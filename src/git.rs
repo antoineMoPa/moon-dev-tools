@@ -488,7 +488,8 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
 
 #[cfg(test)]
 mod tests {
-    use super::canonicalize_repo;
+    use super::{canonicalize_repo, collect_hunks, run_git_no_output};
+    use crate::api::DiffTarget;
     use std::{
         fs,
         path::PathBuf,
@@ -519,38 +520,113 @@ mod tests {
         }
     }
 
+    fn diff_line_counts(patch: &str) -> (usize, usize) {
+        let mut added = 0usize;
+        let mut removed = 0usize;
+
+        for line in patch.lines() {
+            if line.starts_with("+++") || line.starts_with("---") {
+                continue;
+            }
+            if line.starts_with('+') {
+                added += 1;
+            } else if line.starts_with('-') {
+                removed += 1;
+            }
+        }
+
+        (added, removed)
+    }
+
+    #[test]
+    fn collect_hunks_keeps_partially_staged_file_counts_separate() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        fs::create_dir_all(&repo_root).expect("failed to create repo directory");
+        run_git_no_output(&repo_root, &["init"]).expect("failed to init repo");
+        run_git_no_output(&repo_root, &["config", "user.email", "test@example.com"])
+            .expect("failed to configure git email");
+        run_git_no_output(&repo_root, &["config", "user.name", "Test User"])
+            .expect("failed to configure git user");
+        run_git_no_output(&repo_root, &["config", "commit.gpgsign", "false"])
+            .expect("failed to disable git signing");
+
+        let file_path = repo_root.join("example.txt");
+        fs::write(&file_path, "one\ntwo\nthree\nfour\n").expect("failed to write initial file");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add file");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial"])
+            .expect("failed to commit initial file");
+
+        fs::write(&file_path, "one\nTWO staged\nthree\nfour\n")
+            .expect("failed to write staged change");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to stage change");
+        fs::write(&file_path, "one\nTWO staged\nTHREE unstaged\nfour\n")
+            .expect("failed to write unstaged change");
+
+        // Act
+        let hunks =
+            collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+        let staged = hunks
+            .iter()
+            .filter(|hunk| hunk.file_path == "example.txt" && hunk.staged)
+            .map(|hunk| diff_line_counts(&hunk.patch))
+            .fold((0, 0), |sum, item| (sum.0 + item.0, sum.1 + item.1));
+        let unstaged = hunks
+            .iter()
+            .filter(|hunk| hunk.file_path == "example.txt" && !hunk.staged)
+            .map(|hunk| diff_line_counts(&hunk.patch))
+            .fold((0, 0), |sum, item| (sum.0 + item.0, sum.1 + item.1));
+
+        // Assert
+        assert_eq!(staged, (1, 1));
+        assert_eq!(unstaged, (1, 1));
+    }
+
     #[test]
     fn canonicalize_repo_walks_up_to_git_root() {
+        // Arrange
         let temp = TestDir::new();
         let repo_root = temp.path.join("repo");
         let nested = repo_root.join("src/components");
         fs::create_dir_all(repo_root.join(".git")).expect("failed to create fake git dir");
         fs::create_dir_all(&nested).expect("failed to create nested directory");
 
+        // Act
         let resolved = canonicalize_repo(&nested).expect("expected repo root to resolve");
 
+        // Assert
         assert_eq!(resolved, repo_root.canonicalize().unwrap());
     }
 
     #[test]
     fn canonicalize_repo_errors_outside_git_repo() {
+        // Arrange
         let temp = TestDir::new();
         let dir = temp.path.join("plain/nested");
         fs::create_dir_all(&dir).expect("failed to create plain directory");
 
+        // Act
         let error = canonicalize_repo(&dir).expect_err("expected resolution failure");
 
+        // Assert
         assert!(error.to_string().contains("is not inside a git repository"));
     }
 
     #[test]
     fn parse_submodule_status_path_handles_plain_and_branch_lines() {
+        // Arrange
+        let plain_line = " 3f4a1c2 modules/libfoo";
+        let branch_line = "+3f4a1c2 modules/libfoo (heads/main)";
+
+        // Act
+        let plain_path = super::parse_submodule_status_path(plain_line);
+        let branch_path = super::parse_submodule_status_path(branch_line);
+
+        // Assert
+        assert_eq!(plain_path, Some("modules/libfoo"));
         assert_eq!(
-            super::parse_submodule_status_path(" 3f4a1c2 modules/libfoo"),
-            Some("modules/libfoo")
-        );
-        assert_eq!(
-            super::parse_submodule_status_path("+3f4a1c2 modules/libfoo (heads/main)"),
+            branch_path,
             Some("modules/libfoo")
         );
     }

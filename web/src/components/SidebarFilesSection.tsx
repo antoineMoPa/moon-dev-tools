@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "./diffStats";
-import type { SidebarFileItem } from "./LeftSidebar";
+import { EMPTY_LINE_DIFF_STATS } from "./diffStats";
+import type { LineDiffStats } from "./diffStats";
+import type { SidebarFileItem } from "./sidebarFiles";
 
 type SidebarSectionProps = {
   title: string;
@@ -146,10 +147,22 @@ function SidebarFileGroup({
   );
 }
 
+function unstagedLineDiffReducer(sum: LineDiffStats, file: SidebarFileItem): LineDiffStats {
+  return {
+    added: sum.added + file.unstaged_added_line_count,
+    removed: sum.removed + file.unstaged_removed_line_count,
+  };
+}
+
+function stagedLineDiffReducer(sum: LineDiffStats, file: SidebarFileItem): LineDiffStats {
+  return {
+    added: sum.added + file.staged_added_line_count,
+    removed: sum.removed + file.staged_removed_line_count,
+  };
+}
+
 type SidebarFilesSectionProps = {
   files: SidebarFileItem[];
-  addedCount: number;
-  removedCount: number;
   activeFilePath?: string | null;
   readOnly: boolean;
   busy: boolean;
@@ -157,24 +170,53 @@ type SidebarFilesSectionProps = {
   onToggleFileStage: (file: SidebarFileItem) => void;
 };
 
+export function buildSidebarFileGroups(files: SidebarFileItem[]) {
+  const unstagedFiles = files.filter((file) => file.status !== "staged" && !file.snoozed);
+  const stagedFiles = files.filter((file) => file.status === "staged");
+  const snoozedFiles = files.filter((file) => file.snoozed);
+  const unstagedDiffStats = unstagedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const stagedDiffStats = stagedFiles.reduce(stagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const snoozedDiffStats = snoozedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const remainingUnstagedDiffStats = [...unstagedFiles, ...snoozedFiles].reduce(
+    unstagedLineDiffReducer,
+    EMPTY_LINE_DIFF_STATS,
+  );
+
+  return {
+    unstagedFiles,
+    stagedFiles,
+    snoozedFiles,
+    unstagedDiffStats,
+    stagedDiffStats,
+    snoozedDiffStats,
+    remainingUnstagedDiffStats,
+  };
+}
+
 export function SidebarFilesSection({
   files,
-  addedCount,
-  removedCount,
   activeFilePath,
   readOnly,
   busy,
   onJumpToFile,
   onToggleFileStage,
 }: SidebarFilesSectionProps) {
-  const unstagedFiles = files.filter((file) => file.status !== "staged" && !file.snoozed);
-  const stagedFiles = files.filter((file) => file.status === "staged");
-  const snoozedFiles = files.filter((file) => file.snoozed);
-  const unstagedDiffStats = unstagedFiles.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
-  const stagedDiffStats = stagedFiles.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const {
+    unstagedFiles,
+    stagedFiles,
+    snoozedFiles,
+    unstagedDiffStats,
+    stagedDiffStats,
+    snoozedDiffStats,
+    remainingUnstagedDiffStats,
+  } = buildSidebarFileGroups(files);
 
   return (
-    <SidebarSection title="Files" addedCount={addedCount} removedCount={removedCount}>
+    <SidebarSection
+      title="Files"
+      addedCount={remainingUnstagedDiffStats.added}
+      removedCount={remainingUnstagedDiffStats.removed}
+    >
       <SidebarFileGroup
         title="Unstaged"
         files={unstagedFiles}
@@ -200,8 +242,8 @@ export function SidebarFilesSection({
       <SidebarFileGroup
         title="Snoozed"
         files={snoozedFiles}
-        addedCount={0}
-        removedCount={0}
+        addedCount={snoozedDiffStats.added}
+        removedCount={snoozedDiffStats.removed}
         activeFilePath={activeFilePath}
         readOnly={readOnly}
         busy={busy}
