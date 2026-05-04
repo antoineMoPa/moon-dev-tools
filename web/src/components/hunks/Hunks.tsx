@@ -118,9 +118,11 @@ export function Hunks({
   targetHunkId,
 }: HunksProps) {
   const [unstagedOpen, setUnstagedOpen] = useState(true);
-  const [stagedOpen, setStagedOpen] = useState(false);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
+  const [stagedOpen, setStagedOpen] = useState(
+    () => stagedGroups.length > 0 && unstagedGroups.length === 0,
+  );
   const activeFilePath = useMemo(() => {
     if (selectedFilePath && hunks.some((hunk) => hunk.file_path === selectedFilePath)) {
       return selectedFilePath;
@@ -148,10 +150,6 @@ export function Hunks({
       ),
     [hunks],
   );
-
-  useEffect(() => {
-    setStagedOpen(stagedGroups.length > 0 && unstagedGroups.length === 0);
-  }, [stagedGroups.length, unstagedGroups.length]);
 
   useEffect(() => {
     const target = targetHunkId ? hunkTargets.get(targetHunkId) : null;
