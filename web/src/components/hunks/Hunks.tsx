@@ -150,8 +150,8 @@ export function Hunks({
   );
 
   useEffect(() => {
-    setStagedOpen(false);
-  }, [stagedGroups.length]);
+    setStagedOpen(stagedGroups.length > 0 && unstagedGroups.length === 0);
+  }, [stagedGroups.length, unstagedGroups.length]);
 
   useEffect(() => {
     const target = targetHunkId ? hunkTargets.get(targetHunkId) : null;
