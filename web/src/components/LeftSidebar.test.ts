@@ -121,9 +121,10 @@ describe("buildSidebarFiles", () => {
     expect(groups.unstagedDiffStats).toEqual({ added: 3, removed: 1 });
     expect(groups.snoozedDiffStats).toEqual({ added: 2, removed: 6 });
     expect(groups.remainingUnstagedDiffStats).toEqual({ added: 5, removed: 7 });
+    expect(groups.totalDiffStats).toEqual({ added: 15, removed: 11 });
   });
 
-  it("does not count staged lines in the unstaged section for a partial file", () => {
+  it("keeps unstaged section stats separate from the full files total for a partial file", () => {
     const files = buildSidebarFiles(
       makeSession([
         makeHunk({
@@ -148,5 +149,6 @@ describe("buildSidebarFiles", () => {
 
     expect(groups.unstagedDiffStats).toEqual({ added: 9, removed: 6 });
     expect(groups.remainingUnstagedDiffStats).toEqual({ added: 9, removed: 6 });
+    expect(groups.totalDiffStats).toEqual({ added: 340, removed: 25 });
   });
 });

@@ -161,6 +161,13 @@ function stagedLineDiffReducer(sum: LineDiffStats, file: SidebarFileItem): LineD
   };
 }
 
+function totalLineDiffReducer(sum: LineDiffStats, file: SidebarFileItem): LineDiffStats {
+  return {
+    added: sum.added + file.added_line_count,
+    removed: sum.removed + file.removed_line_count,
+  };
+}
+
 type SidebarFilesSectionProps = {
   files: SidebarFileItem[];
   activeFilePath?: string | null;
@@ -177,6 +184,7 @@ export function buildSidebarFileGroups(files: SidebarFileItem[]) {
   const unstagedDiffStats = unstagedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const stagedDiffStats = stagedFiles.reduce(stagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const snoozedDiffStats = snoozedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const totalDiffStats = files.reduce(totalLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const remainingUnstagedDiffStats = [...unstagedFiles, ...snoozedFiles].reduce(
     unstagedLineDiffReducer,
     EMPTY_LINE_DIFF_STATS,
@@ -189,6 +197,7 @@ export function buildSidebarFileGroups(files: SidebarFileItem[]) {
     unstagedDiffStats,
     stagedDiffStats,
     snoozedDiffStats,
+    totalDiffStats,
     remainingUnstagedDiffStats,
   };
 }
@@ -208,14 +217,14 @@ export function SidebarFilesSection({
     unstagedDiffStats,
     stagedDiffStats,
     snoozedDiffStats,
-    remainingUnstagedDiffStats,
+    totalDiffStats,
   } = buildSidebarFileGroups(files);
 
   return (
     <SidebarSection
       title="Files"
-      addedCount={remainingUnstagedDiffStats.added}
-      removedCount={remainingUnstagedDiffStats.removed}
+      addedCount={totalDiffStats.added}
+      removedCount={totalDiffStats.removed}
     >
       <SidebarFileGroup
         title="Unstaged"
