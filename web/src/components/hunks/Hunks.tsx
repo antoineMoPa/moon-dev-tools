@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useReviewStore } from "../../reviewStore";
+import { ReviewView, useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "../diffStats";
 import { HunkCard } from "./HunkCard";
@@ -50,9 +50,10 @@ function FileAccordion({
   onSnoozeFile: (filePath: string) => void;
 }) {
   const {
-    state: { data },
+    state: { activeView, data },
     actions,
   } = useReviewStore();
+  const canStageWholeFile = activeView !== ReviewView.All;
   const staged = hunks.every((hunk) => hunk.staged);
   const status = staged ? "Staged" : "Unstaged";
   const diffStats = hunks.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
@@ -71,7 +72,7 @@ function FileAccordion({
           </span>
           <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{status}</span>
           <span className="muted">{hunks.length}</span>
-          {!readOnly && !staged ? (
+          {canStageWholeFile && !readOnly && !staged ? (
             <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
               {staged ? "Unstage File" : "Stage File"}
             </button>
@@ -91,14 +92,16 @@ function FileAccordion({
         {!readOnly ? (
           <div className="file-accordion-footer">
             <span className="file-accordion-meta file-accordion-meta-footer">
-              {!staged ? (
+              {canStageWholeFile && !staged ? (
                 <button type="button" onClick={() => onSnoozeFile(filePath)}>
                   Snooze
                 </button>
               ) : null}
-              <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
-                {staged ? "Unstage File" : "Stage File"}
-              </button>
+              {canStageWholeFile ? (
+                <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
+                  {staged ? "Unstage File" : "Stage File"}
+                </button>
+              ) : null}
             </span>
           </div>
         ) : null}
@@ -117,6 +120,10 @@ export function Hunks({
   targetFilePath,
   targetHunkId,
 }: HunksProps) {
+  const {
+    state: { activeView },
+  } = useReviewStore();
+  const isViewingAll = activeView === ReviewView.All;
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
@@ -130,12 +137,12 @@ export function Hunks({
     return unstagedGroups[0]?.filePath ?? stagedGroups[0]?.filePath ?? null;
   }, [hunks, selectedFilePath, stagedGroups, unstagedGroups]);
   const visibleUnstagedGroups = useMemo(
-    () => unstagedGroups.filter((group) => group.filePath === activeFilePath),
-    [activeFilePath, unstagedGroups],
+    () => (isViewingAll ? unstagedGroups : unstagedGroups.filter((group) => group.filePath === activeFilePath)),
+    [activeFilePath, isViewingAll, unstagedGroups],
   );
   const visibleStagedGroups = useMemo(
-    () => stagedGroups.filter((group) => group.filePath === activeFilePath),
-    [activeFilePath, stagedGroups],
+    () => (isViewingAll ? stagedGroups : stagedGroups.filter((group) => group.filePath === activeFilePath)),
+    [activeFilePath, isViewingAll, stagedGroups],
   );
   const hunkTargets = useMemo(
     () =>

@@ -10,7 +10,7 @@ import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
-import { ReviewStoreProvider, useReviewStore } from "./reviewStore";
+import { ReviewStoreProvider, ReviewView, useReviewStore } from "./reviewStore";
 import { ThemeProvider, useTheme } from "./theme";
 import type { AgentKind, Hunk, SessionState } from "./types";
 
@@ -219,7 +219,7 @@ function AppContent() {
 function AppContentInner() {
   const { theme } = useTheme();
   const {
-    state: { data, loadError },
+    state: { activeView, data, loadError },
     actions,
   } = useReviewStore();
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -232,6 +232,12 @@ function AppContentInner() {
     elementId: string;
   } | null>(null);
   const snoozedFileSet = new Set(snoozedFiles);
+
+  useEffect(() => {
+    if (activeView === ReviewView.All) {
+      setActiveJumpTarget(null);
+    }
+  }, [activeView]);
 
   useEffect(() => {
     if (!data) {
@@ -257,13 +263,20 @@ function AppContentInner() {
       return;
     }
 
+    if (activeView === ReviewView.All) {
+      if (selectedFilePath && !data.hunks.some((hunk) => hunk.file_path === selectedFilePath)) {
+        setSelectedFilePath(null);
+      }
+      return;
+    }
+
     if (selectedFilePath && data.hunks.some((hunk) => hunk.file_path === selectedFilePath)) {
       return;
     }
 
     const fallbackFilePath = firstReviewFilePath(data.hunks, snoozedFileSet) ?? data.hunks[0]?.file_path ?? null;
     setSelectedFilePath(fallbackFilePath);
-  }, [data, selectedFilePath, snoozedFiles]);
+  }, [activeView, data, selectedFilePath, snoozedFiles]);
 
   useEffect(() => {
     if (!data) {
@@ -354,6 +367,7 @@ function AppContentInner() {
 
   function navigateToFile(filePath: string) {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    actions.setActiveView(ReviewView.File);
     setSelectedFilePath(filePath);
     setActiveJumpTarget({
       filePath,
@@ -367,6 +381,7 @@ function AppContentInner() {
   }
 
   function jumpToComment(target: { filePath: string; hunkId: string; elementId: string }) {
+    actions.setActiveView(ReviewView.File);
     setSelectedFilePath(target.filePath);
     setActiveJumpTarget(target);
   }
@@ -413,7 +428,7 @@ function AppContentInner() {
           <LeftSidebar
             data={data}
             snoozedFiles={snoozedFileSet}
-            activeFilePath={selectedFilePath}
+            activeFilePath={activeView === ReviewView.File ? selectedFilePath : null}
             onJumpToFile={jumpToFile}
             onJumpToComment={jumpToComment}
             onStageWholeFile={(file) => {
@@ -428,7 +443,7 @@ function AppContentInner() {
               selectedAgent={data.selected_agent}
               onAgentChange={handleAgentChange}
               onSnoozeFile={snoozeFile}
-              selectedFilePath={selectedFilePath}
+              selectedFilePath={activeView === ReviewView.File ? selectedFilePath : null}
               targetFilePath={activeJumpTarget?.filePath ?? null}
               targetHunkId={activeJumpTarget?.hunkId ?? null}
             />

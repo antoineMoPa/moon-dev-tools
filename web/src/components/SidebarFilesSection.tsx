@@ -53,7 +53,14 @@ function filePrefix(file: SidebarFileItem) {
   return "";
 }
 
-function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggleFileStage }: SidebarFileButtonProps) {
+function SidebarFileButton({
+  file,
+  active,
+  readOnly,
+  busy,
+  onJumpToFile,
+  onToggleFileStage,
+}: SidebarFileButtonProps) {
   return (
     <div className="sidebar-link" title={file.filePath}>
       <button

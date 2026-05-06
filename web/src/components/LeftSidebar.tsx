@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useReviewStore } from "../reviewStore";
+import { ReviewView, useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
 import type { CommentDispatchStatus, SessionState, SidebarComment } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
@@ -87,18 +87,35 @@ export function LeftSidebar({
   onStageWholeFile,
 }: LeftSidebarProps) {
   const {
-    state: { busy },
+    state: { activeView, busy },
     actions,
   } = useReviewStore();
+  const isViewingAll = activeView === ReviewView.All;
   const sidebarFiles = useMemo(() => buildSidebarFiles(data, snoozedFiles), [data, snoozedFiles]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
 
   return (
     <aside className="left-sidebar">
       <SidebarSummary commentCount={sidebarComments.length} fileCount={sidebarFiles.length} />
+      <section className="sidebar-section sidebar-view-section">
+        <div className="sidebar-list">
+          <div className="sidebar-link">
+            <button
+              className={`sidebar-link-action ${isViewingAll ? "sidebar-link-active" : ""}`.trim()}
+              type="button"
+              onClick={() => {
+                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                actions.setActiveView(ReviewView.All);
+              }}
+            >
+              <span className="sidebar-link-name">all</span>
+            </button>
+          </div>
+        </div>
+      </section>
       <SidebarFilesSection
         files={sidebarFiles}
-        activeFilePath={activeFilePath}
+        activeFilePath={isViewingAll ? null : activeFilePath}
         readOnly={data.read_only}
         busy={busy}
         onJumpToFile={onJumpToFile}

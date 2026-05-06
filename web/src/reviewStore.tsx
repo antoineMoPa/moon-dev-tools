@@ -17,8 +17,14 @@ import { loadDraftComments, persistDraftComments } from "./comments";
 import { COMMENT_DISPATCH_STATUS } from "./types";
 import type { AgentKind, DraftComment, Hunk, SessionState } from "./types";
 
+export enum ReviewView {
+  All = "all",
+  File = "file",
+}
+
 type ReviewStoreState = {
   data: SessionState | null;
+  activeView: ReviewView;
   draftComments: DraftComment[];
   batchDraftComments: boolean;
   loadError: string;
@@ -42,6 +48,7 @@ type ReviewStoreValue = {
     setBatchDraftComments: (value: boolean) => void;
     sendCommentBatch: () => Promise<void>;
     setAgent: (agent: AgentKind) => Promise<void>;
+    setActiveView: (view: ReviewView) => void;
   };
 };
 
@@ -55,7 +62,8 @@ type ReviewStoreAction =
   | { type: "draft_comment_updated"; hunkId: string; comment: string }
   | { type: "draft_comment_upserted"; draft: DraftComment }
   | { type: "draft_comment_removed"; draftId: string }
-  | { type: "batch_draft_comments_set"; value: boolean };
+  | { type: "batch_draft_comments_set"; value: boolean }
+  | { type: "active_view_set"; view: ReviewView };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
 
@@ -159,6 +167,11 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         ...state,
         batchDraftComments: action.value,
       };
+    case "active_view_set":
+      return {
+        ...state,
+        activeView: action.view,
+      };
     default:
       return state;
   }
@@ -167,6 +180,7 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
 function initialReviewStoreState(): ReviewStoreState {
   return {
     data: null,
+    activeView: ReviewView.All,
     draftComments: loadDraftComments(getSessionId()),
     batchDraftComments: false,
     loadError: "",
@@ -262,6 +276,10 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     dispatch({ type: "batch_draft_comments_set", value });
   }
 
+  function setActiveView(view: ReviewView) {
+    dispatch({ type: "active_view_set", view });
+  }
+
   useEffect(() => {
     void loadState();
   }, []);
@@ -298,6 +316,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         setBatchDraftComments,
         sendCommentBatch: async () => mutate(() => sendCommentBatchRequest()),
         setAgent: async (agent) => mutate(() => updateAgentRequest(agent)),
+        setActiveView,
       },
     }),
     [state],

@@ -192,7 +192,12 @@ function HighlightedCode({
   );
 }
 
-export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCardProps) {
+export function HunkCard({
+  hunk,
+  agents,
+  selectedAgent,
+  onAgentChange,
+}: HunkCardProps) {
   const {
     state: { data },
     actions,
