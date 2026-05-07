@@ -22,7 +22,16 @@ export function Header({ repoName, branchName }: HeaderProps) {
     <header>
       <div className="header-inner">
         <div>
-          <h1>🌚 moonreview</h1>
+          <h1>
+            <a
+              className="header-title-link"
+              href="https://github.com/antoineMoPa/moonreview"
+              target="_blank"
+              rel="noreferrer"
+            >
+              🌚 moonreview
+            </a>
+          </h1>
         </div>
         <div className="header-actions">
           {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
