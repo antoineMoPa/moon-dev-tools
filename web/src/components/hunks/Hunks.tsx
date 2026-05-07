@@ -34,6 +34,74 @@ function groupByFile(hunks: Hunk[]): FileGroup[] {
   }));
 }
 
+function flattenGroups(groups: FileGroup[]): Hunk[] {
+  return groups.flatMap((group) => group.hunks);
+}
+
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
+function hunkViewportAnchorTop() {
+  return Math.min(180, window.innerHeight * 0.28);
+}
+
+function useActiveHunkFromViewport(interactiveHunks: Hunk[]) {
+  const { actions } = useReviewStore();
+
+  useEffect(() => {
+    if (interactiveHunks.length === 0) {
+      actions.setActiveHunkId(null);
+      return;
+    }
+
+    let animationFrame = 0;
+
+    function updateActiveHunkFromViewport() {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        let nextHunkId: string | null = null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        const anchorTop = hunkViewportAnchorTop();
+
+        for (const hunk of interactiveHunks) {
+          const element = document.getElementById(`hunk-${hunk.id}`);
+          if (!element) {
+            continue;
+          }
+
+          const rect = element.getBoundingClientRect();
+          if (rect.bottom < 0 || rect.top > window.innerHeight) {
+            continue;
+          }
+
+          const distance = Math.abs(rect.top - anchorTop);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            nextHunkId = hunk.id;
+          }
+        }
+
+        actions.setActiveHunkId(nextHunkId ?? interactiveHunks[0]?.id ?? null);
+      });
+    }
+
+    updateActiveHunkFromViewport();
+    window.addEventListener("scroll", updateActiveHunkFromViewport, { passive: true });
+    window.addEventListener("resize", updateActiveHunkFromViewport);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("scroll", updateActiveHunkFromViewport);
+      window.removeEventListener("resize", updateActiveHunkFromViewport);
+    };
+  }, [actions, interactiveHunks]);
+}
+
 function FileAccordion({
   filePath,
   hunks,
@@ -121,9 +189,11 @@ export function Hunks({
   targetHunkId,
 }: HunksProps) {
   const {
-    state: { activeView },
+    state: { activeHunkId, activeView, busy, data },
+    actions,
   } = useReviewStore();
   const isViewingAll = activeView === ReviewView.All;
+  const readOnly = data?.read_only ?? false;
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
@@ -143,6 +213,35 @@ export function Hunks({
   const visibleStagedGroups = useMemo(
     () => (isViewingAll ? stagedGroups : stagedGroups.filter((group) => group.filePath === activeFilePath)),
     [activeFilePath, isViewingAll, stagedGroups],
+  );
+
+  useEffect(() => {
+    if (!activeFilePath || isViewingAll) {
+      return;
+    }
+
+    if (visibleUnstagedGroups.length === 0 && visibleStagedGroups.length > 0) {
+      setStagedOpen(true);
+    }
+  }, [activeFilePath, isViewingAll, visibleStagedGroups.length, visibleUnstagedGroups.length]);
+
+  const visibleUnstagedHunks = useMemo(() => flattenGroups(visibleUnstagedGroups), [visibleUnstagedGroups]);
+  const visibleStagedHunks = useMemo(() => flattenGroups(visibleStagedGroups), [visibleStagedGroups]);
+  const interactiveUnstagedHunks = useMemo(
+    () => (unstagedOpen ? visibleUnstagedHunks : []),
+    [unstagedOpen, visibleUnstagedHunks],
+  );
+  const interactiveStagedHunks = useMemo(
+    () => (stagedOpen ? visibleStagedHunks : []),
+    [stagedOpen, visibleStagedHunks],
+  );
+  const interactiveHunks = useMemo(
+    () => [...interactiveUnstagedHunks, ...interactiveStagedHunks],
+    [interactiveStagedHunks, interactiveUnstagedHunks],
+  );
+  const activeHunk = useMemo(
+    () => hunks.find((hunk) => hunk.id === activeHunkId) ?? null,
+    [activeHunkId, hunks],
   );
   const hunkTargets = useMemo(
     () =>
@@ -179,6 +278,37 @@ export function Hunks({
       setUnstagedOpen(true);
     }
   }, [hunkTargets, hunks, targetFilePath, targetHunkId]);
+
+  useActiveHunkFromViewport(interactiveHunks);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableShortcutTarget(event.target)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (event.metaKey || event.ctrlKey || event.altKey || readOnly || busy || !activeHunk) {
+        return;
+      }
+
+      if (key === "s" && !activeHunk.staged) {
+        event.preventDefault();
+        const shouldScrollToTop = interactiveUnstagedHunks[0]?.id === activeHunk.id;
+        void actions.toggleStage(activeHunk.id, activeHunk.staged).then((changed) => {
+          if (changed && shouldScrollToTop) {
+            window.scrollTo({ top: 0, left: window.scrollX, behavior: "auto" });
+          }
+        });
+      } else if (key === "u" && activeHunk.staged) {
+        event.preventDefault();
+        void actions.toggleStage(activeHunk.id, activeHunk.staged);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [actions, activeHunk, busy, interactiveUnstagedHunks, readOnly]);
 
   return (
     <div className="hunk-sections">

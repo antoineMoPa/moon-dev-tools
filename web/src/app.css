@@ -21,6 +21,7 @@
   --diff-gutter-bg: rgba(49, 42, 34, 0.04);
   --diff-gutter-hover-bg: rgba(183, 82, 45, 0.12);
   --line-target-bg: rgba(183, 82, 45, 0.08);
+  --hunk-active-bg: rgba(29, 26, 22, 0.1);
   --truncate-overlay: rgba(0, 0, 0, 0.2);
   --truncate-fade: rgba(255, 253, 249, 0.98);
   --inline-comment-border: rgba(183, 82, 45, 0.35);
@@ -62,6 +63,7 @@ html[data-theme="dark"] {
   --diff-gutter-bg: rgba(237, 243, 251, 0.045);
   --diff-gutter-hover-bg: rgba(238, 141, 104, 0.18);
   --line-target-bg: rgba(238, 141, 104, 0.16);
+  --hunk-active-bg: rgba(200, 230, 255, 0.1);
   --truncate-overlay: rgba(0, 0, 0, 0.28);
   --truncate-fade: rgba(13, 18, 26, 0.98);
   --inline-comment-border: rgba(238, 141, 104, 0.44);
@@ -402,6 +404,33 @@ main {
   color: var(--warn);
 }
 
+.sidebar-shortcuts {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.sidebar-shortcuts-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.sidebar-shortcuts-list p {
+  margin: 0;
+}
+
+.sidebar-shortcuts-list kbd {
+  display: inline-block;
+  padding: 0.08rem 0.28rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--control-bg);
+  font: inherit;
+  font-weight: 700;
+}
+
 .meta {
   color: var(--muted);
   font-size: 0.95rem;
@@ -444,6 +473,13 @@ main {
 
 .panel-message-error {
   color: var(--warn);
+}
+
+.success-panel {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  text-align: center;
 }
 
 button {
@@ -524,8 +560,14 @@ select {
   display: grid;
   gap: 0.8rem;
   margin-top: 10px;
+  scroll-margin-top: 7rem;
   border: 0;
   box-shadow: none;
+  transition: background-color 120ms ease;
+}
+
+.hunk-active {
+  background: var(--hunk-active-bg);
 }
 
 .hunk-sections {

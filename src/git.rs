@@ -179,7 +179,7 @@ fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
             }
 
             let patch = format!("{}\n", patch_lines.join("\n"));
-            let id = stable_id(&(file_path.clone(), header.clone(), patch.clone(), staged));
+            let id = stable_id(&(file_path.clone(), header.clone(), patch.clone()));
             hunks.push(DiffHunk {
                 id,
                 file_path: file_path.clone(),

@@ -216,6 +216,18 @@ function AppContent() {
   );
 }
 
+function hasUnstagedHunks(data: SessionState | null) {
+  return data?.hunks.some((hunk) => !hunk.staged) ?? false;
+}
+
+function Success() {
+  return (
+    <section className="success-panel">
+      <h2>All done 🌚</h2>
+    </section>
+  );
+}
+
 function AppContentInner() {
   const { theme } = useTheme();
   const {
@@ -226,6 +238,8 @@ function AppContentInner() {
   const [pendingStageFile, setPendingStageFile] = useState<{ filePath: string; fileName: string } | null>(null);
   const [snoozedFiles, setSnoozedFiles] = useState<string[]>([]);
   const previousDataRef = useRef<typeof data>(null);
+  const hadUnstagedHunksRef = useRef(false);
+  const [reviewComplete, setReviewComplete] = useState(false);
   const [activeJumpTarget, setActiveJumpTarget] = useState<{
     filePath?: string | null;
     hunkId?: string | null;
@@ -277,6 +291,20 @@ function AppContentInner() {
     const fallbackFilePath = firstReviewFilePath(data.hunks, snoozedFileSet) ?? data.hunks[0]?.file_path ?? null;
     setSelectedFilePath(fallbackFilePath);
   }, [activeView, data, selectedFilePath, snoozedFiles]);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const hasUnstaged = hasUnstagedHunks(data);
+    if (hadUnstagedHunksRef.current && !hasUnstaged) {
+      setReviewComplete(true);
+    } else if (hasUnstaged) {
+      setReviewComplete(false);
+    }
+    hadUnstagedHunksRef.current = hasUnstaged;
+  }, [data]);
 
   useEffect(() => {
     if (!data) {
@@ -437,17 +465,23 @@ function AppContentInner() {
           />
 
           <section className="review-main">
-            <Hunks
-              hunks={data.hunks}
-              agents={data.available_agents}
-              selectedAgent={data.selected_agent}
-              onAgentChange={handleAgentChange}
-              onSnoozeFile={snoozeFile}
-              selectedFilePath={activeView === ReviewView.File ? selectedFilePath : null}
-              targetFilePath={activeJumpTarget?.filePath ?? null}
-              targetHunkId={activeJumpTarget?.hunkId ?? null}
-            />
-            <Footer exportText={data.export_text} />
+            {reviewComplete ? (
+              <Success />
+            ) : (
+              <>
+                <Hunks
+                  hunks={data.hunks}
+                  agents={data.available_agents}
+                  selectedAgent={data.selected_agent}
+                  onAgentChange={handleAgentChange}
+                  onSnoozeFile={snoozeFile}
+                  selectedFilePath={activeView === ReviewView.File ? selectedFilePath : null}
+                  targetFilePath={activeJumpTarget?.filePath ?? null}
+                  targetHunkId={activeJumpTarget?.hunkId ?? null}
+                />
+                <Footer exportText={data.export_text} />
+              </>
+            )}
           </section>
         </div>
       </main>

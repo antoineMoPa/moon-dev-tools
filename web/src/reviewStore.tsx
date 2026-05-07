@@ -25,6 +25,7 @@ export enum ReviewView {
 type ReviewStoreState = {
   data: SessionState | null;
   activeView: ReviewView;
+  activeHunkId: string | null;
   draftComments: DraftComment[];
   batchDraftComments: boolean;
   loadError: string;
@@ -37,7 +38,7 @@ type ReviewStoreValue = {
   state: ReviewStoreState;
   actions: {
     loadState: () => Promise<void>;
-    toggleStage: (hunkId: string, staged: boolean) => Promise<void>;
+    toggleStage: (hunkId: string, staged: boolean) => Promise<boolean>;
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
     discardHunk: (hunkId: string) => Promise<void>;
@@ -49,6 +50,7 @@ type ReviewStoreValue = {
     sendCommentBatch: () => Promise<void>;
     setAgent: (agent: AgentKind) => Promise<void>;
     setActiveView: (view: ReviewView) => void;
+    setActiveHunkId: (hunkId: string | null) => void;
   };
 };
 
@@ -63,7 +65,8 @@ type ReviewStoreAction =
   | { type: "draft_comment_upserted"; draft: DraftComment }
   | { type: "draft_comment_removed"; draftId: string }
   | { type: "batch_draft_comments_set"; value: boolean }
-  | { type: "active_view_set"; view: ReviewView };
+  | { type: "active_view_set"; view: ReviewView }
+  | { type: "active_hunk_set"; hunkId: string | null };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
 
@@ -168,9 +171,20 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         batchDraftComments: action.value,
       };
     case "active_view_set":
+      if (state.activeView === action.view) {
+        return state;
+      }
       return {
         ...state,
         activeView: action.view,
+      };
+    case "active_hunk_set":
+      if (state.activeHunkId === action.hunkId) {
+        return state;
+      }
+      return {
+        ...state,
+        activeHunkId: action.hunkId,
       };
     default:
       return state;
@@ -181,6 +195,7 @@ function initialReviewStoreState(): ReviewStoreState {
   return {
     data: null,
     activeView: ReviewView.All,
+    activeHunkId: null,
     draftComments: loadDraftComments(getSessionId()),
     batchDraftComments: false,
     loadError: "",
@@ -246,18 +261,24 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
 
   async function mutate(request: () => Promise<unknown>) {
     if (state.busy) {
-      return;
+      return false;
     }
 
     dispatch({ type: "request_started" });
     try {
       await request();
       await loadState();
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Request failed.");
+      return false;
     } finally {
       dispatch({ type: "request_finished" });
     }
+  }
+
+  async function toggleStage(hunkId: string, staged: boolean) {
+    return mutate(() => toggleStageRequest(hunkId, staged));
   }
 
   function updateDraftComment(hunkId: string, comment: string) {
@@ -278,6 +299,10 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
 
   function setActiveView(view: ReviewView) {
     dispatch({ type: "active_view_set", view });
+  }
+
+  function setActiveHunkId(hunkId: string | null) {
+    dispatch({ type: "active_hunk_set", hunkId });
   }
 
   useEffect(() => {
@@ -305,18 +330,31 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
       state,
       actions: {
         loadState,
-        toggleStage: async (hunkId, staged) => mutate(() => toggleStageRequest(hunkId, staged)),
-        toggleStageFile: async (filePath, staged) => mutate(() => toggleStageFileRequest(filePath, staged)),
-        stageSelection: async (hunkId, selection) => mutate(() => stageSelectionRequest(hunkId, selection)),
-        discardHunk: async (hunkId) => mutate(() => discardHunkRequest(hunkId)),
+        toggleStage,
+        toggleStageFile: async (filePath, staged) => {
+          await mutate(() => toggleStageFileRequest(filePath, staged));
+        },
+        stageSelection: async (hunkId, selection) => {
+          await mutate(() => stageSelectionRequest(hunkId, selection));
+        },
+        discardHunk: async (hunkId) => {
+          await mutate(() => discardHunkRequest(hunkId));
+        },
         updateDraftComment,
         upsertDraftComment,
         removeDraftComment,
-        saveComment: async (hunkId, comment, batch) => mutate(() => saveCommentRequest(hunkId, comment, batch)),
+        saveComment: async (hunkId, comment, batch) => {
+          await mutate(() => saveCommentRequest(hunkId, comment, batch));
+        },
         setBatchDraftComments,
-        sendCommentBatch: async () => mutate(() => sendCommentBatchRequest()),
-        setAgent: async (agent) => mutate(() => updateAgentRequest(agent)),
+        sendCommentBatch: async () => {
+          await mutate(() => sendCommentBatchRequest());
+        },
+        setAgent: async (agent) => {
+          await mutate(() => updateAgentRequest(agent));
+        },
         setActiveView,
+        setActiveHunkId,
       },
     }),
     [state],

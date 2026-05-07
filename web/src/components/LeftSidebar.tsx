@@ -78,6 +78,29 @@ function SidebarSummary({ commentCount, fileCount }: SidebarSummaryProps) {
   );
 }
 
+function SidebarShortcutsHint() {
+  const {
+    state: { activeHunkId, data },
+  } = useReviewStore();
+  const activeHunk = data?.hunks.find((hunk) => hunk.id === activeHunkId) ?? null;
+
+  if (!activeHunk) {
+    return null;
+  }
+
+  return (
+    <div className="sidebar-shortcuts">
+      <div className="sidebar-shortcuts-list">
+        {activeHunk.staged ? (
+          <p><kbd>u</kbd> unstage current hunk</p>
+        ) : (
+          <p><kbd>s</kbd> stage current hunk</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LeftSidebar({
   data,
   snoozedFiles,
@@ -128,6 +151,7 @@ export function LeftSidebar({
         }}
       />
       <SidebarCommentsSection comments={sidebarComments} onJumpToComment={onJumpToComment} />
+      <SidebarShortcutsHint />
     </aside>
   );
 }

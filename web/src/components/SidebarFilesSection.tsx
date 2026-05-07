@@ -83,20 +83,22 @@ function SidebarFileButton({
           {file.fileName}
         </span>
       </button>
-      <span className="sidebar-link-meta">
-        <button
-          className={`badge sidebar-file-status sidebar-file-status-${file.status}`.trim()}
-          type="button"
-          title="toggle file stage"
-          disabled={readOnly || busy}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleFileStage(file);
-          }}
-        >
-          {statusLabel(file)}
-        </button>
-      </span>
+      {!readOnly ? (
+        <span className="sidebar-link-meta">
+          <button
+            className={`badge sidebar-file-status sidebar-file-status-${file.status}`.trim()}
+            type="button"
+            title="toggle file stage"
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleFileStage(file);
+            }}
+          >
+            {statusLabel(file)}
+          </button>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -226,6 +228,28 @@ export function SidebarFilesSection({
     snoozedDiffStats,
     totalDiffStats,
   } = buildSidebarFileGroups(files);
+
+  if (readOnly) {
+    return (
+      <SidebarSection
+        title="Files"
+        addedCount={totalDiffStats.added}
+        removedCount={totalDiffStats.removed}
+      >
+        <SidebarFileGroup
+          title="Changed"
+          files={files}
+          addedCount={totalDiffStats.added}
+          removedCount={totalDiffStats.removed}
+          activeFilePath={activeFilePath}
+          readOnly={readOnly}
+          busy={busy}
+          onJumpToFile={onJumpToFile}
+          onToggleFileStage={onToggleFileStage}
+        />
+      </SidebarSection>
+    );
+  }
 
   return (
     <SidebarSection

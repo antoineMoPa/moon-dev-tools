@@ -199,7 +199,7 @@ export function HunkCard({
   onAgentChange,
 }: HunkCardProps) {
   const {
-    state: { data },
+    state: { activeHunkId, data },
     actions,
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
@@ -365,7 +365,12 @@ export function HunkCard({
 
 
   return (
-    <article id={`hunk-${hunk.id}`} className="panel hunk" ref={hunkRef}>
+    <article
+      id={`hunk-${hunk.id}`}
+      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""}`.trim()}
+      data-hunk-id={hunk.id}
+      ref={hunkRef}
+    >
       <div className="hunk-actions">
         {!readOnly ? (
           <>
