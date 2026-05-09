@@ -97,6 +97,7 @@ function FullFileViewContent() {
   const [activeHash, setActiveHash] = useState(window.location.hash);
   const filePath = requestedFilePath();
 
+  // Load the selected file and session metadata for the full-file view.
   useEffect(() => {
     let cancelled = false;
 
@@ -140,6 +141,7 @@ function FullFileViewContent() {
     [content],
   );
 
+  // Keep the highlighted line in sync with the URL hash.
   useEffect(() => {
     const jumpToHashLine = () => {
       setActiveHash(window.location.hash);
@@ -220,6 +222,22 @@ function hasUnstagedHunks(data: SessionState | null) {
   return data?.hunks.some((hunk) => !hunk.staged) ?? false;
 }
 
+function fileExists(data: SessionState, filePath: string) {
+  return data.hunks.some((hunk) => hunk.file_path === filePath);
+}
+
+function fileHasUnstagedHunks(data: SessionState, filePath: string) {
+  return data.hunks.some((hunk) => hunk.file_path === filePath && !hunk.staged);
+}
+
+function fullyStagedFilePaths(previousData: SessionState, data: SessionState) {
+  return filePathsInListOrder(previousData.hunks).filter((filePath) => (
+    fileHasUnstagedHunks(previousData, filePath) &&
+    fileExists(data, filePath) &&
+    !fileHasUnstagedHunks(data, filePath)
+  ));
+}
+
 function Success() {
   return (
     <section className="success-panel">
@@ -247,12 +265,14 @@ function AppContentInner() {
   } | null>(null);
   const snoozedFileSet = new Set(snoozedFiles);
 
+  // Clear pending jump targets when returning to the all-files view.
   useEffect(() => {
     if (activeView === ReviewView.All) {
       setActiveJumpTarget(null);
     }
   }, [activeView]);
 
+  // Restore the user's persisted agent choice when it is still available.
   useEffect(() => {
     if (!data) {
       return;
@@ -272,6 +292,7 @@ function AppContentInner() {
     void actions.setAgent(storedAgent);
   }, [actions, data]);
 
+  // Keep the selected file valid as review data and view mode change.
   useEffect(() => {
     if (!data) {
       return;
@@ -292,6 +313,7 @@ function AppContentInner() {
     setSelectedFilePath(fallbackFilePath);
   }, [activeView, data, selectedFilePath, snoozedFiles]);
 
+  // Show the completion state once all unstaged hunks have been staged.
   useEffect(() => {
     if (!data) {
       return;
@@ -306,6 +328,7 @@ function AppContentInner() {
     hadUnstagedHunksRef.current = hasUnstaged;
   }, [data]);
 
+  // Drop snoozed files once they no longer have active unstaged hunks.
   useEffect(() => {
     if (!data) {
       return;
@@ -317,6 +340,7 @@ function AppContentInner() {
     setSnoozedFiles((current) => current.filter((filePath) => activePaths.has(filePath)));
   }, [data]);
 
+  // Scroll to a file or hunk after navigation has rendered the target element.
   useEffect(() => {
     if (!activeJumpTarget) {
       return;
@@ -335,52 +359,38 @@ function AppContentInner() {
     return () => window.clearTimeout(timer);
   }, [activeJumpTarget]);
 
+  // Advance to the next review file after the current file becomes fully staged.
   useEffect(() => {
-    if (!data || !pendingStageFile) {
-      return;
-    }
-    if (pendingStageFile.filePath === selectedFilePath) {
-      return;
-    }
-
-    const fileStillExists = data.hunks.some((hunk) => hunk.file_path === pendingStageFile.filePath);
-    const hasUnstagedHunks = data.hunks.some(
-      (hunk) => hunk.file_path === pendingStageFile.filePath && !hunk.staged,
-    );
-
-    if (!fileStillExists || hasUnstagedHunks) {
-      return;
-    }
-
-    toast.success(`file ${pendingStageFile.fileName} fully staged`);
-    const nextFilePath = nextReviewFilePath(data.hunks, pendingStageFile.filePath, snoozedFileSet);
-    if (nextFilePath) {
-      navigateToFile(nextFilePath);
-    }
-    setPendingStageFile(null);
-  }, [data, pendingStageFile, snoozedFiles]);
-
-  useEffect(() => {
-    if (!data || !selectedFilePath) {
+    if (!data) {
       previousDataRef.current = data;
       return;
     }
 
     const previousData = previousDataRef.current;
-    const hadUnstagedHunks = previousData?.hunks.some(
-      (hunk) => hunk.file_path === selectedFilePath && !hunk.staged,
-    ) ?? false;
-    const hasUnstagedHunks = data.hunks.some(
-      (hunk) => hunk.file_path === selectedFilePath && !hunk.staged,
-    );
+    if (!previousData) {
+      previousDataRef.current = data;
+      return;
+    }
 
-    if (hadUnstagedHunks && !hasUnstagedHunks) {
-      toast.success(`file ${fileNameFromPath(selectedFilePath)} fully staged`);
-      const nextFilePath = nextReviewFilePath(data.hunks, selectedFilePath, snoozedFileSet);
+    const completedFilePaths = fullyStagedFilePaths(previousData, data);
+    const completedSelectedFilePath = selectedFilePath && completedFilePaths.includes(selectedFilePath)
+      ? selectedFilePath
+      : null;
+    const completedPendingFilePath = pendingStageFile && completedFilePaths.includes(pendingStageFile.filePath)
+      ? pendingStageFile.filePath
+      : null;
+    const completedFilePath = completedSelectedFilePath ?? completedPendingFilePath ?? completedFilePaths[0];
+
+    if (completedFilePath) {
+      const completedFileName = pendingStageFile?.filePath === completedFilePath
+        ? pendingStageFile.fileName
+        : fileNameFromPath(completedFilePath);
+      toast.success(`file ${completedFileName} fully staged`);
+      const nextFilePath = nextReviewFilePath(data.hunks, completedFilePath, snoozedFileSet);
       if (nextFilePath && nextFilePath !== selectedFilePath) {
         navigateToFile(nextFilePath);
       }
-      if (pendingStageFile?.filePath === selectedFilePath) {
+      if (pendingStageFile?.filePath === completedFilePath) {
         setPendingStageFile(null);
       }
     }
