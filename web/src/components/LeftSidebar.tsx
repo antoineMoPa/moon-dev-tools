@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { ReviewView, useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
-import type { CommentDispatchStatus, SessionState, SidebarComment } from "../types";
+import type { CommentDispatchStatus, Commit, SessionState, SidebarComment } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 import { buildSidebarFiles, FILE_STAGE_STATUS } from "./sidebarFiles";
@@ -101,6 +101,36 @@ function SidebarShortcutsHint() {
   );
 }
 
+function SidebarCommitsSection({ base, commits }: { base?: string | null; commits: Commit[] }) {
+  if (!base) {
+    return null;
+  }
+
+  return (
+    <section className="sidebar-section sidebar-commits-section">
+      <div className="sidebar-section-head">
+        <p>Commits</p>
+        <span className="sidebar-section-meta">{base}</span>
+      </div>
+      <div className="sidebar-list">
+        {commits.length === 0 ? (
+          <p className="sidebar-empty">No commits since {base}.</p>
+        ) : commits.map((commit) => (
+          <div className="sidebar-commit" key={commit.sha} title={`${commit.short_sha} ${commit.subject}`}>
+            <div className="sidebar-commit-topline">
+              <span className="sidebar-commit-subject">{commit.subject}</span>
+              <span className="sidebar-commit-sha">{commit.short_sha}</span>
+            </div>
+            <p className="sidebar-commit-meta">
+              {commit.author} &middot; {commit.relative_time}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function LeftSidebar({
   data,
   snoozedFiles,
@@ -150,6 +180,7 @@ export function LeftSidebar({
           void actions.toggleStageFile(file.filePath, shouldUnstage);
         }}
       />
+      <SidebarCommitsSection base={data.commit_base} commits={data.commits} />
       <SidebarCommentsSection comments={sidebarComments} onJumpToComment={onJumpToComment} />
       <SidebarShortcutsHint />
     </aside>

@@ -15,9 +15,9 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HunkView,
-        OpenSessionRequest, PatchPayload, RepoSession, SelectionRequest, ServerState,
-        SessionOpened, SessionPayload, bind_host, port, server_url,
+        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HunkView, OpenSessionRequest,
+        PatchPayload, RepoSession, SelectionRequest, ServerState, SessionOpened, SessionPayload,
+        bind_host, port, server_url,
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
@@ -25,9 +25,9 @@ use crate::{
         plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
     git::{
-        agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
-        canonicalize_repo, collect_hunks, current_branch_name, detect_agent_availability,
-        preview_patch, read_repo_file, run_git_no_output,
+        agent_is_available, agent_options, apply_patch, branch_commits_since_default,
+        build_partial_patch_from_selection, canonicalize_repo, collect_hunks, current_branch_name,
+        detect_agent_availability, preview_patch, read_repo_file, run_git_no_output,
     },
 };
 
@@ -231,6 +231,7 @@ async fn session_state(
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
         let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
+        let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
         let views = hunks
             .into_iter()
             .map(|hunk| {
@@ -270,6 +271,8 @@ async fn session_state(
                 .unwrap_or("repo")
                 .to_string(),
             branch_name: current_branch_name(&session.repo_path)?,
+            commit_base,
+            commits,
             repo_path: session.repo_path.display().to_string(),
             read_only: session.diff_target.base.is_some(),
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,

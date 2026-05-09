@@ -88,6 +88,8 @@ pub(crate) struct SessionOpened {
 pub(crate) struct SessionPayload {
     pub(crate) repo_name: String,
     pub(crate) branch_name: Option<String>,
+    pub(crate) commit_base: Option<String>,
+    pub(crate) commits: Vec<CommitView>,
     pub(crate) repo_path: String,
     pub(crate) read_only: bool,
     pub(crate) patch_preview_line_limit: usize,
@@ -96,6 +98,15 @@ pub(crate) struct SessionPayload {
     pub(crate) hunks: Vec<HunkView>,
     pub(crate) sidebar_comments: Vec<SidebarCommentView>,
     pub(crate) export_text: String,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct CommitView {
+    pub(crate) sha: String,
+    pub(crate) short_sha: String,
+    pub(crate) subject: String,
+    pub(crate) author: String,
+    pub(crate) relative_time: String,
 }
 
 #[derive(Serialize, Clone)]

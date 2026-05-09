@@ -25,6 +25,8 @@ function makeSession(hunks: Hunk[]): SessionState {
   return {
     repo_name: "repo",
     branch_name: "main",
+    commit_base: "origin/main",
+    commits: [],
     repo_path: "/repo",
     read_only: false,
     patch_preview_line_limit: 200,

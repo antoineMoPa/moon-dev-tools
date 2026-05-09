@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
     agent::ChildExt,
-    api::{DiffHunk, DiffTarget, FileChangeKind, stable_id},
+    api::{CommitView, DiffHunk, DiffTarget, FileChangeKind, stable_id},
 };
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
@@ -110,6 +110,83 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     } else {
         Ok(Some(branch.to_string()))
     }
+}
+
+pub(crate) fn branch_commits_since_default(
+    repo_path: &Path,
+) -> Result<(Option<String>, Vec<CommitView>)> {
+    let Some(base_ref) = default_branch_ref(repo_path)? else {
+        return Ok((None, Vec::new()));
+    };
+    let range = format!("{base_ref}..HEAD");
+    let format = "%H%x1f%h%x1f%an%x1f%cr%x1f%s";
+    let output = run_git(
+        repo_path,
+        &[
+            "log",
+            "--date=relative",
+            &format!("--format={format}"),
+            &range,
+        ],
+    )?;
+    let commits = output
+        .lines()
+        .filter_map(parse_commit_view)
+        .collect::<Vec<_>>();
+
+    Ok((Some(base_ref), commits))
+}
+
+fn default_branch_ref(repo_path: &Path) -> Result<Option<String>> {
+    let origin_head = run_git_allow_status(
+        repo_path,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        &[0, 1, 128],
+    )?;
+    let origin_head = origin_head.trim();
+    if !origin_head.is_empty() && git_ref_exists(repo_path, origin_head)? {
+        return Ok(Some(origin_head.to_string()));
+    }
+
+    for candidate in ["origin/dev", "origin/main", "dev", "main"] {
+        if git_ref_exists(repo_path, candidate)? {
+            return Ok(Some(candidate.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn git_ref_exists(repo_path: &Path, git_ref: &str) -> Result<bool> {
+    Ok(!run_git_allow_status(
+        repo_path,
+        &["rev-parse", "--verify", "--quiet", git_ref],
+        &[0, 1],
+    )?
+    .trim()
+    .is_empty())
+}
+
+fn parse_commit_view(line: &str) -> Option<CommitView> {
+    let mut fields = line.splitn(5, '\x1f');
+    let sha = fields.next()?.to_string();
+    let short_sha = fields.next()?.to_string();
+    let author = fields.next()?.to_string();
+    let relative_time = fields.next()?.to_string();
+    let subject = fields.next()?.to_string();
+
+    Some(CommitView {
+        sha,
+        short_sha,
+        subject,
+        author,
+        relative_time,
+    })
 }
 
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {

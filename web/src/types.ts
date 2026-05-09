@@ -26,6 +26,14 @@ export type CommentDispatch = {
   can_cancel?: boolean;
 };
 
+export type Commit = {
+  sha: string;
+  short_sha: string;
+  subject: string;
+  author: string;
+  relative_time: string;
+};
+
 export type Hunk = {
   id: string;
   file_path: string;
@@ -66,6 +74,8 @@ export type SidebarComment = {
 export type SessionState = {
   repo_name: string;
   branch_name?: string | null;
+  commit_base?: string | null;
+  commits: Commit[];
   repo_path: string;
   read_only: boolean;
   patch_preview_line_limit: number;
