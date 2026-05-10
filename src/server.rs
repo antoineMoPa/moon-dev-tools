@@ -15,9 +15,10 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HunkView, OpenSessionRequest,
-        PatchPayload, RepoSession, SelectionRequest, ServerState, SessionOpened, SessionPayload,
-        bind_host, port, server_url,
+        AgentKind, AppError, AppState, CommitReviewStatus, CommitSelectionRequest,
+        FileContentPayload, FileQuery, FileReviewedRequest, HunkView, OpenSessionRequest,
+        PatchPayload, RepoSession, ReviewedRequest, SelectionRequest, ServerState, SessionOpened,
+        SessionPayload, bind_host, port, server_url,
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
@@ -26,8 +27,9 @@ use crate::{
     },
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
-        build_partial_patch_from_selection, canonicalize_repo, collect_hunks, current_branch_name,
-        detect_agent_availability, preview_patch, read_repo_file, run_git_no_output,
+        build_partial_patch_from_selection, canonicalize_repo, collect_commit_hunks,
+        collect_session_hunks, current_branch_name, detect_agent_availability, preview_patch,
+        read_repo_file, run_git_no_output,
     },
 };
 
@@ -36,6 +38,25 @@ const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
+
+fn commit_review_status(session: &RepoSession, commit: &str) -> Result<CommitReviewStatus> {
+    let hunks = collect_commit_hunks(&session.repo_path, commit)?;
+    if hunks.is_empty() {
+        return Ok(CommitReviewStatus::Unreviewed);
+    }
+
+    let reviewed_count = hunks
+        .iter()
+        .filter(|hunk| session.reviewed.contains(&hunk.id))
+        .count();
+    if reviewed_count == hunks.len() {
+        Ok(CommitReviewStatus::Reviewed)
+    } else if reviewed_count > 0 {
+        Ok(CommitReviewStatus::Partial)
+    } else {
+        Ok(CommitReviewStatus::Unreviewed)
+    }
+}
 
 fn diff_line_stats(patch: &str) -> (usize, usize) {
     let mut added = 0usize;
@@ -75,9 +96,14 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/open", post(open_session))
         .route("/api/session/{session_id}/state", get(session_state))
         .route("/api/session/{session_id}/agent", post(update_agent))
+        .route("/api/session/{session_id}/commit", post(update_commit_view))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
         .route("/api/session/{session_id}/file", get(session_file))
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
+        .route(
+            "/api/session/{session_id}/reviewed-file",
+            post(update_file_reviewed),
+        )
         .route("/api/session/{session_id}/comment", post(update_comment))
         .route(
             "/api/session/{session_id}/comment-batch",
@@ -202,6 +228,7 @@ async fn open_session(
         Some(session) => {
             session.repo_path = repo_path;
             session.diff_target = diff_target;
+            session.active_commit = None;
         }
         None => {
             guard.sessions.insert(
@@ -209,6 +236,7 @@ async fn open_session(
                 RepoSession {
                     repo_path,
                     diff_target,
+                    active_commit: None,
                     comments: HashMap::new(),
                     comment_contexts: HashMap::new(),
                     reviewed: HashSet::new(),
@@ -230,8 +258,12 @@ async fn session_state(
     let agent_availability = state.agent_availability;
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
-        let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
-        let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
+        let hunks = collect_session_hunks(session)?;
+        let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
+        for commit in &mut commits {
+            commit.review_status = commit_review_status(session, &commit.sha)?;
+        }
+        let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
         let views = hunks
             .into_iter()
             .map(|hunk| {
@@ -273,8 +305,9 @@ async fn session_state(
             branch_name: current_branch_name(&session.repo_path)?,
             commit_base,
             commits,
+            active_commit: session.active_commit.clone(),
             repo_path: session.repo_path.display().to_string(),
-            read_only: session.diff_target.base.is_some(),
+            read_only,
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
             available_agents: available_agents.clone(),
             selected_agent: session.selected_agent,
@@ -298,6 +331,27 @@ async fn update_agent(
             bail!("selected agent is not available");
         }
         session.selected_agent = request.agent;
+        Ok(())
+    })?;
+
+    Ok("ok")
+}
+
+async fn update_commit_view(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<CommitSelectionRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::api::with_session(&state, &session_id, |session| {
+        session.active_commit = request
+            .commit
+            .clone()
+            .filter(|commit| !commit.trim().is_empty());
+        if let Some(commit) = &session.active_commit {
+            let _ = collect_session_hunks(session)
+                .with_context(|| format!("failed to load commit {commit}"))?;
+        }
         Ok(())
     })?;
 
@@ -391,12 +445,46 @@ async fn resolve_comment_by_key(
 async fn toggle_reviewed(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<crate::api::HunkRequest>,
+    Json(request): Json<ReviewedRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
-        if !session.reviewed.insert(request.hunk_id.clone()) {
-            session.reviewed.remove(&request.hunk_id);
+        match request.reviewed {
+            Some(true) => {
+                session.reviewed.insert(request.hunk_id.clone());
+            }
+            Some(false) => {
+                session.reviewed.remove(&request.hunk_id);
+            }
+            None => {
+                if !session.reviewed.insert(request.hunk_id.clone()) {
+                    session.reviewed.remove(&request.hunk_id);
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok("ok")
+}
+
+async fn update_file_reviewed(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<FileReviewedRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::api::with_session(&state, &session_id, |session| {
+        let hunk_ids = collect_session_hunks(session)?
+            .into_iter()
+            .filter(|hunk| hunk.file_path == request.file_path)
+            .map(|hunk| hunk.id)
+            .collect::<Vec<_>>();
+        for hunk_id in hunk_ids {
+            if request.reviewed {
+                session.reviewed.insert(hunk_id);
+            } else {
+                session.reviewed.remove(&hunk_id);
+            }
         }
         Ok(())
     })?;

@@ -20,6 +20,9 @@ export type SidebarFileItem = {
   unstaged_removed_line_count: number;
   staged_added_line_count: number;
   staged_removed_line_count: number;
+  hunk_count: number;
+  reviewed_hunk_count: number;
+  reviewed: boolean;
 };
 
 function fileNameFromPath(filePath: string) {
@@ -39,6 +42,11 @@ export function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>)
       existing.changeKind = mergeFileChangeKind(existing.changeKind, hunk.change_kind);
       existing.added_line_count += hunk.added_line_count;
       existing.removed_line_count += hunk.removed_line_count;
+      existing.hunk_count += 1;
+      if (hunk.reviewed) {
+        existing.reviewed_hunk_count += 1;
+      }
+      existing.reviewed = existing.reviewed_hunk_count === existing.hunk_count;
       if (hunk.staged) {
         existing.staged_added_line_count += hunk.added_line_count;
         existing.staged_removed_line_count += hunk.removed_line_count;
@@ -66,6 +74,9 @@ export function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>)
       unstaged_removed_line_count: hunk.staged ? 0 : hunk.removed_line_count,
       staged_added_line_count: hunk.staged ? hunk.added_line_count : 0,
       staged_removed_line_count: hunk.staged ? hunk.removed_line_count : 0,
+      hunk_count: 1,
+      reviewed_hunk_count: hunk.reviewed ? 1 : 0,
+      reviewed: hunk.reviewed,
     });
   }
 

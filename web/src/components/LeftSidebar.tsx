@@ -83,6 +83,7 @@ function SidebarShortcutsHint() {
     state: { activeHunkId, data },
   } = useReviewStore();
   const activeHunk = data?.hunks.find((hunk) => hunk.id === activeHunkId) ?? null;
+  const isCommitReview = Boolean(data?.active_commit);
 
   if (!activeHunk) {
     return null;
@@ -91,7 +92,13 @@ function SidebarShortcutsHint() {
   return (
     <div className="sidebar-shortcuts">
       <div className="sidebar-shortcuts-list">
-        {activeHunk.staged ? (
+        {isCommitReview ? (
+          activeHunk.reviewed ? (
+            <p><kbd>u</kbd> mark current hunk unreviewed</p>
+          ) : (
+            <p><kbd>s</kbd> mark current hunk reviewed</p>
+          )
+        ) : activeHunk.staged ? (
           <p><kbd>u</kbd> unstage current hunk</p>
         ) : (
           <p><kbd>s</kbd> stage current hunk</p>
@@ -101,28 +108,77 @@ function SidebarShortcutsHint() {
   );
 }
 
-function SidebarCommitsSection({ base, commits }: { base?: string | null; commits: Commit[] }) {
-  if (!base) {
-    return null;
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function localChangesSummary(files: SidebarFileItem[]) {
+  const unstagedFiles = files.filter((file) => file.status !== FILE_STAGE_STATUS.staged);
+  if (unstagedFiles.length === 0) {
+    return "no unstaged changes";
   }
 
+  const modified = unstagedFiles.filter((file) => file.changeKind === "modified").length;
+  const added = unstagedFiles.filter((file) => file.changeKind === "added").length;
+  const deleted = unstagedFiles.filter((file) => file.changeKind === "deleted").length;
+  return [
+    modified > 0 ? pluralize(modified, "modified file") : null,
+    added > 0 ? pluralize(added, "new file") : null,
+    deleted > 0 ? pluralize(deleted, "deleted file") : null,
+  ].filter(Boolean).join(", ");
+}
+
+function SidebarCommitsSection({
+  activeCommit,
+  base,
+  commits,
+  localSummary,
+  onSelectCommit,
+}: {
+  activeCommit?: string | null;
+  base?: string | null;
+  commits: Commit[];
+  localSummary: string;
+  onSelectCommit: (commit: string | null) => void;
+}) {
   return (
     <section className="sidebar-section sidebar-commits-section">
       <div className="sidebar-section-head">
         <p>Commits</p>
-        <span className="sidebar-section-meta">{base}</span>
+        {base ? <span className="sidebar-section-meta">{base}</span> : null}
       </div>
       <div className="sidebar-list">
+        <div className="sidebar-commit" title="local changes">
+          <div className="sidebar-commit-topline">
+            <button
+              className={`sidebar-commit-subject ${!activeCommit ? "sidebar-commit-active" : ""}`.trim()}
+              type="button"
+              onClick={() => onSelectCommit(null)}
+            >
+              local changes
+            </button>
+          </div>
+          <p className="sidebar-commit-meta">{localSummary}</p>
+        </div>
         {commits.length === 0 ? (
-          <p className="sidebar-empty">No commits since {base}.</p>
+          <p className="sidebar-empty">{base ? `No commits since ${base}.` : "No default branch found."}</p>
         ) : commits.map((commit) => (
           <div className="sidebar-commit" key={commit.sha} title={`${commit.short_sha} ${commit.subject}`}>
             <div className="sidebar-commit-topline">
-              <span className="sidebar-commit-subject">{commit.subject}</span>
+              <button
+                className={`sidebar-commit-subject ${activeCommit === commit.sha ? "sidebar-commit-active" : ""}`.trim()}
+                type="button"
+                onClick={() => onSelectCommit(commit.sha)}
+              >
+                {commit.subject}
+              </button>
               <span className="sidebar-commit-sha">{commit.short_sha}</span>
             </div>
             <p className="sidebar-commit-meta">
-              {commit.author} &middot; {commit.relative_time}
+              <span>{commit.author}</span>
+              <span className={`sidebar-commit-review-status ${commit.review_status}`.trim()}>
+                {commit.review_status}
+              </span>
             </p>
           </div>
         ))}
@@ -144,6 +200,7 @@ export function LeftSidebar({
     actions,
   } = useReviewStore();
   const isViewingAll = activeView === ReviewView.All;
+  const isCommitReview = Boolean(data.active_commit);
   const sidebarFiles = useMemo(() => buildSidebarFiles(data, snoozedFiles), [data, snoozedFiles]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
 
@@ -171,6 +228,7 @@ export function LeftSidebar({
         activeFilePath={isViewingAll ? null : activeFilePath}
         readOnly={data.read_only}
         busy={busy}
+        reviewMode={isCommitReview}
         onJumpToFile={onJumpToFile}
         onToggleFileStage={(file) => {
           const shouldUnstage = file.status === FILE_STAGE_STATUS.staged;
@@ -179,8 +237,20 @@ export function LeftSidebar({
           }
           void actions.toggleStageFile(file.filePath, shouldUnstage);
         }}
+        onToggleFileReviewed={(file) => {
+          void actions.setFileReviewed(file.filePath, !file.reviewed);
+        }}
       />
-      <SidebarCommitsSection base={data.commit_base} commits={data.commits} />
+      <SidebarCommitsSection
+        activeCommit={data.active_commit}
+        base={data.commit_base}
+        commits={data.commits}
+        localSummary={localChangesSummary(sidebarFiles)}
+        onSelectCommit={(commit) => {
+          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+          void actions.setActiveCommit(commit);
+        }}
+      />
       <SidebarCommentsSection comments={sidebarComments} onJumpToComment={onJumpToComment} />
       <SidebarShortcutsHint />
     </aside>

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { EMPTY_LINE_DIFF_STATS } from "./diffStats";
 import type { LineDiffStats } from "./diffStats";
 import type { SidebarFileItem } from "./sidebarFiles";
@@ -29,14 +29,42 @@ function SidebarSection({ title, addedCount, removedCount, children }: SidebarSe
 
 type SidebarFileButtonProps = {
   file: SidebarFileItem;
-  active: boolean;
-  readOnly: boolean;
-  busy: boolean;
-  onJumpToFile: (filePath: string) => void;
-  onToggleFileStage: (file: SidebarFileItem) => void;
 };
 
-function statusLabel(file: SidebarFileItem) {
+type SidebarFilesContextValue = {
+  activeFilePath?: string | null;
+  readOnly: boolean;
+  busy: boolean;
+  reviewMode: boolean;
+  onJumpToFile: (filePath: string) => void;
+  onToggleFileStage: (file: SidebarFileItem) => void;
+  onToggleFileReviewed?: (file: SidebarFileItem) => void;
+};
+
+const SidebarFilesContext = createContext<SidebarFilesContextValue | null>(null);
+
+function useSidebarFilesContext() {
+  const context = useContext(SidebarFilesContext);
+  if (!context) {
+    throw new Error("Sidebar file controls must be rendered inside SidebarFilesSection.");
+  }
+  return context;
+}
+
+function reviewStatusLabel(file: SidebarFileItem) {
+  if (file.reviewed) {
+    return "Reviewed";
+  }
+  if (file.reviewed_hunk_count > 0) {
+    return "Partial";
+  }
+  return "Unreviewed";
+}
+
+function statusLabel(file: SidebarFileItem, reviewMode: boolean) {
+  if (reviewMode) {
+    return reviewStatusLabel(file);
+  }
   if (file.status === "partial") {
     return "Partial";
   }
@@ -53,14 +81,25 @@ function filePrefix(file: SidebarFileItem) {
   return "";
 }
 
-function SidebarFileButton({
-  file,
-  active,
-  readOnly,
-  busy,
-  onJumpToFile,
-  onToggleFileStage,
-}: SidebarFileButtonProps) {
+function SidebarFileButton({ file }: SidebarFileButtonProps) {
+  const {
+    activeFilePath,
+    readOnly,
+    busy,
+    reviewMode,
+    onJumpToFile,
+    onToggleFileStage,
+    onToggleFileReviewed,
+  } = useSidebarFilesContext();
+  const active = file.filePath === activeFilePath;
+  const statusClass = reviewMode
+    ? file.reviewed
+      ? "reviewed"
+      : file.reviewed_hunk_count > 0
+        ? "partial"
+        : "unreviewed"
+    : file.status;
+
   return (
     <div className="sidebar-link" title={file.filePath}>
       <button
@@ -83,19 +122,23 @@ function SidebarFileButton({
           {file.fileName}
         </span>
       </button>
-      {!readOnly ? (
+      {!readOnly || reviewMode ? (
         <span className="sidebar-link-meta">
           <button
-            className={`badge sidebar-file-status sidebar-file-status-${file.status}`.trim()}
+            className={`badge sidebar-file-status sidebar-file-status-${statusClass}`.trim()}
             type="button"
-            title="toggle file stage"
+            title={reviewMode ? "toggle file reviewed" : "toggle file stage"}
             disabled={busy}
             onClick={(event) => {
               event.stopPropagation();
-              onToggleFileStage(file);
+              if (reviewMode) {
+                onToggleFileReviewed?.(file);
+              } else {
+                onToggleFileStage(file);
+              }
             }}
           >
-            {statusLabel(file)}
+            {statusLabel(file, reviewMode)}
           </button>
         </span>
       ) : null}
@@ -108,11 +151,6 @@ type SidebarFileGroupProps = {
   files: SidebarFileItem[];
   addedCount: number;
   removedCount: number;
-  activeFilePath?: string | null;
-  readOnly: boolean;
-  busy: boolean;
-  onJumpToFile: (filePath: string) => void;
-  onToggleFileStage: (file: SidebarFileItem) => void;
 };
 
 function SidebarFileGroup({
@@ -120,11 +158,6 @@ function SidebarFileGroup({
   files,
   addedCount,
   removedCount,
-  activeFilePath,
-  readOnly,
-  busy,
-  onJumpToFile,
-  onToggleFileStage,
 }: SidebarFileGroupProps) {
   if (files.length === 0) {
     return null;
@@ -144,11 +177,6 @@ function SidebarFileGroup({
           <SidebarFileButton
             key={file.filePath}
             file={file}
-            active={file.filePath === activeFilePath}
-            readOnly={readOnly}
-            busy={busy}
-            onJumpToFile={onJumpToFile}
-            onToggleFileStage={onToggleFileStage}
           />
         ))}
       </div>
@@ -182,17 +210,23 @@ type SidebarFilesSectionProps = {
   activeFilePath?: string | null;
   readOnly: boolean;
   busy: boolean;
+  reviewMode?: boolean;
   onJumpToFile: (filePath: string) => void;
   onToggleFileStage: (file: SidebarFileItem) => void;
+  onToggleFileReviewed?: (file: SidebarFileItem) => void;
 };
 
 export function buildSidebarFileGroups(files: SidebarFileItem[]) {
   const unstagedFiles = files.filter((file) => file.status !== "staged" && !file.snoozed);
   const stagedFiles = files.filter((file) => file.status === "staged");
   const snoozedFiles = files.filter((file) => file.snoozed);
+  const unreviewedFiles = files.filter((file) => !file.reviewed);
+  const reviewedFiles = files.filter((file) => file.reviewed);
   const unstagedDiffStats = unstagedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const stagedDiffStats = stagedFiles.reduce(stagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const snoozedDiffStats = snoozedFiles.reduce(unstagedLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const unreviewedDiffStats = unreviewedFiles.reduce(totalLineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const reviewedDiffStats = reviewedFiles.reduce(totalLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const totalDiffStats = files.reduce(totalLineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const remainingUnstagedDiffStats = [...unstagedFiles, ...snoozedFiles].reduce(
     unstagedLineDiffReducer,
@@ -203,9 +237,13 @@ export function buildSidebarFileGroups(files: SidebarFileItem[]) {
     unstagedFiles,
     stagedFiles,
     snoozedFiles,
+    unreviewedFiles,
+    reviewedFiles,
     unstagedDiffStats,
     stagedDiffStats,
     snoozedDiffStats,
+    unreviewedDiffStats,
+    reviewedDiffStats,
     totalDiffStats,
     remainingUnstagedDiffStats,
   };
@@ -216,80 +254,105 @@ export function SidebarFilesSection({
   activeFilePath,
   readOnly,
   busy,
+  reviewMode = false,
   onJumpToFile,
   onToggleFileStage,
+  onToggleFileReviewed,
 }: SidebarFilesSectionProps) {
   const {
     unstagedFiles,
     stagedFiles,
     snoozedFiles,
+    unreviewedFiles,
+    reviewedFiles,
     unstagedDiffStats,
     stagedDiffStats,
     snoozedDiffStats,
+    unreviewedDiffStats,
+    reviewedDiffStats,
     totalDiffStats,
   } = buildSidebarFileGroups(files);
 
+  const controls = {
+    activeFilePath,
+    readOnly,
+    busy,
+    reviewMode,
+    onJumpToFile,
+    onToggleFileStage,
+    onToggleFileReviewed,
+  };
+
+  if (reviewMode) {
+    return (
+      <SidebarFilesContext.Provider value={controls}>
+        <SidebarSection
+          title="Files"
+          addedCount={totalDiffStats.added}
+          removedCount={totalDiffStats.removed}
+        >
+          <SidebarFileGroup
+            title="Unreviewed"
+            files={unreviewedFiles}
+            addedCount={unreviewedDiffStats.added}
+            removedCount={unreviewedDiffStats.removed}
+          />
+          <SidebarFileGroup
+            title="Reviewed"
+            files={reviewedFiles}
+            addedCount={reviewedDiffStats.added}
+            removedCount={reviewedDiffStats.removed}
+          />
+        </SidebarSection>
+      </SidebarFilesContext.Provider>
+    );
+  }
+
   if (readOnly) {
     return (
+      <SidebarFilesContext.Provider value={controls}>
+        <SidebarSection
+          title="Files"
+          addedCount={totalDiffStats.added}
+          removedCount={totalDiffStats.removed}
+        >
+          <SidebarFileGroup
+            title="Changed"
+            files={files}
+            addedCount={totalDiffStats.added}
+            removedCount={totalDiffStats.removed}
+          />
+        </SidebarSection>
+      </SidebarFilesContext.Provider>
+    );
+  }
+
+  return (
+    <SidebarFilesContext.Provider value={controls}>
       <SidebarSection
         title="Files"
         addedCount={totalDiffStats.added}
         removedCount={totalDiffStats.removed}
       >
         <SidebarFileGroup
-          title="Changed"
-          files={files}
-          addedCount={totalDiffStats.added}
-          removedCount={totalDiffStats.removed}
-          activeFilePath={activeFilePath}
-          readOnly={readOnly}
-          busy={busy}
-          onJumpToFile={onJumpToFile}
-          onToggleFileStage={onToggleFileStage}
+          title="Unstaged"
+          files={unstagedFiles}
+          addedCount={unstagedDiffStats.added}
+          removedCount={unstagedDiffStats.removed}
+        />
+        <SidebarFileGroup
+          title="Staged"
+          files={stagedFiles}
+          addedCount={stagedDiffStats.added}
+          removedCount={stagedDiffStats.removed}
+        />
+        <SidebarFileGroup
+          title="Snoozed"
+          files={snoozedFiles}
+          addedCount={snoozedDiffStats.added}
+          removedCount={snoozedDiffStats.removed}
         />
       </SidebarSection>
-    );
-  }
-
-  return (
-    <SidebarSection
-      title="Files"
-      addedCount={totalDiffStats.added}
-      removedCount={totalDiffStats.removed}
-    >
-      <SidebarFileGroup
-        title="Unstaged"
-        files={unstagedFiles}
-        addedCount={unstagedDiffStats.added}
-        removedCount={unstagedDiffStats.removed}
-        activeFilePath={activeFilePath}
-        readOnly={readOnly}
-        busy={busy}
-        onJumpToFile={onJumpToFile}
-        onToggleFileStage={onToggleFileStage}
-      />
-      <SidebarFileGroup
-        title="Staged"
-        files={stagedFiles}
-        addedCount={stagedDiffStats.added}
-        removedCount={stagedDiffStats.removed}
-        activeFilePath={activeFilePath}
-        readOnly={readOnly}
-        busy={busy}
-        onJumpToFile={onJumpToFile}
-        onToggleFileStage={onToggleFileStage}
-      />
-      <SidebarFileGroup
-        title="Snoozed"
-        files={snoozedFiles}
-        addedCount={snoozedDiffStats.added}
-        removedCount={snoozedDiffStats.removed}
-        activeFilePath={activeFilePath}
-        readOnly={readOnly}
-        busy={busy}
-        onJumpToFile={onJumpToFile}
-        onToggleFileStage={onToggleFileStage}
-      />
-    </SidebarSection>
+    </SidebarFilesContext.Provider>
   );
 }

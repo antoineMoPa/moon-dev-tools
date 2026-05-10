@@ -6,6 +6,9 @@ import {
   fetchSessionState,
   saveComment as saveCommentRequest,
   sendCommentBatch as sendCommentBatchRequest,
+  setActiveCommit as setActiveCommitRequest,
+  setFileReviewed as setFileReviewedRequest,
+  setReviewed as setReviewedRequest,
   stageSelection as stageSelectionRequest,
   toggleStage as toggleStageRequest,
   toggleStageFile as toggleStageFileRequest,
@@ -38,6 +41,9 @@ type ReviewStoreValue = {
   state: ReviewStoreState;
   actions: {
     loadState: () => Promise<void>;
+    setActiveCommit: (commit: string | null) => Promise<void>;
+    setReviewed: (hunkId: string, reviewed: boolean) => Promise<boolean>;
+    setFileReviewed: (filePath: string, reviewed: boolean) => Promise<void>;
     toggleStage: (hunkId: string, staged: boolean) => Promise<boolean>;
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
@@ -281,6 +287,10 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     return mutate(() => toggleStageRequest(hunkId, staged));
   }
 
+  async function setReviewed(hunkId: string, reviewed: boolean) {
+    return mutate(() => setReviewedRequest(hunkId, reviewed));
+  }
+
   function updateDraftComment(hunkId: string, comment: string) {
     dispatch({ type: "draft_comment_updated", hunkId, comment });
   }
@@ -330,6 +340,14 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
       state,
       actions: {
         loadState,
+        setActiveCommit: async (commit) => {
+          dispatch({ type: "active_view_set", view: ReviewView.All });
+          await mutate(() => setActiveCommitRequest(commit));
+        },
+        setReviewed,
+        setFileReviewed: async (filePath, reviewed) => {
+          await mutate(() => setFileReviewedRequest(filePath, reviewed));
+        },
         toggleStage,
         toggleStageFile: async (filePath, staged) => {
           await mutate(() => toggleStageFileRequest(filePath, staged));

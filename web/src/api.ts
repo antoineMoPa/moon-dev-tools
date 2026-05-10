@@ -74,6 +74,27 @@ export function toggleReviewed(hunkId: string): Promise<string> {
   });
 }
 
+export function setReviewed(hunkId: string, reviewed: boolean): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/reviewed`, {
+    method: "POST",
+    body: JSON.stringify({ hunk_id: hunkId, reviewed }),
+  });
+}
+
+export function setFileReviewed(filePath: string, reviewed: boolean): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/reviewed-file`, {
+    method: "POST",
+    body: JSON.stringify({ file_path: filePath, reviewed }),
+  });
+}
+
+export function setActiveCommit(commit: string | null): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/commit`, {
+    method: "POST",
+    body: JSON.stringify({ commit }),
+  });
+}
+
 export function toggleStage(hunkId: string, staged: boolean): Promise<string> {
   return request<string>(`/api/session/${sessionId}/${staged ? "unstage" : "stage"}`, {
     method: "POST",

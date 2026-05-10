@@ -123,9 +123,12 @@ function FileAccordion({
   } = useReviewStore();
   const canStageWholeFile = activeView !== ReviewView.All;
   const staged = hunks.every((hunk) => hunk.staged);
+  const reviewed = hunks.every((hunk) => hunk.reviewed);
   const status = staged ? "Staged" : "Unstaged";
+  const reviewStatus = reviewed ? "Reviewed" : "Unreviewed";
   const diffStats = hunks.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const readOnly = data?.read_only ?? false;
+  const isCommitReview = Boolean(data?.active_commit);
 
   return (
     <div id={`file-${encodeURIComponent(filePath)}`} className="file-accordion">
@@ -139,6 +142,9 @@ function FileAccordion({
             <span className="diff-stat diff-stat-removed">--{diffStats.removed}</span>
           </span>
           <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{status}</span>
+          {isCommitReview ? (
+            <span className={`badge ${reviewed ? "reviewed" : "unreviewed"}`.trim()}>{reviewStatus}</span>
+          ) : null}
           <span className="muted">{hunks.length}</span>
           {canStageWholeFile && !readOnly && !staged ? (
             <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
@@ -194,12 +200,28 @@ export function Hunks({
   } = useReviewStore();
   const isViewingAll = activeView === ReviewView.All;
   const readOnly = data?.read_only ?? false;
+  const isCommitReview = Boolean(data?.active_commit);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
+  const unreviewedUnstagedGroups = useMemo(
+    () => groupByFile(hunks.filter((hunk) => !hunk.staged && !hunk.reviewed)),
+    [hunks],
+  );
+  const unreviewedStagedGroups = useMemo(
+    () => groupByFile(hunks.filter((hunk) => hunk.staged && !hunk.reviewed)),
+    [hunks],
+  );
   const [stagedOpen, setStagedOpen] = useState(
     () => stagedGroups.length > 0 && unstagedGroups.length === 0,
   );
+
+  useEffect(() => {
+    if (isCommitReview) {
+      setStagedOpen(true);
+    }
+  }, [isCommitReview, data?.active_commit]);
+
   const activeFilePath = useMemo(() => {
     if (selectedFilePath && hunks.some((hunk) => hunk.file_path === selectedFilePath)) {
       return selectedFilePath;
@@ -207,12 +229,22 @@ export function Hunks({
     return unstagedGroups[0]?.filePath ?? stagedGroups[0]?.filePath ?? null;
   }, [hunks, selectedFilePath, stagedGroups, unstagedGroups]);
   const visibleUnstagedGroups = useMemo(
-    () => (isViewingAll ? unstagedGroups : unstagedGroups.filter((group) => group.filePath === activeFilePath)),
-    [activeFilePath, isViewingAll, unstagedGroups],
+    () => {
+      if (isViewingAll) {
+        return isCommitReview ? unreviewedUnstagedGroups : unstagedGroups;
+      }
+      return unstagedGroups.filter((group) => group.filePath === activeFilePath);
+    },
+    [activeFilePath, isCommitReview, isViewingAll, unreviewedUnstagedGroups, unstagedGroups],
   );
   const visibleStagedGroups = useMemo(
-    () => (isViewingAll ? stagedGroups : stagedGroups.filter((group) => group.filePath === activeFilePath)),
-    [activeFilePath, isViewingAll, stagedGroups],
+    () => {
+      if (isViewingAll) {
+        return isCommitReview ? unreviewedStagedGroups : stagedGroups;
+      }
+      return stagedGroups.filter((group) => group.filePath === activeFilePath);
+    },
+    [activeFilePath, isCommitReview, isViewingAll, stagedGroups, unreviewedStagedGroups],
   );
 
   useEffect(() => {
@@ -288,11 +320,17 @@ export function Hunks({
       }
 
       const key = event.key.toLowerCase();
-      if (event.metaKey || event.ctrlKey || event.altKey || readOnly || busy || !activeHunk) {
+      if (event.metaKey || event.ctrlKey || event.altKey || busy || !activeHunk) {
         return;
       }
 
-      if (key === "s" && !activeHunk.staged) {
+      if (isCommitReview && key === "s" && !activeHunk.reviewed) {
+        event.preventDefault();
+        void actions.setReviewed(activeHunk.id, true);
+      } else if (isCommitReview && key === "u" && activeHunk.reviewed) {
+        event.preventDefault();
+        void actions.setReviewed(activeHunk.id, false);
+      } else if (!readOnly && key === "s" && !activeHunk.staged) {
         event.preventDefault();
         const shouldScrollToTop = interactiveUnstagedHunks[0]?.id === activeHunk.id;
         void actions.toggleStage(activeHunk.id, activeHunk.staged).then((changed) => {
@@ -300,7 +338,7 @@ export function Hunks({
             window.scrollTo({ top: 0, left: window.scrollX, behavior: "auto" });
           }
         });
-      } else if (key === "u" && activeHunk.staged) {
+      } else if (!readOnly && key === "u" && activeHunk.staged) {
         event.preventDefault();
         void actions.toggleStage(activeHunk.id, activeHunk.staged);
       }
@@ -308,7 +346,7 @@ export function Hunks({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [actions, activeHunk, busy, interactiveUnstagedHunks, readOnly]);
+  }, [actions, activeHunk, busy, interactiveUnstagedHunks, isCommitReview, readOnly]);
 
   return (
     <div className="hunk-sections">

@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -9,7 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
     agent::ChildExt,
-    api::{CommitView, DiffHunk, DiffTarget, FileChangeKind, stable_id},
+    api::{CommitView, DiffHunk, DiffTarget, FileChangeKind, RepoSession, stable_id},
 };
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
@@ -102,6 +101,33 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
     Ok(hunks)
 }
 
+pub(crate) fn collect_session_hunks(session: &RepoSession) -> Result<Vec<DiffHunk>> {
+    if let Some(commit) = &session.active_commit {
+        return collect_commit_hunks(&session.repo_path, commit);
+    }
+
+    collect_hunks(&session.repo_path, &session.diff_target)
+}
+
+pub(crate) fn collect_commit_hunks(repo_path: &Path, commit: &str) -> Result<Vec<DiffHunk>> {
+    if commit.trim().is_empty() {
+        bail!("commit cannot be empty");
+    }
+
+    let diff = run_git(
+        repo_path,
+        &[
+            "show",
+            "--format=",
+            "--diff-algorithm=histogram",
+            "--no-color",
+            "--unified=3",
+            commit,
+        ],
+    )?;
+    parse_diff(&diff, true)
+}
+
 pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     let branch = run_git_allow_status(repo_path, &["symbolic-ref", "--short", "HEAD"], &[0, 128])?;
     let branch = branch.trim();
@@ -119,7 +145,9 @@ pub(crate) fn branch_commits_since_default(
         return Ok((None, Vec::new()));
     };
     let range = format!("{base_ref}..HEAD");
-    let format = "%H%x1f%h%x1f%an%x1f%cr%x1f%s";
+    // Pretty format fields, separated by ASCII unit separators:
+    // %H = full commit SHA, %h = abbreviated SHA, %an = author name, %s = subject.
+    let format = "%H%x1f%h%x1f%an%x1f%s";
     let output = run_git(
         repo_path,
         &[
@@ -153,12 +181,6 @@ fn default_branch_ref(repo_path: &Path) -> Result<Option<String>> {
         return Ok(Some(origin_head.to_string()));
     }
 
-    for candidate in ["origin/dev", "origin/main", "dev", "main"] {
-        if git_ref_exists(repo_path, candidate)? {
-            return Ok(Some(candidate.to_string()));
-        }
-    }
-
     Ok(None)
 }
 
@@ -173,11 +195,10 @@ fn git_ref_exists(repo_path: &Path, git_ref: &str) -> Result<bool> {
 }
 
 fn parse_commit_view(line: &str) -> Option<CommitView> {
-    let mut fields = line.splitn(5, '\x1f');
+    let mut fields = line.splitn(4, '\x1f');
     let sha = fields.next()?.to_string();
     let short_sha = fields.next()?.to_string();
     let author = fields.next()?.to_string();
-    let relative_time = fields.next()?.to_string();
     let subject = fields.next()?.to_string();
 
     Some(CommitView {
@@ -185,7 +206,7 @@ fn parse_commit_view(line: &str) -> Option<CommitView> {
         short_sha,
         subject,
         author,
-        relative_time,
+        review_status: Default::default(),
     })
 }
 
@@ -565,8 +586,12 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonicalize_repo, collect_hunks, run_git_no_output};
-    use crate::api::DiffTarget;
+    use super::{
+        canonicalize_repo, collect_commit_hunks, collect_hunks, collect_session_hunks, run_git,
+        run_git_no_output,
+    };
+    use crate::api::{AgentKind, DiffTarget, RepoSession};
+    use std::collections::{HashMap, HashSet};
     use std::{
         fs,
         path::PathBuf,
@@ -613,6 +638,101 @@ mod tests {
         }
 
         (added, removed)
+    }
+
+    fn init_test_repo(repo_root: &PathBuf) {
+        fs::create_dir_all(repo_root).expect("failed to create repo directory");
+        run_git_no_output(repo_root, &["init"]).expect("failed to init repo");
+        run_git_no_output(repo_root, &["config", "user.email", "test@example.com"])
+            .expect("failed to configure git email");
+        run_git_no_output(repo_root, &["config", "user.name", "Test User"])
+            .expect("failed to configure git user");
+        run_git_no_output(repo_root, &["config", "commit.gpgsign", "false"])
+            .expect("failed to disable git signing");
+    }
+
+    fn test_session(repo_root: PathBuf, active_commit: Option<String>) -> RepoSession {
+        RepoSession {
+            repo_path: repo_root,
+            diff_target: DiffTarget::default(),
+            active_commit,
+            comments: HashMap::new(),
+            comment_contexts: HashMap::new(),
+            reviewed: HashSet::new(),
+            selected_agent: AgentKind::None,
+            comment_dispatches: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn collect_commit_hunks_returns_hunks_for_single_commit() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        let file_path = repo_root.join("example.txt");
+        fs::write(&file_path, "one\ntwo\nthree\n").expect("failed to write initial file");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add file");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial"])
+            .expect("failed to commit initial file");
+
+        fs::write(&file_path, "one\nTWO\nthree\n").expect("failed to write changed file");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add change");
+        run_git_no_output(&repo_root, &["commit", "-m", "change example"])
+            .expect("failed to commit change");
+        let commit = run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
+
+        // Act
+        let hunks = collect_commit_hunks(&repo_root, commit.trim())
+            .expect("failed to collect commit hunks");
+
+        // Assert
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, "example.txt");
+        assert!(hunks[0].staged);
+        assert_eq!(diff_line_counts(&hunks[0].patch), (1, 1));
+    }
+
+    #[test]
+    fn collect_session_hunks_uses_active_commit_when_present() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        let committed_path = repo_root.join("committed.txt");
+        fs::write(&committed_path, "before\n").expect("failed to write committed file");
+        run_git_no_output(&repo_root, &["add", "committed.txt"]).expect("failed to add file");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial"])
+            .expect("failed to commit initial file");
+
+        fs::write(&committed_path, "after\n").expect("failed to change committed file");
+        run_git_no_output(&repo_root, &["add", "committed.txt"]).expect("failed to add change");
+        run_git_no_output(&repo_root, &["commit", "-m", "change committed"])
+            .expect("failed to commit change");
+        let commit = run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
+
+        let local_path = repo_root.join("local.txt");
+        fs::write(&local_path, "local\n").expect("failed to write local file");
+
+        // Act
+        let local_hunks = collect_session_hunks(&test_session(repo_root.clone(), None))
+            .expect("failed to collect local hunks");
+        let commit_hunks = collect_session_hunks(&test_session(
+            repo_root.clone(),
+            Some(commit.trim().to_string()),
+        ))
+        .expect("failed to collect active commit hunks");
+
+        // Assert
+        assert_eq!(local_hunks.len(), 1);
+        assert_eq!(local_hunks[0].file_path, "local.txt");
+        assert!(!local_hunks[0].staged);
+
+        assert_eq!(commit_hunks.len(), 1);
+        assert_eq!(commit_hunks[0].file_path, "committed.txt");
+        assert!(commit_hunks[0].staged);
     }
 
     #[test]
@@ -702,10 +822,7 @@ mod tests {
 
         // Assert
         assert_eq!(plain_path, Some("modules/libfoo"));
-        assert_eq!(
-            branch_path,
-            Some("modules/libfoo")
-        );
+        assert_eq!(branch_path, Some("modules/libfoo"));
     }
 }
 

@@ -13,6 +13,7 @@ export type CommentDispatchStatus =
   (typeof COMMENT_DISPATCH_STATUS)[keyof typeof COMMENT_DISPATCH_STATUS];
 
 export type FileChangeKind = "added" | "deleted" | "modified";
+export type CommitReviewStatus = "reviewed" | "partial" | "unreviewed";
 
 export type AgentOption = {
   kind: AgentKind;
@@ -31,7 +32,7 @@ export type Commit = {
   short_sha: string;
   subject: string;
   author: string;
-  relative_time: string;
+  review_status: CommitReviewStatus;
 };
 
 export type Hunk = {
@@ -76,6 +77,7 @@ export type SessionState = {
   branch_name?: string | null;
   commit_base?: string | null;
   commits: Commit[];
+  active_commit?: string | null;
   repo_path: string;
   read_only: boolean;
   patch_preview_line_limit: number;

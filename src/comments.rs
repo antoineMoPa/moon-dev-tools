@@ -9,7 +9,7 @@ use crate::{
         HunkCommentContext, HunkView, RepoSession, SidebarCommentView, export_server_url,
         server_url, with_session,
     },
-    git::collect_hunks,
+    git::collect_session_hunks,
 };
 
 const ANCHOR_OPEN: &str = "[[mr-anchor]]";
@@ -201,12 +201,12 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
                 };
                 match &result {
                     Ok(detail) => {
-                    dispatch.status = CommentDispatchStatus::Completed;
-                    dispatch.detail = detail.clone();
+                        dispatch.status = CommentDispatchStatus::Completed;
+                        dispatch.detail = detail.clone();
                     }
                     Err(error) => {
-                    dispatch.status = CommentDispatchStatus::Failed;
-                    dispatch.detail = error.to_string();
+                        dispatch.status = CommentDispatchStatus::Failed;
+                        dispatch.detail = error.to_string();
                     }
                 }
             }
@@ -382,7 +382,7 @@ pub(crate) fn plan_batched_comment_dispatches(
         return Err(anyhow!("select an agent before sending a batch"));
     }
 
-    let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
+    let hunks = collect_session_hunks(session)?;
     let mut targets = Vec::new();
 
     for hunk in hunks {
@@ -452,7 +452,7 @@ fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> 
 }
 
 fn remember_hunk_context(session: &mut RepoSession, hunk_id: &str) {
-    let Ok(Some(hunk)) = collect_hunks(&session.repo_path, &session.diff_target)
+    let Ok(Some(hunk)) = collect_session_hunks(session)
         .map(|hunks| hunks.into_iter().find(|hunk| hunk.id == hunk_id))
     else {
         return;
@@ -472,7 +472,7 @@ fn should_dispatch_comments(session: &RepoSession, update: &CommentUpdate) -> bo
 }
 
 fn lookup_dispatch_hunk(session: &RepoSession, hunk_id: &str) -> Result<DiffHunk> {
-    collect_hunks(&session.repo_path, &session.diff_target)?
+    collect_session_hunks(session)?
         .into_iter()
         .find(|hunk| hunk.id == hunk_id)
         .ok_or_else(|| anyhow!("hunk no longer exists"))
@@ -502,10 +502,9 @@ fn queue_dispatch_job(
     } else {
         format!("Queued for {}.", session.selected_agent.label())
     };
-    session.comment_dispatches.insert(
-        dispatch_key,
-        CommentDispatchState { status, detail },
-    );
+    session
+        .comment_dispatches
+        .insert(dispatch_key, CommentDispatchState { status, detail });
 
     if request.batch {
         return None;

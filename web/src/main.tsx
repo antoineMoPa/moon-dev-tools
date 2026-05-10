@@ -11,6 +11,11 @@ import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
 import { ReviewStoreProvider, ReviewView, useReviewStore } from "./reviewStore";
+import {
+  filePathsInListOrder,
+  fullyStagedFilePaths,
+  hasUnstagedHunks,
+} from "./sessionStateUtils";
 import { ThemeProvider, useTheme } from "./theme";
 import type { AgentKind, Hunk, SessionState } from "./types";
 
@@ -19,19 +24,6 @@ const AGENT_STORAGE_KEY = "moonreview:selected-agent";
 function fileNameFromPath(filePath: string) {
   const segments = filePath.split("/");
   return segments[segments.length - 1] || filePath;
-}
-
-function filePathsInListOrder(hunks: Hunk[]) {
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const hunk of hunks) {
-    if (seen.has(hunk.file_path)) {
-      continue;
-    }
-    seen.add(hunk.file_path);
-    ordered.push(hunk.file_path);
-  }
-  return ordered;
 }
 
 function firstReviewFilePath(hunks: Hunk[], snoozedFiles: Set<string>) {
@@ -218,26 +210,6 @@ function AppContent() {
   );
 }
 
-function hasUnstagedHunks(data: SessionState | null) {
-  return data?.hunks.some((hunk) => !hunk.staged) ?? false;
-}
-
-function fileExists(data: SessionState, filePath: string) {
-  return data.hunks.some((hunk) => hunk.file_path === filePath);
-}
-
-function fileHasUnstagedHunks(data: SessionState, filePath: string) {
-  return data.hunks.some((hunk) => hunk.file_path === filePath && !hunk.staged);
-}
-
-function fullyStagedFilePaths(previousData: SessionState, data: SessionState) {
-  return filePathsInListOrder(previousData.hunks).filter((filePath) => (
-    fileHasUnstagedHunks(previousData, filePath) &&
-    fileExists(data, filePath) &&
-    !fileHasUnstagedHunks(data, filePath)
-  ));
-}
-
 function Success() {
   return (
     <section className="success-panel">
@@ -318,6 +290,11 @@ function AppContentInner() {
     if (!data) {
       return;
     }
+    if (data.active_commit) {
+      setReviewComplete(false);
+      hadUnstagedHunksRef.current = false;
+      return;
+    }
 
     const hasUnstaged = hasUnstagedHunks(data);
     if (hadUnstagedHunksRef.current && !hasUnstaged) {
@@ -362,6 +339,10 @@ function AppContentInner() {
   // Advance to the next review file after the current file becomes fully staged.
   useEffect(() => {
     if (!data) {
+      previousDataRef.current = data;
+      return;
+    }
+    if (data.active_commit) {
       previousDataRef.current = data;
       return;
     }

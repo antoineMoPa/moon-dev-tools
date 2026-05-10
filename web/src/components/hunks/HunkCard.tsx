@@ -291,6 +291,7 @@ export function HunkCard({
 
   const parsedComments = useMemo(() => parseAnchoredComments(commentValue), [commentValue]);
   const readOnly = data?.read_only ?? false;
+  const isCommitReview = Boolean(data?.active_commit);
   const { activeDraft, diffSegments, openSelectionDraft, commentContextValue } = useHunkComments({
     hunk,
     visiblePatch,
@@ -367,11 +368,16 @@ export function HunkCard({
   return (
     <article
       id={`hunk-${hunk.id}`}
-      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""}`.trim()}
+      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""} ${hunk.reviewed ? "hunk-reviewed" : ""}`.trim()}
       data-hunk-id={hunk.id}
       ref={hunkRef}
     >
       <div className="hunk-actions">
+        {isCommitReview ? (
+          <button onClick={() => void actions.setReviewed(hunk.id, !hunk.reviewed)}>
+            {hunk.reviewed ? "Mark Unreviewed" : "Mark Reviewed"}
+          </button>
+        ) : null}
         {!readOnly ? (
           <>
             <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>

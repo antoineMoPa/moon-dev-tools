@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
-use crate::{comments::CommentDispatchState, git::collect_hunks};
+use crate::comments::CommentDispatchState;
 
 pub(crate) const DEFAULT_HOST: &str = "127.0.0.1";
 pub(crate) const DEFAULT_PORT: u16 = 42000;
@@ -66,6 +66,7 @@ pub(crate) struct ServerState {
 pub(crate) struct RepoSession {
     pub(crate) repo_path: PathBuf,
     pub(crate) diff_target: DiffTarget,
+    pub(crate) active_commit: Option<String>,
     pub(crate) comments: HashMap<String, String>,
     pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
     pub(crate) reviewed: HashSet<String>,
@@ -90,6 +91,7 @@ pub(crate) struct SessionPayload {
     pub(crate) branch_name: Option<String>,
     pub(crate) commit_base: Option<String>,
     pub(crate) commits: Vec<CommitView>,
+    pub(crate) active_commit: Option<String>,
     pub(crate) repo_path: String,
     pub(crate) read_only: bool,
     pub(crate) patch_preview_line_limit: usize,
@@ -106,7 +108,16 @@ pub(crate) struct CommitView {
     pub(crate) short_sha: String,
     pub(crate) subject: String,
     pub(crate) author: String,
-    pub(crate) relative_time: String,
+    pub(crate) review_status: CommitReviewStatus,
+}
+
+#[derive(Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CommitReviewStatus {
+    Reviewed,
+    Partial,
+    #[default]
+    Unreviewed,
 }
 
 #[derive(Serialize, Clone)]
@@ -250,9 +261,26 @@ pub(crate) struct AgentSelectionRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct CommitSelectionRequest {
+    pub(crate) commit: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FileReviewedRequest {
+    pub(crate) file_path: String,
+    pub(crate) reviewed: bool,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct SelectionRequest {
     pub(crate) hunk_id: String,
     pub(crate) selection: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ReviewedRequest {
+    pub(crate) hunk_id: String,
+    pub(crate) reviewed: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -320,7 +348,7 @@ pub(crate) fn lookup_hunk(
     hunk_id: &str,
 ) -> Result<(PathBuf, String, bool), AppError> {
     with_session(state, session_id, |session| {
-        let hunk = collect_hunks(&session.repo_path, &session.diff_target)?
+        let hunk = crate::git::collect_session_hunks(session)?
             .into_iter()
             .find(|hunk| hunk.id == hunk_id)
             .ok_or_else(|| anyhow!("hunk no longer exists"))?;
