@@ -236,6 +236,7 @@ function AppContentInner() {
     elementId: string;
   } | null>(null);
   const snoozedFileSet = new Set(snoozedFiles);
+  const showReviewComplete = reviewComplete && activeView === ReviewView.All && !data?.active_commit;
 
   // Clear pending jump targets when returning to the all-files view.
   useEffect(() => {
@@ -456,7 +457,7 @@ function AppContentInner() {
           />
 
           <section className="review-main">
-            {reviewComplete ? (
+            {showReviewComplete ? (
               <Success />
             ) : (
               <>
