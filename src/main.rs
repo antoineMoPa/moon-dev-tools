@@ -3,6 +3,7 @@ mod api;
 mod cli;
 mod comments;
 mod git;
+mod reviewed_cache;
 mod server;
 
 use anyhow::Result;

@@ -31,6 +31,10 @@ use crate::{
         collect_session_hunks, current_branch_name, detect_agent_availability, preview_patch,
         read_repo_file, run_git_no_output,
     },
+    reviewed_cache::{
+        hunk_patch_hash, mark_hunk_patch_reviewed, read_reviewed_hunk_hashes,
+        unmark_hunk_patch_reviewed,
+    },
 };
 
 const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
@@ -39,7 +43,11 @@ const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
 
-fn commit_review_status(session: &RepoSession, commit: &str) -> Result<CommitReviewStatus> {
+fn commit_review_status(
+    session: &RepoSession,
+    cached_reviewed: &HashSet<String>,
+    commit: &str,
+) -> Result<CommitReviewStatus> {
     let hunks = collect_commit_hunks(&session.repo_path, commit)?;
     if hunks.is_empty() {
         return Ok(CommitReviewStatus::Unreviewed);
@@ -47,7 +55,10 @@ fn commit_review_status(session: &RepoSession, commit: &str) -> Result<CommitRev
 
     let reviewed_count = hunks
         .iter()
-        .filter(|hunk| session.reviewed.contains(&hunk.id))
+        .filter(|hunk| {
+            session.reviewed.contains(&hunk.id)
+                || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch))
+        })
         .count();
     if reviewed_count == hunks.len() {
         Ok(CommitReviewStatus::Reviewed)
@@ -259,9 +270,10 @@ async fn session_state(
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
         let hunks = collect_session_hunks(session)?;
+        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
         let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
         for commit in &mut commits {
-            commit.review_status = commit_review_status(session, &commit.sha)?;
+            commit.review_status = commit_review_status(session, &cached_reviewed, &commit.sha)?;
         }
         let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
         let views = hunks
@@ -279,7 +291,8 @@ async fn session_state(
                     .collect::<Vec<_>>();
 
                 HunkView {
-                    reviewed: session.reviewed.contains(&hunk.id),
+                    reviewed: session.reviewed.contains(&hunk.id)
+                        || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch)),
                     id: hunk.id,
                     file_path: hunk.file_path,
                     change_kind: hunk.change_kind,
@@ -449,19 +462,25 @@ async fn toggle_reviewed(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
-        match request.reviewed {
-            Some(true) => {
-                session.reviewed.insert(request.hunk_id.clone());
-            }
-            Some(false) => {
-                session.reviewed.remove(&request.hunk_id);
-            }
-            None => {
-                if !session.reviewed.insert(request.hunk_id.clone()) {
-                    session.reviewed.remove(&request.hunk_id);
-                }
-            }
+        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
+        let Some(hunk) = collect_session_hunks(session)?
+            .into_iter()
+            .find(|hunk| hunk.id == request.hunk_id)
+        else {
+            return Ok(());
+        };
+        let is_reviewed = session.reviewed.contains(&hunk.id)
+            || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch));
+        let next_reviewed = request.reviewed.unwrap_or(!is_reviewed);
+
+        if next_reviewed {
+            mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
+            session.reviewed.insert(request.hunk_id.clone());
+        } else {
+            unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
+            session.reviewed.remove(&request.hunk_id);
         }
+
         Ok(())
     })?;
     Ok("ok")
@@ -474,16 +493,17 @@ async fn update_file_reviewed(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
-        let hunk_ids = collect_session_hunks(session)?
+        let hunks = collect_session_hunks(session)?
             .into_iter()
             .filter(|hunk| hunk.file_path == request.file_path)
-            .map(|hunk| hunk.id)
             .collect::<Vec<_>>();
-        for hunk_id in hunk_ids {
+        for hunk in hunks {
             if request.reviewed {
-                session.reviewed.insert(hunk_id);
+                mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
+                session.reviewed.insert(hunk.id);
             } else {
-                session.reviewed.remove(&hunk_id);
+                unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
+                session.reviewed.remove(&hunk.id);
             }
         }
         Ok(())
@@ -537,6 +557,7 @@ async fn stage_hunk(
         return Ok("ok");
     }
     apply_patch(&repo_path, &patch, true, false)?;
+    mark_hunk_patch_reviewed(&repo_path, &patch)?;
     Ok("ok")
 }
 
@@ -570,6 +591,7 @@ async fn stage_selection(
     }
     let partial_patch = build_partial_patch_from_selection(&patch, &request.selection)?;
     apply_patch(&repo_path, &partial_patch, true, false)?;
+    mark_hunk_patch_reviewed(&repo_path, &patch)?;
     Ok("ok")
 }
 
@@ -580,9 +602,18 @@ async fn stage_file(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let repo_path =
-        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    let (repo_path, patches) = crate::api::with_session(&state, &session_id, |session| {
+        let patches = collect_session_hunks(session)?
+            .into_iter()
+            .filter(|hunk| hunk.file_path == request.file_path && !hunk.staged)
+            .map(|hunk| hunk.patch)
+            .collect::<Vec<_>>();
+        Ok((session.repo_path.clone(), patches))
+    })?;
     run_git_no_output(&repo_path, &["add", "--", &request.file_path]).map_err(AppError)?;
+    for patch in patches {
+        mark_hunk_patch_reviewed(&repo_path, &patch)?;
+    }
     Ok("ok")
 }
 
