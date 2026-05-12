@@ -12,8 +12,12 @@ use crate::git::run_git;
 const CACHE_LIMIT: usize = 1000;
 const CACHE_PATH: &[&str] = &["moonreview", "reviewed_hunks"];
 
+fn hunk_patch_content(patch: &str) -> String {
+    format!("{}\n", patch.lines().skip(2).collect::<Vec<_>>().join("\n"))
+}
+
 pub(crate) fn hunk_patch_hash(patch: &str) -> String {
-    format!("{:x}", Sha1::digest(patch.as_bytes()))
+    format!("{:x}", Sha1::digest(hunk_patch_content(patch).as_bytes()))
 }
 
 fn cache_file_path(repo_path: &Path) -> Result<PathBuf> {
@@ -80,13 +84,43 @@ pub(crate) fn unmark_hunk_patch_reviewed(repo_path: &Path, patch: &str) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::hunk_patch_hash;
+    use super::{hunk_patch_content, hunk_patch_hash};
 
     #[test]
     fn hunk_patch_hash_uses_sha1() {
         assert_eq!(
-            hunk_patch_hash("hello"),
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+            hunk_patch_hash("diff --git a/file b/file\nindex 123..456 100644\nhello"),
+            "f572d396fae9206628714fb2ce00f72e94f2258f"
+        );
+    }
+
+    #[test]
+    fn hunk_patch_content_skips_diff_and_index_metadata() {
+        let patch = "\
+diff --git a/src/main.rs b/src/main.rs
+index 30525f5..4e1916b 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -3,6 +3,7 @@ mod api;
+ mod cli;
+ mod comments;
+ mod git;
++mod reviewed_cache;
+ mod server;
+";
+
+        assert_eq!(
+            hunk_patch_content(patch),
+            "\
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -3,6 +3,7 @@ mod api;
+ mod cli;
+ mod comments;
+ mod git;
++mod reviewed_cache;
+ mod server;
+"
         );
     }
 }
