@@ -63,21 +63,6 @@ function buildSidebarCommentItem(comment: SidebarComment, index: number): Sideba
   };
 }
 
-type SidebarSummaryProps = {
-  commentCount: number;
-  fileCount: number;
-};
-
-function SidebarSummary({ commentCount, fileCount }: SidebarSummaryProps) {
-  return (
-    <div className="left-sidebar-head">
-      <p className="sidebar-eyebrow meta">
-        {commentCount} comments across {fileCount} files
-      </p>
-    </div>
-  );
-}
-
 function SidebarShortcutsHint() {
   const {
     state: { activeHunkId, data },
@@ -206,7 +191,6 @@ export function LeftSidebar({
 
   return (
     <aside className="left-sidebar">
-      <SidebarSummary commentCount={sidebarComments.length} fileCount={sidebarFiles.length} />
       <section className="sidebar-section sidebar-view-section">
         <div className="sidebar-list">
           <div className="sidebar-link">
