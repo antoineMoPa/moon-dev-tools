@@ -3,6 +3,7 @@ import { useTheme } from "../theme";
 type HeaderProps = {
   repoName?: string | null;
   branchName?: string | null;
+  reviewLabel?: string | null;
 };
 
 function formatRepoLabel(repoName?: string | null, branchName?: string | null): string | null {
@@ -13,7 +14,7 @@ function formatRepoLabel(repoName?: string | null, branchName?: string | null): 
   return branchName ? `${repoName} / ${branchName}` : repoName;
 }
 
-export function Header({ repoName, branchName }: HeaderProps) {
+export function Header({ repoName, branchName, reviewLabel }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const repoLabel = formatRepoLabel(repoName, branchName);
   const nextTheme = theme === "dark" ? "light" : "dark";
@@ -33,6 +34,7 @@ export function Header({ repoName, branchName }: HeaderProps) {
             </a>
           </h1>
         </div>
+        {reviewLabel ? <div className="header-review-label">{reviewLabel}</div> : null}
         <div className="header-actions">
           {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
           <button

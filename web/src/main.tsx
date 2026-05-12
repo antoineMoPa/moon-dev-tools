@@ -73,6 +73,19 @@ function requestedLineNumberFromHash(hash: string): number | null {
   return Number.parseInt(match[1], 10);
 }
 
+function reviewLabelForSession(session?: SessionState | null) {
+  if (!session) {
+    return null;
+  }
+
+  if (!session.active_commit) {
+    return "local changes";
+  }
+
+  const commit = session.commits.find((candidate) => candidate.sha === session.active_commit);
+  return commit ? `${commit.short_sha} ${commit.subject}` : session.active_commit.slice(0, 7);
+}
+
 function FullFileView() {
   return (
     <ThemeProvider>
@@ -160,7 +173,11 @@ function FullFileViewContent() {
   return (
     <>
       <Toaster closeButton position="bottom-right" richColors theme={theme} />
-      <Header repoName={session?.repo_name} branchName={session?.branch_name} />
+      <Header
+        repoName={session?.repo_name}
+        branchName={session?.branch_name}
+        reviewLabel={reviewLabelForSession(session)}
+      />
       <main>
         <section className="panel full-file-view">
           <div className="full-file-view-head">
@@ -442,7 +459,11 @@ function AppContentInner() {
   return (
     <>
       <Toaster closeButton position="bottom-right" richColors theme={theme} />
-      <Header repoName={data.repo_name} branchName={data.branch_name} />
+      <Header
+        repoName={data.repo_name}
+        branchName={data.branch_name}
+        reviewLabel={reviewLabelForSession(data)}
+      />
       <main>
         <div className="review-layout">
           <LeftSidebar
