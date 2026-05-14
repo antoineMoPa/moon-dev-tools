@@ -25,10 +25,15 @@ export enum ReviewView {
   File = "file",
 }
 
+export type MovedDiffLayout = "unified" | "side-by-side";
+
+const MOVED_DIFF_LAYOUT_STORAGE_KEY = "moonreview:moved-diff-layout";
+
 type ReviewStoreState = {
   data: SessionState | null;
   activeView: ReviewView;
   activeHunkId: string | null;
+  movedDiffLayout: MovedDiffLayout;
   draftComments: DraftComment[];
   batchDraftComments: boolean;
   loadError: string;
@@ -58,6 +63,7 @@ type ReviewStoreValue = {
     setAgent: (agent: AgentKind) => Promise<void>;
     setActiveView: (view: ReviewView) => void;
     setActiveHunkId: (hunkId: string | null) => void;
+    setMovedDiffLayout: (layout: MovedDiffLayout) => void;
   };
 };
 
@@ -73,7 +79,8 @@ type ReviewStoreAction =
   | { type: "draft_comment_removed"; draftId: string }
   | { type: "batch_draft_comments_set"; value: boolean }
   | { type: "active_view_set"; view: ReviewView }
-  | { type: "active_hunk_set"; hunkId: string | null };
+  | { type: "active_hunk_set"; hunkId: string | null }
+  | { type: "moved_diff_layout_set"; layout: MovedDiffLayout };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
 
@@ -118,6 +125,12 @@ function updateHunkComment(data: SessionState, hunkId: string, comment: string):
     hunks,
     export_text: buildExportText(hunks),
   };
+}
+
+function loadMovedDiffLayout(): MovedDiffLayout {
+  return window.localStorage.getItem(MOVED_DIFF_LAYOUT_STORAGE_KEY) === "side-by-side"
+    ? "side-by-side"
+    : "unified";
 }
 
 function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction): ReviewStoreState {
@@ -193,6 +206,14 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         ...state,
         activeHunkId: action.hunkId,
       };
+    case "moved_diff_layout_set":
+      if (state.movedDiffLayout === action.layout) {
+        return state;
+      }
+      return {
+        ...state,
+        movedDiffLayout: action.layout,
+      };
     default:
       return state;
   }
@@ -203,6 +224,7 @@ function initialReviewStoreState(): ReviewStoreState {
     data: null,
     activeView: ReviewView.All,
     activeHunkId: null,
+    movedDiffLayout: loadMovedDiffLayout(),
     draftComments: loadDraftComments(getSessionId()),
     batchDraftComments: false,
     loadError: "",
@@ -326,6 +348,11 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     dispatch({ type: "active_hunk_set", hunkId });
   }
 
+  function setMovedDiffLayout(layout: MovedDiffLayout) {
+    window.localStorage.setItem(MOVED_DIFF_LAYOUT_STORAGE_KEY, layout);
+    dispatch({ type: "moved_diff_layout_set", layout });
+  }
+
   useEffect(() => {
     void loadState();
   }, []);
@@ -385,6 +412,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         },
         setActiveView,
         setActiveHunkId,
+        setMovedDiffLayout,
       },
     }),
     [state],
@@ -399,4 +427,8 @@ export function useReviewStore() {
     throw new Error("useReviewStore must be used within ReviewStoreProvider");
   }
   return value;
+}
+
+export function useOptionalReviewStore() {
+  return useContext(ReviewStoreContext);
 }

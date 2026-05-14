@@ -21,6 +21,9 @@
   --diff-gutter-line: rgba(49, 42, 34, 0.08);
   --diff-gutter-bg: rgba(49, 42, 34, 0.04);
   --diff-gutter-hover-bg: rgba(183, 82, 45, 0.12);
+  --diff-added-bg: rgba(36, 112, 69, 0.08);
+  --diff-removed-bg: rgba(161, 45, 34, 0.08);
+  --diff-changed-bg: rgba(154, 108, 18, 0.07);
   --line-target-bg: rgba(183, 82, 45, 0.08);
   --hunk-active-bg: rgba(29, 26, 22, 0.1);
   --truncate-overlay: rgba(0, 0, 0, 0.2);
@@ -65,6 +68,9 @@ html[data-theme="dark"] {
   --diff-gutter-line: rgba(237, 243, 251, 0.08);
   --diff-gutter-bg: rgba(237, 243, 251, 0.045);
   --diff-gutter-hover-bg: rgba(238, 141, 104, 0.18);
+  --diff-added-bg: rgba(114, 216, 156, 0.12);
+  --diff-removed-bg: rgba(255, 139, 130, 0.12);
+  --diff-changed-bg: rgba(231, 189, 88, 0.1);
   --line-target-bg: rgba(238, 141, 104, 0.16);
   --hunk-active-bg: rgba(200, 230, 255, 0.1);
   --truncate-overlay: rgba(0, 0, 0, 0.28);
@@ -136,17 +142,38 @@ header {
   text-align: right;
 }
 
-.header-review-label {
+.header-center {
   position: absolute;
   left: 50%;
-  max-width: min(34rem, 42vw);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: min(42rem, 48vw);
+  min-width: 0;
+  transform: translateX(-50%);
+}
+
+.header-review-label {
+  min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 400;
   text-overflow: ellipsis;
-  transform: translateX(-50%);
   white-space: nowrap;
+}
+
+.header-move-layout-toggle {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.header-move-layout-toggle:hover {
+  color: var(--accent);
 }
 
 .header-actions {

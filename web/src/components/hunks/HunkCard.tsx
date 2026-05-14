@@ -7,7 +7,7 @@ import {
   parseAnchoredComments,
   type AnchoredComment,
 } from "../../anchoredComments";
-import { useReviewStore } from "../../reviewStore";
+import { useReviewStore, type MovedDiffLayout } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { splitDiffIntoSegments } from "./diffSegments";
 import { HunkCommentContextProvider } from "./HunkCommentContext";
@@ -57,9 +57,11 @@ type FloatingPosition = {
 
 type DiffLine = {
   text: string;
+  oldLineNumber: number | null;
   newLineNumber: number | null;
   commentable: boolean;
   highlightedHtml: string;
+  kind: "header" | "added" | "removed" | "context" | "other";
 };
 
 type MoveDiffView = {
@@ -71,6 +73,11 @@ type MoveDiffView = {
 type WordPart = {
   text: string;
   changed: boolean;
+};
+
+type SideBySideMoveRow = {
+  oldLine: string | null;
+  newLine: string | null;
 };
 
 function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
@@ -204,6 +211,31 @@ function buildMovedCodeDiff(oldLines: string[], newLines: string[]) {
   return lines;
 }
 
+function sideBySideRows(lines: string[]): SideBySideMoveRow[] {
+  const rows: SideBySideMoveRow[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const nextLine = lines[index + 1];
+    if (line.startsWith("@@")) {
+      continue;
+    }
+    if (line.startsWith(" ")) {
+      const text = line.slice(1);
+      rows.push({ oldLine: text, newLine: text });
+    } else if (line.startsWith("-") && nextLine?.startsWith("+")) {
+      rows.push({ oldLine: line.slice(1), newLine: nextLine.slice(1) });
+      index += 1;
+    } else if (line.startsWith("-")) {
+      rows.push({ oldLine: line.slice(1), newLine: null });
+    } else if (line.startsWith("+")) {
+      rows.push({ oldLine: null, newLine: line.slice(1) });
+    }
+  }
+
+  return rows;
+}
+
 function buildDiffLines(text: string): DiffLine[] {
   let oldLineNumber: number | null = null;
   let newLineNumber: number | null = null;
@@ -217,41 +249,51 @@ function buildDiffLines(text: string): DiffLine[] {
       newLineNumber = parsed?.newStart ?? null;
       next = {
         text: line,
+        oldLineNumber: null,
         newLineNumber: null,
         commentable: false,
         highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+        kind: "header",
       };
     } else if (line.startsWith("+") && !line.startsWith("+++")) {
       next = {
         text: line,
+        oldLineNumber: null,
         newLineNumber,
         commentable: true,
         highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+        kind: "added",
       };
       newLineNumber = newLineNumber === null ? null : newLineNumber + 1;
     } else if (line.startsWith("-") && !line.startsWith("---")) {
       next = {
         text: line,
+        oldLineNumber,
         newLineNumber: null,
         commentable: true,
         highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+        kind: "removed",
       };
       oldLineNumber = oldLineNumber === null ? null : oldLineNumber + 1;
     } else if (line.startsWith(" ")) {
       next = {
         text: line,
+        oldLineNumber,
         newLineNumber,
         commentable: true,
         highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+        kind: "context",
       };
       oldLineNumber = oldLineNumber === null ? null : oldLineNumber + 1;
       newLineNumber = newLineNumber === null ? null : newLineNumber + 1;
     } else {
       next = {
         text: line,
+        oldLineNumber: null,
         newLineNumber: null,
         commentable: false,
         highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+        kind: "other",
       };
     }
 
@@ -259,13 +301,124 @@ function buildDiffLines(text: string): DiffLine[] {
   });
 }
 
+type SideBySideDiffRow = {
+  oldLine: DiffLine | null;
+  newLine: DiffLine | null;
+};
+
+function diffLineBody(line: DiffLine | null) {
+  if (!line) {
+    return "";
+  }
+  return line.kind === "added" || line.kind === "removed" || line.kind === "context"
+    ? line.text.slice(1)
+    : line.text;
+}
+
+function diffSideBySideRows(lines: DiffLine[]) {
+  const rows: SideBySideDiffRow[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const nextLine = lines[index + 1];
+    if (line.kind === "header" || line.kind === "other" || line.kind === "context") {
+      rows.push({ oldLine: line, newLine: line });
+    } else if (line.kind === "removed" && nextLine?.kind === "added") {
+      rows.push({ oldLine: line, newLine: nextLine });
+      index += 1;
+    } else if (line.kind === "removed") {
+      rows.push({ oldLine: line, newLine: null });
+    } else if (line.kind === "added") {
+      rows.push({ oldLine: null, newLine: line });
+    }
+  }
+
+  return rows;
+}
+
+function sideBySideCellClass(line: DiffLine | null, side: "old" | "new") {
+  if (!line) {
+    return "move-side-by-side-cell move-side-by-side-empty";
+  }
+  if (line.kind === "header" || line.kind === "other") {
+    return "move-side-by-side-cell move-diff-line-meta";
+  }
+  if (line.kind === "context") {
+    return "move-side-by-side-cell";
+  }
+  return side === "old"
+    ? "move-side-by-side-cell move-diff-line-removed move-side-by-side-row-removed"
+    : "move-side-by-side-cell move-diff-line-added move-side-by-side-row-added";
+}
+
+function SideBySideHighlightedCode({
+  lines,
+  onSelectionStart,
+  onSelection,
+  onLineNumberClick,
+}: {
+  lines: DiffLine[];
+  onSelectionStart: () => void;
+  onSelection: (container: HTMLDivElement) => void;
+  onLineNumberClick: (line: string, rect: DOMRect, lineNumber: number) => void;
+}) {
+  const rows = useMemo(() => diffSideBySideRows(lines), [lines]);
+  const maxLineNumber = lines.reduce(
+    (max, line) => Math.max(max, line.oldLineNumber ?? 0, line.newLineNumber ?? 0),
+    0,
+  );
+  const gutterChars = Math.max(String(maxLineNumber || 0).length, 2);
+
+  return (
+    <div
+      className="move-side-by-side"
+      style={{ "--move-gutter-ch": gutterChars } as CSSProperties}
+      onMouseDown={onSelectionStart}
+      onMouseUp={(event) => onSelection(event.currentTarget)}
+      onKeyUp={(event) => onSelection(event.currentTarget)}
+    >
+      {rows.map((row, index) => (
+        <div key={`${index}:${row.oldLine?.text ?? ""}:${row.newLine?.text ?? ""}`} className="move-side-by-side-row">
+          <button type="button" className="move-side-by-side-gutter" aria-label="Source line">
+            {row.oldLine?.oldLineNumber ?? ""}
+          </button>
+          <div className={sideBySideCellClass(row.oldLine, "old")}>{diffLineBody(row.oldLine)}</div>
+          <button
+            type="button"
+            className={`move-side-by-side-gutter ${row.newLine?.commentable && row.newLine.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
+            onClick={(event) => {
+              if (row.newLine?.commentable && row.newLine.newLineNumber !== null) {
+                onLineNumberClick(
+                  row.newLine.text,
+                  event.currentTarget.getBoundingClientRect(),
+                  row.newLine.newLineNumber,
+                );
+              }
+            }}
+            aria-label={
+              row.newLine?.newLineNumber !== null && row.newLine?.newLineNumber !== undefined
+                ? `Add comment on new line ${row.newLine.newLineNumber}`
+                : "No destination line"
+            }
+          >
+            {row.newLine?.newLineNumber ?? ""}
+          </button>
+          <div className={sideBySideCellClass(row.newLine, "new")}>{diffLineBody(row.newLine)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function HighlightedCode({
   text,
+  layout,
   onSelectionStart,
   onSelection,
   onLineNumberClick,
 }: {
   text: string;
+  layout: MovedDiffLayout;
   onSelectionStart: () => void;
   onSelection: (container: HTMLDivElement) => void;
   onLineNumberClick: (line: string, rect: DOMRect, lineNumber: number) => void;
@@ -278,6 +431,17 @@ function HighlightedCode({
     );
     return Math.max(String(maxLineNumber || 0).length, 2);
   }, [lines]);
+
+  if (layout === "side-by-side") {
+    return (
+      <SideBySideHighlightedCode
+        lines={lines}
+        onSelectionStart={onSelectionStart}
+        onSelection={onSelection}
+        onLineNumberClick={onLineNumberClick}
+      />
+    );
+  }
 
   return (
     <div
@@ -319,7 +483,34 @@ function HighlightedCode({
   );
 }
 
-function MovedDiffCode({ lines }: { lines: string[] }) {
+function WordDiffText({
+  parts,
+  changedClass,
+  fallback,
+}: {
+  parts?: WordPart[];
+  changedClass: string;
+  fallback: string;
+}) {
+  if (!parts) {
+    return <>{fallback}</>;
+  }
+
+  return (
+    <>
+      {parts.map((part, partIndex) => (
+        <span
+          key={`${partIndex}:${part.text}`}
+          className={part.changed ? changedClass : undefined}
+        >
+          {part.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function UnifiedMovedDiffCode({ lines }: { lines: string[] }) {
   const wordDiffs = useMemo(() => {
     const diffs = new Map<number, WordPart[]>();
 
@@ -362,22 +553,77 @@ function MovedDiffCode({ lines }: { lines: string[] }) {
             <button type="button" className="diff-gutter-button" aria-label="No line number" />
             <div className={lineClass}>
               {prefix}
-              {parts
-                ? parts.map((part, partIndex) => (
-                    <span
-                      key={`${partIndex}:${part.text}`}
-                      className={part.changed ? wordChangedClass : undefined}
-                    >
-                      {part.text}
-                    </span>
-                  ))
-                : text}
+              <WordDiffText
+                parts={parts}
+                changedClass={wordChangedClass}
+                fallback={text}
+              />
             </div>
           </div>
         );
       })}
     </div>
   );
+}
+
+function SideBySideMovedDiffCode({ lines }: { lines: string[] }) {
+  const rows = useMemo(() => sideBySideRows(lines), [lines]);
+  const gutterChars = Math.max(String(rows.length).length, 2);
+
+  return (
+    <div
+      className="move-side-by-side"
+      style={{ "--move-gutter-ch": gutterChars } as CSSProperties}
+    >
+      {rows.map((row, index) => {
+        const pairedChange = row.oldLine !== null && row.newLine !== null && row.oldLine !== row.newLine;
+        const wordParts = pairedChange && row.oldLine !== null && row.newLine !== null
+          ? wordDiffParts(row.oldLine, row.newLine)
+          : null;
+        const rowClass = pairedChange
+          ? "move-side-by-side-row-changed"
+          : row.oldLine === null
+            ? "move-side-by-side-row-added"
+            : row.newLine === null
+              ? "move-side-by-side-row-removed"
+              : "";
+        return (
+          <div key={`${index}:${row.oldLine ?? ""}:${row.newLine ?? ""}`} className="move-side-by-side-row">
+            <div className={`move-side-by-side-gutter ${rowClass}`.trim()}>
+              {row.oldLine === null ? "" : index + 1}
+            </div>
+            <div className={`move-side-by-side-cell ${rowClass} ${row.oldLine === null ? "move-side-by-side-empty" : "move-diff-line-removed"}`.trim()}>
+              {row.oldLine === null ? null : (
+                <WordDiffText
+                  parts={wordParts?.oldParts}
+                  changedClass="move-word-changed move-word-changed-removed"
+                  fallback={row.oldLine}
+                />
+              )}
+            </div>
+            <div className={`move-side-by-side-gutter ${rowClass}`.trim()}>
+              {row.newLine === null ? "" : index + 1}
+            </div>
+            <div className={`move-side-by-side-cell ${rowClass} ${row.newLine === null ? "move-side-by-side-empty" : "move-diff-line-added"}`.trim()}>
+              {row.newLine === null ? null : (
+                <WordDiffText
+                  parts={wordParts?.newParts}
+                  changedClass="move-word-changed move-word-changed-added"
+                  fallback={row.newLine}
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MovedDiffCode({ lines, layout }: { lines: string[]; layout: MovedDiffLayout }) {
+  return layout === "side-by-side"
+    ? <SideBySideMovedDiffCode lines={lines} />
+    : <UnifiedMovedDiffCode lines={lines} />;
 }
 
 export function HunkCard({
@@ -388,7 +634,7 @@ export function HunkCard({
   onJumpToHunk,
 }: HunkCardProps) {
   const {
-    state: { activeHunkId, data },
+    state: { activeHunkId, data, movedDiffLayout },
     actions,
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
@@ -499,6 +745,7 @@ export function HunkCard({
   const parsedComments = useMemo(() => parseAnchoredComments(commentValue), [commentValue]);
   const readOnly = data?.read_only ?? false;
   const isCommitReview = Boolean(data?.active_commit);
+  const isDimmedHunk = isCommitReview ? hunk.reviewed : hunk.staged;
   const moveDiffSourceHunk = moveDiffView
     ? data?.hunks.find((candidate) => candidate.id === moveDiffView.sourceHunkId) ?? null
     : null;
@@ -634,7 +881,7 @@ export function HunkCard({
   return (
     <article
       id={`hunk-${hunk.id}`}
-      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""} ${hunk.reviewed ? "hunk-reviewed" : ""}`.trim()}
+      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""} ${isDimmedHunk ? "hunk-dimmed" : ""}`.trim()}
       data-hunk-id={hunk.id}
       ref={hunkRef}
     >
@@ -782,7 +1029,7 @@ export function HunkCard({
           ) : null}
           {moveDiffView ? (
             <div className="diff-stack">
-              <MovedDiffCode lines={moveDiffView.lines} />
+              <MovedDiffCode lines={moveDiffView.lines} layout={movedDiffLayout} />
             </div>
           ) : (
             <div className="diff-stack">
@@ -791,6 +1038,7 @@ export function HunkCard({
                   <HighlightedCode
                     key={`code-${index}`}
                     text={segment.text}
+                    layout={movedDiffLayout}
                     onSelectionStart={() => {
                       selectionStartedInHunkRef.current = true;
                     }}
