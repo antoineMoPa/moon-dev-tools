@@ -293,15 +293,35 @@ pre {
   padding: 0;
 }
 
-.move-word-changed {
-  border-radius: 2px;
-  background: rgba(255, 206, 86, 0.32);
-}
-
 .diff-line-code .hljs-addition,
 .diff-line-code .hljs-deletion,
 .diff-line-code .hljs-meta {
   background: transparent;
+}
+
+.move-diff-line-added {
+  color: var(--added);
+}
+
+.move-diff-line-removed {
+  color: var(--removed);
+}
+
+.move-diff-line-meta {
+  color: #4a6f9f;
+}
+
+.move-word-changed {
+  padding: 1px 0;
+  border-radius: 2px;
+}
+
+.move-word-changed-added {
+  background: var(--added-word-bg);
+}
+
+.move-word-changed-removed {
+  background: var(--removed-word-bg);
 }
 
 html[data-theme="dark"] .diff-line-code .hljs-addition {
@@ -313,6 +333,10 @@ html[data-theme="dark"] .diff-line-code .hljs-deletion {
 }
 
 html[data-theme="dark"] .diff-line-code .hljs-meta {
+  color: #8fb4e8;
+}
+
+html[data-theme="dark"] .move-diff-line-meta {
   color: #8fb4e8;
 }
 

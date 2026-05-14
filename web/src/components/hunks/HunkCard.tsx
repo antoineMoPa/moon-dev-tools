@@ -341,20 +341,32 @@ function MovedDiffCode({ lines }: { lines: string[] }) {
     <div className="diff-code" style={{ "--diff-gutter-ch": 2 } as CSSProperties}>
       {lines.map((line, index) => {
         const parts = wordDiffs.get(index);
+        const wordChangedClass = line.startsWith("+")
+          ? "move-word-changed move-word-changed-added"
+          : line.startsWith("-")
+            ? "move-word-changed move-word-changed-removed"
+            : "move-word-changed";
         const prefix = line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")
           ? line.slice(0, 1)
           : "";
         const text = prefix ? line.slice(1) : line;
+        const lineClass = line.startsWith("+")
+          ? "diff-line-code move-diff-line-added"
+          : line.startsWith("-")
+            ? "diff-line-code move-diff-line-removed"
+            : line.startsWith("@@")
+              ? "diff-line-code move-diff-line-meta"
+              : "diff-line-code";
         return (
           <div key={`${index}:${line}`} className="diff-line">
             <button type="button" className="diff-gutter-button" aria-label="No line number" />
-            <div className="diff-line-code">
+            <div className={lineClass}>
               {prefix}
               {parts
                 ? parts.map((part, partIndex) => (
                     <span
                       key={`${partIndex}:${part.text}`}
-                      className={part.changed ? "move-word-changed" : undefined}
+                      className={part.changed ? wordChangedClass : undefined}
                     >
                       {part.text}
                     </span>
