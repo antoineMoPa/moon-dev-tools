@@ -45,6 +45,7 @@ type ReviewStoreValue = {
     setReviewed: (hunkId: string, reviewed: boolean) => Promise<boolean>;
     setFileReviewed: (filePath: string, reviewed: boolean) => Promise<void>;
     toggleStage: (hunkId: string, staged: boolean) => Promise<boolean>;
+    stageHunks: (hunks: Array<{ hunkId: string; staged: boolean }>) => Promise<boolean>;
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
     discardHunk: (hunkId: string) => Promise<void>;
@@ -287,6 +288,16 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     return mutate(() => toggleStageRequest(hunkId, staged));
   }
 
+  async function stageHunks(hunks: Array<{ hunkId: string; staged: boolean }>) {
+    return mutate(async () => {
+      for (const hunk of hunks) {
+        if (!hunk.staged) {
+          await toggleStageRequest(hunk.hunkId, hunk.staged);
+        }
+      }
+    });
+  }
+
   async function setReviewed(hunkId: string, reviewed: boolean) {
     return mutate(() => setReviewedRequest(hunkId, reviewed));
   }
@@ -349,6 +360,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
           await mutate(() => setFileReviewedRequest(filePath, reviewed));
         },
         toggleStage,
+        stageHunks,
         toggleStageFile: async (filePath, staged) => {
           await mutate(() => toggleStageFileRequest(filePath, staged));
         },

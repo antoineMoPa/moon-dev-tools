@@ -134,6 +134,10 @@
   opacity: 1;
 }
 
+.hunk-move-counterpart-hidden {
+  display: none;
+}
+
 .staged {
   color: var(--staged);
 }
@@ -198,6 +202,19 @@ pre {
 }
 
 .hunk-move-hints a:hover {
+  text-decoration: underline;
+}
+
+.hunk-inline-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  padding: 0;
+  text-decoration: none;
+}
+
+.hunk-inline-link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
@@ -274,6 +291,11 @@ pre {
 .diff-line-code .hljs {
   background: transparent;
   padding: 0;
+}
+
+.move-word-changed {
+  border-radius: 2px;
+  background: rgba(255, 206, 86, 0.32);
 }
 
 .diff-line-code .hljs-addition,

@@ -62,6 +62,17 @@ type DiffLine = {
   highlightedHtml: string;
 };
 
+type MoveDiffView = {
+  sourceHunkId: string;
+  targetHunkId: string;
+  lines: string[];
+};
+
+type WordPart = {
+  text: string;
+  changed: boolean;
+};
+
 function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
   const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
   if (!match) {
@@ -85,6 +96,112 @@ function moveHintLabel(filePath: string, header: string) {
 
 function moveHintTitle(score: number) {
   return `Similarity ${(score * 100).toFixed(0)}%`;
+}
+
+function changedLines(patch: string, prefix: "+" | "-", metadataPrefix: "+++" | "---") {
+  return patch
+    .split("\n")
+    .filter((line) => line.startsWith(prefix) && !line.startsWith(metadataPrefix))
+    .map((line) => line.slice(1));
+}
+
+function tokenizeForWordDiff(line: string) {
+  return line.match(/[A-Za-z0-9_]+|\s+|[^\sA-Za-z0-9_]/g) ?? [];
+}
+
+function changedWordIndexes(oldTokens: string[], newTokens: string[]) {
+  const lengths = Array.from({ length: oldTokens.length + 1 }, () =>
+    Array.from({ length: newTokens.length + 1 }, () => 0),
+  );
+
+  for (let oldIndex = oldTokens.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newTokens.length - 1; newIndex >= 0; newIndex -= 1) {
+      lengths[oldIndex][newIndex] = oldTokens[oldIndex] === newTokens[newIndex]
+        ? lengths[oldIndex + 1][newIndex + 1] + 1
+        : Math.max(lengths[oldIndex + 1][newIndex], lengths[oldIndex][newIndex + 1]);
+    }
+  }
+
+  const unchangedOld = new Set<number>();
+  const unchangedNew = new Set<number>();
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldTokens.length && newIndex < newTokens.length) {
+    if (oldTokens[oldIndex] === newTokens[newIndex]) {
+      unchangedOld.add(oldIndex);
+      unchangedNew.add(newIndex);
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (lengths[oldIndex + 1][newIndex] >= lengths[oldIndex][newIndex + 1]) {
+      oldIndex += 1;
+    } else {
+      newIndex += 1;
+    }
+  }
+
+  return {
+    oldChanged: new Set(oldTokens.map((_, index) => index).filter((index) => !unchangedOld.has(index))),
+    newChanged: new Set(newTokens.map((_, index) => index).filter((index) => !unchangedNew.has(index))),
+  };
+}
+
+function wordDiffParts(oldLine: string, newLine: string): { oldParts: WordPart[]; newParts: WordPart[] } {
+  const oldTokens = tokenizeForWordDiff(oldLine);
+  const newTokens = tokenizeForWordDiff(newLine);
+  const { oldChanged, newChanged } = changedWordIndexes(oldTokens, newTokens);
+
+  return {
+    oldParts: oldTokens.map((token, index) => ({
+      text: token,
+      changed: !/^\s+$/.test(token) && oldChanged.has(index),
+    })),
+    newParts: newTokens.map((token, index) => ({
+      text: token,
+      changed: !/^\s+$/.test(token) && newChanged.has(index),
+    })),
+  };
+}
+
+function buildMovedCodeDiff(oldLines: string[], newLines: string[]) {
+  const lengths = Array.from({ length: oldLines.length + 1 }, () =>
+    Array.from({ length: newLines.length + 1 }, () => 0),
+  );
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      lengths[oldIndex][newIndex] = oldLines[oldIndex] === newLines[newIndex]
+        ? lengths[oldIndex + 1][newIndex + 1] + 1
+        : Math.max(lengths[oldIndex + 1][newIndex], lengths[oldIndex][newIndex + 1]);
+    }
+  }
+
+  const lines = ["@@ moved code @@"];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldLines.length && newIndex < newLines.length) {
+    if (oldLines[oldIndex] === newLines[newIndex]) {
+      lines.push(` ${oldLines[oldIndex]}`);
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (lengths[oldIndex + 1][newIndex] >= lengths[oldIndex][newIndex + 1]) {
+      lines.push(`-${oldLines[oldIndex]}`);
+      oldIndex += 1;
+    } else {
+      lines.push(`+${newLines[newIndex]}`);
+      newIndex += 1;
+    }
+  }
+
+  while (oldIndex < oldLines.length) {
+    lines.push(`-${oldLines[oldIndex]}`);
+    oldIndex += 1;
+  }
+  while (newIndex < newLines.length) {
+    lines.push(`+${newLines[newIndex]}`);
+    newIndex += 1;
+  }
+
+  return lines;
 }
 
 function buildDiffLines(text: string): DiffLine[] {
@@ -202,6 +319,55 @@ function HighlightedCode({
   );
 }
 
+function MovedDiffCode({ lines }: { lines: string[] }) {
+  const wordDiffs = useMemo(() => {
+    const diffs = new Map<number, WordPart[]>();
+
+    for (let index = 0; index < lines.length - 1; index += 1) {
+      const oldLine = lines[index];
+      const newLine = lines[index + 1];
+      if (oldLine.startsWith("-") && newLine.startsWith("+")) {
+        const { oldParts, newParts } = wordDiffParts(oldLine.slice(1), newLine.slice(1));
+        diffs.set(index, oldParts);
+        diffs.set(index + 1, newParts);
+        index += 1;
+      }
+    }
+
+    return diffs;
+  }, [lines]);
+
+  return (
+    <div className="diff-code" style={{ "--diff-gutter-ch": 2 } as CSSProperties}>
+      {lines.map((line, index) => {
+        const parts = wordDiffs.get(index);
+        const prefix = line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")
+          ? line.slice(0, 1)
+          : "";
+        const text = prefix ? line.slice(1) : line;
+        return (
+          <div key={`${index}:${line}`} className="diff-line">
+            <button type="button" className="diff-gutter-button" aria-label="No line number" />
+            <div className="diff-line-code">
+              {prefix}
+              {parts
+                ? parts.map((part, partIndex) => (
+                    <span
+                      key={`${partIndex}:${part.text}`}
+                      className={part.changed ? "move-word-changed" : undefined}
+                    >
+                      {part.text}
+                    </span>
+                  ))
+                : text}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function HunkCard({
   hunk,
   agents,
@@ -219,6 +385,8 @@ export function HunkCard({
   const [expanded, setExpanded] = useState(false);
   const [fullPatch, setFullPatch] = useState<string | null>(null);
   const [loadingPatch, setLoadingPatch] = useState(false);
+  const [loadingMoveDiff, setLoadingMoveDiff] = useState(false);
+  const [moveDiffView, setMoveDiffView] = useState<MoveDiffView | null>(null);
   const [commentValue, setCommentValue] = useState(hunk.comment);
   const movedFrom = hunk.moved_from;
   const movedTo = hunk.moved_to;
@@ -232,6 +400,20 @@ export function HunkCard({
   useEffect(() => {
     setCommentValue(hunk.comment);
   }, [hunk.comment]);
+
+  useEffect(() => {
+    if (!moveDiffView) {
+      return;
+    }
+
+    const counterpartHunkId = moveDiffView.sourceHunkId === hunk.id
+      ? moveDiffView.targetHunkId
+      : moveDiffView.sourceHunkId;
+    const counterpart = document.getElementById(`hunk-${counterpartHunkId}`);
+    counterpart?.classList.add("hunk-move-counterpart-hidden");
+
+    return () => counterpart?.classList.remove("hunk-move-counterpart-hidden");
+  }, [hunk.id, moveDiffView]);
 
   useEffect(() => {
     composerOpenRef.current = composerOpen;
@@ -305,6 +487,19 @@ export function HunkCard({
   const parsedComments = useMemo(() => parseAnchoredComments(commentValue), [commentValue]);
   const readOnly = data?.read_only ?? false;
   const isCommitReview = Boolean(data?.active_commit);
+  const moveDiffSourceHunk = moveDiffView
+    ? data?.hunks.find((candidate) => candidate.id === moveDiffView.sourceHunkId) ?? null
+    : null;
+  const moveDiffTargetHunk = moveDiffView
+    ? data?.hunks.find((candidate) => candidate.id === moveDiffView.targetHunkId) ?? null
+    : null;
+  const canStageMove = Boolean(
+    moveDiffView &&
+      !readOnly &&
+      moveDiffSourceHunk &&
+      moveDiffTargetHunk &&
+      (!moveDiffSourceHunk.staged || !moveDiffTargetHunk.staged),
+  );
   const { activeDraft, diffSegments, openSelectionDraft, commentContextValue } = useHunkComments({
     hunk,
     visiblePatch,
@@ -367,6 +562,52 @@ export function HunkCard({
     }
 
     setExpanded(true);
+  }
+
+  async function patchForHunk(hunkId: string) {
+    if (hunkId === hunk.id && fullPatch) {
+      return fullPatch;
+    }
+    if (hunkId === hunk.id && !isLong) {
+      return hunk.patch_preview;
+    }
+
+    const payload = await fetchHunkPatch(hunkId);
+    if (hunkId === hunk.id) {
+      setFullPatch(payload.patch);
+    }
+    return payload.patch;
+  }
+
+  async function showMoveDiff(sourceHunkId: string, targetHunkId: string) {
+    setLoadingMoveDiff(true);
+    try {
+      const [sourcePatch, targetPatch] = await Promise.all([
+        patchForHunk(sourceHunkId),
+        patchForHunk(targetHunkId),
+      ]);
+      setMoveDiffView({
+        sourceHunkId,
+        targetHunkId,
+        lines: buildMovedCodeDiff(
+          changedLines(sourcePatch, "-", "---"),
+          changedLines(targetPatch, "+", "+++"),
+        ),
+      });
+    } finally {
+      setLoadingMoveDiff(false);
+    }
+  }
+
+  async function stageMove() {
+    if (!moveDiffSourceHunk || !moveDiffTargetHunk) {
+      return;
+    }
+
+    await actions.stageHunks([
+      { hunkId: moveDiffSourceHunk.id, staged: moveDiffSourceHunk.staged },
+      { hunkId: moveDiffTargetHunk.id, staged: moveDiffTargetHunk.staged },
+    ]);
   }
 
   function confirmDiscardHunk() {
@@ -448,67 +689,119 @@ export function HunkCard({
           {movedFrom || movedTo ? (
             <div className="hunk-move-hints">
               {movedFrom ? (
-                <a
-                  href={`#hunk-${movedFrom.target_hunk_id}`}
-                  title={moveHintTitle(movedFrom.score)}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onJumpToHunk({
-                      filePath: movedFrom.target_file_path,
-                      hunkId: movedFrom.target_hunk_id,
-                      elementId: `hunk-${movedFrom.target_hunk_id}`,
-                    });
-                  }}
-                >
-                  Appears to come from {moveHintLabel(movedFrom.target_file_path, movedFrom.target_header)}
-                </a>
+                <span>
+                  Appears to come from{" "}
+                  <a
+                    href={`#hunk-${movedFrom.target_hunk_id}`}
+                    title={moveHintTitle(movedFrom.score)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onJumpToHunk({
+                        filePath: movedFrom.target_file_path,
+                        hunkId: movedFrom.target_hunk_id,
+                        elementId: `hunk-${movedFrom.target_hunk_id}`,
+                      });
+                    }}
+                  >
+                    {moveHintLabel(movedFrom.target_file_path, movedFrom.target_header)}
+                  </a>{" "}
+                  {!moveDiffView ? (
+                    <button
+                      type="button"
+                      className="hunk-inline-link"
+                      disabled={loadingMoveDiff}
+                      onClick={() => void showMoveDiff(movedFrom.target_hunk_id, hunk.id)}
+                    >
+                      [diff]
+                    </button>
+                  ) : null}
+                </span>
               ) : null}
               {movedTo ? (
-                <a
-                  href={`#hunk-${movedTo.target_hunk_id}`}
-                  title={moveHintTitle(movedTo.score)}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onJumpToHunk({
-                      filePath: movedTo.target_file_path,
-                      hunkId: movedTo.target_hunk_id,
-                      elementId: `hunk-${movedTo.target_hunk_id}`,
-                    });
-                  }}
-                >
-                  Appears to have moved to {moveHintLabel(movedTo.target_file_path, movedTo.target_header)}
-                </a>
+                <span>
+                  Appears to have moved to{" "}
+                  <a
+                    href={`#hunk-${movedTo.target_hunk_id}`}
+                    title={moveHintTitle(movedTo.score)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onJumpToHunk({
+                        filePath: movedTo.target_file_path,
+                        hunkId: movedTo.target_hunk_id,
+                        elementId: `hunk-${movedTo.target_hunk_id}`,
+                      });
+                    }}
+                  >
+                    {moveHintLabel(movedTo.target_file_path, movedTo.target_header)}
+                  </a>{" "}
+                  {!moveDiffView ? (
+                    <button
+                      type="button"
+                      className="hunk-inline-link"
+                      disabled={loadingMoveDiff}
+                      onClick={() => void showMoveDiff(hunk.id, movedTo.target_hunk_id)}
+                    >
+                      [diff]
+                    </button>
+                  ) : null}
+                </span>
+              ) : null}
+              {moveDiffView ? (
+                <>
+                  {canStageMove ? (
+                    <button
+                      type="button"
+                      className="hunk-inline-link"
+                      onClick={() => void stageMove()}
+                    >
+                      [stage source and destination]
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="hunk-inline-link"
+                    onClick={() => setMoveDiffView(null)}
+                  >
+                    [back]
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}
-          <div className="diff-stack">
-            {diffSegments.map((segment, index) =>
-              segment.type === "code" ? (
-                <HighlightedCode
-                  key={`code-${index}`}
-                  text={segment.text}
-                  onSelectionStart={() => {
-                    selectionStartedInHunkRef.current = true;
-                  }}
-                  onSelection={captureSelection}
-                  onLineNumberClick={(line, rect, lineNumber) =>
-                    openSelectionDraft(line, selectionPositionFromRect(rect), lineNumber)
-                  }
-                />
-              ) : segment.type === "comment" ? (
-                <InlineCommentCard
-                  key={`comment-${index}`}
-                  id={`comment-${hunk.id}-${segment.index}`}
-                  segment={segment}
-                />
-              ) : (
-                <SelectionComposer
-                  key={`draft-${segment.draftId}`}
-                  draftId={segment.draftId}
-                />
-              ),
-            )}
-          </div>
+          {moveDiffView ? (
+            <div className="diff-stack">
+              <MovedDiffCode lines={moveDiffView.lines} />
+            </div>
+          ) : (
+            <div className="diff-stack">
+              {diffSegments.map((segment, index) =>
+                segment.type === "code" ? (
+                  <HighlightedCode
+                    key={`code-${index}`}
+                    text={segment.text}
+                    onSelectionStart={() => {
+                      selectionStartedInHunkRef.current = true;
+                    }}
+                    onSelection={captureSelection}
+                    onLineNumberClick={(line, rect, lineNumber) =>
+                      openSelectionDraft(line, selectionPositionFromRect(rect), lineNumber)
+                    }
+                  />
+                ) : segment.type === "comment" ? (
+                  <InlineCommentCard
+                    key={`comment-${index}`}
+                    id={`comment-${hunk.id}-${segment.index}`}
+                    segment={segment}
+                  />
+                ) : (
+                  <SelectionComposer
+                    key={`draft-${segment.draftId}`}
+                    draftId={segment.draftId}
+                  />
+                ),
+              )}
+            </div>
+          )}
         </div>
       </HunkCommentContextProvider>
     </article>
