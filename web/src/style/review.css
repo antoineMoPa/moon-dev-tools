@@ -123,17 +123,6 @@
   color: var(--unstaged);
 }
 
-.hunk-dimmed {
-  border-color: var(--staged);
-  opacity: 0.2;
-  transition: opacity 0.2s;
-}
-
-.hunk-dimmed:hover,
-.hunk-dimmed:focus-within {
-  opacity: 1;
-}
-
 .hunk-move-counterpart-hidden {
   display: none;
 }
@@ -218,7 +207,8 @@ pre {
   text-decoration: underline;
 }
 
-.hunk-move-hints + .diff-stack .diff-code:first-child {
+.hunk-move-hints + .diff-stack .diff-code:first-child,
+.hunk-move-hints + .diff-stack .split-diff:first-child {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
@@ -299,15 +289,15 @@ pre {
   background: transparent;
 }
 
-.move-diff-line-added {
+.diff-split-line-added {
   color: var(--added);
 }
 
-.move-diff-line-removed {
+.diff-split-line-removed {
   color: var(--removed);
 }
 
-.move-diff-line-meta {
+.diff-split-line-meta {
   color: #4a6f9f;
 }
 
@@ -324,7 +314,7 @@ pre {
   background: var(--removed-word-bg);
 }
 
-.move-side-by-side {
+.split-diff {
   display: grid;
   grid-template-columns:
     calc(var(--move-gutter-ch) * 1ch + 0.9rem) minmax(14rem, 1fr)
@@ -337,16 +327,16 @@ pre {
   overflow: auto;
 }
 
-.move-side-by-side-cell:nth-child(4n),
-.move-side-by-side-gutter:nth-child(4n + 3) {
+.split-diff-cell:nth-child(4n),
+.split-diff-gutter:nth-child(4n + 3) {
   border-left: 1px solid var(--line);
 }
 
-.move-side-by-side-row {
+.split-diff-row {
   display: contents;
 }
 
-.move-side-by-side-gutter {
+.split-diff-gutter {
   border: 0;
   border-right: 1px solid var(--diff-gutter-line);
   border-radius: 0;
@@ -362,7 +352,7 @@ pre {
   -webkit-user-select: none;
 }
 
-.move-side-by-side-cell {
+.split-diff-cell {
   min-width: 0;
   min-height: 1.35em;
   padding: 0.05rem 0.75rem;
@@ -371,19 +361,19 @@ pre {
   word-break: break-word;
 }
 
-.move-side-by-side-empty {
+.split-diff-empty {
   background: var(--diff-gutter-bg);
 }
 
-.move-side-by-side-row-added {
+.split-diff-row-added {
   background: var(--diff-added-bg);
 }
 
-.move-side-by-side-row-removed {
+.split-diff-row-removed {
   background: var(--diff-removed-bg);
 }
 
-.move-side-by-side-row-changed {
+.split-diff-row-changed {
   background: var(--diff-changed-bg);
 }
 
@@ -399,7 +389,7 @@ html[data-theme="dark"] .diff-line-code .hljs-meta {
   color: #8fb4e8;
 }
 
-html[data-theme="dark"] .move-diff-line-meta {
+html[data-theme="dark"] .diff-split-line-meta {
   color: #8fb4e8;
 }
 

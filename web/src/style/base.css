@@ -159,17 +159,23 @@ header {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 400;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .header-move-layout-toggle {
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
   border: 0;
   background: transparent;
   padding: 0;
   color: var(--muted);
-  font-size: 0.72rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.2;
 }
 
 .header-move-layout-toggle:hover {

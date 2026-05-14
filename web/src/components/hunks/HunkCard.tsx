@@ -338,17 +338,17 @@ function diffSideBySideRows(lines: DiffLine[]) {
 
 function sideBySideCellClass(line: DiffLine | null, side: "old" | "new") {
   if (!line) {
-    return "move-side-by-side-cell move-side-by-side-empty";
+    return "split-diff-cell split-diff-empty";
   }
   if (line.kind === "header" || line.kind === "other") {
-    return "move-side-by-side-cell move-diff-line-meta";
+    return "split-diff-cell diff-split-line-meta";
   }
   if (line.kind === "context") {
-    return "move-side-by-side-cell";
+    return "split-diff-cell";
   }
   return side === "old"
-    ? "move-side-by-side-cell move-diff-line-removed move-side-by-side-row-removed"
-    : "move-side-by-side-cell move-diff-line-added move-side-by-side-row-added";
+    ? "split-diff-cell diff-split-line-removed split-diff-row-removed"
+    : "split-diff-cell diff-split-line-added split-diff-row-added";
 }
 
 function SideBySideHighlightedCode({
@@ -371,21 +371,21 @@ function SideBySideHighlightedCode({
 
   return (
     <div
-      className="move-side-by-side"
+      className="split-diff"
       style={{ "--move-gutter-ch": gutterChars } as CSSProperties}
       onMouseDown={onSelectionStart}
       onMouseUp={(event) => onSelection(event.currentTarget)}
       onKeyUp={(event) => onSelection(event.currentTarget)}
     >
       {rows.map((row, index) => (
-        <div key={`${index}:${row.oldLine?.text ?? ""}:${row.newLine?.text ?? ""}`} className="move-side-by-side-row">
-          <button type="button" className="move-side-by-side-gutter" aria-label="Source line">
+        <div key={`${index}:${row.oldLine?.text ?? ""}:${row.newLine?.text ?? ""}`} className="split-diff-row">
+          <button type="button" className="split-diff-gutter" aria-label="Source line">
             {row.oldLine?.oldLineNumber ?? ""}
           </button>
           <div className={sideBySideCellClass(row.oldLine, "old")}>{diffLineBody(row.oldLine)}</div>
           <button
             type="button"
-            className={`move-side-by-side-gutter ${row.newLine?.commentable && row.newLine.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
+            className={`split-diff-gutter ${row.newLine?.commentable && row.newLine.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
             onClick={(event) => {
               if (row.newLine?.commentable && row.newLine.newLineNumber !== null) {
                 onLineNumberClick(
@@ -542,11 +542,11 @@ function UnifiedMovedDiffCode({ lines }: { lines: string[] }) {
           : "";
         const text = prefix ? line.slice(1) : line;
         const lineClass = line.startsWith("+")
-          ? "diff-line-code move-diff-line-added"
+          ? "diff-line-code diff-split-line-added"
           : line.startsWith("-")
-            ? "diff-line-code move-diff-line-removed"
+            ? "diff-line-code diff-split-line-removed"
             : line.startsWith("@@")
-              ? "diff-line-code move-diff-line-meta"
+              ? "diff-line-code diff-split-line-meta"
               : "diff-line-code";
         return (
           <div key={`${index}:${line}`} className="diff-line">
@@ -572,7 +572,7 @@ function SideBySideMovedDiffCode({ lines }: { lines: string[] }) {
 
   return (
     <div
-      className="move-side-by-side"
+      className="split-diff"
       style={{ "--move-gutter-ch": gutterChars } as CSSProperties}
     >
       {rows.map((row, index) => {
@@ -581,18 +581,18 @@ function SideBySideMovedDiffCode({ lines }: { lines: string[] }) {
           ? wordDiffParts(row.oldLine, row.newLine)
           : null;
         const rowClass = pairedChange
-          ? "move-side-by-side-row-changed"
+          ? "split-diff-row-changed"
           : row.oldLine === null
-            ? "move-side-by-side-row-added"
+            ? "split-diff-row-added"
             : row.newLine === null
-              ? "move-side-by-side-row-removed"
+              ? "split-diff-row-removed"
               : "";
         return (
-          <div key={`${index}:${row.oldLine ?? ""}:${row.newLine ?? ""}`} className="move-side-by-side-row">
-            <div className={`move-side-by-side-gutter ${rowClass}`.trim()}>
+          <div key={`${index}:${row.oldLine ?? ""}:${row.newLine ?? ""}`} className="split-diff-row">
+            <div className={`split-diff-gutter ${rowClass}`.trim()}>
               {row.oldLine === null ? "" : index + 1}
             </div>
-            <div className={`move-side-by-side-cell ${rowClass} ${row.oldLine === null ? "move-side-by-side-empty" : "move-diff-line-removed"}`.trim()}>
+            <div className={`split-diff-cell ${rowClass} ${row.oldLine === null ? "split-diff-empty" : "diff-split-line-removed"}`.trim()}>
               {row.oldLine === null ? null : (
                 <WordDiffText
                   parts={wordParts?.oldParts}
@@ -601,10 +601,10 @@ function SideBySideMovedDiffCode({ lines }: { lines: string[] }) {
                 />
               )}
             </div>
-            <div className={`move-side-by-side-gutter ${rowClass}`.trim()}>
+            <div className={`split-diff-gutter ${rowClass}`.trim()}>
               {row.newLine === null ? "" : index + 1}
             </div>
-            <div className={`move-side-by-side-cell ${rowClass} ${row.newLine === null ? "move-side-by-side-empty" : "move-diff-line-added"}`.trim()}>
+            <div className={`split-diff-cell ${rowClass} ${row.newLine === null ? "split-diff-empty" : "diff-split-line-added"}`.trim()}>
               {row.newLine === null ? null : (
                 <WordDiffText
                   parts={wordParts?.newParts}
@@ -745,7 +745,6 @@ export function HunkCard({
   const parsedComments = useMemo(() => parseAnchoredComments(commentValue), [commentValue]);
   const readOnly = data?.read_only ?? false;
   const isCommitReview = Boolean(data?.active_commit);
-  const isDimmedHunk = isCommitReview ? hunk.reviewed : hunk.staged;
   const moveDiffSourceHunk = moveDiffView
     ? data?.hunks.find((candidate) => candidate.id === moveDiffView.sourceHunkId) ?? null
     : null;
@@ -881,7 +880,7 @@ export function HunkCard({
   return (
     <article
       id={`hunk-${hunk.id}`}
-      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""} ${isDimmedHunk ? "hunk-dimmed" : ""}`.trim()}
+      className={`panel hunk ${activeHunkId === hunk.id ? "hunk-active" : ""}`.trim()}
       data-hunk-id={hunk.id}
       ref={hunkRef}
     >
