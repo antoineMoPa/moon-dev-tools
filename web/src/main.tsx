@@ -488,6 +488,7 @@ function AppContentInner() {
                   selectedAgent={data.selected_agent}
                   onAgentChange={handleAgentChange}
                   onSnoozeFile={snoozeFile}
+                  onJumpToHunk={jumpToComment}
                   selectedFilePath={activeView === ReviewView.File ? selectedFilePath : null}
                   targetFilePath={activeJumpTarget?.filePath ?? null}
                   targetHunkId={activeJumpTarget?.hunkId ?? null}

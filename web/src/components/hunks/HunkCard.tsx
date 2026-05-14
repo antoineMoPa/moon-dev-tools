@@ -23,6 +23,7 @@ type HunkCardProps = {
   agents: AgentOption[];
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
+  onJumpToHunk: (target: { filePath: string; hunkId: string; elementId: string }) => void;
 };
 
 function selectionLivesWithin(container: Node, selection: Selection): boolean {
@@ -75,6 +76,15 @@ function parseHunkHeader(line: string): { oldStart: number; newStart: number } |
 
 function hunkStartLine(header: string): number | null {
   return parseHunkHeader(header)?.newStart ?? null;
+}
+
+function moveHintLabel(filePath: string, header: string) {
+  const line = hunkStartLine(header);
+  return line === null ? filePath : `${filePath}:${line}`;
+}
+
+function moveHintTitle(score: number) {
+  return `Similarity ${(score * 100).toFixed(0)}%`;
 }
 
 function buildDiffLines(text: string): DiffLine[] {
@@ -197,6 +207,7 @@ export function HunkCard({
   agents,
   selectedAgent,
   onAgentChange,
+  onJumpToHunk,
 }: HunkCardProps) {
   const {
     state: { activeHunkId, data },
@@ -209,6 +220,8 @@ export function HunkCard({
   const [fullPatch, setFullPatch] = useState<string | null>(null);
   const [loadingPatch, setLoadingPatch] = useState(false);
   const [commentValue, setCommentValue] = useState(hunk.comment);
+  const movedFrom = hunk.moved_from;
+  const movedTo = hunk.moved_to;
   const [selectedText, setSelectedText] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectionPosition, setSelectionPosition] = useState<{ top: number; left: number } | null>(null);
@@ -432,6 +445,42 @@ export function HunkCard({
         ) : null}
 
         <div className={`patch-wrap ${!expanded && isLong ? "patch-truncated" : ""}`.trim()}>
+          {movedFrom || movedTo ? (
+            <div className="hunk-move-hints">
+              {movedFrom ? (
+                <a
+                  href={`#hunk-${movedFrom.target_hunk_id}`}
+                  title={moveHintTitle(movedFrom.score)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onJumpToHunk({
+                      filePath: movedFrom.target_file_path,
+                      hunkId: movedFrom.target_hunk_id,
+                      elementId: `hunk-${movedFrom.target_hunk_id}`,
+                    });
+                  }}
+                >
+                  Appears to come from {moveHintLabel(movedFrom.target_file_path, movedFrom.target_header)}
+                </a>
+              ) : null}
+              {movedTo ? (
+                <a
+                  href={`#hunk-${movedTo.target_hunk_id}`}
+                  title={moveHintTitle(movedTo.score)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onJumpToHunk({
+                      filePath: movedTo.target_file_path,
+                      hunkId: movedTo.target_hunk_id,
+                      elementId: `hunk-${movedTo.target_hunk_id}`,
+                    });
+                  }}
+                >
+                  Appears to have moved to {moveHintLabel(movedTo.target_file_path, movedTo.target_header)}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
           <div className="diff-stack">
             {diffSegments.map((segment, index) =>
               segment.type === "code" ? (

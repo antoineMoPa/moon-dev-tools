@@ -10,6 +10,7 @@ type HunksProps = {
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
   onSnoozeFile: (filePath: string) => void;
+  onJumpToHunk: (target: { filePath: string; hunkId: string; elementId: string }) => void;
   selectedFilePath?: string | null;
   targetFilePath?: string | null;
   targetHunkId?: string | null;
@@ -109,6 +110,7 @@ function FileAccordion({
   selectedAgent,
   onAgentChange,
   onSnoozeFile,
+  onJumpToHunk,
 }: {
   filePath: string;
   hunks: Hunk[];
@@ -116,6 +118,7 @@ function FileAccordion({
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
   onSnoozeFile: (filePath: string) => void;
+  onJumpToHunk: (target: { filePath: string; hunkId: string; elementId: string }) => void;
 }) {
   const {
     state: { activeView, data },
@@ -161,6 +164,7 @@ function FileAccordion({
             agents={agents}
             selectedAgent={selectedAgent}
             onAgentChange={onAgentChange}
+            onJumpToHunk={onJumpToHunk}
           />
         ))}
         {!readOnly ? (
@@ -190,6 +194,7 @@ export function Hunks({
   selectedAgent,
   onAgentChange,
   onSnoozeFile,
+  onJumpToHunk,
   selectedFilePath,
   targetFilePath,
   targetHunkId,
@@ -366,6 +371,7 @@ export function Hunks({
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
                 onSnoozeFile={onSnoozeFile}
+                onJumpToHunk={onJumpToHunk}
               />
             ))
           ) : (
@@ -392,6 +398,7 @@ export function Hunks({
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
                 onSnoozeFile={onSnoozeFile}
+                onJumpToHunk={onJumpToHunk}
               />
             ))
           ) : (

@@ -13,5 +13,6 @@ axum = { version = "0.8", features = ["json"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 sha1 = "0.10"
+textdistance = "1.1.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 webbrowser = "1"

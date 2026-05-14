@@ -134,6 +134,16 @@ pub(crate) struct HunkView {
     pub(crate) patch_line_count: usize,
     pub(crate) added_line_count: usize,
     pub(crate) removed_line_count: usize,
+    pub(crate) moved_from: Option<HunkMoveHint>,
+    pub(crate) moved_to: Option<HunkMoveHint>,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct HunkMoveHint {
+    pub(crate) target_hunk_id: String,
+    pub(crate) target_file_path: String,
+    pub(crate) target_header: String,
+    pub(crate) score: f64,
 }
 
 #[derive(Clone, Default)]

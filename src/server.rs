@@ -270,6 +270,7 @@ async fn session_state(
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
         let hunks = collect_session_hunks(session)?;
+        let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
         let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
         let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
         for commit in &mut commits {
@@ -289,6 +290,8 @@ async fn session_state(
                     .into_iter()
                     .map(|entry| comment_dispatch_view(session, &hunk.id, &entry))
                     .collect::<Vec<_>>();
+                let moved_from = move_hints.moved_from.get(&hunk.id).cloned();
+                let moved_to = move_hints.moved_to.get(&hunk.id).cloned();
 
                 HunkView {
                     reviewed: session.reviewed.contains(&hunk.id)
@@ -304,6 +307,8 @@ async fn session_state(
                     patch_line_count: hunk.patch.lines().count(),
                     added_line_count,
                     removed_line_count,
+                    moved_from,
+                    moved_to,
                 }
             })
             .collect::<Vec<_>>();

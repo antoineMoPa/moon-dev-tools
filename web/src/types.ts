@@ -48,6 +48,15 @@ export type Hunk = {
   patch_line_count: number;
   added_line_count: number;
   removed_line_count: number;
+  moved_from?: HunkMoveHint | null;
+  moved_to?: HunkMoveHint | null;
+};
+
+export type HunkMoveHint = {
+  target_hunk_id: string;
+  target_file_path: string;
+  target_header: string;
+  score: number;
 };
 
 export type DraftComment = {
