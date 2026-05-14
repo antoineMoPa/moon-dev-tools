@@ -209,21 +209,23 @@ export function Hunks({
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
-  const unreviewedUnstagedGroups = useMemo(
-    () => groupByFile(hunks.filter((hunk) => !hunk.staged && !hunk.reviewed)),
+  const unreviewedGroups = useMemo(
+    () => groupByFile(hunks.filter((hunk) => !hunk.reviewed)),
     [hunks],
   );
-  const unreviewedStagedGroups = useMemo(
-    () => groupByFile(hunks.filter((hunk) => hunk.staged && !hunk.reviewed)),
+  const reviewedGroups = useMemo(
+    () => groupByFile(hunks.filter((hunk) => hunk.reviewed)),
     [hunks],
   );
   const [stagedOpen, setStagedOpen] = useState(
     () => stagedGroups.length > 0 && unstagedGroups.length === 0,
   );
+  const firstSectionTitle = isCommitReview ? "Unreviewed" : "Unstaged";
+  const secondSectionTitle = isCommitReview ? "Reviewed" : "Staged";
 
   useEffect(() => {
     if (isCommitReview) {
-      setStagedOpen(true);
+      setUnstagedOpen(true);
     }
   }, [isCommitReview, data?.active_commit]);
 
@@ -233,23 +235,35 @@ export function Hunks({
     }
     return unstagedGroups[0]?.filePath ?? stagedGroups[0]?.filePath ?? null;
   }, [hunks, selectedFilePath, stagedGroups, unstagedGroups]);
+  const emptyFirstSectionText = isCommitReview
+    ? "No unreviewed hunks."
+    : activeFilePath
+      ? `No unstaged hunks in ${activeFilePath}.`
+      : "No unstaged hunks.";
+  const emptySecondSectionText = isCommitReview ? "No reviewed hunks." : "No staged hunks.";
   const visibleUnstagedGroups = useMemo(
     () => {
       if (isViewingAll) {
-        return isCommitReview ? unreviewedUnstagedGroups : unstagedGroups;
+        return isCommitReview ? unreviewedGroups : unstagedGroups;
+      }
+      if (isCommitReview) {
+        return unreviewedGroups.filter((group) => group.filePath === activeFilePath);
       }
       return unstagedGroups.filter((group) => group.filePath === activeFilePath);
     },
-    [activeFilePath, isCommitReview, isViewingAll, unreviewedUnstagedGroups, unstagedGroups],
+    [activeFilePath, isCommitReview, isViewingAll, unreviewedGroups, unstagedGroups],
   );
   const visibleStagedGroups = useMemo(
     () => {
       if (isViewingAll) {
-        return isCommitReview ? unreviewedStagedGroups : stagedGroups;
+        return isCommitReview ? reviewedGroups : stagedGroups;
+      }
+      if (isCommitReview) {
+        return reviewedGroups.filter((group) => group.filePath === activeFilePath);
       }
       return stagedGroups.filter((group) => group.filePath === activeFilePath);
     },
-    [activeFilePath, isCommitReview, isViewingAll, stagedGroups, unreviewedStagedGroups],
+    [activeFilePath, isCommitReview, isViewingAll, reviewedGroups, stagedGroups],
   );
 
   useEffect(() => {
@@ -287,6 +301,7 @@ export function Hunks({
           hunk.id,
           {
             filePath: hunk.file_path,
+            reviewed: hunk.reviewed,
             staged: hunk.staged,
           },
         ]),
@@ -302,7 +317,13 @@ export function Hunks({
     }
 
     if (target) {
-      if (target.staged) {
+      if (isCommitReview) {
+        if (target.reviewed) {
+          setStagedOpen(true);
+        } else {
+          setUnstagedOpen(true);
+        }
+      } else if (target.staged) {
         setStagedOpen(true);
       } else {
         setUnstagedOpen(true);
@@ -314,7 +335,7 @@ export function Hunks({
     if (fileHunks.some((hunk) => !hunk.staged)) {
       setUnstagedOpen(true);
     }
-  }, [hunkTargets, hunks, targetFilePath, targetHunkId]);
+  }, [hunkTargets, hunks, isCommitReview, targetFilePath, targetHunkId]);
 
   useActiveHunkFromViewport(interactiveHunks);
 
@@ -357,7 +378,7 @@ export function Hunks({
     <div className="hunk-sections">
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setUnstagedOpen((open) => !open)}>
-          <h2>Unstaged</h2>
+          <h2>{firstSectionTitle}</h2>
           <span className="muted">{visibleUnstagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
         </button>
         <div className={`collapsible-content ${unstagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
@@ -375,16 +396,14 @@ export function Hunks({
               />
             ))
           ) : (
-            <div className="empty-section muted">
-              {activeFilePath ? `No unstaged hunks in ${activeFilePath}.` : "No unstaged hunks."}
-            </div>
+            <div className="empty-section muted">{emptyFirstSectionText}</div>
           )}
         </div>
       </section>
 
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setStagedOpen((open) => !open)}>
-          <h2>Staged</h2>
+          <h2>{secondSectionTitle}</h2>
           <span className="muted">{visibleStagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
         </button>
         <div className={`collapsible-content ${stagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
@@ -402,7 +421,7 @@ export function Hunks({
               />
             ))
           ) : (
-            <div className="empty-section muted">No staged hunks.</div>
+            <div className="empty-section muted">{emptySecondSectionText}</div>
           )}
         </div>
       </section>
