@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSidebarFileGroups } from "./SidebarFilesSection";
+import { buildSidebarFileGroups, orderMovedFilesAdjacently } from "./SidebarFilesSection";
 import { buildSidebarFiles, FILE_STAGE_STATUS } from "./sidebarFiles";
 import type { Hunk, SessionState } from "../types";
 
@@ -88,6 +88,97 @@ describe("buildSidebarFiles", () => {
       unstaged_added_line_count: 2,
       unstaged_removed_line_count: 6,
     });
+  });
+
+  it("marks whole-file moves from deleted and added files", () => {
+    const files = buildSidebarFiles(
+      makeSession([
+        makeHunk({
+          id: "old",
+          file_path: "src/a.ts",
+          change_kind: "deleted",
+          removed_line_count: 12,
+          moved_to: {
+            target_hunk_id: "new",
+            target_file_path: "src/b.ts",
+            target_header: "@@ -0,0 +1,12 @@",
+            score: 0.9,
+          },
+        }),
+        makeHunk({
+          id: "other",
+          file_path: "src/other.ts",
+          change_kind: "modified",
+          added_line_count: 1,
+        }),
+        makeHunk({
+          id: "new",
+          file_path: "src/b.ts",
+          change_kind: "added",
+          added_line_count: 12,
+          moved_from: {
+            target_hunk_id: "old",
+            target_file_path: "src/a.ts",
+            target_header: "@@ -1,12 +0,0 @@",
+            score: 0.9,
+          },
+        }),
+      ]),
+      new Set(),
+    );
+
+    expect(files.find((file) => file.filePath === "src/a.ts")).toMatchObject({
+      movedToFilePath: "src/b.ts",
+    });
+    expect(files.find((file) => file.filePath === "src/b.ts")).toMatchObject({
+      movedFromFilePath: "src/a.ts",
+    });
+    expect(orderMovedFilesAdjacently(files).map((file) => file.filePath)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/other.ts",
+    ]);
+  });
+
+  it("does not mark moved code blocks as whole-file moves", () => {
+    const files = buildSidebarFiles(
+      makeSession([
+        makeHunk({
+          id: "old",
+          file_path: "src/a.ts",
+          change_kind: "deleted",
+          removed_line_count: 12,
+          moved_to: {
+            target_hunk_id: "new",
+            target_file_path: "src/b.ts",
+            target_header: "@@ -0,0 +1,12 @@",
+            score: 0.9,
+          },
+        }),
+        makeHunk({
+          id: "new",
+          file_path: "src/b.ts",
+          change_kind: "added",
+          added_line_count: 12,
+          moved_from: {
+            target_hunk_id: "old",
+            target_file_path: "src/a.ts",
+            target_header: "@@ -1,12 +0,0 @@",
+            score: 0.9,
+          },
+        }),
+        makeHunk({
+          id: "new-extra",
+          file_path: "src/b.ts",
+          change_kind: "added",
+          added_line_count: 1,
+        }),
+      ]),
+      new Set(),
+    );
+
+    expect(files.find((file) => file.filePath === "src/a.ts")?.movedToFilePath).toBeUndefined();
+    expect(files.find((file) => file.filePath === "src/b.ts")?.movedFromFilePath).toBeUndefined();
   });
 
   it("sums section stats from remaining unstaged code", () => {

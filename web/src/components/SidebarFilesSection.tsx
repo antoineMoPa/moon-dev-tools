@@ -153,6 +153,46 @@ type SidebarFileGroupProps = {
   removedCount: number;
 };
 
+export function orderMovedFilesAdjacently(files: SidebarFileItem[]) {
+  const remaining = new Set(files.map((file) => file.filePath));
+  const fileByPath = new Map(files.map((file) => [file.filePath, file]));
+  const ordered: SidebarFileItem[] = [];
+
+  for (const file of files) {
+    if (!remaining.has(file.filePath) || file.movedFromFilePath) {
+      continue;
+    }
+
+    ordered.push(file);
+    remaining.delete(file.filePath);
+
+    if (file.movedToFilePath && remaining.has(file.movedToFilePath)) {
+      const targetFile = fileByPath.get(file.movedToFilePath);
+      if (targetFile) {
+        ordered.push(targetFile);
+        remaining.delete(targetFile.filePath);
+      }
+    }
+  }
+
+  for (const file of files) {
+    if (remaining.has(file.filePath)) {
+      ordered.push(file);
+    }
+  }
+
+  return ordered;
+}
+
+function showsMovedMarker(file: SidebarFileItem, previousFile?: SidebarFileItem) {
+  return (
+    file.changeKind === "added" &&
+    previousFile?.changeKind === "deleted" &&
+    file.movedFromFilePath === previousFile.filePath &&
+    previousFile.movedToFilePath === file.filePath
+  );
+}
+
 function SidebarFileGroup({
   title,
   files,
@@ -162,6 +202,8 @@ function SidebarFileGroup({
   if (files.length === 0) {
     return null;
   }
+
+  const orderedFiles = orderMovedFilesAdjacently(files);
 
   return (
     <div className="sidebar-file-group">
@@ -173,11 +215,13 @@ function SidebarFileGroup({
         </div>
       </div>
       <div className="sidebar-list">
-        {files.map((file) => (
-          <SidebarFileButton
-            key={file.filePath}
-            file={file}
-          />
+        {orderedFiles.map((file, index) => (
+          <div className="sidebar-file-row-wrap" key={file.filePath}>
+            {showsMovedMarker(file, orderedFiles[index - 1]) ? (
+              <span className="sidebar-link-moved-marker" aria-hidden="true">↓</span>
+            ) : null}
+            <SidebarFileButton file={file} />
+          </div>
         ))}
       </div>
     </div>

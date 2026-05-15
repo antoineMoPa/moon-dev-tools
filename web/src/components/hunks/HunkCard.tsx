@@ -645,6 +645,7 @@ export function HunkCard({
   const [loadingPatch, setLoadingPatch] = useState(false);
   const [loadingMoveDiff, setLoadingMoveDiff] = useState(false);
   const [moveDiffView, setMoveDiffView] = useState<MoveDiffView | null>(null);
+  const [moveDiffDismissed, setMoveDiffDismissed] = useState(false);
   const [commentValue, setCommentValue] = useState(hunk.comment);
   const movedFrom = hunk.moved_from;
   const movedTo = hunk.moved_to;
@@ -857,6 +858,27 @@ export function HunkCard({
     }
   }
 
+  useEffect(() => {
+    if (moveDiffView || moveDiffDismissed || loadingMoveDiff) {
+      return;
+    }
+
+    if (movedTo) {
+      void showMoveDiff(hunk.id, movedTo.target_hunk_id);
+      return;
+    }
+
+    if (!movedFrom) {
+      return;
+    }
+
+    if (document.getElementById(`hunk-${movedFrom.target_hunk_id}`)) {
+      return;
+    }
+
+    void showMoveDiff(movedFrom.target_hunk_id, hunk.id);
+  }, [hunk.id, loadingMoveDiff, moveDiffDismissed, moveDiffView, movedFrom, movedTo]);
+
   async function stageMove() {
     if (!moveDiffSourceHunk || !moveDiffTargetHunk) {
       return;
@@ -1018,9 +1040,12 @@ export function HunkCard({
                   <button
                     type="button"
                     className="hunk-inline-link"
-                    onClick={() => setMoveDiffView(null)}
+                    onClick={() => {
+                      setMoveDiffDismissed(true);
+                      setMoveDiffView(null);
+                    }}
                   >
-                    [back]
+                    [back to per-file view]
                   </button>
                 </>
               ) : null}

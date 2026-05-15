@@ -23,6 +23,8 @@ export type SidebarFileItem = {
   hunk_count: number;
   reviewed_hunk_count: number;
   reviewed: boolean;
+  movedFromFilePath?: string;
+  movedToFilePath?: string;
 };
 
 function fileNameFromPath(filePath: string) {
@@ -80,5 +82,80 @@ export function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>)
     });
   }
 
-  return [...grouped.values()];
+  const files = [...grouped.values()];
+  annotateMovedFiles(files, data);
+  return files;
+}
+
+function annotateMovedFiles(files: SidebarFileItem[], data: SessionState) {
+  const fileByPath = new Map(files.map((file) => [file.filePath, file]));
+  const hunksByFilePath = new Map<string, SessionState["hunks"]>();
+  const moveCounts = new Map<string, number>();
+
+  for (const hunk of data.hunks) {
+    const fileHunks = hunksByFilePath.get(hunk.file_path);
+    if (fileHunks) {
+      fileHunks.push(hunk);
+    } else {
+      hunksByFilePath.set(hunk.file_path, [hunk]);
+    }
+  }
+
+  for (const hunk of data.hunks) {
+    const targetFilePath = hunk.moved_to?.target_file_path;
+    if (!targetFilePath || hunk.file_path === targetFilePath) {
+      continue;
+    }
+
+    const sourceFile = fileByPath.get(hunk.file_path);
+    const targetFile = fileByPath.get(targetFilePath);
+    if (sourceFile?.changeKind !== "deleted" || targetFile?.changeKind !== "added") {
+      continue;
+    }
+
+    const key = `${hunk.file_path}\0${targetFilePath}`;
+    moveCounts.set(key, (moveCounts.get(key) ?? 0) + 1);
+  }
+
+  const movePairs = [...moveCounts.entries()].sort((left, right) => right[1] - left[1]);
+  for (const [key] of movePairs) {
+    const [sourceFilePath, targetFilePath] = key.split("\0");
+    const sourceFile = fileByPath.get(sourceFilePath);
+    const targetFile = fileByPath.get(targetFilePath);
+    if (!sourceFile || !targetFile || sourceFile.movedToFilePath || targetFile.movedFromFilePath) {
+      continue;
+    }
+    const sourceHunks = hunksByFilePath.get(sourceFilePath) ?? [];
+    const targetHunks = hunksByFilePath.get(targetFilePath) ?? [];
+    if (!isWholeFileMove(sourceFilePath, targetFilePath, sourceFile, targetFile, sourceHunks, targetHunks)) {
+      continue;
+    }
+
+    sourceFile.movedToFilePath = targetFilePath;
+    targetFile.movedFromFilePath = sourceFilePath;
+  }
+}
+
+function isWholeFileMove(
+  sourceFilePath: string,
+  targetFilePath: string,
+  sourceFile: SidebarFileItem,
+  targetFile: SidebarFileItem,
+  sourceHunks: SessionState["hunks"],
+  targetHunks: SessionState["hunks"],
+) {
+  if (
+    sourceHunks.length === 0 ||
+    targetHunks.length === 0 ||
+    sourceFile.added_line_count > 0 ||
+    targetFile.removed_line_count > 0 ||
+    sourceFile.removed_line_count !== targetFile.added_line_count
+  ) {
+    return false;
+  }
+
+  return (
+    sourceHunks.every((hunk) => hunk.moved_to?.target_file_path === targetFilePath) &&
+    targetHunks.every((hunk) => hunk.moved_from?.target_file_path === sourceFilePath)
+  );
 }
