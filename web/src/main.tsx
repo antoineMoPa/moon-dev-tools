@@ -385,9 +385,11 @@ function AppContentInner() {
         ? pendingStageFile.fileName
         : fileNameFromPath(completedFilePath);
       toast.success(`file ${completedFileName} fully staged`);
-      const nextFilePath = nextReviewFilePath(data.hunks, completedFilePath, snoozedFileSet);
-      if (nextFilePath && nextFilePath !== selectedFilePath) {
-        navigateToFile(nextFilePath);
+      if (activeView === ReviewView.File) {
+        const nextFilePath = nextReviewFilePath(data.hunks, completedFilePath, snoozedFileSet);
+        if (nextFilePath && nextFilePath !== selectedFilePath) {
+          navigateToFile(nextFilePath);
+        }
       }
       if (pendingStageFile?.filePath === completedFilePath) {
         setPendingStageFile(null);
@@ -395,7 +397,7 @@ function AppContentInner() {
     }
 
     previousDataRef.current = data;
-  }, [data, pendingStageFile, selectedFilePath, snoozedFiles]);
+  }, [activeView, data, pendingStageFile, selectedFilePath, snoozedFiles]);
 
   function handleAgentChange(agent: AgentKind) {
     window.localStorage.setItem(AGENT_STORAGE_KEY, agent);
