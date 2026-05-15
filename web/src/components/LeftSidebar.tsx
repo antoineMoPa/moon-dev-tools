@@ -23,6 +23,7 @@ type LeftSidebarProps = {
   snoozedFiles: Set<string>;
   onJumpToFile: (filePath: string) => void;
   onJumpToComment: (target: { filePath: string; hunkId: string; elementId: string }) => void;
+  onShowAll: () => void;
   activeFilePath?: string | null;
   onStageWholeFile?: (file: SidebarFileItem) => void;
 };
@@ -177,6 +178,7 @@ export function LeftSidebar({
   snoozedFiles,
   onJumpToFile,
   onJumpToComment,
+  onShowAll,
   activeFilePath,
   onStageWholeFile,
 }: LeftSidebarProps) {
@@ -199,7 +201,7 @@ export function LeftSidebar({
               type="button"
               onClick={() => {
                 window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                actions.setActiveView(ReviewView.All);
+                onShowAll();
               }}
             >
               <span className="sidebar-link-name">all</span>

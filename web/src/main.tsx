@@ -317,6 +317,7 @@ function AppContentInner() {
     const hasUnstaged = hasUnstagedHunks(data);
     if (hadUnstagedHunksRef.current && !hasUnstaged) {
       setReviewComplete(true);
+      actions.setActiveView(ReviewView.All);
     } else if (hasUnstaged) {
       setReviewComplete(false);
     }
@@ -419,6 +420,11 @@ function AppContentInner() {
     navigateToFile(filePath);
   }
 
+  function showAllFiles() {
+    setReviewComplete(false);
+    actions.setActiveView(ReviewView.All);
+  }
+
   function jumpToComment(target: { filePath: string; hunkId: string; elementId: string }) {
     actions.setActiveView(ReviewView.File);
     setSelectedFilePath(target.filePath);
@@ -474,6 +480,7 @@ function AppContentInner() {
             activeFilePath={activeView === ReviewView.File ? selectedFilePath : null}
             onJumpToFile={jumpToFile}
             onJumpToComment={jumpToComment}
+            onShowAll={showAllFiles}
             onStageWholeFile={(file) => {
               setPendingStageFile({ filePath: file.filePath, fileName: file.fileName });
             }}
