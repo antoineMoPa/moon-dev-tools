@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { ApiError, getSessionId } from "./api";
 import {
   discardHunk as discardHunkRequest,
+  discardHunks as discardHunksRequest,
   fetchSessionState,
   saveComment as saveCommentRequest,
   sendCommentBatch as sendCommentBatchRequest,
@@ -54,6 +55,7 @@ type ReviewStoreValue = {
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
     discardHunk: (hunkId: string) => Promise<void>;
+    discardHunks: (hunkIds: string[]) => Promise<void>;
     updateDraftComment: (hunkId: string, comment: string) => void;
     upsertDraftComment: (draft: DraftComment) => void;
     removeDraftComment: (draftId: string) => void;
@@ -396,6 +398,9 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         },
         discardHunk: async (hunkId) => {
           await mutate(() => discardHunkRequest(hunkId));
+        },
+        discardHunks: async (hunkIds) => {
+          await mutate(() => discardHunksRequest(hunkIds));
         },
         updateDraftComment,
         upsertDraftComment,

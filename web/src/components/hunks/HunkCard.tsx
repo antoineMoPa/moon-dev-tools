@@ -759,6 +759,7 @@ export function HunkCard({
       moveDiffTargetHunk &&
       (!moveDiffSourceHunk.staged || !moveDiffTargetHunk.staged),
   );
+  const canDiscardMove = Boolean(moveDiffView && !readOnly && moveDiffSourceHunk && moveDiffTargetHunk);
   const { activeDraft, diffSegments, openSelectionDraft, commentContextValue } = useHunkComments({
     hunk,
     visiblePatch,
@@ -890,6 +891,18 @@ export function HunkCard({
     ]);
   }
 
+  function confirmDiscardMove() {
+    if (!moveDiffSourceHunk || !moveDiffTargetHunk) {
+      return;
+    }
+
+    if (!window.confirm("Discard source and destination hunks?")) {
+      return;
+    }
+
+    void actions.discardHunks([moveDiffSourceHunk.id, moveDiffTargetHunk.id]);
+  }
+
   function confirmDiscardHunk() {
     if (!window.confirm("Discard this hunk?")) {
       return;
@@ -912,7 +925,7 @@ export function HunkCard({
             {hunk.reviewed ? "Mark Unreviewed" : "Mark Reviewed"}
           </button>
         ) : null}
-        {!readOnly ? (
+        {!readOnly && !moveDiffView ? (
           <>
             <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>
               {hunk.staged ? "Unstage Hunk" : "Stage Hunk"}
@@ -1035,6 +1048,15 @@ export function HunkCard({
                       onClick={() => void stageMove()}
                     >
                       [stage source and destination]
+                    </button>
+                  ) : null}
+                  {canDiscardMove ? (
+                    <button
+                      type="button"
+                      className="hunk-inline-link"
+                      onClick={confirmDiscardMove}
+                    >
+                      [discard source and destination]
                     </button>
                   ) : null}
                   <button

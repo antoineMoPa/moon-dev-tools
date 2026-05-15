@@ -123,6 +123,13 @@ export function discardHunk(hunkId: string): Promise<string> {
   });
 }
 
+export function discardHunks(hunkIds: string[]): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/discard-batch`, {
+    method: "POST",
+    body: JSON.stringify({ hunk_ids: hunkIds }),
+  });
+}
+
 export function saveComment(hunkId: string, comment: string, batch = false): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment`, {
     method: "POST",

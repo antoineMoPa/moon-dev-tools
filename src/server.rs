@@ -127,6 +127,10 @@ pub(crate) async fn run_server() -> Result<()> {
             post(stage_selection),
         )
         .route("/api/session/{session_id}/discard", post(discard_hunk))
+        .route(
+            "/api/session/{session_id}/discard-batch",
+            post(discard_hunks),
+        )
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
         .with_state(AppState {
@@ -635,6 +639,25 @@ async fn discard_hunk(
     apply_patch(&repo_path, &patch, false, true)?;
     if is_staged {
         apply_patch(&repo_path, &patch, true, true)?;
+    }
+
+    Ok("ok")
+}
+
+async fn discard_hunks(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkBatchRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patches) = crate::api::lookup_hunks(&state, &session_id, &request.hunk_ids)?;
+
+    for (patch, is_staged) in patches {
+        apply_patch(&repo_path, &patch, false, true)?;
+        if is_staged {
+            apply_patch(&repo_path, &patch, true, true)?;
+        }
     }
 
     Ok("ok")

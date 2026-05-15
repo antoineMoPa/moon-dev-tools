@@ -248,6 +248,11 @@ pub(crate) struct HunkRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct HunkBatchRequest {
+    pub(crate) hunk_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct FileRequest {
     pub(crate) file_path: String,
 }
@@ -363,6 +368,27 @@ pub(crate) fn lookup_hunk(
             .find(|hunk| hunk.id == hunk_id)
             .ok_or_else(|| anyhow!("hunk no longer exists"))?;
         Ok((session.repo_path.clone(), hunk.patch, hunk.staged))
+    })
+}
+
+pub(crate) fn lookup_hunks(
+    state: &AppState,
+    session_id: &str,
+    hunk_ids: &[String],
+) -> Result<(PathBuf, Vec<(String, bool)>), AppError> {
+    with_session(state, session_id, |session| {
+        let hunks = crate::git::collect_session_hunks(session)?;
+        let mut patches = Vec::with_capacity(hunk_ids.len());
+
+        for hunk_id in hunk_ids {
+            let hunk = hunks
+                .iter()
+                .find(|hunk| hunk.id == *hunk_id)
+                .ok_or_else(|| anyhow!("hunk no longer exists"))?;
+            patches.push((hunk.patch.clone(), hunk.staged));
+        }
+
+        Ok((session.repo_path.clone(), patches))
     })
 }
 
