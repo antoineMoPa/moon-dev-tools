@@ -651,6 +651,7 @@ dependencies = [
  "axum",
  "reqwest",
  "serde",
+ "serde_json",
  "sha1",
  "textdistance",
  "tokio",

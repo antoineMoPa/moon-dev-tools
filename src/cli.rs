@@ -19,6 +19,7 @@ use crate::{
 #[derive(Debug, PartialEq, Eq)]
 enum CliCommand {
     Help,
+    Version,
     Serve {
         logs: bool,
     },
@@ -33,6 +34,10 @@ pub(crate) fn run() -> Result<()> {
     match parse_cli_args(env::args().skip(1).collect::<Vec<_>>())? {
         CliCommand::Help => {
             print_help();
+            Ok(())
+        }
+        CliCommand::Version => {
+            print_version();
             Ok(())
         }
         CliCommand::Serve { logs } => {
@@ -153,6 +158,7 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
             "--logs" => logs = true,
             "-ns" | "--no-submodules" => no_submodules = true,
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
+            "--version" | "-v" => return Ok(CliCommand::Version),
             _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text()),
             _ => positional.push(arg),
         }
@@ -207,6 +213,7 @@ Usage:
   moonreview diff <target> -ns
   moonreview diff <target> --logs
   moonreview serve --logs
+  moonreview --version
   moonreview --help
 
 Examples:
@@ -221,6 +228,10 @@ Use `-ns` or `--no-submodules` to open only the current repository when changed 
 
 `moonreview diff <target>` opens a read-only diff review against a git target.
 Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`."
+}
+
+fn print_version() {
+    println!("moonreview {}", env!("MOONREVIEW_VERSION"));
 }
 
 fn ensure_server_running(logs: bool) -> Result<()> {
@@ -290,6 +301,16 @@ mod tests {
                 no_submodules: true,
             }
         );
+    }
+
+    #[test]
+    fn parse_short_version_option() {
+        assert_eq!(parse(&["-v"]), CliCommand::Version);
+    }
+
+    #[test]
+    fn parse_long_version_option() {
+        assert_eq!(parse(&["--version"]), CliCommand::Version);
     }
 
     #[test]
