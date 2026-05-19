@@ -127,7 +127,6 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/", get(root))
         .route("/healthz", get(healthz))
         .route("/review/{session_id}", get(review_page))
-        .route("/review/{session_id}/file", get(review_page))
         .route("/assets/app.js", get(app_js))
         .route("/assets/app.css", get(app_css))
         .route(

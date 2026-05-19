@@ -221,6 +221,9 @@ pre {
 
 .hunk-full-file-link {
   margin-left: auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
   font-size: 0.77rem;
   color: var(--muted);
   text-decoration: none;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import hljs from "highlight.js/lib/core";
 import diff from "highlight.js/lib/languages/diff";
-import { buildFullFileUrl, fetchHunkPatch } from "../../api";
+import { fetchHunkPatch } from "../../api";
 import {
   buildAnchoredCommentValue,
   parseAnchoredComments,
@@ -9,6 +9,7 @@ import {
 } from "../../anchoredComments";
 import { useReviewStore, type MovedDiffLayout } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
+import { FullFileModal } from "../FullFileModal";
 import { splitDiffIntoSegments } from "./diffSegments";
 import { HunkCommentContextProvider } from "./HunkCommentContext";
 import { InlineCommentCard } from "./InlineCommentCard";
@@ -646,6 +647,7 @@ export function HunkCard({
   const [loadingMoveDiff, setLoadingMoveDiff] = useState(false);
   const [moveDiffView, setMoveDiffView] = useState<MoveDiffView | null>(null);
   const [moveDiffDismissed, setMoveDiffDismissed] = useState(false);
+  const [fullFileOpen, setFullFileOpen] = useState(false);
   const [commentValue, setCommentValue] = useState(hunk.comment);
   const movedFrom = hunk.moved_from;
   const movedTo = hunk.moved_to;
@@ -942,15 +944,22 @@ export function HunkCard({
                 : `Expand Diff (${hunk.patch_line_count} lines)`}
           </button>
         ) : null}
-        <a
+        <button
           className="hunk-full-file-link"
-          href={buildFullFileUrl(hunk.file_path, hunkStartLine(hunk.header))}
-          target="_blank"
-          rel="noreferrer"
+          type="button"
+          onClick={() => setFullFileOpen(true)}
         >
-          View full file
-        </a>
+          View file
+        </button>
       </div>
+
+      {fullFileOpen ? (
+        <FullFileModal
+          filePath={hunk.file_path}
+          lineNumber={hunkStartLine(hunk.header)}
+          onClose={() => setFullFileOpen(false)}
+        />
+      ) : null}
 
       {selectedText && !composerOpen && selectionPosition ? (
         <LineActions

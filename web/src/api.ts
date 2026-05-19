@@ -61,12 +61,6 @@ export function fetchFileContent(filePath: string): Promise<FileContentPayload> 
   return request<FileContentPayload>(`/api/session/${sessionId}/file?${params.toString()}`);
 }
 
-export function buildFullFileUrl(filePath: string, lineNumber?: number | null): string {
-  const params = new URLSearchParams({ file_path: filePath });
-  const hash = lineNumber ? `#L${lineNumber}` : "";
-  return `/review/${sessionId}/file?${params.toString()}${hash}`;
-}
-
 export function toggleReviewed(hunkId: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/reviewed`, {
     method: "POST",

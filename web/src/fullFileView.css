@@ -77,3 +77,38 @@
   line-height: inherit;
   padding: 0;
 }
+
+.full-file-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.full-file-modal {
+  width: min(1200px, calc(100vw - 4rem));
+  max-height: calc(100vh - 4rem);
+  display: flex;
+  flex-direction: column;
+  margin: auto;
+}
+
+.full-file-modal .full-file-code {
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .full-file-modal-backdrop {
+    padding: 0.75rem;
+  }
+
+  .full-file-modal {
+    width: calc(100vw - 1.5rem);
+    max-height: calc(100vh - 1.5rem);
+  }
+}
