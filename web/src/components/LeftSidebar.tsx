@@ -4,7 +4,7 @@ import { COMMENT_DISPATCH_STATUS } from "../types";
 import type { CommentDispatchStatus, Commit, SessionState, SidebarComment } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
-import { buildSidebarFiles, FILE_STAGE_STATUS } from "./sidebarFiles";
+import { buildSidebarFiles, FILE_STAGE_STATUS, localChangesSummary } from "./sidebarFiles";
 import type { SidebarFileItem } from "./sidebarFiles";
 
 export type SidebarCommentItem = {
@@ -92,26 +92,6 @@ function SidebarShortcutsHint() {
       </div>
     </div>
   );
-}
-
-function pluralize(count: number, singular: string, plural = `${singular}s`) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-function localChangesSummary(files: SidebarFileItem[]) {
-  const unstagedFiles = files.filter((file) => file.status !== FILE_STAGE_STATUS.staged);
-  if (unstagedFiles.length === 0) {
-    return "no unstaged changes";
-  }
-
-  const modified = unstagedFiles.filter((file) => file.changeKind === "modified").length;
-  const added = unstagedFiles.filter((file) => file.changeKind === "added").length;
-  const deleted = unstagedFiles.filter((file) => file.changeKind === "deleted").length;
-  return [
-    modified > 0 ? pluralize(modified, "modified file") : null,
-    added > 0 ? pluralize(added, "new file") : null,
-    deleted > 0 ? pluralize(deleted, "deleted file") : null,
-  ].filter(Boolean).join(", ");
 }
 
 function SidebarCommitsSection({
@@ -231,7 +211,7 @@ export function LeftSidebar({
         activeCommit={data.active_commit}
         base={data.commit_base}
         commits={data.commits}
-        localSummary={localChangesSummary(sidebarFiles)}
+        localSummary={localChangesSummary(data.local_change_summary)}
         onSelectCommit={(commit) => {
           window.scrollTo({ top: 0, left: 0, behavior: "auto" });
           void actions.setActiveCommit(commit);

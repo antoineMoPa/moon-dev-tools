@@ -27,7 +27,7 @@ use crate::{
     },
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
-        build_partial_patch_from_selection, canonicalize_repo, collect_commit_hunks,
+        build_partial_patch_from_selection, canonicalize_repo, collect_commit_hunks, collect_hunks,
         collect_session_hunks, current_branch_name, detect_agent_availability, preview_patch,
         read_repo_file, run_git_no_output,
     },
@@ -85,6 +85,40 @@ fn diff_line_stats(patch: &str) -> (usize, usize) {
     }
 
     (added, removed)
+}
+
+fn merge_file_change_kind(
+    left: crate::api::FileChangeKind,
+    right: crate::api::FileChangeKind,
+) -> crate::api::FileChangeKind {
+    if left == right {
+        left
+    } else {
+        crate::api::FileChangeKind::Modified
+    }
+}
+
+fn local_change_summary(session: &RepoSession) -> Result<crate::api::LocalChangeSummary> {
+    let mut files = HashMap::new();
+    for hunk in collect_hunks(&session.repo_path, &session.diff_target)?
+        .into_iter()
+        .filter(|hunk| !hunk.staged)
+    {
+        files
+            .entry(hunk.file_path)
+            .and_modify(|kind| *kind = merge_file_change_kind(*kind, hunk.change_kind))
+            .or_insert(hunk.change_kind);
+    }
+
+    let mut summary = crate::api::LocalChangeSummary::default();
+    for kind in files.values() {
+        match kind {
+            crate::api::FileChangeKind::Added => summary.added += 1,
+            crate::api::FileChangeKind::Deleted => summary.deleted += 1,
+            crate::api::FileChangeKind::Modified => summary.modified += 1,
+        }
+    }
+    Ok(summary)
 }
 
 pub(crate) async fn run_server() -> Result<()> {
@@ -280,6 +314,7 @@ async fn session_state(
         for commit in &mut commits {
             commit.review_status = commit_review_status(session, &cached_reviewed, &commit.sha)?;
         }
+        let local_change_summary = local_change_summary(session)?;
         let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
         let views = hunks
             .into_iter()
@@ -327,6 +362,7 @@ async fn session_state(
             branch_name: current_branch_name(&session.repo_path)?,
             commit_base,
             commits,
+            local_change_summary,
             active_commit: session.active_commit.clone(),
             repo_path: session.repo_path.display().to_string(),
             read_only,

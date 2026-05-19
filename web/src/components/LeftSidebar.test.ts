@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSidebarFileGroups, orderMovedFilesAdjacently } from "./SidebarFilesSection";
-import { buildSidebarFiles, FILE_STAGE_STATUS } from "./sidebarFiles";
+import { buildSidebarFiles, FILE_STAGE_STATUS, localChangesSummary } from "./sidebarFiles";
 import type { Hunk, SessionState } from "../types";
 
 function makeHunk(overrides: Partial<Hunk>): Hunk {
@@ -27,6 +27,7 @@ function makeSession(hunks: Hunk[]): SessionState {
     branch_name: "main",
     commit_base: "origin/main",
     commits: [],
+    local_change_summary: { modified: 0, added: 0, deleted: 0 },
     repo_path: "/repo",
     read_only: false,
     patch_preview_line_limit: 200,
@@ -243,5 +244,17 @@ describe("buildSidebarFiles", () => {
     expect(groups.unstagedDiffStats).toEqual({ added: 9, removed: 6 });
     expect(groups.remainingUnstagedDiffStats).toEqual({ added: 9, removed: 6 });
     expect(groups.totalDiffStats).toEqual({ added: 340, removed: 25 });
+  });
+});
+
+describe("localChangesSummary", () => {
+  it("formats local working tree counts", () => {
+    expect(localChangesSummary({ modified: 4, added: 1, deleted: 2 })).toBe(
+      "4 modified files, 1 new file, 2 deleted files",
+    );
+  });
+
+  it("describes an empty local working tree", () => {
+    expect(localChangesSummary({ modified: 0, added: 0, deleted: 0 })).toBe("no unstaged changes");
   });
 });

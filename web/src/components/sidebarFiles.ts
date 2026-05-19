@@ -1,4 +1,4 @@
-import type { FileChangeKind, SessionState } from "../types";
+import type { FileChangeKind, LocalChangeSummary, SessionState } from "../types";
 
 export const FILE_STAGE_STATUS = {
   staged: "staged",
@@ -30,6 +30,22 @@ export type SidebarFileItem = {
 function fileNameFromPath(filePath: string) {
   const segments = filePath.split("/");
   return segments[segments.length - 1] || filePath;
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export function localChangesSummary(summary: LocalChangeSummary) {
+  if (summary.modified === 0 && summary.added === 0 && summary.deleted === 0) {
+    return "no unstaged changes";
+  }
+
+  return [
+    summary.modified > 0 ? pluralize(summary.modified, "modified file") : null,
+    summary.added > 0 ? pluralize(summary.added, "new file") : null,
+    summary.deleted > 0 ? pluralize(summary.deleted, "deleted file") : null,
+  ].filter(Boolean).join(", ");
 }
 
 function mergeFileChangeKind(left: FileChangeKind, right: FileChangeKind): FileChangeKind {

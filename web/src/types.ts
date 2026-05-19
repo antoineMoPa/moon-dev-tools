@@ -35,6 +35,12 @@ export type Commit = {
   review_status: CommitReviewStatus;
 };
 
+export type LocalChangeSummary = {
+  modified: number;
+  added: number;
+  deleted: number;
+};
+
 export type Hunk = {
   id: string;
   file_path: string;
@@ -86,6 +92,7 @@ export type SessionState = {
   branch_name?: string | null;
   commit_base?: string | null;
   commits: Commit[];
+  local_change_summary: LocalChangeSummary;
   active_commit?: string | null;
   repo_path: string;
   read_only: boolean;

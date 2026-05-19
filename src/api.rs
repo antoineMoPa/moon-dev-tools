@@ -91,6 +91,7 @@ pub(crate) struct SessionPayload {
     pub(crate) branch_name: Option<String>,
     pub(crate) commit_base: Option<String>,
     pub(crate) commits: Vec<CommitView>,
+    pub(crate) local_change_summary: LocalChangeSummary,
     pub(crate) active_commit: Option<String>,
     pub(crate) repo_path: String,
     pub(crate) read_only: bool,
@@ -100,6 +101,13 @@ pub(crate) struct SessionPayload {
     pub(crate) hunks: Vec<HunkView>,
     pub(crate) sidebar_comments: Vec<SidebarCommentView>,
     pub(crate) export_text: String,
+}
+
+#[derive(Clone, Copy, Default, Serialize)]
+pub(crate) struct LocalChangeSummary {
+    pub(crate) modified: usize,
+    pub(crate) added: usize,
+    pub(crate) deleted: usize,
 }
 
 #[derive(Serialize, Clone)]
