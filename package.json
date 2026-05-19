@@ -1,7 +1,7 @@
 {
   "name": "moon-review-web",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.9.0",
   "scripts": {
     "build": "node ./web/build.mjs",
     "test": "vitest run",
