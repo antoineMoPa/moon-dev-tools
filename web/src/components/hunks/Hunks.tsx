@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ReviewView, useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "../diffStats";
@@ -220,6 +220,7 @@ export function Hunks({
   const [stagedOpen, setStagedOpen] = useState(
     () => stagedGroups.length > 0 && unstagedGroups.length === 0,
   );
+  const stagedDefaultKey = useRef<string | null>(null);
   const firstSectionTitle = isCommitReview ? "Unreviewed" : "Unstaged";
   const secondSectionTitle = isCommitReview ? "Reviewed" : "Staged";
 
@@ -265,6 +266,28 @@ export function Hunks({
     },
     [activeFilePath, isCommitReview, isViewingAll, reviewedGroups, stagedGroups],
   );
+  const hasVisibleUnstagedGroups = visibleUnstagedGroups.length > 0;
+  const hasVisibleStagedGroups = visibleStagedGroups.length > 0;
+
+  useEffect(() => {
+    if (isCommitReview) {
+      return;
+    }
+
+    const nextDefaultKey = [
+      isViewingAll ? "all" : activeFilePath ?? "",
+      hasVisibleUnstagedGroups ? "has-unstaged" : "no-unstaged",
+      hasVisibleStagedGroups ? "has-staged" : "no-staged",
+    ].join(":");
+    if (stagedDefaultKey.current === nextDefaultKey) {
+      return;
+    }
+    stagedDefaultKey.current = nextDefaultKey;
+
+    if (hasVisibleUnstagedGroups && hasVisibleStagedGroups) {
+      setStagedOpen(false);
+    }
+  }, [activeFilePath, hasVisibleStagedGroups, hasVisibleUnstagedGroups, isCommitReview, isViewingAll]);
 
   useEffect(() => {
     if (!activeFilePath || isViewingAll) {
