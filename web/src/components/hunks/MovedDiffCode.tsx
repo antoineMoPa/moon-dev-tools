@@ -1,15 +1,11 @@
 import { useMemo, type CSSProperties } from "react";
 import type { MovedDiffLayout } from "../../reviewStore";
+import { WordDiffText, wordDiffParts, type WordPart } from "./wordDiff";
 
 export type MoveDiffView = {
   sourceHunkId: string;
   targetHunkId: string;
   lines: string[];
-};
-
-type WordPart = {
-  text: string;
-  changed: boolean;
 };
 
 type SideBySideMoveRow = {
@@ -22,63 +18,6 @@ export function changedLines(patch: string, prefix: "+" | "-", metadataPrefix: "
     .split("\n")
     .filter((line) => line.startsWith(prefix) && !line.startsWith(metadataPrefix))
     .map((line) => line.slice(1));
-}
-
-function tokenizeForWordDiff(line: string) {
-  return line.match(/[A-Za-z0-9_]+|\s+|[^\sA-Za-z0-9_]/g) ?? [];
-}
-
-function changedWordIndexes(oldTokens: string[], newTokens: string[]) {
-  const lengths = Array.from({ length: oldTokens.length + 1 }, () =>
-    Array.from({ length: newTokens.length + 1 }, () => 0),
-  );
-
-  for (let oldIndex = oldTokens.length - 1; oldIndex >= 0; oldIndex -= 1) {
-    for (let newIndex = newTokens.length - 1; newIndex >= 0; newIndex -= 1) {
-      lengths[oldIndex][newIndex] = oldTokens[oldIndex] === newTokens[newIndex]
-        ? lengths[oldIndex + 1][newIndex + 1] + 1
-        : Math.max(lengths[oldIndex + 1][newIndex], lengths[oldIndex][newIndex + 1]);
-    }
-  }
-
-  const unchangedOld = new Set<number>();
-  const unchangedNew = new Set<number>();
-  let oldIndex = 0;
-  let newIndex = 0;
-  while (oldIndex < oldTokens.length && newIndex < newTokens.length) {
-    if (oldTokens[oldIndex] === newTokens[newIndex]) {
-      unchangedOld.add(oldIndex);
-      unchangedNew.add(newIndex);
-      oldIndex += 1;
-      newIndex += 1;
-    } else if (lengths[oldIndex + 1][newIndex] >= lengths[oldIndex][newIndex + 1]) {
-      oldIndex += 1;
-    } else {
-      newIndex += 1;
-    }
-  }
-
-  return {
-    oldChanged: new Set(oldTokens.map((_, index) => index).filter((index) => !unchangedOld.has(index))),
-    newChanged: new Set(newTokens.map((_, index) => index).filter((index) => !unchangedNew.has(index))),
-  };
-}
-
-function wordDiffParts(oldLine: string, newLine: string): { oldParts: WordPart[]; newParts: WordPart[] } {
-  const oldTokens = tokenizeForWordDiff(oldLine);
-  const newTokens = tokenizeForWordDiff(newLine);
-  const { oldChanged, newChanged } = changedWordIndexes(oldTokens, newTokens);
-
-  return {
-    oldParts: oldTokens.map((token, index) => ({
-      text: token,
-      changed: !/^\s+$/.test(token) && oldChanged.has(index),
-    })),
-    newParts: newTokens.map((token, index) => ({
-      text: token,
-      changed: !/^\s+$/.test(token) && newChanged.has(index),
-    })),
-  };
 }
 
 export function buildMovedCodeDiff(oldLines: string[], newLines: string[]) {
@@ -146,33 +85,6 @@ function sideBySideRows(lines: string[]): SideBySideMoveRow[] {
   }
 
   return rows;
-}
-
-function WordDiffText({
-  parts,
-  changedClass,
-  fallback,
-}: {
-  parts?: WordPart[];
-  changedClass: string;
-  fallback: string;
-}) {
-  if (!parts) {
-    return <>{fallback}</>;
-  }
-
-  return (
-    <>
-      {parts.map((part, partIndex) => (
-        <span
-          key={`${partIndex}:${part.text}`}
-          className={part.changed ? changedClass : undefined}
-        >
-          {part.text}
-        </span>
-      ))}
-    </>
-  );
 }
 
 function UnifiedMovedDiffCode({ lines }: { lines: string[] }) {

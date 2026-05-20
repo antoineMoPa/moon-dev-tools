@@ -3,6 +3,7 @@ import hljs from "highlight.js/lib/core";
 import diff from "highlight.js/lib/languages/diff";
 import type { MovedDiffLayout } from "../../reviewStore";
 import { parseHunkHeader } from "./hunkHeaders";
+import { WordDiffText, wordDiffParts, type WordPart } from "./wordDiff";
 
 hljs.registerLanguage("diff", diff);
 
@@ -18,6 +19,11 @@ type DiffLine = {
 type SideBySideDiffRow = {
   oldLine: DiffLine | null;
   newLine: DiffLine | null;
+};
+
+type LineWordDiff = {
+  oldParts: WordPart[];
+  newParts: WordPart[];
 };
 
 function buildDiffLines(text: string): DiffLine[] {
@@ -115,6 +121,44 @@ function diffSideBySideRows(lines: DiffLine[]) {
   return rows;
 }
 
+function pairedLineWordDiff(oldLine: DiffLine | null, newLine: DiffLine | null): LineWordDiff | null {
+  if (oldLine?.kind !== "removed" || newLine?.kind !== "added") {
+    return null;
+  }
+
+  return wordDiffParts(diffLineBody(oldLine), diffLineBody(newLine));
+}
+
+function unifiedWordDiffs(lines: DiffLine[]) {
+  const diffs = new Map<number, WordPart[]>();
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const oldLine = lines[index];
+    const newLine = lines[index + 1];
+    const wordParts = pairedLineWordDiff(oldLine, newLine);
+    if (wordParts) {
+      diffs.set(index, oldLine.kind === "removed" ? wordParts.oldParts : wordParts.newParts);
+      diffs.set(index + 1, newLine.kind === "added" ? wordParts.newParts : wordParts.oldParts);
+      index += 1;
+    }
+  }
+
+  return diffs;
+}
+
+function diffLineClass(line: DiffLine) {
+  if (line.kind === "added") {
+    return "diff-line-code diff-split-line-added";
+  }
+  if (line.kind === "removed") {
+    return "diff-line-code diff-split-line-removed";
+  }
+  if (line.kind === "header" || line.kind === "other") {
+    return "diff-line-code diff-split-line-meta";
+  }
+  return "diff-line-code";
+}
+
 function sideBySideCellClass(line: DiffLine | null, side: "old" | "new") {
   if (!line) {
     return "split-diff-cell split-diff-empty";
@@ -156,35 +200,50 @@ function SideBySideHighlightedCode({
       onMouseUp={(event) => onSelection(event.currentTarget)}
       onKeyUp={(event) => onSelection(event.currentTarget)}
     >
-      {rows.map((row, index) => (
-        <div key={`${index}:${row.oldLine?.text ?? ""}:${row.newLine?.text ?? ""}`} className="split-diff-row">
-          <button type="button" className="split-diff-gutter" aria-label="Source line">
-            {row.oldLine?.oldLineNumber ?? ""}
-          </button>
-          <div className={sideBySideCellClass(row.oldLine, "old")}>{diffLineBody(row.oldLine)}</div>
-          <button
-            type="button"
-            className={`split-diff-gutter ${row.newLine?.commentable && row.newLine.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
-            onClick={(event) => {
-              if (row.newLine?.commentable && row.newLine.newLineNumber !== null) {
-                onLineNumberClick(
-                  row.newLine.text,
-                  event.currentTarget.getBoundingClientRect(),
-                  row.newLine.newLineNumber,
-                );
+      {rows.map((row, index) => {
+        const wordParts = pairedLineWordDiff(row.oldLine, row.newLine);
+        return (
+          <div key={`${index}:${row.oldLine?.text ?? ""}:${row.newLine?.text ?? ""}`} className="split-diff-row">
+            <button type="button" className="split-diff-gutter" aria-label="Source line">
+              {row.oldLine?.oldLineNumber ?? ""}
+            </button>
+            <div className={sideBySideCellClass(row.oldLine, "old")}>
+              <WordDiffText
+                parts={wordParts?.oldParts}
+                changedClass="move-word-changed move-word-changed-removed"
+                fallback={diffLineBody(row.oldLine)}
+              />
+            </div>
+            <button
+              type="button"
+              className={`split-diff-gutter ${row.newLine?.commentable && row.newLine.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
+              onClick={(event) => {
+                if (row.newLine?.commentable && row.newLine.newLineNumber !== null) {
+                  onLineNumberClick(
+                    row.newLine.text,
+                    event.currentTarget.getBoundingClientRect(),
+                    row.newLine.newLineNumber,
+                  );
+                }
+              }}
+              aria-label={
+                row.newLine?.newLineNumber !== null && row.newLine?.newLineNumber !== undefined
+                  ? `Add comment on new line ${row.newLine.newLineNumber}`
+                  : "No destination line"
               }
-            }}
-            aria-label={
-              row.newLine?.newLineNumber !== null && row.newLine?.newLineNumber !== undefined
-                ? `Add comment on new line ${row.newLine.newLineNumber}`
-                : "No destination line"
-            }
-          >
-            {row.newLine?.newLineNumber ?? ""}
-          </button>
-          <div className={sideBySideCellClass(row.newLine, "new")}>{diffLineBody(row.newLine)}</div>
-        </div>
-      ))}
+            >
+              {row.newLine?.newLineNumber ?? ""}
+            </button>
+            <div className={sideBySideCellClass(row.newLine, "new")}>
+              <WordDiffText
+                parts={wordParts?.newParts}
+                changedClass="move-word-changed move-word-changed-added"
+                fallback={diffLineBody(row.newLine)}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -210,6 +269,7 @@ export function HighlightedCode({
     );
     return Math.max(String(maxLineNumber || 0).length, 2);
   }, [lines]);
+  const wordDiffs = useMemo(() => unifiedWordDiffs(lines), [lines]);
 
   if (layout === "side-by-side") {
     return (
@@ -252,10 +312,23 @@ export function HighlightedCode({
           >
             {line.newLineNumber ?? ""}
           </button>
-          <div
-            className="diff-line-code"
-            dangerouslySetInnerHTML={{ __html: line.highlightedHtml || "&nbsp;" }}
-          />
+          {wordDiffs.has(index) ? (
+            <div className={diffLineClass(line)}>
+              {line.text.slice(0, 1)}
+              <WordDiffText
+                parts={wordDiffs.get(index)}
+                changedClass={`move-word-changed ${
+                  line.kind === "added" ? "move-word-changed-added" : "move-word-changed-removed"
+                }`}
+                fallback={diffLineBody(line)}
+              />
+            </div>
+          ) : (
+            <div
+              className="diff-line-code"
+              dangerouslySetInnerHTML={{ __html: line.highlightedHtml || "&nbsp;" }}
+            />
+          )}
         </div>
       ))}
     </div>
