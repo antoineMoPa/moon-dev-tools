@@ -1,4 +1,4 @@
-import type { AgentKind, FileContentPayload, PatchPayload, SessionState } from "./types";
+import type { AgentKind, CommitHistoryPage, FileContentPayload, PatchPayload, SessionState } from "./types";
 
 function parseSessionId(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);
@@ -50,6 +50,11 @@ export function getSessionId(): string {
 
 export function fetchSessionState(): Promise<SessionState> {
   return request<SessionState>(`/api/session/${sessionId}/state`);
+}
+
+export function fetchCommitHistory(offset: number, limit = 30): Promise<CommitHistoryPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  return request<CommitHistoryPage>(`/api/session/${sessionId}/history?${params.toString()}`);
 }
 
 export function fetchHunkPatch(hunkId: string): Promise<PatchPayload> {

@@ -35,6 +35,11 @@ export type Commit = {
   review_status: CommitReviewStatus;
 };
 
+export type CommitHistoryPage = {
+  commits: Commit[];
+  has_more: boolean;
+};
+
 export type LocalChangeSummary = {
   modified: number;
   added: number;
@@ -92,6 +97,8 @@ export type SessionState = {
   branch_name?: string | null;
   commit_base?: string | null;
   commits: Commit[];
+  history_commits: Commit[];
+  history_has_more: boolean;
   local_change_summary: LocalChangeSummary;
   active_commit?: string | null;
   repo_path: string;

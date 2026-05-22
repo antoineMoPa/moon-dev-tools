@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { fetchCommitHistory } from "../api";
 import { ReviewView, useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
 import type { CommentDispatchStatus, Commit, SessionState, SidebarComment } from "../types";
@@ -6,6 +7,8 @@ import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 import { buildSidebarFiles, FILE_STAGE_STATUS, localChangesSummary } from "./sidebarFiles";
 import type { SidebarFileItem } from "./sidebarFiles";
+
+const HISTORY_COMMIT_PAGE_SIZE = 30;
 
 export type SidebarCommentItem = {
   id: string;
@@ -98,15 +101,51 @@ function SidebarCommitsSection({
   activeCommit,
   base,
   commits,
+  historyCommits,
+  historyHasMore,
   localSummary,
   onSelectCommit,
 }: {
   activeCommit?: string | null;
   base?: string | null;
   commits: Commit[];
+  historyCommits: Commit[];
+  historyHasMore: boolean;
   localSummary: string;
   onSelectCommit: (commit: string | null) => void;
 }) {
+  const [loadedHistoryCommits, setLoadedHistoryCommits] = useState<Commit[]>(historyCommits);
+  const [historyHasMorePages, setHistoryHasMorePages] = useState(historyHasMore);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  useEffect(() => {
+    setLoadedHistoryCommits(historyCommits);
+    setHistoryHasMorePages(historyHasMore);
+  }, [historyCommits, historyHasMore]);
+
+  function renderCommit(commit: Commit) {
+    return (
+      <div className="sidebar-commit" key={commit.sha} title={`${commit.short_sha} ${commit.subject}`}>
+        <div className="sidebar-commit-topline">
+          <button
+            className={`sidebar-commit-subject ${activeCommit === commit.sha ? "sidebar-commit-active" : ""}`.trim()}
+            type="button"
+            onClick={() => onSelectCommit(commit.sha)}
+          >
+            {commit.subject}
+          </button>
+          <span className="sidebar-commit-sha">{commit.short_sha}</span>
+        </div>
+        <p className="sidebar-commit-meta">
+          <span>{commit.author}</span>
+          <span className={`sidebar-commit-review-status ${commit.review_status}`.trim()}>
+            {commit.review_status}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
   return (
     <section className="sidebar-section sidebar-commits-section">
       <div className="sidebar-section-head">
@@ -128,26 +167,34 @@ function SidebarCommitsSection({
         </div>
         {commits.length === 0 ? (
           <p className="sidebar-empty">{base ? `No commits since ${base}.` : "No default branch found."}</p>
-        ) : commits.map((commit) => (
-          <div className="sidebar-commit" key={commit.sha} title={`${commit.short_sha} ${commit.subject}`}>
-            <div className="sidebar-commit-topline">
-              <button
-                className={`sidebar-commit-subject ${activeCommit === commit.sha ? "sidebar-commit-active" : ""}`.trim()}
-                type="button"
-                onClick={() => onSelectCommit(commit.sha)}
-              >
-                {commit.subject}
-              </button>
-              <span className="sidebar-commit-sha">{commit.short_sha}</span>
+        ) : commits.map(renderCommit)}
+        {loadedHistoryCommits.length > 0 ? (
+          <div className="sidebar-commit-history">
+            <div className="sidebar-commit-history-head">
+              <p>History</p>
+              <span>{loadedHistoryCommits.length}</span>
             </div>
-            <p className="sidebar-commit-meta">
-              <span>{commit.author}</span>
-              <span className={`sidebar-commit-review-status ${commit.review_status}`.trim()}>
-                {commit.review_status}
-              </span>
-            </p>
+            {loadedHistoryCommits.map(renderCommit)}
+            {historyHasMorePages ? (
+              <button
+                className="sidebar-commit-history-more"
+                type="button"
+                disabled={loadingHistory}
+                onClick={() => {
+                  setLoadingHistory(true);
+                  void fetchCommitHistory(loadedHistoryCommits.length, HISTORY_COMMIT_PAGE_SIZE)
+                    .then((page) => {
+                      setLoadedHistoryCommits((current) => [...current, ...page.commits]);
+                      setHistoryHasMorePages(page.has_more);
+                    })
+                    .finally(() => setLoadingHistory(false));
+                }}
+              >
+                {loadingHistory ? "Loading..." : "Show more"}
+              </button>
+            ) : null}
           </div>
-        ))}
+        ) : null}
       </div>
     </section>
   );
@@ -211,6 +258,8 @@ export function LeftSidebar({
         activeCommit={data.active_commit}
         base={data.commit_base}
         commits={data.commits}
+        historyCommits={data.history_commits}
+        historyHasMore={data.history_has_more}
         localSummary={localChangesSummary(data.local_change_summary)}
         onSelectCommit={(commit) => {
           window.scrollTo({ top: 0, left: 0, behavior: "auto" });

@@ -15,10 +15,11 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, CommitReviewStatus, CommitSelectionRequest,
-        FileContentPayload, FileQuery, FileReviewedRequest, HunkView, OpenSessionRequest,
-        PatchPayload, RepoSession, ReviewedRequest, SelectionRequest, ServerState, SessionOpened,
-        SessionPayload, bind_host, port, server_url,
+        AgentKind, AppError, AppState, CommitHistoryPayload, CommitHistoryQuery,
+        CommitReviewStatus, CommitSelectionRequest, DiffHunk, FileContentPayload, FileQuery,
+        FileReviewedRequest, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
+        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload, bind_host,
+        port, server_url,
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
@@ -27,9 +28,10 @@ use crate::{
     },
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
-        build_partial_patch_from_selection, canonicalize_repo, collect_commit_hunks, collect_hunks,
-        collect_session_hunks, current_branch_name, detect_agent_availability, preview_patch,
-        read_repo_file, run_git_no_output,
+        build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
+        commit_history_page, commit_view, current_branch_name, detect_agent_availability,
+        local_change_summary_from_status, preview_patch, read_repo_file, run_git,
+        run_git_no_output,
     },
     reviewed_cache::{
         hunk_patch_hash, mark_hunk_patch_reviewed, read_reviewed_hunk_hashes,
@@ -38,36 +40,11 @@ use crate::{
 };
 
 const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
+const HISTORY_COMMIT_PAGE_SIZE: usize = 30;
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
-
-fn commit_review_status(
-    session: &RepoSession,
-    cached_reviewed: &HashSet<String>,
-    commit: &str,
-) -> Result<CommitReviewStatus> {
-    let hunks = collect_commit_hunks(&session.repo_path, commit)?;
-    if hunks.is_empty() {
-        return Ok(CommitReviewStatus::Unreviewed);
-    }
-
-    let reviewed_count = hunks
-        .iter()
-        .filter(|hunk| {
-            session.reviewed.contains(&hunk.id)
-                || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch))
-        })
-        .count();
-    if reviewed_count == hunks.len() {
-        Ok(CommitReviewStatus::Reviewed)
-    } else if reviewed_count > 0 {
-        Ok(CommitReviewStatus::Partial)
-    } else {
-        Ok(CommitReviewStatus::Unreviewed)
-    }
-}
 
 fn diff_line_stats(patch: &str) -> (usize, usize) {
     let mut added = 0usize;
@@ -85,40 +62,6 @@ fn diff_line_stats(patch: &str) -> (usize, usize) {
     }
 
     (added, removed)
-}
-
-fn merge_file_change_kind(
-    left: crate::api::FileChangeKind,
-    right: crate::api::FileChangeKind,
-) -> crate::api::FileChangeKind {
-    if left == right {
-        left
-    } else {
-        crate::api::FileChangeKind::Modified
-    }
-}
-
-fn local_change_summary(session: &RepoSession) -> Result<crate::api::LocalChangeSummary> {
-    let mut files = HashMap::new();
-    for hunk in collect_hunks(&session.repo_path, &session.diff_target)?
-        .into_iter()
-        .filter(|hunk| !hunk.staged)
-    {
-        files
-            .entry(hunk.file_path)
-            .and_modify(|kind| *kind = merge_file_change_kind(*kind, hunk.change_kind))
-            .or_insert(hunk.change_kind);
-    }
-
-    let mut summary = crate::api::LocalChangeSummary::default();
-    for kind in files.values() {
-        match kind {
-            crate::api::FileChangeKind::Added => summary.added += 1,
-            crate::api::FileChangeKind::Deleted => summary.deleted += 1,
-            crate::api::FileChangeKind::Modified => summary.modified += 1,
-        }
-    }
-    Ok(summary)
 }
 
 pub(crate) async fn run_server() -> Result<()> {
@@ -139,6 +82,7 @@ pub(crate) async fn run_server() -> Result<()> {
         )
         .route("/api/session/open", post(open_session))
         .route("/api/session/{session_id}/state", get(session_state))
+        .route("/api/session/{session_id}/history", get(commit_history))
         .route("/api/session/{session_id}/agent", post(update_agent))
         .route("/api/session/{session_id}/commit", post(update_commit_view))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
@@ -183,6 +127,76 @@ pub(crate) async fn run_server() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal(last_activity))
         .await
         .context("server failed")
+}
+
+fn branch_commit_shas(commits: &[crate::api::CommitView]) -> HashSet<String> {
+    commits.iter().map(|commit| commit.sha.clone()).collect()
+}
+
+fn review_status_for_hunks(
+    session: &RepoSession,
+    cached_reviewed: &HashSet<String>,
+    hunks: &[DiffHunk],
+) -> CommitReviewStatus {
+    if hunks.is_empty() {
+        return CommitReviewStatus::Unreviewed;
+    }
+
+    let reviewed_count = hunks
+        .iter()
+        .filter(|hunk| {
+            session.reviewed.contains(&hunk.id)
+                || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch))
+        })
+        .count();
+
+    if reviewed_count == hunks.len() {
+        CommitReviewStatus::Reviewed
+    } else if reviewed_count > 0 {
+        CommitReviewStatus::Partial
+    } else {
+        CommitReviewStatus::Unreviewed
+    }
+}
+
+fn apply_commit_status(
+    commits: &mut [crate::api::CommitView],
+    commit_sha: &str,
+    status: CommitReviewStatus,
+) {
+    if let Some(commit) = commits.iter_mut().find(|commit| commit.sha == commit_sha) {
+        commit.review_status = status;
+    }
+}
+
+fn apply_cached_commit_statuses(session: &RepoSession, commits: &mut [crate::api::CommitView]) {
+    for commit in commits {
+        if let Some(status) = session.commit_statuses.get(&commit.sha) {
+            commit.review_status = *status;
+        }
+    }
+}
+
+fn ensure_active_commit_visible(
+    repo_path: &std::path::Path,
+    commits: &[crate::api::CommitView],
+    history_commits: &mut Vec<crate::api::CommitView>,
+    active_commit: Option<&str>,
+) -> Result<()> {
+    let Some(active_commit) = active_commit else {
+        return Ok(());
+    };
+    if commits.iter().any(|commit| commit.sha == active_commit)
+        || history_commits
+            .iter()
+            .any(|commit| commit.sha == active_commit)
+    {
+        return Ok(());
+    }
+    if let Some(commit) = commit_view(repo_path, active_commit)? {
+        history_commits.insert(0, commit);
+    }
+    Ok(())
 }
 
 async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
@@ -288,6 +302,7 @@ async fn open_session(
                     comments: HashMap::new(),
                     comment_contexts: HashMap::new(),
                     reviewed: HashSet::new(),
+                    commit_statuses: HashMap::new(),
                     selected_agent: AgentKind::None,
                     comment_dispatches: HashMap::new(),
                 },
@@ -310,10 +325,29 @@ async fn session_state(
         let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
         let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
         let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
-        for commit in &mut commits {
-            commit.review_status = commit_review_status(session, &cached_reviewed, &commit.sha)?;
+        let (mut history_commits, history_has_more) = commit_history_page(
+            &session.repo_path,
+            &branch_commit_shas(&commits),
+            0,
+            HISTORY_COMMIT_PAGE_SIZE,
+        )?;
+        ensure_active_commit_visible(
+            &session.repo_path,
+            &commits,
+            &mut history_commits,
+            session.active_commit.as_deref(),
+        )?;
+        apply_cached_commit_statuses(session, &mut commits);
+        apply_cached_commit_statuses(session, &mut history_commits);
+        if let Some(active_commit) = session.active_commit.as_deref() {
+            let active_commit_status = review_status_for_hunks(session, &cached_reviewed, &hunks);
+            session
+                .commit_statuses
+                .insert(active_commit.to_string(), active_commit_status);
+            apply_commit_status(&mut commits, active_commit, active_commit_status);
+            apply_commit_status(&mut history_commits, active_commit, active_commit_status);
         }
-        let local_change_summary = local_change_summary(session)?;
+        let local_change_summary = local_change_summary_from_status(&session.repo_path)?;
         let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
         let views = hunks
             .into_iter()
@@ -361,6 +395,8 @@ async fn session_state(
             branch_name: current_branch_name(&session.repo_path)?,
             commit_base,
             commits,
+            history_commits,
+            history_has_more,
             local_change_summary,
             active_commit: session.active_commit.clone(),
             repo_path: session.repo_path.display().to_string(),
@@ -375,6 +411,29 @@ async fn session_state(
     })?;
 
     Ok(Json(session))
+}
+
+async fn commit_history(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<CommitHistoryQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<CommitHistoryPayload>, AppError> {
+    mark_activity(&state);
+    let payload = crate::api::with_session(&state, &session_id, |session| {
+        let (_, commits) = branch_commits_since_default(&session.repo_path)?;
+        let limit = query.limit.unwrap_or(HISTORY_COMMIT_PAGE_SIZE).min(100);
+        let (mut commits, has_more) = commit_history_page(
+            &session.repo_path,
+            &branch_commit_shas(&commits),
+            query.offset.unwrap_or(0),
+            limit,
+        )?;
+        apply_cached_commit_statuses(session, &mut commits);
+
+        Ok(CommitHistoryPayload { commits, has_more })
+    })?;
+
+    Ok(Json(payload))
 }
 
 async fn update_agent(
@@ -406,7 +465,8 @@ async fn update_commit_view(
             .clone()
             .filter(|commit| !commit.trim().is_empty());
         if let Some(commit) = &session.active_commit {
-            let _ = collect_session_hunks(session)
+            let commit_ref = format!("{commit}^{{commit}}");
+            let _ = run_git(&session.repo_path, &["rev-parse", "--verify", &commit_ref])
                 .with_context(|| format!("failed to load commit {commit}"))?;
         }
         Ok(())

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -165,11 +166,67 @@ pub(crate) fn branch_commits_since_default(
     Ok((Some(base_ref), commits))
 }
 
+pub(crate) fn commit_history_page(
+    repo_path: &Path,
+    excluded_shas: &HashSet<String>,
+    offset: usize,
+    limit: usize,
+) -> Result<(Vec<CommitView>, bool)> {
+    if limit == 0 {
+        return Ok((Vec::new(), false));
+    }
+
+    let format = "%H%x1f%h%x1f%an%x1f%s";
+    let output = run_git(repo_path, &["log", &format!("--format={format}")])?;
+    let mut skipped = 0usize;
+    let mut commits = Vec::new();
+    let mut has_more = false;
+
+    for commit in output.lines().filter_map(parse_commit_view) {
+        if excluded_shas.contains(&commit.sha) {
+            continue;
+        }
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        if commits.len() >= limit {
+            has_more = true;
+            break;
+        }
+        commits.push(commit);
+    }
+
+    Ok((commits, has_more))
+}
+
+pub(crate) fn commit_view(repo_path: &Path, commit: &str) -> Result<Option<CommitView>> {
+    if commit.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let format = "%H%x1f%h%x1f%an%x1f%s";
+    let output = run_git_allow_status(
+        repo_path,
+        &["show", "-s", &format!("--format={format}"), commit],
+        &[0, 128],
+    )?;
+    Ok(output.lines().find_map(parse_commit_view))
+}
+
 fn default_branch_ref(repo_path: &Path) -> Result<Option<String>> {
+    if let Some(origin_head) = origin_head_ref(repo_path)? {
+        return Ok(Some(origin_head));
+    }
+
     if let Some(upstream) = current_branch_upstream_ref(repo_path)? {
         return Ok(Some(upstream));
     }
 
+    Ok(None)
+}
+
+fn origin_head_ref(repo_path: &Path) -> Result<Option<String>> {
     let origin_head = run_git_allow_status(
         repo_path,
         &[
@@ -375,6 +432,30 @@ fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
             .map(ToOwned::to_owned)
             .collect(),
     )
+}
+
+pub(crate) fn local_change_summary_from_status(
+    repo_path: &Path,
+) -> Result<crate::api::LocalChangeSummary> {
+    let status = run_git(repo_path, &["status", "--porcelain"])?;
+    let mut summary = crate::api::LocalChangeSummary::default();
+
+    for line in status.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+
+        let status_code = &line[..2];
+        if status_code == "??" || status_code.contains('A') {
+            summary.added += 1;
+        } else if status_code.contains('D') {
+            summary.deleted += 1;
+        } else {
+            summary.modified += 1;
+        }
+    }
+
+    Ok(summary)
 }
 
 fn parse_submodule_status_path(line: &str) -> Option<&str> {
@@ -682,6 +763,7 @@ mod tests {
             comments: HashMap::new(),
             comment_contexts: HashMap::new(),
             reviewed: HashSet::new(),
+            commit_statuses: HashMap::new(),
             selected_agent: AgentKind::None,
             comment_dispatches: HashMap::new(),
         }
@@ -759,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn branch_commits_since_default_prefers_current_branch_upstream() {
+    fn branch_commits_since_default_prefers_origin_head_over_current_branch_upstream() {
         // Arrange
         let temp = TestDir::new();
         let repo_root = temp.path.join("repo");
@@ -770,12 +852,13 @@ mod tests {
         run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add file");
         run_git_no_output(&repo_root, &["commit", "-m", "initial"])
             .expect("failed to commit initial file");
-        let main_head = run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
+        let default_head =
+            run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
         run_git_no_output(&repo_root, &["remote", "add", "origin", "."])
             .expect("failed to add remote");
         run_git_no_output(
             &repo_root,
-            &["update-ref", "refs/remotes/origin/main", main_head.trim()],
+            &["update-ref", "refs/remotes/origin/dev", default_head.trim()],
         )
         .expect("failed to create remote default ref");
         run_git_no_output(
@@ -783,7 +866,7 @@ mod tests {
             &[
                 "symbolic-ref",
                 "refs/remotes/origin/HEAD",
-                "refs/remotes/origin/main",
+                "refs/remotes/origin/dev",
             ],
         )
         .expect("failed to set remote default ref");
@@ -799,6 +882,62 @@ mod tests {
             .expect("failed to add second change");
         run_git_no_output(&repo_root, &["commit", "-m", "second change"])
             .expect("failed to commit second change");
+        let feature_head =
+            run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read feature HEAD");
+        run_git_no_output(
+            &repo_root,
+            &[
+                "update-ref",
+                "refs/remotes/origin/feature",
+                feature_head.trim(),
+            ],
+        )
+        .expect("failed to create remote feature ref");
+        run_git_no_output(&repo_root, &["config", "branch.feature.remote", "origin"])
+            .expect("failed to configure upstream remote");
+        run_git_no_output(
+            &repo_root,
+            &["config", "branch.feature.merge", "refs/heads/feature"],
+        )
+        .expect("failed to configure upstream branch");
+
+        // Act
+        let (base, commits) =
+            branch_commits_since_default(&repo_root).expect("failed to collect commits");
+
+        // Assert
+        assert_eq!(base.as_deref(), Some("origin/dev"));
+        assert_eq!(
+            commits
+                .iter()
+                .map(|commit| commit.subject.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second change", "first change"]
+        );
+    }
+
+    #[test]
+    fn branch_commits_since_default_falls_back_to_current_branch_upstream() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        let file_path = repo_root.join("example.txt");
+        fs::write(&file_path, "base\n").expect("failed to write initial file");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add file");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial"])
+            .expect("failed to commit initial file");
+
+        run_git_no_output(&repo_root, &["remote", "add", "origin", "."])
+            .expect("failed to add remote");
+        run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
+            .expect("failed to create feature branch");
+        fs::write(&file_path, "base\none\n").expect("failed to write feature change");
+        run_git_no_output(&repo_root, &["add", "example.txt"])
+            .expect("failed to add feature change");
+        run_git_no_output(&repo_root, &["commit", "-m", "feature change"])
+            .expect("failed to commit feature change");
         let feature_head =
             run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read feature HEAD");
         run_git_no_output(

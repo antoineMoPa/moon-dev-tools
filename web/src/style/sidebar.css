@@ -14,16 +14,6 @@
   min-width: 0;
 }
 
-.sidebar-commits-section {
-  opacity: 0.3;
-  transition: opacity 0.2s;
-}
-
-.sidebar-commits-section:hover,
-.sidebar-commits-section:focus-within {
-  opacity: 1;
-}
-
 .sidebar-file-group {
   display: grid;
   gap: 0.45rem;
@@ -231,6 +221,51 @@
   display: grid;
   gap: 0.22rem;
   min-width: 0;
+}
+
+.sidebar-commit-history {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  opacity: 0.3;
+  transition: opacity 0.2s;
+}
+
+.sidebar-commit-history:hover,
+.sidebar-commit-history:focus-within {
+  opacity: 1;
+}
+
+.sidebar-commit-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sidebar-commit-history-head p {
+  margin: 0;
+}
+
+.sidebar-commit-history-more {
+  justify-self: start;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+
+.sidebar-commit-history-more:active:not(:disabled) {
+  background: transparent;
+  transform: none;
 }
 
 .sidebar-commit-topline {

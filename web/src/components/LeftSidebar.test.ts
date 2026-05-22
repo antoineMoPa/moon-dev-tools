@@ -27,6 +27,8 @@ function makeSession(hunks: Hunk[]): SessionState {
     branch_name: "main",
     commit_base: "origin/main",
     commits: [],
+    history_commits: [],
+    history_has_more: false,
     local_change_summary: { modified: 0, added: 0, deleted: 0 },
     repo_path: "/repo",
     read_only: false,

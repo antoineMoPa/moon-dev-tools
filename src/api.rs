@@ -70,6 +70,7 @@ pub(crate) struct RepoSession {
     pub(crate) comments: HashMap<String, String>,
     pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
     pub(crate) reviewed: HashSet<String>,
+    pub(crate) commit_statuses: HashMap<String, CommitReviewStatus>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
 }
@@ -91,6 +92,8 @@ pub(crate) struct SessionPayload {
     pub(crate) branch_name: Option<String>,
     pub(crate) commit_base: Option<String>,
     pub(crate) commits: Vec<CommitView>,
+    pub(crate) history_commits: Vec<CommitView>,
+    pub(crate) history_has_more: bool,
     pub(crate) local_change_summary: LocalChangeSummary,
     pub(crate) active_commit: Option<String>,
     pub(crate) repo_path: String,
@@ -101,6 +104,12 @@ pub(crate) struct SessionPayload {
     pub(crate) hunks: Vec<HunkView>,
     pub(crate) sidebar_comments: Vec<SidebarCommentView>,
     pub(crate) export_text: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct CommitHistoryPayload {
+    pub(crate) commits: Vec<CommitView>,
+    pub(crate) has_more: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize)]
@@ -268,6 +277,12 @@ pub(crate) struct FileRequest {
 #[derive(Deserialize)]
 pub(crate) struct FileQuery {
     pub(crate) file_path: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CommitHistoryQuery {
+    pub(crate) offset: Option<usize>,
+    pub(crate) limit: Option<usize>,
 }
 
 #[derive(Deserialize)]
