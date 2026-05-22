@@ -46,6 +46,24 @@ export type LocalChangeSummary = {
   deleted: number;
 };
 
+export type ExecutiveSummaryItem = {
+  file_path: string;
+  label: string;
+  reason: string;
+  byte_size?: number | null;
+  line_count?: number | null;
+  added_line_count: number;
+  removed_line_count: number;
+  hunk_count: number;
+};
+
+export type ExecutiveSummary = {
+  large_files: ExecutiveSummaryItem[];
+  large_new_files: ExecutiveSummaryItem[];
+  hotspots: ExecutiveSummaryItem[];
+  complexity_hints: ExecutiveSummaryItem[];
+};
+
 export type Hunk = {
   id: string;
   file_path: string;
@@ -100,6 +118,7 @@ export type SessionState = {
   history_commits: Commit[];
   history_has_more: boolean;
   local_change_summary: LocalChangeSummary;
+  executive_summary?: ExecutiveSummary | null;
   active_commit?: string | null;
   repo_path: string;
   read_only: boolean;

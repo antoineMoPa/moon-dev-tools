@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ReviewView, useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "../diffStats";
@@ -14,6 +14,7 @@ type HunksProps = {
   selectedFilePath?: string | null;
   targetFilePath?: string | null;
   targetHunkId?: string | null;
+  header?: ReactNode;
 };
 
 type FileGroup = {
@@ -198,6 +199,7 @@ export function Hunks({
   selectedFilePath,
   targetFilePath,
   targetHunkId,
+  header,
 }: HunksProps) {
   const {
     state: { activeHunkId, activeView, busy, data },
@@ -399,6 +401,7 @@ export function Hunks({
 
   return (
     <div className="hunk-sections">
+      {header}
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setUnstagedOpen((open) => !open)}>
           <h2>{firstSectionTitle}</h2>

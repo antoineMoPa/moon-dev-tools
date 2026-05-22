@@ -95,6 +95,7 @@ pub(crate) struct SessionPayload {
     pub(crate) history_commits: Vec<CommitView>,
     pub(crate) history_has_more: bool,
     pub(crate) local_change_summary: LocalChangeSummary,
+    pub(crate) executive_summary: Option<ExecutiveSummary>,
     pub(crate) active_commit: Option<String>,
     pub(crate) repo_path: String,
     pub(crate) read_only: bool,
@@ -104,6 +105,26 @@ pub(crate) struct SessionPayload {
     pub(crate) hunks: Vec<HunkView>,
     pub(crate) sidebar_comments: Vec<SidebarCommentView>,
     pub(crate) export_text: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub(crate) struct ExecutiveSummary {
+    pub(crate) large_files: Vec<ExecutiveSummaryItem>,
+    pub(crate) large_new_files: Vec<ExecutiveSummaryItem>,
+    pub(crate) hotspots: Vec<ExecutiveSummaryItem>,
+    pub(crate) complexity_hints: Vec<ExecutiveSummaryItem>,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct ExecutiveSummaryItem {
+    pub(crate) file_path: String,
+    pub(crate) label: String,
+    pub(crate) reason: String,
+    pub(crate) byte_size: Option<usize>,
+    pub(crate) line_count: Option<usize>,
+    pub(crate) added_line_count: usize,
+    pub(crate) removed_line_count: usize,
+    pub(crate) hunk_count: usize,
 }
 
 #[derive(Serialize)]

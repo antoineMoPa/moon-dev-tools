@@ -4,6 +4,7 @@ import "highlight.js/styles/github.css";
 import { toast, Toaster } from "sonner";
 import "./app.css";
 import "./fullFileView.css";
+import { ExecutiveSummary } from "./components/ExecutiveSummary";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -344,6 +345,11 @@ function AppContentInner() {
             ) : (
               <>
                 <Hunks
+                  header={
+                    activeView === ReviewView.All && !data.active_commit ? (
+                      <ExecutiveSummary summary={data.executive_summary} onJumpToFile={jumpToFile} />
+                    ) : null
+                  }
                   hunks={data.hunks}
                   agents={data.available_agents}
                   selectedAgent={data.selected_agent}

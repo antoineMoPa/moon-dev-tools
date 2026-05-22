@@ -26,6 +26,7 @@ use crate::{
         build_export_text, build_sidebar_comments, comment_dispatch_view, parse_anchored_comments,
         plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
+    executive_summary::build_executive_summary,
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
         build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
@@ -349,6 +350,11 @@ async fn session_state(
         }
         let local_change_summary = local_change_summary_from_status(&session.repo_path)?;
         let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
+        let executive_summary = if !read_only {
+            Some(build_executive_summary(&session.repo_path, &hunks)?)
+        } else {
+            None
+        };
         let views = hunks
             .into_iter()
             .map(|hunk| {
@@ -398,6 +404,7 @@ async fn session_state(
             history_commits,
             history_has_more,
             local_change_summary,
+            executive_summary,
             active_commit: session.active_commit.clone(),
             repo_path: session.repo_path.display().to_string(),
             read_only,

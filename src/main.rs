@@ -2,6 +2,7 @@ mod agent;
 mod api;
 mod cli;
 mod comments;
+mod executive_summary;
 mod git;
 mod moved_hunks;
 mod reviewed_cache;

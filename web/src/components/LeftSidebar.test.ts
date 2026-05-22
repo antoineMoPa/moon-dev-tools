@@ -30,6 +30,7 @@ function makeSession(hunks: Hunk[]): SessionState {
     history_commits: [],
     history_has_more: false,
     local_change_summary: { modified: 0, added: 0, deleted: 0 },
+    executive_summary: null,
     repo_path: "/repo",
     read_only: false,
     patch_preview_line_limit: 200,
