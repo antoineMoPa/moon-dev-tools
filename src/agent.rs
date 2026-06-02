@@ -1,20 +1,32 @@
 use std::{
     io::Read,
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
+    time::Duration,
 };
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{api::AgentKind, comments::DispatchJob};
 
 pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
+    if job.cancel_token.load(Ordering::SeqCst) {
+        bail!("agent dispatch stopped");
+    }
+
     let prompt = build_agent_prompt(job);
     match job.agent {
         AgentKind::None => Ok(String::new()),
-        AgentKind::Claude => run_claude(prompt, &job.repo_path),
-        AgentKind::Codex => run_codex(prompt, &job.repo_path),
+        AgentKind::Claude => run_claude(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
+        AgentKind::Codex => run_codex(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
     }
 }
 
@@ -70,13 +82,13 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
     prompt
 }
 
-fn run_claude(prompt: String, repo_path: &Path) -> Result<String> {
-    let output = Command::new("claude")
+fn run_claude(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+    let mut command = Command::new("claude");
+    command
         .current_dir(repo_path)
-        .args(["-p", "--permission-mode", "bypassPermissions"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .args(["-p", "--permission-mode", "bypassPermissions"]);
+    configure_agent_command(&mut command);
+    let output = command
         .spawn()
         .context("failed to start Claude")?
         .wait_with_streamed_output_from_stdin(
@@ -84,18 +96,19 @@ fn run_claude(prompt: String, repo_path: &Path) -> Result<String> {
             "failed to write prompt to Claude",
             "[moonreview] Claude stdout: ",
             "[moonreview] Claude stderr: ",
+            cancel_token,
         )?;
 
     summarize_agent_output("Claude", output)
 }
 
-fn run_codex(prompt: String, repo_path: &Path) -> Result<String> {
-    let output = Command::new("codex")
+fn run_codex(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+    let mut command = Command::new("codex");
+    command
         .current_dir(repo_path)
-        .args(["exec", "--full-auto", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .args(["exec", "--full-auto", "-"]);
+    configure_agent_command(&mut command);
+    let output = command
         .spawn()
         .context("failed to start Codex")?
         .wait_with_streamed_output_from_stdin(
@@ -103,9 +116,27 @@ fn run_codex(prompt: String, repo_path: &Path) -> Result<String> {
             "failed to write prompt to Codex",
             "[moonreview] Codex stdout: ",
             "[moonreview] Codex stderr: ",
+            cancel_token,
         )?;
 
     summarize_agent_output("Codex", output)
+}
+
+fn configure_agent_command(command: &mut Command) {
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }
 
 fn summarize_agent_output(agent: &str, output: std::process::Output) -> Result<String> {
@@ -154,6 +185,7 @@ pub(crate) trait ChildExt {
         write_error: &str,
         stdout_prefix: &'static str,
         stderr_prefix: &'static str,
+        cancel_token: Arc<AtomicBool>,
     ) -> Result<std::process::Output>;
 }
 
@@ -178,6 +210,7 @@ impl ChildExt for std::process::Child {
         write_error: &str,
         stdout_prefix: &'static str,
         stderr_prefix: &'static str,
+        cancel_token: Arc<AtomicBool>,
     ) -> Result<std::process::Output> {
         use std::io::Write;
 
@@ -198,7 +231,16 @@ impl ChildExt for std::process::Child {
         let stdout_thread = thread::spawn(move || stream_reader(stdout, stdout_prefix));
         let stderr_thread = thread::spawn(move || stream_reader(stderr, stderr_prefix));
 
-        let status = self.wait().context("failed to wait for process")?;
+        let status = loop {
+            if cancel_token.load(Ordering::SeqCst) {
+                let _ = stop_process_group(&mut self);
+                break self.wait().context("failed to wait for stopped process")?;
+            }
+            if let Some(status) = self.try_wait().context("failed to wait for process")? {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(100));
+        };
         let stdout = stdout_thread
             .join()
             .map_err(|_| anyhow!("stdout stream thread panicked"))??;
@@ -212,6 +254,22 @@ impl ChildExt for std::process::Child {
             stderr,
         })
     }
+}
+
+#[cfg(unix)]
+fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
+    let pid = child.id() as libc::pid_t;
+    let group_result = unsafe { libc::kill(-pid, libc::SIGKILL) };
+    if group_result == -1 {
+        child.kill()
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(unix))]
+fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
+    child.kill()
 }
 
 fn stream_reader<R: Read>(mut reader: R, prefix: &'static str) -> Result<Vec<u8>> {
@@ -232,4 +290,81 @@ fn stream_reader<R: Read>(mut reader: R, prefix: &'static str) -> Result<Vec<u8>
     }
 
     Ok(collected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn wait_with_streamed_output_from_stdin_captures_stdout_and_stderr() {
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        let output = Command::new("sh")
+            .args([
+                "-c",
+                "cat >/dev/null; printf stdout-value; printf stderr-value >&2",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn test shell")
+            .wait_with_streamed_output_from_stdin(
+                b"input",
+                "write stdin",
+                "[test] stdout: ",
+                "[test] stderr: ",
+                cancel_token,
+            )
+            .expect("wait for child");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"stdout-value");
+        assert_eq!(output.stderr, b"stderr-value");
+    }
+
+    #[test]
+    fn wait_with_streamed_output_from_stdin_kills_cancelled_child() {
+        let cancel_token = Arc::new(AtomicBool::new(true));
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 10 & wait"]);
+        configure_agent_command(&mut command);
+
+        let output = command
+            .spawn()
+            .expect("spawn test shell")
+            .wait_with_streamed_output_from_stdin(
+                b"",
+                "write stdin",
+                "[test] stdout: ",
+                "[test] stderr: ",
+                cancel_token,
+            )
+            .expect("wait for stopped child");
+
+        assert!(!output.status.success());
+    }
+
+    #[test]
+    fn wait_with_streamed_output_from_stdin_kills_cancelled_descendant() {
+        let cancel_token = Arc::new(AtomicBool::new(true));
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 10 &"]);
+        configure_agent_command(&mut command);
+
+        let output = command
+            .spawn()
+            .expect("spawn test shell")
+            .wait_with_streamed_output_from_stdin(
+                b"",
+                "write stdin",
+                "[test] stdout: ",
+                "[test] stderr: ",
+                cancel_token,
+            )
+            .expect("wait for stopped child process group");
+
+        assert!(!output.status.success());
+    }
 }

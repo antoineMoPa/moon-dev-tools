@@ -142,6 +142,13 @@ export function sendCommentBatch(): Promise<string> {
   });
 }
 
+export function cancelCommentDispatch(hunkId: string, commentIndex: number): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/comment-dispatch/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ hunk_id: hunkId, comment_index: commentIndex }),
+  });
+}
+
 export function updateAgent(agent: AgentKind): Promise<string> {
   return request<string>(`/api/session/${sessionId}/agent`, {
     method: "POST",

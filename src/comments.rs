@@ -1,13 +1,21 @@
-use std::{collections::HashSet, path::PathBuf, thread};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+};
 
 use anyhow::{Result, anyhow};
 
 use crate::{
     agent::run_agent_dispatch,
     api::{
-        AgentKind, AppState, CommentDispatchStatus, CommentDispatchView, CommentRequest, DiffHunk,
-        HunkCommentContext, HunkView, RepoSession, SidebarCommentView, export_server_url,
-        server_url, with_session,
+        AgentKind, AppState, CancelToken, CommentDispatchStatus, CommentDispatchView,
+        CommentRequest, DiffHunk, HunkCommentContext, HunkView, RepoSession, SidebarCommentView,
+        export_server_url, server_url, with_session,
     },
     git::collect_session_hunks,
 };
@@ -22,6 +30,7 @@ const ANCHOR_CLOSE: &str = "[[/mr-anchor]]";
 pub(crate) struct CommentDispatchState {
     pub(crate) status: CommentDispatchStatus,
     pub(crate) detail: String,
+    pub(crate) cancel_token: Option<CancelToken>,
 }
 
 pub(crate) struct AnchoredComment {
@@ -52,6 +61,7 @@ pub(crate) struct DispatchJob {
     pub(crate) ui_url: String,
     pub(crate) agent: AgentKind,
     pub(crate) targets: Vec<DispatchTarget>,
+    pub(crate) cancel_token: CancelToken,
 }
 
 pub(crate) fn build_anchored_comment_value(comments: &[AnchoredComment]) -> String {
@@ -166,6 +176,7 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
                 };
                 dispatch.status = CommentDispatchStatus::Running;
                 dispatch.detail = format!("Running in {}.", job.agent.label());
+                dispatch.cancel_token = Some(Arc::clone(&job.cancel_token));
             }
             Ok(())
         });
@@ -177,6 +188,7 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
             job.targets.len(),
         );
         let result = run_agent_dispatch(&job);
+        let canceled = job.cancel_token.load(Ordering::SeqCst);
         match &result {
             Ok(detail) => eprintln!(
                 "[moonreview] dispatch done agent={} comments={} detail={}",
@@ -199,6 +211,12 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
                 else {
                     continue;
                 };
+                dispatch.cancel_token = None;
+                if canceled {
+                    dispatch.status = CommentDispatchStatus::Canceled;
+                    dispatch.detail = format!("Stopped {}.", job.agent.label());
+                    continue;
+                }
                 match &result {
                     Ok(detail) => {
                         dispatch.status = CommentDispatchStatus::Completed;
@@ -214,6 +232,36 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
             Ok(())
         });
     });
+}
+
+pub(crate) fn cancel_comment_dispatch(
+    session: &mut RepoSession,
+    hunk_id: &str,
+    comment_index: usize,
+) -> Result<()> {
+    let Some(existing) = session.comments.get(hunk_id) else {
+        return Err(anyhow!("comment no longer exists"));
+    };
+    let anchored = parse_anchored_comments(existing);
+    let Some(entry) = anchored.get(comment_index) else {
+        return Err(anyhow!("comment index is out of bounds"));
+    };
+    let dispatch_key = dispatch_key(hunk_id, entry);
+    let Some(dispatch) = session.comment_dispatches.get_mut(&dispatch_key) else {
+        return Err(anyhow!("agent dispatch no longer exists"));
+    };
+
+    match dispatch.status {
+        CommentDispatchStatus::Queued | CommentDispatchStatus::Running => {
+            let Some(cancel_token) = &dispatch.cancel_token else {
+                return Err(anyhow!("agent dispatch cannot be stopped yet"));
+            };
+            cancel_token.store(true, Ordering::SeqCst);
+            dispatch.detail = "Stopping agent.".to_string();
+            Ok(())
+        }
+        _ => Err(anyhow!("agent dispatch is not running")),
+    }
 }
 
 pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String {
@@ -409,12 +457,21 @@ pub(crate) fn plan_batched_comment_dispatches(
         return Ok(Vec::new());
     }
 
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    for target in &targets {
+        let dispatch_key = format!("{}:{}", target.hunk_id, target.comment_key);
+        if let Some(dispatch) = session.comment_dispatches.get_mut(&dispatch_key) {
+            dispatch.cancel_token = Some(Arc::clone(&cancel_token));
+        }
+    }
+
     Ok(vec![DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
         ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets,
+        cancel_token,
     }])
 }
 
@@ -502,9 +559,15 @@ fn queue_dispatch_job(
     } else {
         format!("Queued for {}.", session.selected_agent.label())
     };
-    session
-        .comment_dispatches
-        .insert(dispatch_key, CommentDispatchState { status, detail });
+    let cancel_token = (!request.batch).then(|| Arc::new(AtomicBool::new(false)));
+    session.comment_dispatches.insert(
+        dispatch_key,
+        CommentDispatchState {
+            status,
+            detail,
+            cancel_token: cancel_token.as_ref().map(Arc::clone),
+        },
+    );
 
     if request.batch {
         return None;
@@ -516,6 +579,7 @@ fn queue_dispatch_job(
         &request.hunk_id,
         hunk,
         entry,
+        cancel_token.expect("non-batch dispatch has a cancel token"),
     ))
 }
 
@@ -525,6 +589,7 @@ fn build_dispatch_job(
     hunk_id: &str,
     hunk: &DiffHunk,
     entry: &AnchoredComment,
+    cancel_token: CancelToken,
 ) -> DispatchJob {
     DispatchJob {
         session_id: session_id.to_string(),
@@ -532,6 +597,7 @@ fn build_dispatch_job(
         ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets: vec![build_dispatch_target(hunk_id, hunk, entry)],
+        cancel_token,
     }
 }
 
@@ -561,7 +627,10 @@ pub(crate) fn comment_dispatch_view(
         .map(|dispatch| CommentDispatchView {
             status: dispatch.status,
             detail: dispatch.detail.clone(),
-            can_cancel: false,
+            can_cancel: matches!(
+                dispatch.status,
+                CommentDispatchStatus::Queued | CommentDispatchStatus::Running
+            ),
         })
         .unwrap_or_default()
 }

@@ -21,12 +21,14 @@ export function InlineCommentCard({ id, segment }: InlineCommentCardProps) {
     onStartEditing,
     onSave,
     onDelete,
+    onCancelDispatch,
     onEditingCommentValueChange,
   } = useHunkCommentContext();
   const dispatch = getDispatch(segment.index);
   const editing = editingCommentIndex === segment.index;
   const resolvedClassName = segment.resolved ? "resolved" : "";
   const showDispatch = dispatch && dispatch.status !== HIDDEN_DISPATCH_STATUS;
+  const canStopDispatch = dispatch?.can_cancel ?? false;
 
   return (
     <div id={id} className="inline-comment-card">
@@ -43,7 +45,17 @@ export function InlineCommentCard({ id, segment }: InlineCommentCardProps) {
           ) : (
             <button onClick={() => onStartEditing(segment.index)}>Edit</button>
           )}
-          <button onClick={() => onDelete(segment.index)}>Delete</button>
+          {canStopDispatch ? (
+            <button
+              type="button"
+              aria-label={`Stop ${dispatch?.status ?? "active"} agent dispatch`}
+              onClick={() => onCancelDispatch(segment.index)}
+            >
+              Stop agent
+            </button>
+          ) : (
+            <button onClick={() => onDelete(segment.index)}>Delete comment</button>
+          )}
         </div>
       </div>
       {showDispatch ? (

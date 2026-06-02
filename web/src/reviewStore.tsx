@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useReducer } from "react
 import { toast } from "sonner";
 import { ApiError, getSessionId } from "./api";
 import {
+  cancelCommentDispatch as cancelCommentDispatchRequest,
   discardHunk as discardHunkRequest,
   discardHunks as discardHunksRequest,
   fetchSessionState,
@@ -62,6 +63,7 @@ type ReviewStoreValue = {
     saveComment: (hunkId: string, comment: string, batch?: boolean) => Promise<void>;
     setBatchDraftComments: (value: boolean) => void;
     sendCommentBatch: () => Promise<void>;
+    cancelCommentDispatch: (hunkId: string, commentIndex: number) => Promise<void>;
     setAgent: (agent: AgentKind) => Promise<void>;
     setActiveView: (view: ReviewView) => void;
     setActiveHunkId: (hunkId: string | null) => void;
@@ -411,6 +413,9 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         setBatchDraftComments,
         sendCommentBatch: async () => {
           await mutate(() => sendCommentBatchRequest());
+        },
+        cancelCommentDispatch: async (hunkId, commentIndex) => {
+          await mutate(() => cancelCommentDispatchRequest(hunkId, commentIndex));
         },
         setAgent: async (agent) => {
           await mutate(() => updateAgentRequest(agent));

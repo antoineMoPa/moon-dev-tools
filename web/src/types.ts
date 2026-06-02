@@ -5,6 +5,7 @@ export const COMMENT_DISPATCH_STATUS = {
   batched: "batched",
   queued: "queued",
   running: "running",
+  canceled: "canceled",
   completed: "completed",
   failed: "failed",
 } as const;

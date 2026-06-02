@@ -16,6 +16,7 @@ export type HunkCommentContextValue = {
   onStartEditing: (index: number) => void;
   onSave: (index: number) => void;
   onDelete: (index: number) => void;
+  onCancelDispatch: (index: number) => void;
   onEditingCommentValueChange: Dispatch<SetStateAction<string>>;
   getDraft: (draftId: string) => DraftComment | null;
   onDraftNoteChange: (draftId: string, value: string) => void;

@@ -183,6 +183,10 @@ export function useHunkComments({
     persistAnchoredComments(nextAnchored);
   }
 
+  function cancelCommentDispatch(index: number) {
+    void actions.cancelCommentDispatch(hunk.id, index);
+  }
+
   const commentContextValue = useMemo(
     () => ({
       agents,
@@ -195,6 +199,7 @@ export function useHunkComments({
       onStartEditing: startEditingComment,
       onSave: saveEditedComment,
       onDelete: deleteComment,
+      onCancelDispatch: cancelCommentDispatch,
       onEditingCommentValueChange: setEditingCommentValue,
       getDraft: getAttachedDraft,
       onDraftNoteChange: (draftId: string, value: string) => {
@@ -233,6 +238,7 @@ export function useHunkComments({
       editingCommentValue,
       batchDraftComments,
       hunk.comment_dispatches,
+      hunk.id,
       hunk.file_path,
       hunk.header,
       onAgentChange,

@@ -3,7 +3,7 @@ use std::{
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::Instant,
 };
 
@@ -231,6 +231,7 @@ pub(crate) enum CommentDispatchStatus {
     Batched,
     Queued,
     Running,
+    Canceled,
     Completed,
     Failed,
 }
@@ -294,6 +295,12 @@ pub(crate) struct CommentRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct CancelCommentDispatchRequest {
+    pub(crate) hunk_id: String,
+    pub(crate) comment_index: usize,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct AgentSelectionRequest {
     pub(crate) agent: AgentKind,
 }
@@ -320,6 +327,8 @@ pub(crate) struct ReviewedRequest {
     pub(crate) hunk_id: String,
     pub(crate) reviewed: Option<bool>,
 }
+
+pub(crate) type CancelToken = Arc<AtomicBool>;
 
 #[derive(Clone)]
 pub(crate) struct DiffHunk {

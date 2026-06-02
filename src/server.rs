@@ -23,8 +23,9 @@ use crate::{
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
-        build_export_text, build_sidebar_comments, comment_dispatch_view, parse_anchored_comments,
-        plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
+        build_export_text, build_sidebar_comments, cancel_comment_dispatch, comment_dispatch_view,
+        parse_anchored_comments, plan_batched_comment_dispatches, plan_comment_dispatches,
+        spawn_comment_dispatch,
     },
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
@@ -96,6 +97,10 @@ pub(crate) async fn run_server() -> Result<()> {
         .route(
             "/api/session/{session_id}/comment-batch",
             post(send_comment_batch),
+        )
+        .route(
+            "/api/session/{session_id}/comment-dispatch/cancel",
+            post(cancel_comment_dispatch_request),
         )
         .route("/api/session/{session_id}/stage", post(stage_hunk))
         .route("/api/session/{session_id}/stage-file", post(stage_file))
@@ -644,6 +649,19 @@ async fn send_comment_batch(
     for job in dispatch_jobs {
         spawn_comment_dispatch(state.clone(), job);
     }
+
+    Ok("ok")
+}
+
+async fn cancel_comment_dispatch_request(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CancelCommentDispatchRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::api::with_session(&state, &session_id, |session| {
+        cancel_comment_dispatch(session, &request.hunk_id, request.comment_index)
+    })?;
 
     Ok("ok")
 }

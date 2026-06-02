@@ -496,14 +496,23 @@ html[data-theme="dark"] .diff-split-line-meta {
   text-transform: capitalize;
 }
 
+.dispatch-status button {
+  justify-self: start;
+  margin-top: 0.25rem;
+}
+
+.dispatch-status-queued,
+.dispatch-status-running,
 .dispatch-status-sending {
   background: var(--status-open-bg);
 }
 
+.dispatch-status-completed,
 .dispatch-status-sent {
   background: var(--status-resolved-bg);
 }
 
+.dispatch-status-canceled,
 .dispatch-status-failed {
   background: var(--status-failed-bg);
   color: var(--warn);

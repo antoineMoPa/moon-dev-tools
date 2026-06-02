@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -11,6 +12,8 @@ use crate::{
     agent::ChildExt,
     api::{CommitView, DiffHunk, DiffTarget, FileChangeKind, RepoSession, stable_id},
 };
+
+const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     let original_path = path.as_ref().to_path_buf();
@@ -86,6 +89,9 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         true,
     )?);
     for path in list_untracked_files(repo_path)? {
+        if is_likely_binary_file(&repo_path.join(&path))? {
+            continue;
+        }
         let untracked_args = vec![
             "diff",
             "--no-index",
@@ -100,6 +106,17 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         hunks.extend(parse_diff(&diff, false)?);
     }
     Ok(hunks)
+}
+
+fn is_likely_binary_file(path: &Path) -> Result<bool> {
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to inspect {}", path.display()))?;
+    let mut buffer = Vec::new();
+    file.take(BINARY_DETECTION_READ_LIMIT)
+        .read_to_end(&mut buffer)
+        .with_context(|| format!("failed to inspect {}", path.display()))?;
+
+    Ok(buffer.contains(&0) || std::str::from_utf8(&buffer).is_err())
 }
 
 pub(crate) fn collect_session_hunks(session: &RepoSession) -> Result<Vec<DiffHunk>> {
@@ -1009,6 +1026,27 @@ mod tests {
         // Assert
         assert_eq!(staged, (1, 1));
         assert_eq!(unstaged, (1, 1));
+    }
+
+    #[test]
+    fn collect_hunks_skips_untracked_binary_files() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        fs::write(repo_root.join("note.txt"), "reviewable\ntext\n")
+            .expect("failed to write text file");
+        fs::write(repo_root.join("asset.bin"), [0, 159, 146, 150, 255])
+            .expect("failed to write binary file");
+
+        // Act
+        let hunks =
+            collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+
+        // Assert
+        assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
+        assert!(!hunks.iter().any(|hunk| hunk.file_path == "asset.bin"));
     }
 
     #[test]
