@@ -159,6 +159,10 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
 pub(crate) fn branch_commits_since_default(
     repo_path: &Path,
 ) -> Result<(Option<String>, Vec<CommitView>)> {
+    if !git_ref_exists(repo_path, "HEAD")? {
+        return Ok((None, Vec::new()));
+    }
+
     let Some(base_ref) = default_branch_ref(repo_path)? else {
         return Ok((None, Vec::new()));
     };
@@ -190,6 +194,9 @@ pub(crate) fn commit_history_page(
     limit: usize,
 ) -> Result<(Vec<CommitView>, bool)> {
     if limit == 0 {
+        return Ok((Vec::new(), false));
+    }
+    if !git_ref_exists(repo_path, "HEAD")? {
         return Ok((Vec::new(), false));
     }
 
@@ -709,7 +716,7 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
 mod tests {
     use super::{
         branch_commits_since_default, canonicalize_repo, collect_commit_hunks, collect_hunks,
-        collect_session_hunks, run_git, run_git_no_output,
+        collect_session_hunks, commit_history_page, run_git, run_git_no_output,
     };
     use crate::api::{AgentKind, DiffTarget, RepoSession};
     use std::collections::{HashMap, HashSet};
@@ -814,6 +821,37 @@ mod tests {
         assert_eq!(hunks[0].file_path, "example.txt");
         assert!(hunks[0].staged);
         assert_eq!(diff_line_counts(&hunks[0].patch), (1, 1));
+    }
+
+    #[test]
+    fn initial_staged_changes_are_available_before_first_commit() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        fs::write(repo_root.join("example.txt"), "initial contents\n")
+            .expect("failed to write initial file");
+        run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add initial file");
+
+        // Act
+        let hunks = collect_hunks(&repo_root, &DiffTarget::default())
+            .expect("failed to collect initial staged hunks");
+        let (base, branch_commits) =
+            branch_commits_since_default(&repo_root).expect("failed to collect branch commits");
+        let (history_commits, history_has_more) =
+            commit_history_page(&repo_root, &HashSet::new(), 0, 50)
+                .expect("failed to collect commit history");
+
+        // Assert
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, "example.txt");
+        assert!(hunks[0].staged);
+        assert_eq!(diff_line_counts(&hunks[0].patch), (1, 0));
+        assert_eq!(base, None);
+        assert!(branch_commits.is_empty());
+        assert!(history_commits.is_empty());
+        assert!(!history_has_more);
     }
 
     #[test]
