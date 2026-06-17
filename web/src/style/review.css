@@ -423,8 +423,19 @@ html[data-theme="dark"] .diff-split-line-meta {
   position: absolute;
   z-index: 8;
   display: flex;
+  align-items: center;
   gap: 0.5rem;
-  box-shadow: var(--line-actions-shadow);
+}
+
+.popup-close-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: #fff;
+  color: #000;
+  line-height: 36px;
+  text-align: center;
 }
 
 .anchor-composer {

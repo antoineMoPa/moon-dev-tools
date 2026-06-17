@@ -208,11 +208,13 @@ function SideBySideHighlightedCode({
               {row.oldLine?.oldLineNumber ?? ""}
             </button>
             <div className={sideBySideCellClass(row.oldLine, "old")}>
-              <WordDiffText
-                parts={wordParts?.oldParts}
-                changedClass="move-word-changed move-word-changed-removed"
-                fallback={diffLineBody(row.oldLine)}
-              />
+              <span data-patch-line={row.oldLine?.text}>
+                <WordDiffText
+                  parts={wordParts?.oldParts}
+                  changedClass="move-word-changed move-word-changed-removed"
+                  fallback={diffLineBody(row.oldLine)}
+                />
+              </span>
             </div>
             <button
               type="button"
@@ -235,11 +237,13 @@ function SideBySideHighlightedCode({
               {row.newLine?.newLineNumber ?? ""}
             </button>
             <div className={sideBySideCellClass(row.newLine, "new")}>
-              <WordDiffText
-                parts={wordParts?.newParts}
-                changedClass="move-word-changed move-word-changed-added"
-                fallback={diffLineBody(row.newLine)}
-              />
+              <span data-patch-line={row.newLine?.text}>
+                <WordDiffText
+                  parts={wordParts?.newParts}
+                  changedClass="move-word-changed move-word-changed-added"
+                  fallback={diffLineBody(row.newLine)}
+                />
+              </span>
             </div>
           </div>
         );
@@ -314,18 +318,21 @@ export function HighlightedCode({
           </button>
           {wordDiffs.has(index) ? (
             <div className={diffLineClass(line)}>
-              {line.text.slice(0, 1)}
-              <WordDiffText
-                parts={wordDiffs.get(index)}
-                changedClass={`move-word-changed ${
-                  line.kind === "added" ? "move-word-changed-added" : "move-word-changed-removed"
-                }`}
-                fallback={diffLineBody(line)}
-              />
+              <span data-patch-line={line.text}>
+                {line.text.slice(0, 1)}
+                <WordDiffText
+                  parts={wordDiffs.get(index)}
+                  changedClass={`move-word-changed ${
+                    line.kind === "added" ? "move-word-changed-added" : "move-word-changed-removed"
+                  }`}
+                  fallback={diffLineBody(line)}
+                />
+              </span>
             </div>
           ) : (
             <div
               className="diff-line-code"
+              data-patch-line={line.text}
               dangerouslySetInnerHTML={{ __html: line.highlightedHtml || "&nbsp;" }}
             />
           )}

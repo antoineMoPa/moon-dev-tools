@@ -55,6 +55,21 @@ function selectionPositionFromRect(rect: DOMRect) {
   };
 }
 
+function expandedPatchSelection(container: Node, selection: Selection) {
+  const root = container instanceof Element ? container : container.parentElement;
+  if (!root || selection.rangeCount === 0) {
+    return selection.toString().trim();
+  }
+
+  const range = selection.getRangeAt(0);
+  const selectedLines = Array.from(root.querySelectorAll<HTMLElement>("[data-patch-line]"))
+    .filter((element) => range.intersectsNode(element))
+    .map((element) => element.dataset.patchLine ?? "")
+    .filter(Boolean);
+
+  return selectedLines.length > 0 ? selectedLines.join("\n") : selection.toString().trim();
+}
+
 type FloatingPosition = {
   top: number;
   left: number;
@@ -229,7 +244,7 @@ export function HunkCard({
         return;
       }
 
-      const text = selection.toString().trim();
+      const text = expandedPatchSelection(container, selection);
       if (!text) {
         return;
       }
@@ -406,6 +421,7 @@ export function HunkCard({
       {selectedText && !composerOpen && selectionPosition ? (
         <LineActions
           style={{ top: selectionPosition.top, left: selectionPosition.left }}
+          onClose={clearSelectionUi}
           onAddComment={() => {
             composerOpenRef.current = true;
             openSelectionDraft(selectedText, selectionPosition);
