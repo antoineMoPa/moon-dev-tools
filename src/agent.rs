@@ -27,6 +27,7 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
         AgentKind::None => Ok(String::new()),
         AgentKind::Claude => run_claude(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
         AgentKind::Codex => run_codex(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
+        AgentKind::OpenCode => run_opencode(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
     }
 }
 
@@ -120,6 +121,27 @@ fn run_codex(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) ->
         )?;
 
     summarize_agent_output("Codex", output)
+}
+
+fn run_opencode(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+    let mut command = Command::new("opencode");
+    command
+        .current_dir(repo_path)
+        .args(["run", "--dangerously-skip-permissions"])
+        .arg(prompt);
+    configure_agent_command(&mut command);
+    let output = command
+        .spawn()
+        .context("failed to start OpenCode")?
+        .wait_with_streamed_output_from_stdin(
+            b"",
+            "failed to write prompt to OpenCode",
+            "[moonreview] OpenCode stdout: ",
+            "[moonreview] OpenCode stderr: ",
+            cancel_token,
+        )?;
+
+    summarize_agent_output("OpenCode", output)
 }
 
 fn configure_agent_command(command: &mut Command) {

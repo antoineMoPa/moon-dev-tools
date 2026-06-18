@@ -1150,6 +1150,7 @@ pub(crate) fn detect_agent_availability() -> crate::api::AgentAvailability {
     crate::api::AgentAvailability {
         claude: command_exists("claude"),
         codex: command_exists("codex"),
+        opencode: command_exists("opencode"),
     }
 }
 
@@ -1161,6 +1162,7 @@ pub(crate) fn agent_is_available(
         crate::api::AgentKind::None => true,
         crate::api::AgentKind::Claude => availability.claude,
         crate::api::AgentKind::Codex => availability.codex,
+        crate::api::AgentKind::OpenCode => availability.opencode,
     }
 }
 
@@ -1171,6 +1173,7 @@ pub(crate) fn agent_options(
         (crate::api::AgentKind::None, "No agent"),
         (crate::api::AgentKind::Claude, "Claude"),
         (crate::api::AgentKind::Codex, "Codex"),
+        (crate::api::AgentKind::OpenCode, "OpenCode"),
     ]
     .into_iter()
     .map(|(kind, label)| crate::api::AgentOption {

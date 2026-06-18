@@ -1,4 +1,4 @@
-export type AgentKind = "none" | "claude" | "codex";
+export type AgentKind = "none" | "claude" | "codex" | "opencode";
 
 export const COMMENT_DISPATCH_STATUS = {
   idle: "idle",

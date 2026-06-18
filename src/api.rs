@@ -195,6 +195,7 @@ pub(crate) struct SidebarCommentView {
 pub(crate) struct AgentAvailability {
     pub(crate) claude: bool,
     pub(crate) codex: bool,
+    pub(crate) opencode: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,6 +205,7 @@ pub(crate) enum AgentKind {
     None,
     Claude,
     Codex,
+    OpenCode,
 }
 
 impl AgentKind {
@@ -212,6 +214,7 @@ impl AgentKind {
             Self::None => "None",
             Self::Claude => "Claude",
             Self::Codex => "Codex",
+            Self::OpenCode => "OpenCode",
         }
     }
 }

@@ -6,7 +6,7 @@ The missing local code review step when working with AI agents.
 
 moonreview is a tiny local code review UI for git.
 
-It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude or codex (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
+It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude, codex, or opencode (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
 
 ## Installation
 
