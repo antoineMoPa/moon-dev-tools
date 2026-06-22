@@ -25,7 +25,7 @@
   --diff-removed-bg: rgba(161, 45, 34, 0.08);
   --diff-changed-bg: rgba(154, 108, 18, 0.07);
   --line-target-bg: rgba(183, 82, 45, 0.08);
-  --hunk-active-bg: rgba(29, 26, 22, 0.1);
+  --hunk-active-bg: #6380f9;
   --truncate-overlay: rgba(0, 0, 0, 0.2);
   --truncate-fade: rgba(255, 253, 249, 0.98);
   --inline-comment-border: rgba(183, 82, 45, 0.35);
@@ -72,7 +72,7 @@ html[data-theme="dark"] {
   --diff-removed-bg: rgba(255, 139, 130, 0.12);
   --diff-changed-bg: rgba(231, 189, 88, 0.1);
   --line-target-bg: rgba(238, 141, 104, 0.16);
-  --hunk-active-bg: rgba(200, 230, 255, 0.1);
+  --hunk-active-bg: #567489;
   --truncate-overlay: rgba(0, 0, 0, 0.28);
   --truncate-fade: rgba(13, 18, 26, 0.98);
   --inline-comment-border: rgba(238, 141, 104, 0.44);

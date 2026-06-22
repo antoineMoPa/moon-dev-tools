@@ -285,12 +285,12 @@ pre {
   background: transparent;
   padding: 0;
   font-size: 0.77rem;
-  color: var(--muted);
+  color: #111;
   text-decoration: none;
 }
 
 .hunk-full-file-link:hover {
-  color: var(--accent);
+  color: #111;
   text-decoration: underline;
 }
 
