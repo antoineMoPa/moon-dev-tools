@@ -12,7 +12,7 @@ use reqwest::blocking::Client;
 
 use crate::{
     api::{DiffTarget, OpenSessionRequest, SessionOpened, client_host, port, server_url},
-    git::{canonicalize_repo, list_changed_submodule_repos, parse_review_target},
+    git::{canonicalize_repo, list_changed_submodule_repos, parse_review_target, run_git},
     server,
 };
 
@@ -24,10 +24,23 @@ enum CliCommand {
         logs: bool,
     },
     Review {
-        target: Option<String>,
+        target: ReviewTarget,
         logs: bool,
         no_submodules: bool,
     },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReviewTarget {
+    WorkingTree,
+    Diff(String),
+    Commit(String),
+}
+
+#[derive(Clone)]
+struct ReviewOpenRequest {
+    diff_target: DiffTarget,
+    active_commit: Option<String>,
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -58,21 +71,69 @@ pub(crate) fn run() -> Result<()> {
     }
 }
 
-fn launch_review(raw_target: Option<String>, logs: bool, no_submodules: bool) -> Result<()> {
-    let diff_target = parse_review_target(raw_target)?;
+fn launch_review(target: ReviewTarget, logs: bool, no_submodules: bool) -> Result<()> {
     let repo_path = canonicalize_repo(env::current_dir()?)?;
+    let open_request = review_open_request(&repo_path, target)?;
     if logs {
-        return launch_review_with_foreground_server(repo_path, diff_target, no_submodules);
+        return launch_review_with_foreground_server(repo_path, open_request, no_submodules);
     }
 
     ensure_server_running(logs)?;
-    open_review_session(&repo_path, diff_target, no_submodules)?;
+    open_review_session(&repo_path, &open_request, no_submodules)?;
     Ok(())
+}
+
+fn review_open_request(repo_path: &Path, target: ReviewTarget) -> Result<ReviewOpenRequest> {
+    match target {
+        ReviewTarget::WorkingTree => Ok(ReviewOpenRequest {
+            diff_target: DiffTarget::default(),
+            active_commit: None,
+        }),
+        ReviewTarget::Commit(commit) => {
+            let Some(commit) = resolve_commit(repo_path, &commit)? else {
+                return Ok(ReviewOpenRequest {
+                    diff_target: parse_review_target(Some(commit))?,
+                    active_commit: None,
+                });
+            };
+
+            Ok(ReviewOpenRequest {
+                diff_target: DiffTarget::default(),
+                active_commit: Some(commit),
+            })
+        }
+        ReviewTarget::Diff(target) => Ok(ReviewOpenRequest {
+            diff_target: parse_review_target(Some(target))?,
+            active_commit: None,
+        }),
+    }
+}
+
+fn is_sha_like(value: &str) -> bool {
+    (7..=40).contains(&value.len()) && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn resolve_commit(repo_path: &Path, commit: &str) -> Result<Option<String>> {
+    let commit_ref = format!("{commit}^{{commit}}");
+    match run_git(repo_path, &["rev-parse", "--verify", &commit_ref]) {
+        Ok(resolved) => Ok(Some(resolved.trim().to_string())),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("Needed a single revision")
+                || message.contains("unknown revision")
+                || message.contains("not a valid object name")
+            {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 fn launch_review_with_foreground_server(
     repo_path: PathBuf,
-    diff_target: DiffTarget,
+    open_request: ReviewOpenRequest,
     no_submodules: bool,
 ) -> Result<()> {
     if server_is_running()? {
@@ -90,7 +151,7 @@ fn launch_review_with_foreground_server(
 
     for _ in 0..30 {
         if server_is_running()? {
-            open_review_session(&repo_path, diff_target, no_submodules)?;
+            open_review_session(&repo_path, &open_request, no_submodules)?;
             return server_thread
                 .join()
                 .map_err(|_| anyhow!("review server thread panicked"))?;
@@ -103,19 +164,22 @@ fn launch_review_with_foreground_server(
 
 fn open_review_session(
     repo_path: &Path,
-    diff_target: DiffTarget,
+    open_request: &ReviewOpenRequest,
     no_submodules: bool,
 ) -> Result<()> {
-    let extra_repo_paths = if diff_target.base.is_none() && !no_submodules {
+    let extra_repo_paths = if open_request.diff_target.base.is_none()
+        && open_request.active_commit.is_none()
+        && !no_submodules
+    {
         list_changed_submodule_repos(repo_path)?
     } else {
         Vec::new()
     };
 
     let mut opened_urls = Vec::new();
-    opened_urls.push(open_review_url_for_session(repo_path, &diff_target)?);
+    opened_urls.push(open_review_url_for_session(repo_path, open_request)?);
     for submodule_path in extra_repo_paths {
-        opened_urls.push(open_review_url_for_session(&submodule_path, &diff_target)?);
+        opened_urls.push(open_review_url_for_session(&submodule_path, open_request)?);
     }
 
     for url in &opened_urls {
@@ -126,7 +190,10 @@ fn open_review_session(
     Ok(())
 }
 
-fn open_review_url_for_session(repo_path: &Path, diff_target: &DiffTarget) -> Result<String> {
+fn open_review_url_for_session(
+    repo_path: &Path,
+    open_request: &ReviewOpenRequest,
+) -> Result<String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
@@ -136,7 +203,8 @@ fn open_review_url_for_session(repo_path: &Path, diff_target: &DiffTarget) -> Re
         .post(format!("{}/api/session/open", server_url()))
         .json(&OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
-            diff_target: Some(diff_target.clone()),
+            diff_target: Some(open_request.diff_target.clone()),
+            active_commit: open_request.active_commit.clone(),
         })
         .send()
         .context("failed to connect to review server")?
@@ -166,7 +234,7 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
 
     match positional.as_slice() {
         [] => Ok(CliCommand::Review {
-            target: None,
+            target: ReviewTarget::WorkingTree,
             logs,
             no_submodules,
         }),
@@ -178,17 +246,21 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
         }
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
         [command] if command == "diff" => Ok(CliCommand::Review {
-            target: None,
+            target: ReviewTarget::WorkingTree,
             logs,
             no_submodules,
         }),
         [command, target] if command == "diff" => Ok(CliCommand::Review {
-            target: Some(target.clone()),
+            target: ReviewTarget::Diff(target.clone()),
             logs,
             no_submodules,
         }),
         [target] => Ok(CliCommand::Review {
-            target: Some(target.clone()),
+            target: if is_sha_like(target) {
+                ReviewTarget::Commit(target.clone())
+            } else {
+                ReviewTarget::Diff(target.clone())
+            },
             logs,
             no_submodules,
         }),
@@ -207,6 +279,7 @@ Tiny local code review UI for git.
 
 Usage:
   moonreview
+  moonreview <commit>
   moonreview -ns
   moonreview --logs
   moonreview diff <target>
@@ -218,6 +291,7 @@ Usage:
 
 Examples:
   moonreview
+  moonreview 4542abe
   moonreview diff dev
   moonreview diff dev:./
 
@@ -226,6 +300,7 @@ Run `moonreview` inside any git repository you want to review.
 Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
 Use `-ns` or `--no-submodules` to open only the current repository when changed submodules are present.
 
+`moonreview <commit>` opens a read-only review of a single commit.
 `moonreview diff <target>` opens a read-only diff review against a git target.
 Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`."
 }
@@ -284,7 +359,7 @@ mod tests {
         assert_eq!(
             parse(&["-ns"]),
             CliCommand::Review {
-                target: None,
+                target: ReviewTarget::WorkingTree,
                 logs: false,
                 no_submodules: true,
             }
@@ -296,9 +371,33 @@ mod tests {
         assert_eq!(
             parse(&["diff", "dev", "--no-submodules"]),
             CliCommand::Review {
-                target: Some("dev".to_string()),
+                target: ReviewTarget::Diff("dev".to_string()),
                 logs: false,
                 no_submodules: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bare_short_sha_as_commit_review() {
+        assert_eq!(
+            parse(&["4542abe"]),
+            CliCommand::Review {
+                target: ReviewTarget::Commit("4542abe".to_string()),
+                logs: false,
+                no_submodules: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_diff_short_sha_as_range_diff_review() {
+        assert_eq!(
+            parse(&["diff", "4542abe"]),
+            CliCommand::Review {
+                target: ReviewTarget::Diff("4542abe".to_string()),
+                logs: false,
+                no_submodules: false,
             }
         );
     }

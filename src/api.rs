@@ -268,6 +268,7 @@ pub(crate) struct FileContentPayload {
 pub(crate) struct OpenSessionRequest {
     pub(crate) repo_path: String,
     pub(crate) diff_target: Option<DiffTarget>,
+    pub(crate) active_commit: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -441,10 +442,15 @@ pub(crate) fn stable_id<T: Hash>(value: &T) -> String {
     format!("{:x}", hasher.finish())
 }
 
-pub(crate) fn session_id_for(path: &Path, diff_target: &DiffTarget) -> String {
+pub(crate) fn session_id_for_view(
+    path: &Path,
+    diff_target: &DiffTarget,
+    active_commit: Option<&str>,
+) -> String {
     stable_id(&(
         path.display().to_string(),
         diff_target.base.clone(),
         diff_target.pathspec.clone(),
+        active_commit.map(ToOwned::to_owned),
     ))
 }

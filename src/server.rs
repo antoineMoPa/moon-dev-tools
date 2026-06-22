@@ -285,7 +285,17 @@ async fn open_session(
     mark_activity(&state);
     let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
     let diff_target = request.diff_target.unwrap_or_default();
-    let session_id = crate::api::session_id_for(&repo_path, &diff_target);
+    let active_commit = request
+        .active_commit
+        .clone()
+        .filter(|commit| !commit.trim().is_empty());
+    if let Some(commit) = &active_commit {
+        let commit_ref = format!("{commit}^{{commit}}");
+        let _ = run_git(&repo_path, &["rev-parse", "--verify", &commit_ref])
+            .with_context(|| format!("failed to load commit {commit}"))?;
+    }
+    let session_id =
+        crate::api::session_id_for_view(&repo_path, &diff_target, active_commit.as_deref());
 
     let mut guard = state
         .inner
@@ -295,7 +305,7 @@ async fn open_session(
         Some(session) => {
             session.repo_path = repo_path;
             session.diff_target = diff_target;
-            session.active_commit = None;
+            session.active_commit = active_commit;
         }
         None => {
             guard.sessions.insert(
@@ -303,7 +313,7 @@ async fn open_session(
                 RepoSession {
                     repo_path,
                     diff_target,
-                    active_commit: None,
+                    active_commit,
                     comments: HashMap::new(),
                     comment_contexts: HashMap::new(),
                     reviewed: HashSet::new(),
