@@ -386,6 +386,7 @@ async fn session_state(
                     removed_line_count,
                     moved_from,
                     moved_to,
+                    image_diff: hunk.image_diff,
                 }
             })
             .collect::<Vec<_>>();

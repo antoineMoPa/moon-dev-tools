@@ -172,6 +172,60 @@ pre {
   gap: 0;
 }
 
+.image-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: 3px 3px 0 0;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.image-diff-pane {
+  display: grid;
+  grid-template-rows: auto minmax(12rem, 1fr);
+  min-width: 0;
+  margin: 0;
+  background: var(--panel);
+}
+
+.image-diff-pane figcaption {
+  padding: 0.45rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.image-diff-pane img,
+.image-diff-empty {
+  align-self: center;
+  justify-self: center;
+}
+
+.image-diff-pane img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  padding: 1rem;
+  object-fit: contain;
+}
+
+.image-diff-empty {
+  color: var(--muted);
+  padding: 2rem;
+}
+
+.image-diff + .diff-code,
+.image-diff + .split-diff {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .hunk-move-hints {
   display: flex;
   flex-wrap: wrap;
@@ -211,6 +265,12 @@ pre {
 .hunk-move-hints + .diff-stack .split-diff:first-child {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
+}
+
+@media (max-width: 720px) {
+  .image-diff {
+    grid-template-columns: 1fr;
+  }
 }
 
 .patch-wrap pre,

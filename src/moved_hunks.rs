@@ -220,6 +220,7 @@ mod tests {
             header: header.to_string(),
             patch,
             staged: false,
+            image_diff: None,
         }
     }
 

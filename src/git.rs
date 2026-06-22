@@ -7,10 +7,13 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 
 use crate::{
     agent::ChildExt,
-    api::{CommitView, DiffHunk, DiffTarget, FileChangeKind, RepoSession, stable_id},
+    api::{
+        CommitView, DiffHunk, DiffTarget, FileChangeKind, ImageDiffView, RepoSession, stable_id,
+    },
 };
 
 const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
@@ -60,10 +63,11 @@ pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathB
 pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
     if let Some(base) = &diff_target.base {
         let diff = run_target_diff(repo_path, base, diff_target.pathspec.as_deref())?;
-        return parse_diff(&diff, false);
+        return parse_diff(repo_path, &diff, false);
     }
 
     let mut hunks = parse_diff(
+        repo_path,
         &run_git(
             repo_path,
             &[
@@ -76,6 +80,7 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         false,
     )?;
     hunks.extend(parse_diff(
+        repo_path,
         &run_git(
             repo_path,
             &[
@@ -90,6 +95,27 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
     )?);
     for path in list_untracked_files(repo_path)? {
         if is_likely_binary_file(&repo_path.join(&path))? {
+            if let Some(mime_type) = image_mime_type(&path) {
+                let data = fs::read(repo_path.join(&path))
+                    .with_context(|| format!("failed to read {}", path))?;
+                let image_diff = ImageDiffView {
+                    before_src: None,
+                    after_src: Some(data_uri(mime_type, &data)),
+                };
+                let patch = format!(
+                    "diff --git a/{path} b/{path}\nnew file mode 100644\nBinary image added\n"
+                );
+                let id = stable_id(&(path.clone(), "Binary image added", patch.clone()));
+                hunks.push(DiffHunk {
+                    id,
+                    file_path: path,
+                    change_kind: FileChangeKind::Added,
+                    header: "Binary image added".to_string(),
+                    patch,
+                    staged: false,
+                    image_diff: Some(image_diff),
+                });
+            }
             continue;
         }
         let untracked_args = vec![
@@ -103,7 +129,7 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
             &path,
         ];
         let diff = run_git_allow_status(repo_path, &untracked_args, &[0, 1])?;
-        hunks.extend(parse_diff(&diff, false)?);
+        hunks.extend(parse_diff(repo_path, &diff, false)?);
     }
     Ok(hunks)
 }
@@ -143,7 +169,7 @@ pub(crate) fn collect_commit_hunks(repo_path: &Path, commit: &str) -> Result<Vec
             commit,
         ],
     )?;
-    parse_diff(&diff, true)
+    parse_diff(repo_path, &diff, true)
 }
 
 pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
@@ -353,17 +379,38 @@ fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Resu
     run_git(repo_path, &args)
 }
 
-fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
+fn parse_diff(repo_path: &Path, diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
     let mut hunks = Vec::new();
     for section in split_diff_sections(diff) {
         let file_path = parse_file_path(&section).unwrap_or_else(|| "unknown".to_string());
         let change_kind = parse_change_kind(&section);
+        let image_diff = image_diff_from_section(repo_path, &file_path, &section)?;
         let mut prelude = Vec::new();
         let mut idx = 0usize;
 
         while idx < section.len() && !section[idx].starts_with("@@") {
             prelude.push(section[idx].clone());
             idx += 1;
+        }
+
+        if idx == section.len() && image_diff.is_some() {
+            let header = match change_kind {
+                FileChangeKind::Added => "Binary image added",
+                FileChangeKind::Deleted => "Binary image deleted",
+                FileChangeKind::Modified => "Binary image changed",
+            }
+            .to_string();
+            let patch = format!("{}\n{}\n", prelude.join("\n"), header);
+            let id = stable_id(&(file_path.clone(), header.clone(), patch.clone()));
+            hunks.push(DiffHunk {
+                id,
+                file_path: file_path.clone(),
+                change_kind,
+                header,
+                patch,
+                staged,
+                image_diff: image_diff.clone(),
+            });
         }
 
         while idx < section.len() {
@@ -389,11 +436,91 @@ fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
                 header,
                 patch,
                 staged,
+                image_diff: image_diff.clone(),
             });
         }
     }
 
     Ok(hunks)
+}
+
+fn image_diff_from_section(
+    repo_path: &Path,
+    file_path: &str,
+    section: &[String],
+) -> Result<Option<ImageDiffView>> {
+    let Some(mime_type) = image_mime_type(file_path) else {
+        return Ok(None);
+    };
+
+    let Some((old_blob, new_blob)) = parse_index_blobs(section) else {
+        return Ok(None);
+    };
+
+    let before_src = image_blob_data_uri(repo_path, old_blob.as_deref(), mime_type, None)?;
+    let after_src =
+        image_blob_data_uri(repo_path, new_blob.as_deref(), mime_type, Some(file_path))?;
+    Ok(Some(ImageDiffView {
+        before_src,
+        after_src,
+    }))
+}
+
+fn parse_index_blobs(section: &[String]) -> Option<(Option<&str>, Option<&str>)> {
+    let line = section
+        .iter()
+        .find_map(|line| line.strip_prefix("index "))?;
+    let blobs = line.split_whitespace().next()?;
+    let (old_blob, new_blob) = blobs.split_once("..")?;
+    Some((non_zero_blob(old_blob), non_zero_blob(new_blob)))
+}
+
+fn non_zero_blob(blob: &str) -> Option<&str> {
+    if blob.chars().all(|ch| ch == '0') {
+        None
+    } else {
+        Some(blob)
+    }
+}
+
+fn image_blob_data_uri(
+    repo_path: &Path,
+    blob: Option<&str>,
+    mime_type: &str,
+    fallback_path: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(blob) = blob else {
+        return Ok(None);
+    };
+    let bytes = match run_git_bytes(repo_path, &["show", blob]) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let Some(fallback_path) = fallback_path else {
+                return Err(error);
+            };
+            fs::read(repo_path.join(fallback_path))
+                .with_context(|| format!("failed to read {}", fallback_path))?
+        }
+    };
+    Ok(Some(data_uri(mime_type, &bytes)))
+}
+
+fn data_uri(mime_type: &str, data: &[u8]) -> String {
+    format!("data:{mime_type};base64,{}", BASE64.encode(data))
+}
+
+fn image_mime_type(path: &str) -> Option<&'static str> {
+    let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "apng" => Some("image/apng"),
+        "avif" => Some("image/avif"),
+        "gif" => Some("image/gif"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "svg" => Some("image/svg+xml"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 fn split_diff_sections(diff: &str) -> Vec<Vec<String>> {
@@ -510,6 +637,20 @@ fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Res
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run git {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+
+    Ok(output.stdout)
 }
 
 pub(crate) fn preview_patch(patch: &str, lines: usize) -> String {
@@ -1085,6 +1226,46 @@ mod tests {
         // Assert
         assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
         assert!(!hunks.iter().any(|hunk| hunk.file_path == "asset.bin"));
+    }
+
+    #[test]
+    fn collect_hunks_includes_image_diff_for_unstaged_binary_image() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        fs::write(repo_root.join("asset.png"), b"\x89PNG\r\n\x1a\n\0before")
+            .expect("failed to write initial image");
+        run_git_no_output(&repo_root, &["add", "asset.png"]).expect("failed to add image");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial image"])
+            .expect("failed to commit initial image");
+        fs::write(repo_root.join("asset.png"), b"\x89PNG\r\n\x1a\n\0after")
+            .expect("failed to modify image");
+
+        // Act
+        let hunks =
+            collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+        let hunk = hunks
+            .iter()
+            .find(|hunk| hunk.file_path == "asset.png")
+            .expect("expected image hunk");
+
+        // Assert
+        let image_diff = hunk.image_diff.as_ref().expect("expected image diff");
+        assert!(
+            image_diff
+                .before_src
+                .as_deref()
+                .is_some_and(|src| src.starts_with("data:image/png;base64,"))
+        );
+        assert!(
+            image_diff
+                .after_src
+                .as_deref()
+                .is_some_and(|src| src.starts_with("data:image/png;base64,"))
+        );
+        assert_eq!(hunk.header, "Binary image changed");
     }
 
     #[test]

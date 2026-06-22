@@ -153,6 +153,13 @@ pub(crate) struct HunkView {
     pub(crate) removed_line_count: usize,
     pub(crate) moved_from: Option<HunkMoveHint>,
     pub(crate) moved_to: Option<HunkMoveHint>,
+    pub(crate) image_diff: Option<ImageDiffView>,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct ImageDiffView {
+    pub(crate) before_src: Option<String>,
+    pub(crate) after_src: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -341,6 +348,7 @@ pub(crate) struct DiffHunk {
     pub(crate) header: String,
     pub(crate) patch: String,
     pub(crate) staged: bool,
+    pub(crate) image_diff: Option<ImageDiffView>,
 }
 
 #[derive(Debug)]

@@ -84,6 +84,29 @@ function moveHintTitle(score: number) {
   return `Similarity ${(score * 100).toFixed(0)}%`;
 }
 
+function ImageDiffPreview({ beforeSrc, afterSrc }: { beforeSrc?: string | null; afterSrc?: string | null }) {
+  return (
+    <div className="image-diff" aria-label="Image before and after comparison">
+      <figure className="image-diff-pane">
+        <figcaption>Before</figcaption>
+        {beforeSrc ? (
+          <img src={beforeSrc} alt="Before change" />
+        ) : (
+          <div className="image-diff-empty">No image</div>
+        )}
+      </figure>
+      <figure className="image-diff-pane">
+        <figcaption>After</figcaption>
+        {afterSrc ? (
+          <img src={afterSrc} alt="After change" />
+        ) : (
+          <div className="image-diff-empty">No image</div>
+        )}
+      </figure>
+    </div>
+  );
+}
+
 export function HunkCard({
   hunk,
   agents,
@@ -546,6 +569,12 @@ export function HunkCard({
             </div>
           ) : (
             <div className="diff-stack">
+              {hunk.image_diff ? (
+                <ImageDiffPreview
+                  beforeSrc={hunk.image_diff.before_src}
+                  afterSrc={hunk.image_diff.after_src}
+                />
+              ) : null}
               {diffSegments.map((segment, index) =>
                 segment.type === "code" ? (
                   <HighlightedCode

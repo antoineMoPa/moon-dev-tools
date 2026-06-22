@@ -62,6 +62,12 @@ export type Hunk = {
   removed_line_count: number;
   moved_from?: HunkMoveHint | null;
   moved_to?: HunkMoveHint | null;
+  image_diff?: ImageDiff | null;
+};
+
+export type ImageDiff = {
+  before_src?: string | null;
+  after_src?: string | null;
 };
 
 export type HunkMoveHint = {
