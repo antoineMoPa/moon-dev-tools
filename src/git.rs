@@ -94,10 +94,16 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         true,
     )?);
     for path in list_untracked_files(repo_path)? {
-        if is_likely_binary_file(&repo_path.join(&path))? {
+        let full_path = repo_path.join(&path);
+        let is_binary = match is_likely_binary_file(&full_path) {
+            Ok(is_binary) => is_binary,
+            Err(_) => continue,
+        };
+        if is_binary {
             if let Some(mime_type) = image_mime_type(&path) {
-                let data = fs::read(repo_path.join(&path))
-                    .with_context(|| format!("failed to read {}", path))?;
+                let Ok(data) = fs::read(&full_path) else {
+                    continue;
+                };
                 let image_diff = ImageDiffView {
                     before_src: None,
                     after_src: Some(data_uri(mime_type, &data)),
@@ -575,14 +581,15 @@ fn parse_change_kind(section: &[String]) -> FileChangeKind {
 }
 
 fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
-    Ok(
-        run_git(repo_path, &["ls-files", "--others", "--exclude-standard"])?
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
-    )
+    let output = run_git_bytes(
+        repo_path,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?;
+    Ok(output
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect())
 }
 
 pub(crate) fn local_change_summary_from_status(
@@ -1226,6 +1233,37 @@ mod tests {
         // Assert
         assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
         assert!(!hunks.iter().any(|hunk| hunk.file_path == "asset.bin"));
+    }
+
+    #[test]
+    fn collect_hunks_handles_untracked_image_paths_with_non_ascii_characters() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        let image_path = "tmp-images-upload/502 chiné gris dos.webp";
+        fs::create_dir_all(repo_root.join("tmp-images-upload"))
+            .expect("failed to create image directory");
+        fs::write(repo_root.join(image_path), b"RIFF\0\0\0\0WEBPVP8 ")
+            .expect("failed to write image file");
+
+        // Act
+        let hunks =
+            collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+        let hunk = hunks
+            .iter()
+            .find(|hunk| hunk.file_path == image_path)
+            .expect("expected image hunk");
+
+        // Assert
+        assert_eq!(hunk.header, "Binary image added");
+        assert!(
+            hunk.image_diff
+                .as_ref()
+                .and_then(|image_diff| image_diff.after_src.as_deref())
+                .is_some_and(|src| src.starts_with("data:image/webp;base64,"))
+        );
     }
 
     #[test]
