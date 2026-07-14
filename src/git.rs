@@ -66,34 +66,33 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         return parse_diff(repo_path, &diff, false);
     }
 
-    let mut hunks = parse_diff(
-        repo_path,
-        &run_git(
-            repo_path,
-            &[
-                "diff",
-                "--diff-algorithm=histogram",
-                "--no-color",
-                "--unified=3",
-            ],
-        )?,
-        false,
-    )?;
+    let pathspec = diff_target
+        .pathspec
+        .as_deref()
+        .filter(|value| !value.is_empty());
+    let mut unstaged_args = vec![
+        "diff",
+        "--diff-algorithm=histogram",
+        "--no-color",
+        "--unified=3",
+    ];
+    append_pathspec(&mut unstaged_args, pathspec);
+    let mut hunks = parse_diff(repo_path, &run_git(repo_path, &unstaged_args)?, false)?;
+
+    let mut staged_args = vec![
+        "diff",
+        "--cached",
+        "--diff-algorithm=histogram",
+        "--no-color",
+        "--unified=3",
+    ];
+    append_pathspec(&mut staged_args, pathspec);
     hunks.extend(parse_diff(
         repo_path,
-        &run_git(
-            repo_path,
-            &[
-                "diff",
-                "--cached",
-                "--diff-algorithm=histogram",
-                "--no-color",
-                "--unified=3",
-            ],
-        )?,
+        &run_git(repo_path, &staged_args)?,
         true,
     )?);
-    for path in list_untracked_files(repo_path)? {
+    for path in list_untracked_files(repo_path, pathspec)? {
         let full_path = repo_path.join(&path);
         let is_binary = match is_likely_binary_file(&full_path) {
             Ok(is_binary) => is_binary,
@@ -385,6 +384,13 @@ fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Resu
     run_git(repo_path, &args)
 }
 
+fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {
+    if let Some(pathspec) = pathspec.filter(|value| !value.is_empty()) {
+        args.push("--");
+        args.push(pathspec);
+    }
+}
+
 fn parse_diff(repo_path: &Path, diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
     let mut hunks = Vec::new();
     for section in split_diff_sections(diff) {
@@ -580,11 +586,10 @@ fn parse_change_kind(section: &[String]) -> FileChangeKind {
     }
 }
 
-fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
-    let output = run_git_bytes(
-        repo_path,
-        &["ls-files", "-z", "--others", "--exclude-standard"],
-    )?;
+fn list_untracked_files(repo_path: &Path, pathspec: Option<&str>) -> Result<Vec<String>> {
+    let mut args = vec!["ls-files", "-z", "--others", "--exclude-standard"];
+    append_pathspec(&mut args, pathspec);
+    let output = run_git_bytes(repo_path, &args)?;
     Ok(output
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
@@ -594,8 +599,11 @@ fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
 
 pub(crate) fn local_change_summary_from_status(
     repo_path: &Path,
+    pathspec: Option<&str>,
 ) -> Result<crate::api::LocalChangeSummary> {
-    let status = run_git(repo_path, &["status", "--porcelain"])?;
+    let mut args = vec!["status", "--porcelain"];
+    append_pathspec(&mut args, pathspec);
+    let status = run_git(repo_path, &args)?;
     let mut summary = crate::api::LocalChangeSummary::default();
 
     for line in status.lines() {
@@ -864,7 +872,8 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
 mod tests {
     use super::{
         branch_commits_since_default, canonicalize_repo, collect_commit_hunks, collect_hunks,
-        collect_session_hunks, commit_history_page, run_git, run_git_no_output,
+        collect_session_hunks, commit_history_page, local_change_summary_from_status, run_git,
+        run_git_no_output,
     };
     use crate::api::{AgentKind, DiffTarget, RepoSession};
     use std::collections::{HashMap, HashSet};
@@ -1233,6 +1242,54 @@ mod tests {
         // Assert
         assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
         assert!(!hunks.iter().any(|hunk| hunk.file_path == "asset.bin"));
+    }
+
+    #[test]
+    fn working_tree_pathspec_limits_hunks_and_status_summary() {
+        // Arrange
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        fs::create_dir_all(repo_root.join("src")).expect("failed to create src directory");
+        fs::create_dir_all(repo_root.join("docs")).expect("failed to create docs directory");
+        fs::write(repo_root.join("src/tracked.txt"), "before\n").expect("failed to write src file");
+        fs::write(repo_root.join("docs/tracked.txt"), "before\n")
+            .expect("failed to write docs file");
+        run_git_no_output(&repo_root, &["add", "src/tracked.txt", "docs/tracked.txt"])
+            .expect("failed to add tracked files");
+        run_git_no_output(&repo_root, &["commit", "-m", "initial"])
+            .expect("failed to commit tracked files");
+
+        fs::write(repo_root.join("src/tracked.txt"), "after\n").expect("failed to modify src file");
+        fs::write(repo_root.join("docs/tracked.txt"), "after\n")
+            .expect("failed to modify docs file");
+        fs::write(repo_root.join("src/new.txt"), "new\n").expect("failed to write src new file");
+        fs::write(repo_root.join("docs/new.txt"), "new\n").expect("failed to write docs new file");
+
+        // Act
+        let hunks = collect_hunks(
+            &repo_root,
+            &DiffTarget {
+                base: None,
+                pathspec: Some("src".to_string()),
+            },
+        )
+        .expect("failed to collect hunks");
+        let summary = local_change_summary_from_status(&repo_root, Some("src"))
+            .expect("failed to collect status summary");
+
+        // Assert
+        let paths = hunks
+            .iter()
+            .map(|hunk| hunk.file_path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"src/tracked.txt"));
+        assert!(paths.contains(&"src/new.txt"));
+        assert!(!paths.iter().any(|path| path.starts_with("docs/")));
+        assert_eq!(summary.modified, 1);
+        assert_eq!(summary.added, 1);
+        assert_eq!(summary.deleted, 0);
     }
 
     #[test]

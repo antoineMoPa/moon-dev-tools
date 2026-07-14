@@ -33,6 +33,7 @@ enum CliCommand {
 #[derive(Debug, PartialEq, Eq)]
 enum ReviewTarget {
     WorkingTree,
+    CurrentDirectory,
     Diff(String),
     Commit(String),
 }
@@ -72,8 +73,10 @@ pub(crate) fn run() -> Result<()> {
 }
 
 fn launch_review(target: ReviewTarget, logs: bool, no_submodules: bool) -> Result<()> {
-    let repo_path = canonicalize_repo(env::current_dir()?)?;
-    let open_request = review_open_request(&repo_path, target)?;
+    let current_dir = env::current_dir()?;
+    let repo_path = canonicalize_repo(&current_dir)?;
+    let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
+    let open_request = review_open_request(&repo_path, target, current_dir_pathspec)?;
     if logs {
         return launch_review_with_foreground_server(repo_path, open_request, no_submodules);
     }
@@ -83,10 +86,39 @@ fn launch_review(target: ReviewTarget, logs: bool, no_submodules: bool) -> Resul
     Ok(())
 }
 
-fn review_open_request(repo_path: &Path, target: ReviewTarget) -> Result<ReviewOpenRequest> {
+fn current_dir_pathspec(repo_path: &Path, current_dir: &Path) -> Result<Option<String>> {
+    let current_dir = current_dir
+        .canonicalize()
+        .context("failed to resolve current directory")?;
+    let relative = current_dir
+        .strip_prefix(repo_path)
+        .context("current directory is outside the repository")?;
+    if relative.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/"),
+    ))
+}
+
+fn review_open_request(
+    repo_path: &Path,
+    target: ReviewTarget,
+    current_dir_pathspec: Option<String>,
+) -> Result<ReviewOpenRequest> {
     match target {
         ReviewTarget::WorkingTree => Ok(ReviewOpenRequest {
             diff_target: DiffTarget::default(),
+            active_commit: None,
+        }),
+        ReviewTarget::CurrentDirectory => Ok(ReviewOpenRequest {
+            diff_target: DiffTarget {
+                base: None,
+                pathspec: current_dir_pathspec,
+            },
             active_commit: None,
         }),
         ReviewTarget::Commit(commit) => {
@@ -168,6 +200,7 @@ fn open_review_session(
     no_submodules: bool,
 ) -> Result<()> {
     let extra_repo_paths = if open_request.diff_target.base.is_none()
+        && open_request.diff_target.pathspec.is_none()
         && open_request.active_commit.is_none()
         && !no_submodules
     {
@@ -255,6 +288,11 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
             logs,
             no_submodules,
         }),
+        [target] if target == "." || target == "./" => Ok(CliCommand::Review {
+            target: ReviewTarget::CurrentDirectory,
+            logs,
+            no_submodules,
+        }),
         [target] => Ok(CliCommand::Review {
             target: if is_sha_like(target) {
                 ReviewTarget::Commit(target.clone())
@@ -279,6 +317,7 @@ Tiny local code review UI for git.
 
 Usage:
   moonreview
+  moonreview .
   moonreview <commit>
   moonreview -ns
   moonreview --logs
@@ -291,11 +330,13 @@ Usage:
 
 Examples:
   moonreview
+  moonreview .
   moonreview 4542abe
   moonreview diff dev
   moonreview diff dev:./
 
 Run `moonreview` inside any git repository you want to review.
+Run `moonreview .` to review only the current directory.
 
 Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
 Use `-ns` or `--no-submodules` to open only the current repository when changed submodules are present.
@@ -364,6 +405,46 @@ mod tests {
                 no_submodules: true,
             }
         );
+    }
+
+    #[test]
+    fn parse_dot_as_current_directory_review() {
+        assert_eq!(
+            parse(&["."]),
+            CliCommand::Review {
+                target: ReviewTarget::CurrentDirectory,
+                logs: false,
+                no_submodules: false,
+            }
+        );
+    }
+
+    #[test]
+    fn working_tree_review_ignores_current_directory_pathspec() {
+        let request = review_open_request(
+            Path::new("/repo"),
+            ReviewTarget::WorkingTree,
+            Some("src".to_string()),
+        )
+        .expect("expected review request");
+
+        assert_eq!(request.diff_target.base, None);
+        assert_eq!(request.diff_target.pathspec, None);
+        assert_eq!(request.active_commit, None);
+    }
+
+    #[test]
+    fn current_directory_review_uses_current_directory_pathspec() {
+        let request = review_open_request(
+            Path::new("/repo"),
+            ReviewTarget::CurrentDirectory,
+            Some("src".to_string()),
+        )
+        .expect("expected review request");
+
+        assert_eq!(request.diff_target.base, None);
+        assert_eq!(request.diff_target.pathspec.as_deref(), Some("src"));
+        assert_eq!(request.active_commit, None);
     }
 
     #[test]
