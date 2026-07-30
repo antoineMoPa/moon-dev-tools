@@ -23,9 +23,12 @@ export type AgentOption = {
 };
 
 export type CommentDispatch = {
+  key: string;
   status: CommentDispatchStatus;
   detail: string;
-  can_cancel?: boolean;
+  agent: AgentKind;
+  can_cancel: boolean;
+  has_log: boolean;
 };
 
 export type Commit = {
@@ -87,7 +90,7 @@ export type DraftComment = {
   lineNumberHint?: number;
 };
 
-export type SidebarComment = {
+export type ReviewComment = {
   hunk_id: string;
   comment_index: number;
   file_path: string;
@@ -95,7 +98,7 @@ export type SidebarComment = {
   selection: string;
   comment: string;
   resolved: boolean;
-  dispatch_status: CommentDispatchStatus;
+  dispatch: CommentDispatch;
   jumpable: boolean;
 };
 
@@ -114,7 +117,7 @@ export type SessionState = {
   available_agents: AgentOption[];
   selected_agent: AgentKind;
   hunks: Hunk[];
-  sidebar_comments: SidebarComment[];
+  review_comments: ReviewComment[];
   export_text: string;
 };
 
@@ -125,4 +128,9 @@ export type PatchPayload = {
 export type FileContentPayload = {
   file_path: string;
   content: string;
+};
+
+export type AgentLogPayload = {
+  dispatch_key: string;
+  text: string;
 };

@@ -36,7 +36,7 @@ function makeSession(hunks: Hunk[]): SessionState {
     available_agents: [],
     selected_agent: "none",
     hunks,
-    sidebar_comments: [],
+    review_comments: [],
     export_text: "",
   };
 }

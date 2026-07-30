@@ -8,7 +8,8 @@ import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
-import { TerminalPanel } from "./components/TerminalPanel";
+import { DockWindows } from "./components/windows/DockWindows";
+import { DockWindowsProvider } from "./components/windows/dockWindowState";
 import { ReviewStoreProvider, ReviewView, useReviewStore } from "./reviewStore";
 import {
   filePathsInListOrder,
@@ -75,7 +76,9 @@ function reviewLabelForSession(session?: SessionState | null) {
 function AppContent() {
   return (
     <ThemeProvider>
-      <AppContentInner />
+      <DockWindowsProvider>
+        <AppContentInner />
+      </DockWindowsProvider>
     </ThemeProvider>
   );
 }
@@ -100,8 +103,6 @@ function AppContentInner() {
   const previousDataRef = useRef<typeof data>(null);
   const hadUnstagedHunksRef = useRef(false);
   const [reviewComplete, setReviewComplete] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalEverOpened, setTerminalEverOpened] = useState(false);
   const [activeJumpTarget, setActiveJumpTarget] = useState<{
     filePath?: string | null;
     hunkId?: string | null;
@@ -255,11 +256,6 @@ function AppContentInner() {
     previousDataRef.current = data;
   }, [activeView, data, pendingStageFile, selectedFilePath, snoozedFiles]);
 
-  function openTerminal() {
-    setTerminalEverOpened(true);
-    setTerminalOpen(true);
-  }
-
   function handleAgentChange(agent: AgentKind) {
     window.localStorage.setItem(AGENT_STORAGE_KEY, agent);
     void actions.setAgent(agent);
@@ -331,7 +327,6 @@ function AppContentInner() {
         repoName={data.repo_name}
         branchName={data.branch_name}
         reviewLabel={reviewLabelForSession(data)}
-        onOpenTerminal={terminalOpen ? null : openTerminal}
       />
       <main>
         <div className="review-layout">
@@ -369,9 +364,7 @@ function AppContentInner() {
           </section>
         </div>
       </main>
-      {terminalEverOpened ? (
-        <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} />
-      ) : null}
+      <DockWindows />
     </>
   );
 }

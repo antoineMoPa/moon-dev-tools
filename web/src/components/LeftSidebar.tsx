@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchCommitHistory } from "../api";
 import { ReviewView, useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
-import type { CommentDispatchStatus, Commit, SessionState, SidebarComment } from "../types";
+import type { CommentDispatchStatus, Commit, ReviewComment, SessionState } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 import { buildSidebarFiles, FILE_STAGE_STATUS, localChangesSummary } from "./sidebarFiles";
@@ -51,10 +51,10 @@ function statusLabel(resolved: boolean, status: CommentDispatchStatus) {
 }
 
 function buildSidebarComments(data: SessionState): SidebarCommentItem[] {
-  return data.sidebar_comments.map((comment, index) => buildSidebarCommentItem(comment, index));
+  return data.review_comments.map((comment, index) => buildSidebarCommentItem(comment, index));
 }
 
-function buildSidebarCommentItem(comment: SidebarComment, index: number): SidebarCommentItem {
+function buildSidebarCommentItem(comment: ReviewComment, index: number): SidebarCommentItem {
   return {
     id: `${comment.hunk_id}:${comment.comment_index}:${index}`,
     hunkId: comment.hunk_id,
@@ -63,7 +63,7 @@ function buildSidebarCommentItem(comment: SidebarComment, index: number): Sideba
     comment: comment.comment,
     selection: comment.selection,
     resolved: comment.resolved,
-    statusLabel: statusLabel(comment.resolved, comment.dispatch_status),
+    statusLabel: statusLabel(comment.resolved, comment.dispatch.status),
   };
 }
 

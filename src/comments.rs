@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -13,9 +13,9 @@ use anyhow::{Result, anyhow};
 use crate::{
     agent::run_agent_dispatch,
     api::{
-        AgentKind, AppState, CancelToken, CommentDispatchStatus, CommentDispatchView,
-        CommentRequest, DiffHunk, HunkCommentContext, HunkView, RepoSession, SidebarCommentView,
-        export_server_url, server_url, with_session,
+        AgentKind, AgentLog, AppState, CancelToken, CommentDispatchStatus, CommentDispatchView,
+        CommentRequest, DiffHunk, HunkCommentContext, HunkView, RepoSession, ReviewCommentView,
+        append_to_agent_log, export_server_url, server_url, with_session,
     },
     git::collect_session_hunks,
 };
@@ -30,7 +30,9 @@ const ANCHOR_CLOSE: &str = "[[/mr-anchor]]";
 pub(crate) struct CommentDispatchState {
     pub(crate) status: CommentDispatchStatus,
     pub(crate) detail: String,
+    pub(crate) agent: AgentKind,
     pub(crate) cancel_token: Option<CancelToken>,
+    pub(crate) log: Option<AgentLog>,
 }
 
 pub(crate) struct AnchoredComment {
@@ -62,6 +64,7 @@ pub(crate) struct DispatchJob {
     pub(crate) agent: AgentKind,
     pub(crate) targets: Vec<DispatchTarget>,
     pub(crate) cancel_token: CancelToken,
+    pub(crate) log: AgentLog,
 }
 
 pub(crate) fn build_anchored_comment_value(comments: &[AnchoredComment]) -> String {
@@ -176,7 +179,9 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
                 };
                 dispatch.status = CommentDispatchStatus::Running;
                 dispatch.detail = format!("Running in {}.", job.agent.label());
+                dispatch.agent = job.agent;
                 dispatch.cancel_token = Some(Arc::clone(&job.cancel_token));
+                dispatch.log = Some(Arc::clone(&job.log));
             }
             Ok(())
         });
@@ -189,6 +194,10 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
         );
         let result = run_agent_dispatch(&job);
         let canceled = job.cancel_token.load(Ordering::SeqCst);
+        match &result {
+            Ok(detail) => append_to_agent_log(&job.log, &format!("\n[moonreview] {detail}\n")),
+            Err(error) => append_to_agent_log(&job.log, &format!("\n[moonreview] {error}\n")),
+        }
         match &result {
             Ok(detail) => eprintln!(
                 "[moonreview] dispatch done agent={} comments={} detail={}",
@@ -310,19 +319,21 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
     out
 }
 
-pub(crate) fn build_sidebar_comments(
+/// Every comment of the session, whether or not its hunk is still part of the current diff.
+/// Feeds both the sidebar comment list and the agent monitor window.
+pub(crate) fn build_review_comments(
     session: &RepoSession,
     current_hunks: &[HunkView],
-) -> Vec<SidebarCommentView> {
-    let mut sidebar_comments = Vec::new();
+) -> Vec<ReviewCommentView> {
+    let mut review_comments = Vec::new();
     let mut seen_hunks = HashSet::new();
 
     for hunk in current_hunks {
         seen_hunks.insert(hunk.id.clone());
         let anchored = parse_anchored_comments(&hunk.comment);
         for (comment_index, entry) in anchored.into_iter().enumerate() {
-            let dispatch = comment_dispatch_view(session, &hunk.id, &entry);
-            sidebar_comments.push(SidebarCommentView {
+            review_comments.push(ReviewCommentView {
+                dispatch: comment_dispatch_view(session, &hunk.id, &entry),
                 hunk_id: hunk.id.clone(),
                 comment_index,
                 file_path: hunk.file_path.clone(),
@@ -330,7 +341,6 @@ pub(crate) fn build_sidebar_comments(
                 selection: entry.selection.clone(),
                 comment: entry.comment.clone(),
                 resolved: entry.resolved,
-                dispatch_status: dispatch.status,
                 jumpable: true,
             });
         }
@@ -346,8 +356,8 @@ pub(crate) fn build_sidebar_comments(
         };
         let anchored = parse_anchored_comments(stored_comment);
         for (comment_index, entry) in anchored.into_iter().enumerate() {
-            let dispatch = comment_dispatch_view(session, hunk_id, &entry);
-            sidebar_comments.push(SidebarCommentView {
+            review_comments.push(ReviewCommentView {
+                dispatch: comment_dispatch_view(session, hunk_id, &entry),
                 hunk_id: hunk_id.clone(),
                 comment_index,
                 file_path: context.file_path.clone(),
@@ -355,13 +365,12 @@ pub(crate) fn build_sidebar_comments(
                 selection: entry.selection.clone(),
                 comment: entry.comment.clone(),
                 resolved: entry.resolved,
-                dispatch_status: dispatch.status,
                 jumpable: false,
             });
         }
     }
 
-    sidebar_comments
+    review_comments
 }
 
 pub(crate) fn plan_comment_dispatches(
@@ -449,6 +458,7 @@ pub(crate) fn plan_batched_comment_dispatches(
 
             dispatch.status = CommentDispatchStatus::Queued;
             dispatch.detail = format!("Queued for {}.", session.selected_agent.label());
+            dispatch.agent = session.selected_agent;
             targets.push(build_dispatch_target(&hunk.id, &hunk, &entry));
         }
     }
@@ -472,6 +482,7 @@ pub(crate) fn plan_batched_comment_dispatches(
         agent: session.selected_agent,
         targets,
         cancel_token,
+        log: Arc::new(Mutex::new(String::new())),
     }])
 }
 
@@ -565,7 +576,9 @@ fn queue_dispatch_job(
         CommentDispatchState {
             status,
             detail,
+            agent: session.selected_agent,
             cancel_token: cancel_token.as_ref().map(Arc::clone),
+            log: None,
         },
     );
 
@@ -598,6 +611,7 @@ fn build_dispatch_job(
         agent: session.selected_agent,
         targets: vec![build_dispatch_target(hunk_id, hunk, entry)],
         cancel_token,
+        log: Arc::new(Mutex::new(String::new())),
     }
 }
 
@@ -621,16 +635,38 @@ pub(crate) fn comment_dispatch_view(
     hunk_id: &str,
     entry: &AnchoredComment,
 ) -> CommentDispatchView {
-    session
-        .comment_dispatches
-        .get(&dispatch_key(hunk_id, entry))
-        .map(|dispatch| CommentDispatchView {
-            status: dispatch.status,
-            detail: dispatch.detail.clone(),
-            can_cancel: matches!(
-                dispatch.status,
-                CommentDispatchStatus::Queued | CommentDispatchStatus::Running
-            ),
-        })
-        .unwrap_or_default()
+    let key = dispatch_key(hunk_id, entry);
+    let Some(dispatch) = session.comment_dispatches.get(&key) else {
+        return CommentDispatchView {
+            key,
+            status: CommentDispatchStatus::default(),
+            detail: String::new(),
+            agent: AgentKind::None,
+            can_cancel: false,
+            has_log: false,
+        };
+    };
+
+    CommentDispatchView {
+        key,
+        status: dispatch.status,
+        detail: dispatch.detail.clone(),
+        agent: dispatch.agent,
+        can_cancel: matches!(
+            dispatch.status,
+            CommentDispatchStatus::Queued | CommentDispatchStatus::Running
+        ),
+        has_log: dispatch.log.is_some(),
+    }
+}
+
+pub(crate) fn agent_dispatch_log(session: &RepoSession, dispatch_key: &str) -> Result<String> {
+    let Some(dispatch) = session.comment_dispatches.get(dispatch_key) else {
+        return Err(anyhow!("agent dispatch no longer exists"));
+    };
+    let Some(log) = &dispatch.log else {
+        return Ok(String::new());
+    };
+
+    crate::api::read_agent_log(log)
 }

@@ -102,7 +102,7 @@ pub(crate) struct SessionPayload {
     pub(crate) available_agents: Vec<AgentOption>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) hunks: Vec<HunkView>,
-    pub(crate) sidebar_comments: Vec<SidebarCommentView>,
+    pub(crate) review_comments: Vec<ReviewCommentView>,
     pub(crate) export_text: String,
 }
 
@@ -186,7 +186,7 @@ pub(crate) enum FileChangeKind {
 }
 
 #[derive(Serialize)]
-pub(crate) struct SidebarCommentView {
+pub(crate) struct ReviewCommentView {
     pub(crate) hunk_id: String,
     pub(crate) comment_index: usize,
     pub(crate) file_path: String,
@@ -194,7 +194,7 @@ pub(crate) struct SidebarCommentView {
     pub(crate) selection: String,
     pub(crate) comment: String,
     pub(crate) resolved: bool,
-    pub(crate) dispatch_status: CommentDispatchStatus,
+    pub(crate) dispatch: CommentDispatchView,
     pub(crate) jumpable: bool,
 }
 
@@ -246,11 +246,14 @@ pub(crate) enum CommentDispatchStatus {
     Failed,
 }
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct CommentDispatchView {
+    pub(crate) key: String,
     pub(crate) status: CommentDispatchStatus,
     pub(crate) detail: String,
+    pub(crate) agent: AgentKind,
     pub(crate) can_cancel: bool,
+    pub(crate) has_log: bool,
 }
 
 #[derive(Serialize)]
@@ -312,6 +315,17 @@ pub(crate) struct CancelCommentDispatchRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct AgentLogQuery {
+    pub(crate) dispatch_key: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct AgentLogPayload {
+    pub(crate) dispatch_key: String,
+    pub(crate) text: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct AgentSelectionRequest {
     pub(crate) agent: AgentKind,
 }
@@ -340,6 +354,36 @@ pub(crate) struct ReviewedRequest {
 }
 
 pub(crate) type CancelToken = Arc<AtomicBool>;
+
+/// Live stdout/stderr of one agent run, shared by every comment that run addresses.
+pub(crate) type AgentLog = Arc<Mutex<String>>;
+
+/// Older output is dropped once a run exceeds this, so a chatty agent cannot grow the session forever.
+const AGENT_LOG_MAX_BYTES: usize = 200_000;
+
+pub(crate) fn append_to_agent_log(log: &AgentLog, chunk: &str) {
+    let Ok(mut text) = log.lock() else {
+        return;
+    };
+
+    text.push_str(chunk);
+    if text.len() <= AGENT_LOG_MAX_BYTES {
+        return;
+    }
+
+    let drop_until = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| text.len() - index <= AGENT_LOG_MAX_BYTES)
+        .unwrap_or(text.len());
+    text.replace_range(..drop_until, "");
+}
+
+pub(crate) fn read_agent_log(log: &AgentLog) -> Result<String> {
+    log.lock()
+        .map(|text| text.clone())
+        .map_err(|_| anyhow!("agent log lock poisoned"))
+}
 
 #[derive(Clone)]
 pub(crate) struct DiffHunk {

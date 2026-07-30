@@ -15,17 +15,18 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, CommitHistoryPayload, CommitHistoryQuery,
-        CommitReviewStatus, CommitSelectionRequest, DiffHunk, FileContentPayload, FileQuery,
+        AgentKind, AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
+        CommitHistoryQuery, CommitReviewStatus, CommitSelectionRequest, DiffHunk,
+        FileContentPayload, FileQuery,
         FileReviewedRequest, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
         ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload, bind_host,
         port, server_url,
     },
     comments::{
-        anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
-        build_export_text, build_sidebar_comments, cancel_comment_dispatch, comment_dispatch_view,
-        parse_anchored_comments, plan_batched_comment_dispatches, plan_comment_dispatches,
-        spawn_comment_dispatch,
+        agent_dispatch_log, anchored_comment_key, anchored_comments_only,
+        build_anchored_comment_value, build_export_text, build_review_comments,
+        cancel_comment_dispatch, comment_dispatch_view, parse_anchored_comments,
+        plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
     git::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
@@ -101,6 +102,10 @@ pub(crate) async fn run_server() -> Result<()> {
         .route(
             "/api/session/{session_id}/comment-dispatch/cancel",
             post(cancel_comment_dispatch_request),
+        )
+        .route(
+            "/api/session/{session_id}/agent-dispatch/log",
+            get(agent_dispatch_log_request),
         )
         .route("/api/session/{session_id}/stage", post(stage_hunk))
         .route("/api/session/{session_id}/stage-file", post(stage_file))
@@ -427,7 +432,7 @@ async fn session_state(
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
             available_agents: available_agents.clone(),
             selected_agent: session.selected_agent,
-            sidebar_comments: build_sidebar_comments(session, &views),
+            review_comments: build_review_comments(session, &views),
             export_text: build_export_text(&session_id, &views),
             hunks: views,
         })
@@ -682,6 +687,22 @@ async fn cancel_comment_dispatch_request(
     })?;
 
     Ok("ok")
+}
+
+async fn agent_dispatch_log_request(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<AgentLogQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<AgentLogPayload>, AppError> {
+    mark_activity(&state);
+    let payload = crate::api::with_session(&state, &session_id, |session| {
+        Ok(AgentLogPayload {
+            dispatch_key: query.dispatch_key.clone(),
+            text: agent_dispatch_log(session, &query.dispatch_key)?,
+        })
+    })?;
+
+    Ok(Json(payload))
 }
 
 async fn stage_hunk(

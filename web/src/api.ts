@@ -1,4 +1,11 @@
-import type { AgentKind, CommitHistoryPage, FileContentPayload, PatchPayload, SessionState } from "./types";
+import type {
+  AgentKind,
+  AgentLogPayload,
+  CommitHistoryPage,
+  FileContentPayload,
+  PatchPayload,
+  SessionState,
+} from "./types";
 
 function parseSessionId(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);
@@ -152,6 +159,11 @@ export function cancelCommentDispatch(hunkId: string, commentIndex: number): Pro
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, comment_index: commentIndex }),
   });
+}
+
+export function fetchAgentLog(dispatchKey: string): Promise<AgentLogPayload> {
+  const params = new URLSearchParams({ dispatch_key: dispatchKey });
+  return request<AgentLogPayload>(`/api/session/${sessionId}/agent-dispatch/log?${params.toString()}`);
 }
 
 export function updateAgent(agent: AgentKind): Promise<string> {

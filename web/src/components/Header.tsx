@@ -1,11 +1,12 @@
 import { useTheme } from "../theme";
 import { useOptionalReviewStore } from "../reviewStore";
+import { useOptionalDockWindows } from "./windows/dockWindowState";
+import { dockWindowIds, mapWindowIdToDefinition } from "./windows/windowRegistry";
 
 type HeaderProps = {
   repoName?: string | null;
   branchName?: string | null;
   reviewLabel?: string | null;
-  onOpenTerminal?: (() => void) | null;
 };
 
 function formatRepoLabel(repoName?: string | null, branchName?: string | null): string | null {
@@ -16,9 +17,10 @@ function formatRepoLabel(repoName?: string | null, branchName?: string | null): 
   return branchName ? `${repoName} / ${branchName}` : repoName;
 }
 
-export function Header({ repoName, branchName, reviewLabel, onOpenTerminal }: HeaderProps) {
+export function Header({ repoName, branchName, reviewLabel }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const reviewStore = useOptionalReviewStore();
+  const dockWindows = useOptionalDockWindows();
   const movedDiffLayout = reviewStore?.state.movedDiffLayout ?? "unified";
   const repoLabel = formatRepoLabel(repoName, branchName);
   const nextTheme = theme === "dark" ? "light" : "dark";
@@ -66,16 +68,21 @@ export function Header({ repoName, branchName, reviewLabel, onOpenTerminal }: He
             </span>
             <span>{theme === "dark" ? "Light" : "Dark"}</span>
           </button>
-          {onOpenTerminal ? (
-            <button
-              type="button"
-              className="header-terminal-toggle"
-              onClick={onOpenTerminal}
-              title="Open terminal"
-            >
-              [terminal]
-            </button>
-          ) : null}
+          {dockWindows
+            ? dockWindowIds
+                .filter((windowId) => !dockWindows.openWindowIds.includes(windowId))
+                .map((windowId) => (
+                  <button
+                    key={windowId}
+                    type="button"
+                    className="header-window-toggle"
+                    onClick={() => dockWindows.openWindow(windowId)}
+                    title={`Open ${mapWindowIdToDefinition[windowId].title}`}
+                  >
+                    [{mapWindowIdToDefinition[windowId].title}]
+                  </button>
+                ))
+            : null}
         </div>
       </div>
     </header>

@@ -255,10 +255,10 @@ function hasActiveDispatches(data: SessionState | null): boolean {
           dispatch.status === COMMENT_DISPATCH_STATUS.running,
       ),
     ) ||
-    data.sidebar_comments.some(
+    data.review_comments.some(
       (comment) =>
-        comment.dispatch_status === COMMENT_DISPATCH_STATUS.queued ||
-        comment.dispatch_status === COMMENT_DISPATCH_STATUS.running,
+        comment.dispatch.status === COMMENT_DISPATCH_STATUS.queued ||
+        comment.dispatch.status === COMMENT_DISPATCH_STATUS.running,
     )
   );
 }

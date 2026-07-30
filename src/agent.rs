@@ -1,6 +1,5 @@
 use std::{
     io::Read,
-    path::Path,
     process::{Child, Command, Stdio},
     sync::{
         Arc,
@@ -15,7 +14,10 @@ use std::os::unix::process::CommandExt;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::{api::AgentKind, comments::DispatchJob};
+use crate::{
+    api::{AgentKind, AgentLog, append_to_agent_log},
+    comments::DispatchJob,
+};
 
 pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
     if job.cancel_token.load(Ordering::SeqCst) {
@@ -25,9 +27,9 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
     let prompt = build_agent_prompt(job);
     match job.agent {
         AgentKind::None => Ok(String::new()),
-        AgentKind::Claude => run_claude(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
-        AgentKind::Codex => run_codex(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
-        AgentKind::OpenCode => run_opencode(prompt, &job.repo_path, Arc::clone(&job.cancel_token)),
+        AgentKind::Claude => run_claude(prompt, job),
+        AgentKind::Codex => run_codex(prompt, job),
+        AgentKind::OpenCode => run_opencode(prompt, job),
     }
 }
 
@@ -83,10 +85,10 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
     prompt
 }
 
-fn run_claude(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+fn run_claude(prompt: String, job: &DispatchJob) -> Result<String> {
     let mut command = Command::new("claude");
     command
-        .current_dir(repo_path)
+        .current_dir(&job.repo_path)
         .args(["-p", "--permission-mode", "bypassPermissions"]);
     configure_agent_command(&mut command);
     let output = command
@@ -97,16 +99,17 @@ fn run_claude(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -
             "failed to write prompt to Claude",
             "[moonreview] Claude stdout: ",
             "[moonreview] Claude stderr: ",
-            cancel_token,
+            Arc::clone(&job.cancel_token),
+            Arc::clone(&job.log),
         )?;
 
     summarize_agent_output("Claude", output)
 }
 
-fn run_codex(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+fn run_codex(prompt: String, job: &DispatchJob) -> Result<String> {
     let mut command = Command::new("codex");
     command
-        .current_dir(repo_path)
+        .current_dir(&job.repo_path)
         .args(["exec", "--full-auto", "-"]);
     configure_agent_command(&mut command);
     let output = command
@@ -117,16 +120,17 @@ fn run_codex(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) ->
             "failed to write prompt to Codex",
             "[moonreview] Codex stdout: ",
             "[moonreview] Codex stderr: ",
-            cancel_token,
+            Arc::clone(&job.cancel_token),
+            Arc::clone(&job.log),
         )?;
 
     summarize_agent_output("Codex", output)
 }
 
-fn run_opencode(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>) -> Result<String> {
+fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
     let mut command = Command::new("opencode");
     command
-        .current_dir(repo_path)
+        .current_dir(&job.repo_path)
         .args(["run", "--dangerously-skip-permissions"])
         .arg(prompt);
     configure_agent_command(&mut command);
@@ -138,7 +142,8 @@ fn run_opencode(prompt: String, repo_path: &Path, cancel_token: Arc<AtomicBool>)
             "failed to write prompt to OpenCode",
             "[moonreview] OpenCode stdout: ",
             "[moonreview] OpenCode stderr: ",
-            cancel_token,
+            Arc::clone(&job.cancel_token),
+            Arc::clone(&job.log),
         )?;
 
     summarize_agent_output("OpenCode", output)
@@ -208,6 +213,7 @@ pub(crate) trait ChildExt {
         stdout_prefix: &'static str,
         stderr_prefix: &'static str,
         cancel_token: Arc<AtomicBool>,
+        log: AgentLog,
     ) -> Result<std::process::Output>;
 }
 
@@ -233,6 +239,7 @@ impl ChildExt for std::process::Child {
         stdout_prefix: &'static str,
         stderr_prefix: &'static str,
         cancel_token: Arc<AtomicBool>,
+        log: AgentLog,
     ) -> Result<std::process::Output> {
         use std::io::Write;
 
@@ -250,8 +257,9 @@ impl ChildExt for std::process::Child {
             .take()
             .ok_or_else(|| anyhow!("process stderr was not piped"))?;
 
-        let stdout_thread = thread::spawn(move || stream_reader(stdout, stdout_prefix));
-        let stderr_thread = thread::spawn(move || stream_reader(stderr, stderr_prefix));
+        let stdout_log = Arc::clone(&log);
+        let stdout_thread = thread::spawn(move || stream_reader(stdout, stdout_prefix, stdout_log));
+        let stderr_thread = thread::spawn(move || stream_reader(stderr, stderr_prefix, log));
 
         let status = loop {
             if cancel_token.load(Ordering::SeqCst) {
@@ -294,7 +302,7 @@ fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
     child.kill()
 }
 
-fn stream_reader<R: Read>(mut reader: R, prefix: &'static str) -> Result<Vec<u8>> {
+fn stream_reader<R: Read>(mut reader: R, prefix: &'static str, log: AgentLog) -> Result<Vec<u8>> {
     let mut collected = Vec::new();
     let mut buffer = [0u8; 4096];
 
@@ -308,7 +316,9 @@ fn stream_reader<R: Read>(mut reader: R, prefix: &'static str) -> Result<Vec<u8>
 
         let chunk = &buffer[..bytes_read];
         collected.extend_from_slice(chunk);
-        eprint!("{prefix}{}", String::from_utf8_lossy(chunk));
+        let text = String::from_utf8_lossy(chunk);
+        append_to_agent_log(&log, &text);
+        eprint!("{prefix}{text}");
     }
 
     Ok(collected)
@@ -338,6 +348,7 @@ mod tests {
                 "[test] stdout: ",
                 "[test] stderr: ",
                 cancel_token,
+                Arc::new(std::sync::Mutex::new(String::new())),
             )
             .expect("wait for child");
 
@@ -362,6 +373,7 @@ mod tests {
                 "[test] stdout: ",
                 "[test] stderr: ",
                 cancel_token,
+                Arc::new(std::sync::Mutex::new(String::new())),
             )
             .expect("wait for stopped child");
 
@@ -384,6 +396,7 @@ mod tests {
                 "[test] stdout: ",
                 "[test] stderr: ",
                 cancel_token,
+                Arc::new(std::sync::Mutex::new(String::new())),
             )
             .expect("wait for stopped child process group");
 
