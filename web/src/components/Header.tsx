@@ -5,6 +5,7 @@ type HeaderProps = {
   repoName?: string | null;
   branchName?: string | null;
   reviewLabel?: string | null;
+  onOpenTerminal?: (() => void) | null;
 };
 
 function formatRepoLabel(repoName?: string | null, branchName?: string | null): string | null {
@@ -15,7 +16,7 @@ function formatRepoLabel(repoName?: string | null, branchName?: string | null): 
   return branchName ? `${repoName} / ${branchName}` : repoName;
 }
 
-export function Header({ repoName, branchName, reviewLabel }: HeaderProps) {
+export function Header({ repoName, branchName, reviewLabel, onOpenTerminal }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const reviewStore = useOptionalReviewStore();
   const movedDiffLayout = reviewStore?.state.movedDiffLayout ?? "unified";
@@ -65,6 +66,16 @@ export function Header({ repoName, branchName, reviewLabel }: HeaderProps) {
             </span>
             <span>{theme === "dark" ? "Light" : "Dark"}</span>
           </button>
+          {onOpenTerminal ? (
+            <button
+              type="button"
+              className="header-terminal-toggle"
+              onClick={onOpenTerminal}
+              title="Open terminal"
+            >
+              [terminal]
+            </button>
+          ) : null}
         </div>
       </div>
     </header>

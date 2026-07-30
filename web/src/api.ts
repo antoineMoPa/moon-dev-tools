@@ -48,6 +48,11 @@ export function getSessionId(): string {
   return sessionId;
 }
 
+export function terminalSocketUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/session/${sessionId}/terminal`;
+}
+
 export function fetchSessionState(): Promise<SessionState> {
   return request<SessionState>(`/api/session/${sessionId}/state`);
 }

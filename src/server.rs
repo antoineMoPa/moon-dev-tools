@@ -115,6 +115,10 @@ pub(crate) async fn run_server() -> Result<()> {
         )
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
+        .route(
+            "/api/session/{session_id}/terminal",
+            get(crate::terminal::terminal_socket),
+        )
         .with_state(AppState {
             inner: Arc::new(Mutex::new(ServerState::default())),
             agent_availability: detect_agent_availability(),

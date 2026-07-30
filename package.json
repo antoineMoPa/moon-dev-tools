@@ -9,6 +9,8 @@
     "bin-release": "./scripts/bin-release.sh"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
