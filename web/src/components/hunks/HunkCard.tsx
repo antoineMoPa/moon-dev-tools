@@ -404,24 +404,24 @@ export function HunkCard({
       <div className="hunk-actions">
         {isCommitReview ? (
           <button onClick={() => void actions.setReviewed(hunk.id, !hunk.reviewed)}>
-            {hunk.reviewed ? "Mark Unreviewed" : "Mark Reviewed"}
+            [{hunk.reviewed ? "mark unreviewed" : "mark reviewed"}]
           </button>
         ) : null}
         {!readOnly && !moveDiffView ? (
           <>
             <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>
-              {hunk.staged ? "Unstage Hunk" : "Stage Hunk"}
+              [{hunk.staged ? "unstage hunk" : "stage hunk"}]
             </button>
-            <button onClick={confirmDiscardHunk}>Discard Hunk</button>
+            <button onClick={confirmDiscardHunk}>[discard hunk]</button>
           </>
         ) : null}
         {isLong ? (
           <button onClick={() => void toggleExpanded()}>
             {expanded
-              ? "Collapse Diff"
+              ? "[collapse diff]"
               : loadingPatch
-                ? "Loading Diff..."
-                : `Expand Diff (${hunk.patch_line_count} lines)`}
+                ? "[loading diff...]"
+                : `[expand diff (${hunk.patch_line_count} lines)]`}
           </button>
         ) : null}
         <button
@@ -429,7 +429,7 @@ export function HunkCard({
           type="button"
           onClick={() => setFullFileOpen(true)}
         >
-          View file
+          [view file]
         </button>
       </div>
 

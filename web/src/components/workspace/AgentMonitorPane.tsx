@@ -73,7 +73,7 @@ function AgentRunRow({ run, logOpen, logText, onToggleLog, onStop }: AgentRunRow
   );
 }
 
-export function AgentMonitorWindow() {
+export function AgentMonitorPane() {
   const {
     state: { data },
     actions,
@@ -121,11 +121,11 @@ export function AgentMonitorWindow() {
   }, [openLogIsLive, openLogKey]);
 
   if (!data) {
-    return <div className="agent-monitor empty-section muted">Loading review state...</div>;
+    return <div className="agent-monitor agent-monitor-empty muted">Loading review state...</div>;
   }
 
   if (runs.length === 0) {
-    return <div className="agent-monitor empty-section muted">No comments yet.</div>;
+    return <div className="agent-monitor agent-monitor-empty muted">No comments yet.</div>;
   }
 
   return (

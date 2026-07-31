@@ -56,6 +56,7 @@ pub(crate) struct AppState {
     pub(crate) inner: Arc<Mutex<ServerState>>,
     pub(crate) agent_availability: AgentAvailability,
     pub(crate) last_activity: Arc<Mutex<Instant>>,
+    pub(crate) terminals: Arc<crate::terminal::TerminalRegistry>,
 }
 
 #[derive(Default)]
@@ -411,6 +412,13 @@ where
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         (axum::http::StatusCode::BAD_REQUEST, self.0.to_string()).into_response()
+    }
+}
+
+/// Push back the idle shutdown: the server only stops once nothing has touched it for a while.
+pub(crate) fn mark_activity(last_activity: &Mutex<Instant>) {
+    if let Ok(mut last_activity) = last_activity.lock() {
+        *last_activity = Instant::now();
     }
 }
 

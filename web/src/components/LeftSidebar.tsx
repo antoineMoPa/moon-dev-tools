@@ -6,6 +6,7 @@ import type { CommentDispatchStatus, Commit, ReviewComment, SessionState } from 
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 import { buildSidebarFiles, FILE_STAGE_STATUS, localChangesSummary } from "./sidebarFiles";
+import { useReviewScroll } from "./workspace/reviewScroll";
 import type { SidebarFileItem } from "./sidebarFiles";
 
 const HISTORY_COMMIT_PAGE_SIZE = 30;
@@ -213,6 +214,7 @@ export function LeftSidebar({
     state: { activeView, busy },
     actions,
   } = useReviewStore();
+  const { scrollToTop } = useReviewScroll();
   const isViewingAll = activeView === ReviewView.All;
   const isCommitReview = Boolean(data.active_commit);
   const sidebarFiles = useMemo(() => buildSidebarFiles(data, snoozedFiles), [data, snoozedFiles]);
@@ -227,7 +229,7 @@ export function LeftSidebar({
               className={`sidebar-link-action ${isViewingAll ? "sidebar-link-active" : ""}`.trim()}
               type="button"
               onClick={() => {
-                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                scrollToTop();
                 onShowAll();
               }}
             >
@@ -262,7 +264,7 @@ export function LeftSidebar({
         historyHasMore={data.history_has_more}
         localSummary={localChangesSummary(data.local_change_summary)}
         onSelectCommit={(commit) => {
-          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+          scrollToTop();
           void actions.setActiveCommit(commit);
         }}
       />

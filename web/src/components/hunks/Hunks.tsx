@@ -3,6 +3,7 @@ import { ReviewView, useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "../diffStats";
 import { HunkCard } from "./HunkCard";
+import { useReviewScroll } from "../workspace/reviewScroll";
 
 type HunksProps = {
   hunks: Hunk[];
@@ -48,16 +49,23 @@ function isEditableShortcutTarget(target: EventTarget | null) {
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
 }
 
-function hunkViewportAnchorTop() {
-  return Math.min(180, window.innerHeight * 0.28);
+/// The hunk the keyboard shortcuts act on is the one nearest this line in the review pane.
+function hunkAnchorTop(paneTop: number, paneHeight: number) {
+  return paneTop + Math.min(180, paneHeight * 0.28);
 }
 
 function useActiveHunkFromViewport(interactiveHunks: Hunk[]) {
   const { actions } = useReviewStore();
+  const { scrollElement } = useReviewScroll();
 
   useEffect(() => {
     if (interactiveHunks.length === 0) {
       actions.setActiveHunkId(null);
+      return;
+    }
+
+    const pane = scrollElement();
+    if (!pane) {
       return;
     }
 
@@ -68,7 +76,8 @@ function useActiveHunkFromViewport(interactiveHunks: Hunk[]) {
       animationFrame = window.requestAnimationFrame(() => {
         let nextHunkId: string | null = null;
         let bestDistance = Number.POSITIVE_INFINITY;
-        const anchorTop = hunkViewportAnchorTop();
+        const paneRect = pane!.getBoundingClientRect();
+        const anchorTop = hunkAnchorTop(paneRect.top, paneRect.height);
 
         for (const hunk of interactiveHunks) {
           const element = document.getElementById(`hunk-${hunk.id}`);
@@ -77,7 +86,7 @@ function useActiveHunkFromViewport(interactiveHunks: Hunk[]) {
           }
 
           const rect = element.getBoundingClientRect();
-          if (rect.bottom < 0 || rect.top > window.innerHeight) {
+          if (rect.bottom < paneRect.top || rect.top > paneRect.bottom) {
             continue;
           }
 
@@ -93,14 +102,14 @@ function useActiveHunkFromViewport(interactiveHunks: Hunk[]) {
     }
 
     updateActiveHunkFromViewport();
-    window.addEventListener("scroll", updateActiveHunkFromViewport, { passive: true });
+    pane.addEventListener("scroll", updateActiveHunkFromViewport, { passive: true });
     window.addEventListener("resize", updateActiveHunkFromViewport);
     return () => {
       window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener("scroll", updateActiveHunkFromViewport);
+      pane.removeEventListener("scroll", updateActiveHunkFromViewport);
       window.removeEventListener("resize", updateActiveHunkFromViewport);
     };
-  }, [actions, interactiveHunks]);
+  }, [actions, interactiveHunks, scrollElement]);
 }
 
 function FileAccordion({
@@ -203,6 +212,7 @@ export function Hunks({
     state: { activeHunkId, activeView, busy, data },
     actions,
   } = useReviewStore();
+  const { scrollToTop } = useReviewScroll();
   const isViewingAll = activeView === ReviewView.All;
   const readOnly = data?.read_only ?? false;
   const isCommitReview = Boolean(data?.active_commit);
@@ -384,7 +394,7 @@ export function Hunks({
         const shouldScrollToTop = interactiveUnstagedHunks[0]?.id === activeHunk.id;
         void actions.toggleStage(activeHunk.id, activeHunk.staged).then((changed) => {
           if (changed && shouldScrollToTop) {
-            window.scrollTo({ top: 0, left: window.scrollX, behavior: "auto" });
+            scrollToTop();
           }
         });
       } else if (!readOnly && key === "u" && activeHunk.staged) {

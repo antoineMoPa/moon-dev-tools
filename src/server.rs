@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
     response::{Html, IntoResponse},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 
 use crate::{
@@ -121,13 +121,24 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
         .route(
-            "/api/session/{session_id}/terminal",
+            "/api/session/{session_id}/terminals",
+            get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
+        )
+        .route(
+            "/api/session/{session_id}/terminals/{terminal_id}",
+            delete(crate::terminal::close_terminal),
+        )
+        .route(
+            "/api/session/{session_id}/terminals/{terminal_id}/socket",
             get(crate::terminal::terminal_socket),
         )
         .with_state(AppState {
             inner: Arc::new(Mutex::new(ServerState::default())),
             agent_availability: detect_agent_availability(),
             last_activity: Arc::clone(&last_activity),
+            terminals: Arc::new(crate::terminal::TerminalRegistry::new(Arc::clone(
+                &last_activity,
+            ))),
         });
 
     let port = port()?;
@@ -248,9 +259,7 @@ async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
 }
 
 fn mark_activity(state: &AppState) {
-    if let Ok(mut last_activity) = state.last_activity.lock() {
-        *last_activity = Instant::now();
-    }
+    crate::api::mark_activity(&state.last_activity);
 }
 
 async fn root(State(state): State<AppState>) -> impl IntoResponse {

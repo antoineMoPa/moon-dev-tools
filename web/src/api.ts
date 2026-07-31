@@ -55,9 +55,26 @@ export function getSessionId(): string {
   return sessionId;
 }
 
-export function terminalSocketUrl(): string {
+export function terminalSocketUrl(terminalId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/session/${sessionId}/terminal`;
+  return `${protocol}//${window.location.host}/api/session/${sessionId}/terminals/${terminalId}/socket`;
+}
+
+export function createTerminal(): Promise<{ terminal_id: string }> {
+  return request<{ terminal_id: string }>(`/api/session/${sessionId}/terminals`, {
+    method: "POST",
+  });
+}
+
+export function fetchTerminalIds(): Promise<{ terminal_ids: string[] }> {
+  return request<{ terminal_ids: string[] }>(`/api/session/${sessionId}/terminals`);
+}
+
+export function closeTerminal(terminalId: string): Promise<{ terminal_ids: string[] }> {
+  return request<{ terminal_ids: string[] }>(
+    `/api/session/${sessionId}/terminals/${terminalId}`,
+    { method: "DELETE" },
+  );
 }
 
 export function fetchSessionState(): Promise<SessionState> {

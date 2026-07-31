@@ -1,7 +1,5 @@
 :root {
-  --header-height: 2.4rem;
-  --dock-window-width: 0px;
-  --dock-window-height: 0px;
+  --header-height: 1.55rem;
   --bg: #f3efe6;
   --panel: #fffaf2;
   --ink: #1d1a16;
@@ -104,31 +102,15 @@ body {
   color: var(--ink);
 }
 
-header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 20;
-  width: calc(100% - var(--dock-window-width));
-  border-bottom: 1px solid var(--line);
-  background: var(--header-bg);
-  backdrop-filter: blur(10px);
-}
-
-.header-inner {
-  position: relative;
-  width: 100%;
-  padding-left: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.header-inner h1 {
-  font-size: 0.88rem;
+/* The app header is the tab strip of the top-left frame, so the brand and the app-wide
+   actions sit inside it. */
+.header-brand {
+  flex: 0 0 auto;
+  padding: 0 0.45rem 0 0.15rem;
+  font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
 .header-title-link {
@@ -137,22 +119,15 @@ header {
 }
 
 .header-repo-name {
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 500;
+  /* Same line box as its neighbours in the centre group, so they share a baseline. */
+  line-height: 1.2;
   letter-spacing: 0.01em;
   text-align: right;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  max-width: min(42rem, 48vw);
-  min-width: 0;
-  transform: translateX(-50%);
 }
 
 .header-review-label {
@@ -184,12 +159,29 @@ header {
   color: var(--accent);
 }
 
+/* Pushed to the far end of the tab strip it shares with the tabs. */
 .header-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
-  min-width: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 1rem;
+  white-space: nowrap;
+}
+
+@container frame (max-width: 900px) {
+  .header-review-label,
+  .header-repo-name {
+    display: none;
+  }
+}
+
+@container frame (max-width: 640px) {
+  .header-move-layout-toggle {
+    display: none;
+  }
 }
 
 .theme-toggle {
@@ -201,8 +193,8 @@ header {
   justify-content: center;
   border-color: transparent;
   background: transparent;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.75rem;
+  padding: 0 0.35rem;
+  font-size: 0.73rem;
 }
 
 .theme-toggle-icon {
@@ -214,23 +206,9 @@ h1, h2, h3 {
   font-weight: 700;
 }
 
-main {
-  width: 100%;
-  margin: calc(var(--header-height) + 1rem) 0 2rem;
-  display: grid;
-  gap: 1rem;
-}
-
-.review-layout {
-  width: min(1600px, calc(100vw - 2rem - var(--dock-window-width)));
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
-}
-
 .review-main {
+  width: min(1600px, 100%);
+  margin: 0 auto;
   display: grid;
   gap: 1rem;
   min-width: 0;
@@ -238,14 +216,13 @@ main {
 }
 
 .left-sidebar {
-  position: sticky;
-  top: calc(var(--header-height) + 1rem);
   display: grid;
+  align-content: start;
   gap: 1rem;
   min-width: 0;
-  max-height: calc(100vh - var(--header-height) - 2rem);
+  height: 100%;
   overflow-y: auto;
-  padding: 0 0 0 1rem;
+  padding: 1rem 0 1rem 1rem;
 }
 
 .meta {
@@ -259,6 +236,25 @@ main {
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
+}
+
+/* The actions on a hunk read as text commands, in keeping with the rest of the chrome. */
+.hunk-actions button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  /* Inherited so the active hunk can recolour everything on it at once. */
+  color: inherit;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.hunk-actions button:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.hunk-actions button:not(.primary):not(.secondary):active:not(:disabled) {
+  background: transparent;
 }
 
 .batch-comment-toggle {
@@ -373,33 +369,15 @@ select {
   padding: 0.6rem 0.55rem;
 }
 
-@media (max-width: 720px) {
-  .header-inner {
-    width: calc(100vw - 1rem);
-    gap: 0.5rem;
-  }
-
-  .header-actions {
-    min-width: 0;
-  }
-
-  .review-layout {
-    /* Let the lone mobile grid column shrink below its contents' min width to avoid horizontal overflow. */
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .left-sidebar {
-    display: none;
-  }
-}
-
-.header-window-toggle {
+.header-pane-toggle {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   border: 0;
   background: transparent;
-  padding: 0 0.6rem 0 0;
+  /* No padding of its own: the strip's own inset is what sets it off the right edge,
+     matching the brand on the left. */
+  padding: 0;
   cursor: pointer;
   color: var(--muted);
   font: inherit;
@@ -408,99 +386,198 @@ select {
   line-height: 1.2;
 }
 
-.header-window-toggle:hover {
+.header-pane-toggle:hover {
   color: var(--accent);
 }
 
-.dock-window {
+/* Popover listing the kinds of window that can be opened. */
+.pane-menu {
   position: fixed;
-  z-index: 40;
+  z-index: 80;
   display: flex;
+  flex-direction: column;
+  min-width: 8rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
   background: var(--panel);
+  padding: 0.2rem;
+  box-shadow: var(--float-shadow);
 }
 
-.dock-window-right {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  flex-direction: row;
-  box-shadow: -18px 0 44px rgba(0, 0, 0, 0.18);
+.pane-menu-item {
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  padding: 0.3rem 0.5rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
 }
 
-.dock-window-bottom {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  flex-direction: column;
-  box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.18);
-}
-
-.dock-window-fringe {
-  flex: 0 0 auto;
+.pane-menu-item:hover {
   background: var(--control-active-bg);
-  touch-action: none;
+  color: var(--accent);
 }
 
-.dock-window-right .dock-window-fringe {
-  width: 5px;
-  border-left: 1px solid var(--line);
-  cursor: ew-resize;
+/* The workspace fills everything under the header: a tree of splits whose leaves are
+   frames of tabs, with the tab contents drawn on top of them. */
+.workspace {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
 }
 
-.dock-window-bottom .dock-window-fringe {
-  height: 5px;
-  border-top: 1px solid var(--line);
-  cursor: ns-resize;
+body.workspace-resizing {
+  cursor: grabbing;
+  user-select: none;
 }
 
-.dock-window-fringe:hover,
-.dock-window-fringe-resizing {
-  background: var(--accent);
-}
-
-.dock-window-body {
+.workspace-split {
   display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-split-row {
+  flex-direction: row;
+}
+
+.workspace-split-column {
   flex-direction: column;
-  flex: 1 1 auto;
+}
+
+.workspace-split-child {
+  position: relative;
+  flex-basis: 0;
   min-width: 0;
   min-height: 0;
 }
 
-.dock-window-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--header-bg);
-  padding: 0.2rem 0.6rem;
-  user-select: none;
+.workspace-divider {
+  position: absolute;
+  z-index: 5;
+  background: var(--line);
+  touch-action: none;
 }
 
-.dock-window-tabs {
+.workspace-divider-row {
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+}
+
+.workspace-divider-column {
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.workspace-divider:hover {
+  background: var(--accent);
+}
+
+/* Same for a frame: its header strip drops the optional labels when the frame is narrow. */
+.frame {
+  container: frame / inline-size;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.frame-active {
+  border-color: var(--accent);
+}
+
+.frame-tabs {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-height: var(--header-height);
+  border-bottom: 1px solid var(--line);
+  background: var(--header-bg);
+  padding: 0 0.5rem;
   overflow-x: auto;
+  user-select: none;
 }
 
-.dock-window-tab {
+/* The strip that doubles as the app header keeps its actions pinned to the right and
+   what is being reviewed centred across the whole strip. */
+.frame-tabs-primary {
+  position: relative;
+  padding-left: 0.35rem;
+}
+
+/* Every frame ends its strip with its own [+]; in the header strip the app controls have
+   already claimed the free space. */
+.frame-tab-menu {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.frame-tabs-primary .frame-tab-menu {
+  margin-left: 0.75rem;
+}
+
+.header-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: min(42rem, 45%);
+  min-width: 0;
+  transform: translate(-50%, -50%);
+  /* Sits over the strip, so only its own controls take clicks. */
+  pointer-events: none;
+}
+
+.header-center > * {
+  pointer-events: auto;
+}
+
+/* A frame holding only the review needs no tab title; every other tab keeps one. */
+.frame-tabs-lone-review .frame-tab {
+  display: none;
+}
+
+.frame-tab {
   display: flex;
   align-items: center;
   gap: 0.15rem;
-  border-radius: 0.3rem;
-  padding: 0.05rem 0.3rem;
+  flex: 0 0 auto;
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
   color: var(--muted);
+  cursor: grab;
 }
 
-.dock-window-tab-active {
+.frame-tab-active {
   background: var(--control-active-bg);
   color: var(--ink);
 }
 
-.dock-window-tab button,
-.dock-window-dock-toggle {
+/* The tab being dragged: it slides along the strip rather than floating over the page. */
+.frame-tab-dragged {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--ink);
+  cursor: grabbing;
+}
+
+.frame-tab button,
+.frame-add-tab {
   border: 0;
   background: transparent;
   padding: 0;
@@ -510,41 +587,169 @@ select {
   cursor: pointer;
 }
 
-.dock-window-dock-toggle {
+.frame-add-tab {
   flex: 0 0 auto;
   color: var(--muted);
+  padding: 0 0.3rem;
 }
 
-.dock-window-tab button:hover,
-.dock-window-tab-close:hover,
-.dock-window-dock-toggle:hover {
+.frame-tab button:hover,
+.frame-tab-close:hover,
+.frame-add-tab:hover {
   color: var(--accent);
 }
 
-.dock-window-surface {
+.frame-body {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.frame-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 0.8rem;
+}
+
+/* Only visible while a tab is being dragged: the edges split this frame, the middle
+   moves the tab into it. */
+.frame-drop-zones {
+  position: absolute;
+  z-index: 60;
+  inset: 0;
+}
+
+.frame-drop-zone {
+  position: absolute;
+}
+
+/* Top and bottom span the whole width; left and right take the band between them. */
+.frame-drop-zone-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 25%;
+}
+
+.frame-drop-zone-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 25%;
+}
+
+.frame-drop-zone-left {
+  top: 25%;
+  bottom: 25%;
+  left: 0;
+  width: 22%;
+}
+
+.frame-drop-zone-right {
+  top: 25%;
+  right: 0;
+  bottom: 25%;
+  width: 22%;
+}
+
+.frame-drop-zone-center {
+  top: 25%;
+  right: 22%;
+  bottom: 25%;
+  left: 22%;
+}
+
+/* Shows where the tab would land: the half of the frame it would take, or the whole
+   frame when it would just become another tab here. */
+.frame-drop-preview {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+.frame-drop-preview-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 50%;
+}
+
+.frame-drop-preview-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 50%;
+}
+
+.frame-drop-preview-left {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
+}
+
+.frame-drop-preview-right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+.frame-drop-preview-tabs {
+  inset: 0;
+}
+
+.pane-host {
+  position: absolute;
+  overflow: hidden;
+  /* A pane's contents lay themselves out against the pane, not the window. */
+  container: pane / inline-size;
+}
+
+.pane-host[data-visible="false"] {
+  /* Kept in the DOM but out of sight so shells and scroll positions survive. */
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.review-pane {
+  display: grid;
+  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+  width: 100%;
+  height: 100%;
+}
+
+.review-pane-scroll {
+  height: 100%;
   overflow: auto;
-  padding: 0.4rem 0.6rem;
+  padding: 1rem 0;
 }
 
-.dock-window-surface[hidden] {
-  display: none;
+@container pane (max-width: 720px) {
+  .review-pane {
+    /* Let the lone narrow-pane column shrink below its contents' min width to avoid horizontal overflow. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .left-sidebar {
+    display: none;
+  }
 }
 
-/* The terminal keeps its own dark surface regardless of the app theme. */
-.dock-window-surface:has(.terminal-window-surface) {
-  background: #0d121a;
-}
-
-.terminal-window {
+.terminal-pane {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: #0d121a;
+  padding: 0.3rem 0.5rem;
 }
 
-.terminal-window-restart {
+.terminal-pane-restart {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -553,7 +758,7 @@ select {
   font-size: 0.75rem;
 }
 
-.terminal-window-restart button {
+.terminal-pane-restart button {
   border: 0;
   background: transparent;
   padding: 0;
@@ -563,29 +768,33 @@ select {
   cursor: pointer;
 }
 
-.terminal-window-restart .muted {
+.terminal-pane-restart .muted {
   color: #8b949e;
 }
 
-.terminal-window-surface {
+.terminal-pane-surface {
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.terminal-window-surface .xterm {
+.terminal-pane-surface .xterm {
   height: 100%;
 }
 
-html.dock-window-open body {
-  padding-right: var(--dock-window-width);
-  padding-bottom: var(--dock-window-height);
-}
 
 .agent-monitor {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  height: 100%;
+  overflow: auto;
+  padding: 0.4rem 0.6rem;
   font-size: 0.8rem;
+}
+
+/* Nothing to show yet: keep the message on the same left edge as the runs. */
+.agent-monitor-empty {
+  padding: 0.75rem 0.6rem;
 }
 
 .agent-monitor-stage {

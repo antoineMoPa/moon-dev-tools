@@ -12,6 +12,17 @@
   background: var(--hunk-active-bg);
 }
 
+/* Light mode paints the active hunk a strong blue, so everything sitting on it goes white.
+   Dark mode's active colour is muted enough to keep the usual ink. */
+html:not([data-theme="dark"]) .hunk-active {
+  color: #fff;
+}
+
+html:not([data-theme="dark"]) .hunk-active .hunk-actions button:hover:not(:disabled) {
+  color: #fff;
+  text-decoration: underline;
+}
+
 .hunk-sections {
   display: grid;
   gap: 1rem;
@@ -281,17 +292,7 @@ pre {
 
 .hunk-full-file-link {
   margin-left: auto;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  font-size: 0.77rem;
-  color: #111;
-  text-decoration: none;
-}
-
-.hunk-full-file-link:hover {
-  color: #111;
-  text-decoration: underline;
+  color: var(--muted);
 }
 
 .diff-code {
