@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import { fetchFileContent } from "../api";
+import { useReviewStore } from "../reviewStore";
 
 type FullFileModalProps = {
   filePath: string;
@@ -9,6 +10,9 @@ type FullFileModalProps = {
 };
 
 export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalProps) {
+  const {
+    state: { sessionId },
+  } = useReviewStore();
   const [content, setContent] = useState("");
   const [loadError, setLoadError] = useState("");
 
@@ -17,7 +21,7 @@ export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalPr
 
     async function load() {
       try {
-        const file = await fetchFileContent(filePath);
+        const file = await fetchFileContent(sessionId, filePath);
         if (cancelled) {
           return;
         }
@@ -38,7 +42,7 @@ export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalPr
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, sessionId]);
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {

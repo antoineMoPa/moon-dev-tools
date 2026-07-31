@@ -115,7 +115,7 @@ export function HunkCard({
   onJumpToHunk,
 }: HunkCardProps) {
   const {
-    state: { activeHunkId, data, movedDiffLayout },
+    state: { activeHunkId, data, movedDiffLayout, sessionId },
     actions,
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
@@ -296,7 +296,7 @@ export function HunkCard({
     if (fullPatch === null) {
       setLoadingPatch(true);
       try {
-        const payload = await fetchHunkPatch(hunk.id);
+        const payload = await fetchHunkPatch(sessionId, hunk.id);
         setFullPatch(payload.patch);
       } finally {
         setLoadingPatch(false);
@@ -314,7 +314,7 @@ export function HunkCard({
       return hunk.patch_preview;
     }
 
-    const payload = await fetchHunkPatch(hunkId);
+    const payload = await fetchHunkPatch(sessionId, hunkId);
     if (hunkId === hunk.id) {
       setFullPatch(payload.patch);
     }

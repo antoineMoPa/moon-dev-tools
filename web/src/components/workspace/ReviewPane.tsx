@@ -5,7 +5,9 @@ import { LeftSidebar } from "../LeftSidebar";
 import { Hunks } from "../hunks/Hunks";
 import { ReviewScrollProvider } from "./reviewScroll";
 import type { ReviewScrollValue } from "./reviewScroll";
-import { ReviewView, useReviewStore } from "../../reviewStore";
+import { ReviewStoreProvider, ReviewView, useReviewStore } from "../../reviewStore";
+import { useWorkspace } from "./workspaceState";
+import { getRootSessionId } from "../../api";
 import { filePathsInListOrder, fullyStagedFilePaths, hasUnstagedHunks } from "../../sessionStateUtils";
 import type { AgentKind, Hunk } from "../../types";
 
@@ -56,7 +58,29 @@ function Success() {
   );
 }
 
-export function ReviewPane() {
+/// One review of one repo. The store it needs lives here, so a second review pane simply
+/// brings its own.
+export function ReviewPane({ sessionId }: { sessionId: string }) {
+  const { focusedReviewSessionId, submoduleReviews, submodulesResolved } = useWorkspace();
+  // The server forgets its sessions when it restarts, and only the repo the page was opened
+  // on is handed back by the CLI. A submodule's session is reopened by the workspace, so
+  // its review waits for that rather than asking about a session nobody knows yet.
+  const sessionIsOpen =
+    sessionId === getRootSessionId() ||
+    submoduleReviews.some((review) => review.sessionId === sessionId);
+
+  if (!sessionIsOpen && !submodulesResolved) {
+    return <div className="review-pane-opening muted">Opening review...</div>;
+  }
+
+  return (
+    <ReviewStoreProvider sessionId={sessionId}>
+      <ReviewPaneContent focused={focusedReviewSessionId === sessionId} />
+    </ReviewStoreProvider>
+  );
+}
+
+function ReviewPaneContent({ focused }: { focused: boolean }) {
   const {
     state: { activeView, data, loadError },
     actions,
@@ -319,6 +343,7 @@ export function ReviewPane() {
                   selectedFilePath={activeView === ReviewView.File ? selectedFilePath : null}
                   targetFilePath={activeJumpTarget?.filePath ?? null}
                   targetHunkId={activeJumpTarget?.hunkId ?? null}
+                  shortcutsEnabled={focused}
                 />
                 <Footer exportText={data.export_text} />
               </>

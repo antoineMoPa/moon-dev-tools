@@ -19,8 +19,8 @@ use crate::{
         CommitHistoryQuery, CommitReviewStatus, CommitSelectionRequest, DiffHunk,
         FileContentPayload, FileQuery,
         FileReviewedRequest, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
-        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload, bind_host,
-        port, server_url,
+        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
+        SubmoduleView, bind_host, port, server_url,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -32,8 +32,8 @@ use crate::{
         agent_is_available, agent_options, apply_patch, branch_commits_since_default,
         build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
         commit_history_page, commit_view, current_branch_name, detect_agent_availability,
-        local_change_summary_from_status, preview_patch, read_repo_file, run_git,
-        run_git_no_output,
+        list_changed_submodule_repos, local_change_summary_from_status, preview_patch,
+        read_repo_file, run_git, run_git_no_output,
     },
     reviewed_cache::{
         hunk_patch_hash, mark_hunk_patch_reviewed, read_reviewed_hunk_hashes,
@@ -84,6 +84,10 @@ pub(crate) async fn run_server() -> Result<()> {
         )
         .route("/api/session/open", post(open_session))
         .route("/api/session/{session_id}/state", get(session_state))
+        .route(
+            "/api/session/{session_id}/submodules",
+            get(session_submodules),
+        )
         .route("/api/session/{session_id}/history", get(commit_history))
         .route("/api/session/{session_id}/agent", post(update_agent))
         .route("/api/session/{session_id}/commit", post(update_commit_view))
@@ -294,6 +298,31 @@ async fn app_css(State(state): State<AppState>) -> impl IntoResponse {
         [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
         APP_CSS,
     )
+}
+
+/// The submodules of this repo that have changes worth reviewing. The browser opens a
+/// session for one of these on demand, as another review window.
+async fn session_submodules(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SubmoduleView>>, AppError> {
+    mark_activity(&state);
+    let repo_path = crate::api::with_session(&state, &session_id, |session| {
+        Ok(session.repo_path.clone())
+    })?;
+
+    let submodules = list_changed_submodule_repos(&repo_path)?
+        .into_iter()
+        .map(|path| SubmoduleView {
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string()),
+            repo_path: path.display().to_string(),
+        })
+        .collect();
+
+    Ok(Json(submodules))
 }
 
 async fn open_session(

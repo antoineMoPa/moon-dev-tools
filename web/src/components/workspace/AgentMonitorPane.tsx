@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchAgentLog } from "../../api";
 import { parseAnsiSpans } from "./ansi";
-import { useReviewStore } from "../../reviewStore";
+import { useReviewStoreFor } from "../../reviewStores";
+import { useWorkspace } from "./workspaceState";
 import {
   AGENT_RUN_STAGES,
   AgentRunStage,
@@ -73,11 +74,12 @@ function AgentRunRow({ run, logOpen, logText, onToggleLog, onStop }: AgentRunRow
   );
 }
 
+/// Follows whichever review the user is working in, so a workspace with several reviews
+/// shows the agents of the one in front.
 export function AgentMonitorPane() {
-  const {
-    state: { data },
-    actions,
-  } = useReviewStore();
+  const { focusedReviewSessionId } = useWorkspace();
+  const reviewStore = useReviewStoreFor(focusedReviewSessionId);
+  const data = reviewStore?.state.data ?? null;
   const [openLogKey, setOpenLogKey] = useState<string | null>(null);
   const [logText, setLogText] = useState("");
   const runs = useMemo(() => (data ? buildAgentRuns(data) : []), [data]);
@@ -95,7 +97,7 @@ export function AgentMonitorPane() {
 
     async function loadLog() {
       try {
-        const payload = await fetchAgentLog(openLogKey!);
+        const payload = await fetchAgentLog(focusedReviewSessionId, openLogKey!);
         if (!canceled) {
           setLogText(payload.text);
         }
@@ -118,10 +120,14 @@ export function AgentMonitorPane() {
       canceled = true;
       window.clearInterval(timer);
     };
-  }, [openLogIsLive, openLogKey]);
+  }, [focusedReviewSessionId, openLogIsLive, openLogKey]);
 
   if (!data) {
-    return <div className="agent-monitor agent-monitor-empty muted">Loading review state...</div>;
+    return (
+      <div className="agent-monitor agent-monitor-empty muted">
+        {reviewStore ? "Loading review state..." : "No review open."}
+      </div>
+    );
   }
 
   if (runs.length === 0) {
@@ -152,7 +158,9 @@ export function AgentMonitorPane() {
                 onToggleLog={() =>
                   setOpenLogKey((current) => (current === run.dispatchKey ? null : run.dispatchKey))
                 }
-                onStop={() => void actions.cancelCommentDispatch(run.hunkId, run.commentIndex)}
+                onStop={() =>
+                  void reviewStore?.actions.cancelCommentDispatch(run.hunkId, run.commentIndex)
+                }
               />
             ))}
           </section>

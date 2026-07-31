@@ -5,7 +5,7 @@ import "./app.css";
 import "./fullFileView.css";
 import { Workspace } from "./components/workspace/Workspace";
 import { WorkspaceProvider } from "./components/workspace/workspaceState";
-import { ReviewStoreProvider } from "./reviewStore";
+import { ReviewStoresProvider } from "./reviewStores";
 import { ThemeProvider, useTheme } from "./theme";
 
 /// The workspace fills the window; the app header lives in the top-left frame's tab strip.
@@ -22,13 +22,13 @@ function AppShell() {
 
 function App() {
   return (
-    <ReviewStoreProvider>
+    <ReviewStoresProvider>
       <ThemeProvider>
         <WorkspaceProvider>
           <AppShell />
         </WorkspaceProvider>
       </ThemeProvider>
-    </ReviewStoreProvider>
+    </ReviewStoresProvider>
   );
 }
 

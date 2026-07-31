@@ -1,19 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "../theme";
-import { useOptionalReviewStore } from "../reviewStore";
+import { getRootSessionId } from "../api";
+import { useReviewStoreFor } from "../reviewStores";
 import { useWorkspace } from "./workspace/workspaceState";
-import { mapPaneKindToDefinition, paneKinds } from "./workspace/paneRegistry";
-import { findPaneOfKind, mapPaneKindToMultiplicity } from "./workspace/layout";
+import { findPaneOfKind, findReviewPane } from "./workspace/layout";
+import type { OpenPaneRequest } from "./workspace/layout";
 import type { SessionState } from "../types";
-
-function formatRepoLabel(repoName?: string | null, branchName?: string | null): string | null {
-  if (!repoName) {
-    return null;
-  }
-
-  return branchName ? `${repoName} / ${branchName}` : repoName;
-}
 
 /// What the review is currently pointed at: the working tree, or one commit.
 function reviewLabelForSession(session?: SessionState | null): string | null {
@@ -46,6 +39,35 @@ export function HeaderBrand() {
   );
 }
 
+type OpenableWindow = {
+  key: string;
+  title: string;
+  request: OpenPaneRequest;
+};
+
+/// What the menu offers: the review of the repo this page was opened on, the agent monitor,
+/// and always another shell. Submodule reviews are not listed — they open as tabs on their
+/// own when the submodule has changes.
+function openableWindowsFor(workspace: ReturnType<typeof useWorkspace>): OpenableWindow[] {
+  const rootSessionId = getRootSessionId();
+
+  return [
+    ...(findReviewPane(workspace.layout, rootSessionId)
+      ? []
+      : [
+          {
+            key: rootSessionId,
+            title: "review",
+            request: { kind: "review" as const, sessionId: rootSessionId, title: "review" },
+          },
+        ]),
+    ...(findPaneOfKind(workspace.layout, "agents")
+      ? []
+      : [{ key: "agents", title: "agents", request: { kind: "agents" as const } }]),
+    { key: "terminal", title: "terminal", request: { kind: "terminal" as const } },
+  ];
+}
+
 /// Each frame's button for opening a pane into it, with the kinds behind a popover. The
 /// popover is rendered into the body so the tab strip it lives in cannot clip it.
 export function OpenWindowMenu({ frameId }: { frameId: string }) {
@@ -53,10 +75,7 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const openableKinds = paneKinds.filter(
-    (kind) =>
-      mapPaneKindToMultiplicity[kind] === "many" || !findPaneOfKind(workspace.layout, kind),
-  );
+  const openableWindows = openableWindowsFor(workspace);
 
   useEffect(() => {
     if (!menuRect) {
@@ -112,18 +131,18 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
               role="menu"
               style={{ top: menuRect.bottom + 4, right: window.innerWidth - menuRect.right }}
             >
-              {openableKinds.map((kind) => (
+              {openableWindows.map((window) => (
                 <button
-                  key={kind}
+                  key={window.key}
                   type="button"
                   role="menuitem"
                   className="pane-menu-item"
                   onClick={() => {
-                    workspace.openPane(kind, frameId);
+                    workspace.openPane(window.request, frameId);
                     setMenuRect(null);
                   }}
                 >
-                  {mapPaneKindToDefinition[kind].title}
+                  {window.title}
                 </button>
               ))}
             </div>,
@@ -136,11 +155,11 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
 
 /// What is being reviewed, centred in the header strip between the tabs and the actions.
 export function HeaderCenter() {
-  const reviewStore = useOptionalReviewStore();
+  const { focusedReviewSessionId } = useWorkspace();
+  const reviewStore = useReviewStoreFor(focusedReviewSessionId);
   const data = reviewStore?.state.data;
   const reviewLabel = reviewLabelForSession(data);
   const movedDiffLayout = reviewStore?.state.movedDiffLayout ?? "unified";
-  const repoLabel = formatRepoLabel(data?.repo_name, data?.branch_name);
   const nextMovedDiffLayout = movedDiffLayout === "side-by-side" ? "unified" : "side-by-side";
 
   return (
@@ -156,7 +175,6 @@ export function HeaderCenter() {
           [{movedDiffLayout === "side-by-side" ? "unified" : "side by side"}]
         </button>
       ) : null}
-      {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
     </div>
   );
 }

@@ -12,7 +12,7 @@ use reqwest::blocking::Client;
 
 use crate::{
     api::{DiffTarget, OpenSessionRequest, SessionOpened, client_host, port, server_url},
-    git::{canonicalize_repo, list_changed_submodule_repos, parse_review_target, run_git},
+    git::{canonicalize_repo, parse_review_target, run_git},
     server,
 };
 
@@ -26,7 +26,6 @@ enum CliCommand {
     Review {
         target: ReviewTarget,
         logs: bool,
-        no_submodules: bool,
     },
 }
 
@@ -64,25 +63,21 @@ pub(crate) fn run() -> Result<()> {
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())
         }
-        CliCommand::Review {
-            target,
-            logs,
-            no_submodules,
-        } => launch_review(target, logs, no_submodules),
+        CliCommand::Review { target, logs } => launch_review(target, logs),
     }
 }
 
-fn launch_review(target: ReviewTarget, logs: bool, no_submodules: bool) -> Result<()> {
+fn launch_review(target: ReviewTarget, logs: bool) -> Result<()> {
     let current_dir = env::current_dir()?;
     let repo_path = canonicalize_repo(&current_dir)?;
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
     let open_request = review_open_request(&repo_path, target, current_dir_pathspec)?;
     if logs {
-        return launch_review_with_foreground_server(repo_path, open_request, no_submodules);
+        return launch_review_with_foreground_server(repo_path, open_request);
     }
 
     ensure_server_running(logs)?;
-    open_review_session(&repo_path, &open_request, no_submodules)?;
+    open_review_session(&repo_path, &open_request)?;
     Ok(())
 }
 
@@ -166,7 +161,6 @@ fn resolve_commit(repo_path: &Path, commit: &str) -> Result<Option<String>> {
 fn launch_review_with_foreground_server(
     repo_path: PathBuf,
     open_request: ReviewOpenRequest,
-    no_submodules: bool,
 ) -> Result<()> {
     if server_is_running()? {
         bail!("moonreview server already running; stop it first to use --logs in the foreground");
@@ -183,7 +177,7 @@ fn launch_review_with_foreground_server(
 
     for _ in 0..30 {
         if server_is_running()? {
-            open_review_session(&repo_path, &open_request, no_submodules)?;
+            open_review_session(&repo_path, &open_request)?;
             return server_thread
                 .join()
                 .map_err(|_| anyhow!("review server thread panicked"))?;
@@ -194,32 +188,12 @@ fn launch_review_with_foreground_server(
     bail!("review server did not become ready on {}", server_url())
 }
 
-fn open_review_session(
-    repo_path: &Path,
-    open_request: &ReviewOpenRequest,
-    no_submodules: bool,
-) -> Result<()> {
-    let extra_repo_paths = if open_request.diff_target.base.is_none()
-        && open_request.diff_target.pathspec.is_none()
-        && open_request.active_commit.is_none()
-        && !no_submodules
-    {
-        list_changed_submodule_repos(repo_path)?
-    } else {
-        Vec::new()
-    };
-
-    let mut opened_urls = Vec::new();
-    opened_urls.push(open_review_url_for_session(repo_path, open_request)?);
-    for submodule_path in extra_repo_paths {
-        opened_urls.push(open_review_url_for_session(&submodule_path, open_request)?);
-    }
-
-    for url in &opened_urls {
-        webbrowser::open(url).context("failed to open browser")?;
-        println!("Opened {url}");
-    }
-
+/// One browser tab per run. Changed submodules are offered inside it, as review windows
+/// the user opens from the workspace.
+fn open_review_session(repo_path: &Path, open_request: &ReviewOpenRequest) -> Result<()> {
+    let url = open_review_url_for_session(repo_path, open_request)?;
+    webbrowser::open(&url).context("failed to open browser")?;
+    println!("Opened {url}");
     Ok(())
 }
 
@@ -251,13 +225,11 @@ fn open_review_url_for_session(
 
 fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
     let mut logs = false;
-    let mut no_submodules = false;
     let mut positional = Vec::new();
 
     for arg in args {
         match arg.as_str() {
             "--logs" => logs = true,
-            "-ns" | "--no-submodules" => no_submodules = true,
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
             _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text()),
@@ -269,29 +241,19 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
         [] => Ok(CliCommand::Review {
             target: ReviewTarget::WorkingTree,
             logs,
-            no_submodules,
         }),
-        [command] if command == "serve" && no_submodules => {
-            bail!(
-                "--no-submodules only applies when opening a review\n\n{}",
-                help_text()
-            )
-        }
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
         [command] if command == "diff" => Ok(CliCommand::Review {
             target: ReviewTarget::WorkingTree,
             logs,
-            no_submodules,
         }),
         [command, target] if command == "diff" => Ok(CliCommand::Review {
             target: ReviewTarget::Diff(target.clone()),
             logs,
-            no_submodules,
         }),
         [target] if target == "." || target == "./" => Ok(CliCommand::Review {
             target: ReviewTarget::CurrentDirectory,
             logs,
-            no_submodules,
         }),
         [target] => Ok(CliCommand::Review {
             target: if is_sha_like(target) {
@@ -300,7 +262,6 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
                 ReviewTarget::Diff(target.clone())
             },
             logs,
-            no_submodules,
         }),
         _ => bail!("{}", help_text()),
     }
@@ -322,7 +283,6 @@ Usage:
   moonreview -ns
   moonreview --logs
   moonreview diff <target>
-  moonreview diff <target> -ns
   moonreview diff <target> --logs
   moonreview serve --logs
   moonreview --version
@@ -339,7 +299,7 @@ Run `moonreview` inside any git repository you want to review.
 Run `moonreview .` to review only the current directory.
 
 Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
-Use `-ns` or `--no-submodules` to open only the current repository when changed submodules are present.
+Changed submodules are offered inside the review, as extra review windows you can open from [+].
 
 `moonreview <commit>` opens a read-only review of a single commit.
 `moonreview diff <target>` opens a read-only diff review against a git target.
@@ -396,13 +356,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_no_submodules_short_option_for_default_review() {
+    fn parse_bare_review_of_the_working_tree() {
         assert_eq!(
-            parse(&["-ns"]),
+            parse(&[]),
             CliCommand::Review {
                 target: ReviewTarget::WorkingTree,
                 logs: false,
-                no_submodules: true,
             }
         );
     }
@@ -414,7 +373,6 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::CurrentDirectory,
                 logs: false,
-                no_submodules: false,
             }
         );
     }
@@ -448,13 +406,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_no_submodules_long_option_for_diff_review() {
+    fn parse_diff_review_against_a_named_ref() {
         assert_eq!(
-            parse(&["diff", "dev", "--no-submodules"]),
+            parse(&["diff", "dev"]),
             CliCommand::Review {
                 target: ReviewTarget::Diff("dev".to_string()),
                 logs: false,
-                no_submodules: true,
             }
         );
     }
@@ -466,7 +423,6 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Commit("4542abe".to_string()),
                 logs: false,
-                no_submodules: false,
             }
         );
     }
@@ -478,7 +434,6 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Diff("4542abe".to_string()),
                 logs: false,
-                no_submodules: false,
             }
         );
     }
@@ -494,14 +449,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_no_submodules_rejects_serve_command() {
-        let error = parse_cli_args(vec!["serve".to_string(), "-ns".to_string()])
-            .expect_err("expected no-submodules to be rejected for serve");
+    fn parse_rejects_unknown_options() {
+        let error = parse_cli_args(vec!["-ns".to_string()])
+            .expect_err("expected an unknown option to be rejected");
 
-        assert!(
-            error
-                .to_string()
-                .contains("--no-submodules only applies when opening a review")
-        );
+        assert!(error.to_string().contains("unknown option: -ns"));
     }
 }

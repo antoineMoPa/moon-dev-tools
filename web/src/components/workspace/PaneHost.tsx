@@ -31,9 +31,10 @@ export function PaneHost({ pane }: { pane: Pane }) {
       style={{ left, top, width, height }}
       aria-hidden={!visible}
       data-visible={visible ? "true" : "false"}
-      // Working inside a pane makes its frame the one new tabs open in.
+      // Working inside a pane makes it the focused one: new tabs open in its frame, and
+      // the header and agent monitor follow the review it shows.
       onPointerDownCapture={() => {
-        if (visible && layout.activeFrameId !== frame?.frameId) {
+        if (visible) {
           focusPaneById(pane.paneId);
         }
       }}

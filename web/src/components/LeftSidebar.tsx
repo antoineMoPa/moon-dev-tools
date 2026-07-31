@@ -115,6 +115,9 @@ function SidebarCommitsSection({
   localSummary: string;
   onSelectCommit: (commit: string | null) => void;
 }) {
+  const {
+    state: { sessionId },
+  } = useReviewStore();
   const [loadedHistoryCommits, setLoadedHistoryCommits] = useState<Commit[]>(historyCommits);
   const [historyHasMorePages, setHistoryHasMorePages] = useState(historyHasMore);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -183,7 +186,7 @@ function SidebarCommitsSection({
                 disabled={loadingHistory}
                 onClick={() => {
                   setLoadingHistory(true);
-                  void fetchCommitHistory(loadedHistoryCommits.length, HISTORY_COMMIT_PAGE_SIZE)
+                  void fetchCommitHistory(sessionId, loadedHistoryCommits.length, HISTORY_COMMIT_PAGE_SIZE)
                     .then((page) => {
                       setLoadedHistoryCommits((current) => [...current, ...page.commits]);
                       setHistoryHasMorePages(page.has_more);

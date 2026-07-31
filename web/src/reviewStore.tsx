@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import { toast } from "sonner";
-import { ApiError, getSessionId } from "./api";
+import { ApiError } from "./api";
 import {
   cancelCommentDispatch as cancelCommentDispatchRequest,
   discardHunk as discardHunkRequest,
@@ -16,6 +16,7 @@ import {
   toggleStageFile as toggleStageFileRequest,
   updateAgent as updateAgentRequest,
 } from "./api";
+import { usePublishReviewStore } from "./reviewStores";
 import { parseAnchoredComments } from "./anchoredComments";
 import { reconcileDraftComments } from "./draftCommentAnchoring";
 import { loadDraftComments, persistDraftComments } from "./comments";
@@ -32,6 +33,8 @@ export type MovedDiffLayout = "unified" | "side-by-side";
 const MOVED_DIFF_LAYOUT_STORAGE_KEY = "moonreview:moved-diff-layout";
 
 type ReviewStoreState = {
+  /// Which review this store is for; every request it makes carries it.
+  sessionId: string;
   data: SessionState | null;
   activeView: ReviewView;
   activeHunkId: string | null;
@@ -44,7 +47,7 @@ type ReviewStoreState = {
   timeoutToastShown: boolean;
 };
 
-type ReviewStoreValue = {
+export type ReviewStoreValue = {
   state: ReviewStoreState;
   actions: {
     loadState: () => Promise<void>;
@@ -92,9 +95,8 @@ function exportServerUrl(): string {
   return window.location.origin.replace("127.0.0.1", "localhost");
 }
 
-function buildExportText(hunks: Hunk[]): string {
+function buildExportText(sessionId: string, hunks: Hunk[]): string {
   const lines = ["Moon Review notes", "=================", "Please fix these code issues and mark as resolved:", ""];
-  const sessionId = getSessionId();
 
   for (const hunk of hunks.filter((item) => item.comment.trim())) {
     const anchored = parseAnchoredComments(hunk.comment);
@@ -122,12 +124,17 @@ function buildExportText(hunks: Hunk[]): string {
   return lines.join("\n");
 }
 
-function updateHunkComment(data: SessionState, hunkId: string, comment: string): SessionState {
+function updateHunkComment(
+  sessionId: string,
+  data: SessionState,
+  hunkId: string,
+  comment: string,
+): SessionState {
   const hunks = data.hunks.map((hunk) => (hunk.id === hunkId ? { ...hunk, comment } : hunk));
   return {
     ...data,
     hunks,
-    export_text: buildExportText(hunks),
+    export_text: buildExportText(sessionId, hunks),
   };
 }
 
@@ -174,7 +181,7 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
       }
       return {
         ...state,
-        data: updateHunkComment(state.data, action.hunkId, action.comment),
+        data: updateHunkComment(state.sessionId, state.data, action.hunkId, action.comment),
       };
     case "draft_comment_upserted":
       return {
@@ -223,13 +230,14 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
   }
 }
 
-function initialReviewStoreState(): ReviewStoreState {
+function initialReviewStoreState(sessionId: string): ReviewStoreState {
   return {
+    sessionId,
     data: null,
     activeView: ReviewView.All,
     activeHunkId: null,
     movedDiffLayout: loadMovedDiffLayout(),
-    draftComments: loadDraftComments(getSessionId()),
+    draftComments: loadDraftComments(sessionId),
     batchDraftComments: false,
     loadError: "",
     busy: false,
@@ -263,12 +271,20 @@ function hasActiveDispatches(data: SessionState | null): boolean {
   );
 }
 
-export function ReviewStoreProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(reviewStoreReducer, undefined, initialReviewStoreState);
+/// One store per review: a workspace can hold several, one for the repo the page was
+/// opened on and one for each submodule review the user opens.
+export function ReviewStoreProvider({
+  sessionId,
+  children,
+}: {
+  sessionId: string;
+  children: React.ReactNode;
+}) {
+  const [state, dispatch] = useReducer(reviewStoreReducer, sessionId, initialReviewStoreState);
 
   async function loadStateInternal(showErrorToast: boolean) {
     try {
-      const data = await fetchSessionState();
+      const data = await fetchSessionState(sessionId);
       dispatch({ type: "state_loaded", data });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load state.";
@@ -311,21 +327,21 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
   }
 
   async function toggleStage(hunkId: string, staged: boolean) {
-    return mutate(() => toggleStageRequest(hunkId, staged));
+    return mutate(() => toggleStageRequest(sessionId, hunkId, staged));
   }
 
   async function stageHunks(hunks: Array<{ hunkId: string; staged: boolean }>) {
     return mutate(async () => {
       for (const hunk of hunks) {
         if (!hunk.staged) {
-          await toggleStageRequest(hunk.hunkId, hunk.staged);
+          await toggleStageRequest(sessionId, hunk.hunkId, hunk.staged);
         }
       }
     });
   }
 
   async function setReviewed(hunkId: string, reviewed: boolean) {
-    return mutate(() => setReviewedRequest(hunkId, reviewed));
+    return mutate(() => setReviewedRequest(sessionId, hunkId, reviewed));
   }
 
   function updateDraftComment(hunkId: string, comment: string) {
@@ -362,7 +378,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
   }, []);
 
   useEffect(() => {
-    persistDraftComments(getSessionId(), state.draftComments);
+    persistDraftComments(sessionId, state.draftComments);
   }, [state.draftComments]);
 
   useEffect(() => {
@@ -384,49 +400,56 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         loadState,
         setActiveCommit: async (commit) => {
           dispatch({ type: "active_view_set", view: ReviewView.All });
-          await mutate(() => setActiveCommitRequest(commit));
+          await mutate(() => setActiveCommitRequest(sessionId, commit));
         },
         setReviewed,
         setFileReviewed: async (filePath, reviewed) => {
-          await mutate(() => setFileReviewedRequest(filePath, reviewed));
+          await mutate(() => setFileReviewedRequest(sessionId, filePath, reviewed));
         },
         toggleStage,
         stageHunks,
         toggleStageFile: async (filePath, staged) => {
-          await mutate(() => toggleStageFileRequest(filePath, staged));
+          await mutate(() => toggleStageFileRequest(sessionId, filePath, staged));
         },
         stageSelection: async (hunkId, selection) => {
-          await mutate(() => stageSelectionRequest(hunkId, selection));
+          await mutate(() => stageSelectionRequest(sessionId, hunkId, selection));
         },
         discardHunk: async (hunkId) => {
-          await mutate(() => discardHunkRequest(hunkId));
+          await mutate(() => discardHunkRequest(sessionId, hunkId));
         },
         discardHunks: async (hunkIds) => {
-          await mutate(() => discardHunksRequest(hunkIds));
+          await mutate(() => discardHunksRequest(sessionId, hunkIds));
         },
         updateDraftComment,
         upsertDraftComment,
         removeDraftComment,
         saveComment: async (hunkId, comment, batch) => {
-          await mutate(() => saveCommentRequest(hunkId, comment, batch));
+          await mutate(() => saveCommentRequest(sessionId, hunkId, comment, batch));
         },
         setBatchDraftComments,
         sendCommentBatch: async () => {
-          await mutate(() => sendCommentBatchRequest());
+          await mutate(() => sendCommentBatchRequest(sessionId));
         },
         cancelCommentDispatch: async (hunkId, commentIndex) => {
-          await mutate(() => cancelCommentDispatchRequest(hunkId, commentIndex));
+          await mutate(() => cancelCommentDispatchRequest(sessionId, hunkId, commentIndex));
         },
         setAgent: async (agent) => {
-          await mutate(() => updateAgentRequest(agent));
+          await mutate(() => updateAgentRequest(sessionId, agent));
         },
         setActiveView,
         setActiveHunkId,
         setMovedDiffLayout,
       },
     }),
-    [state],
+    [sessionId, state],
   );
+
+  // Let the parts of the app that live outside this pane read this review.
+  const publishStore = usePublishReviewStore();
+  useEffect(() => {
+    publishStore(sessionId, value);
+    return () => publishStore(sessionId, null);
+  }, [publishStore, sessionId, value]);
 
   return <ReviewStoreContext.Provider value={value}>{children}</ReviewStoreContext.Provider>;
 }

@@ -5,6 +5,7 @@ import type {
   FileContentPayload,
   PatchPayload,
   SessionState,
+  Submodule,
 } from "./types";
 
 function parseSessionId(pathname: string): string {
@@ -17,7 +18,8 @@ function parseSessionId(pathname: string): string {
   return segments[reviewIndex + 1] ?? "";
 }
 
-const sessionId = parseSessionId(window.location.pathname);
+/// The review the page was opened on. Other reviews (submodules) get their own ids.
+const rootSessionId = parseSessionId(window.location.pathname);
 
 export class ApiError extends Error {
   readonly isTimeout: boolean;
@@ -51,139 +53,186 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.text() as Promise<T>;
 }
 
-export function getSessionId(): string {
-  return sessionId;
+export function getRootSessionId(): string {
+  return rootSessionId;
 }
 
 export function terminalSocketUrl(terminalId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/session/${sessionId}/terminals/${terminalId}/socket`;
+  return `${protocol}//${window.location.host}/api/session/${rootSessionId}/terminals/${terminalId}/socket`;
 }
 
-export function createTerminal(): Promise<{ terminal_id: string }> {
+/// The shell starts in the repo of the session it is created against, so a shell opened
+/// while reviewing a submodule starts in that submodule.
+export function createTerminal(sessionId: string): Promise<{ terminal_id: string }> {
   return request<{ terminal_id: string }>(`/api/session/${sessionId}/terminals`, {
     method: "POST",
   });
 }
 
 export function fetchTerminalIds(): Promise<{ terminal_ids: string[] }> {
-  return request<{ terminal_ids: string[] }>(`/api/session/${sessionId}/terminals`);
+  return request<{ terminal_ids: string[] }>(`/api/session/${rootSessionId}/terminals`);
 }
 
 export function closeTerminal(terminalId: string): Promise<{ terminal_ids: string[] }> {
   return request<{ terminal_ids: string[] }>(
-    `/api/session/${sessionId}/terminals/${terminalId}`,
+    `/api/session/${rootSessionId}/terminals/${terminalId}`,
     { method: "DELETE" },
   );
 }
 
-export function fetchSessionState(): Promise<SessionState> {
+/// The submodules of a reviewed repo that have changes of their own.
+export function fetchSubmodules(sessionId: string): Promise<Submodule[]> {
+  return request<Submodule[]>(`/api/session/${sessionId}/submodules`);
+}
+
+/// Opening the same repo and target twice returns the same session, so this doubles as a
+/// lookup for a submodule's session id.
+export function openSession(repoPath: string): Promise<{ session_id: string }> {
+  return request<{ session_id: string }>(`/api/session/open`, {
+    method: "POST",
+    body: JSON.stringify({ repo_path: repoPath }),
+  });
+}
+
+export function fetchSessionState(sessionId: string): Promise<SessionState> {
   return request<SessionState>(`/api/session/${sessionId}/state`);
 }
 
-export function fetchCommitHistory(offset: number, limit = 30): Promise<CommitHistoryPage> {
+export function fetchCommitHistory(
+  sessionId: string,
+  offset: number,
+  limit = 30,
+): Promise<CommitHistoryPage> {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   return request<CommitHistoryPage>(`/api/session/${sessionId}/history?${params.toString()}`);
 }
 
-export function fetchHunkPatch(hunkId: string): Promise<PatchPayload> {
+export function fetchHunkPatch(sessionId: string, hunkId: string): Promise<PatchPayload> {
   return request<PatchPayload>(`/api/session/${sessionId}/hunk/${hunkId}`);
 }
 
-export function fetchFileContent(filePath: string): Promise<FileContentPayload> {
+export function fetchFileContent(sessionId: string, filePath: string): Promise<FileContentPayload> {
   const params = new URLSearchParams({ file_path: filePath });
   return request<FileContentPayload>(`/api/session/${sessionId}/file?${params.toString()}`);
 }
 
-export function toggleReviewed(hunkId: string): Promise<string> {
+export function toggleReviewed(sessionId: string, hunkId: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/reviewed`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId }),
   });
 }
 
-export function setReviewed(hunkId: string, reviewed: boolean): Promise<string> {
+export function setReviewed(
+  sessionId: string,
+  hunkId: string,
+  reviewed: boolean,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/reviewed`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, reviewed }),
   });
 }
 
-export function setFileReviewed(filePath: string, reviewed: boolean): Promise<string> {
+export function setFileReviewed(
+  sessionId: string,
+  filePath: string,
+  reviewed: boolean,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/reviewed-file`, {
     method: "POST",
     body: JSON.stringify({ file_path: filePath, reviewed }),
   });
 }
 
-export function setActiveCommit(commit: string | null): Promise<string> {
+export function setActiveCommit(sessionId: string, commit: string | null): Promise<string> {
   return request<string>(`/api/session/${sessionId}/commit`, {
     method: "POST",
     body: JSON.stringify({ commit }),
   });
 }
 
-export function toggleStage(hunkId: string, staged: boolean): Promise<string> {
+export function toggleStage(sessionId: string, hunkId: string, staged: boolean): Promise<string> {
   return request<string>(`/api/session/${sessionId}/${staged ? "unstage" : "stage"}`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId }),
   });
 }
 
-export function toggleStageFile(filePath: string, staged: boolean): Promise<string> {
+export function toggleStageFile(
+  sessionId: string,
+  filePath: string,
+  staged: boolean,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/${staged ? "unstage-file" : "stage-file"}`, {
     method: "POST",
     body: JSON.stringify({ file_path: filePath }),
   });
 }
 
-export function stageSelection(hunkId: string, selection: string): Promise<string> {
+export function stageSelection(
+  sessionId: string,
+  hunkId: string,
+  selection: string,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/stage-selection`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, selection }),
   });
 }
 
-export function discardHunk(hunkId: string): Promise<string> {
+export function discardHunk(sessionId: string, hunkId: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/discard`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId }),
   });
 }
 
-export function discardHunks(hunkIds: string[]): Promise<string> {
+export function discardHunks(sessionId: string, hunkIds: string[]): Promise<string> {
   return request<string>(`/api/session/${sessionId}/discard-batch`, {
     method: "POST",
     body: JSON.stringify({ hunk_ids: hunkIds }),
   });
 }
 
-export function saveComment(hunkId: string, comment: string, batch = false): Promise<string> {
+export function saveComment(
+  sessionId: string,
+  hunkId: string,
+  comment: string,
+  batch = false,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, comment, batch }),
   });
 }
 
-export function sendCommentBatch(): Promise<string> {
+export function sendCommentBatch(sessionId: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment-batch`, {
     method: "POST",
   });
 }
 
-export function cancelCommentDispatch(hunkId: string, commentIndex: number): Promise<string> {
+export function cancelCommentDispatch(
+  sessionId: string,
+  hunkId: string,
+  commentIndex: number,
+): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment-dispatch/cancel`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, comment_index: commentIndex }),
   });
 }
 
-export function fetchAgentLog(dispatchKey: string): Promise<AgentLogPayload> {
+export function fetchAgentLog(sessionId: string, dispatchKey: string): Promise<AgentLogPayload> {
   const params = new URLSearchParams({ dispatch_key: dispatchKey });
-  return request<AgentLogPayload>(`/api/session/${sessionId}/agent-dispatch/log?${params.toString()}`);
+  return request<AgentLogPayload>(
+    `/api/session/${sessionId}/agent-dispatch/log?${params.toString()}`,
+  );
 }
 
-export function updateAgent(agent: AgentKind): Promise<string> {
+export function updateAgent(sessionId: string, agent: AgentKind): Promise<string> {
   return request<string>(`/api/session/${sessionId}/agent`, {
     method: "POST",
     body: JSON.stringify({ agent }),

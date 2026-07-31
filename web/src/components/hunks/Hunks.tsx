@@ -15,6 +15,8 @@ type HunksProps = {
   selectedFilePath?: string | null;
   targetFilePath?: string | null;
   targetHunkId?: string | null;
+  /// Several reviews can be on screen at once; only the one in front takes the shortcuts.
+  shortcutsEnabled: boolean;
 };
 
 type FileGroup = {
@@ -207,6 +209,7 @@ export function Hunks({
   selectedFilePath,
   targetFilePath,
   targetHunkId,
+  shortcutsEnabled,
 }: HunksProps) {
   const {
     state: { activeHunkId, activeView, busy, data },
@@ -373,6 +376,10 @@ export function Hunks({
   useActiveHunkFromViewport(interactiveHunks);
 
   useEffect(() => {
+    if (!shortcutsEnabled) {
+      return;
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
       if (isEditableShortcutTarget(event.target)) {
         return;
@@ -405,7 +412,7 @@ export function Hunks({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [actions, activeHunk, busy, interactiveUnstagedHunks, isCommitReview, readOnly]);
+  }, [actions, activeHunk, busy, interactiveUnstagedHunks, isCommitReview, readOnly, shortcutsEnabled]);
 
   return (
     <div className="hunk-sections">

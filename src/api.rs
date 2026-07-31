@@ -107,6 +107,14 @@ pub(crate) struct SessionPayload {
     pub(crate) export_text: String,
 }
 
+/// A submodule of the reviewed repo that has changes of its own, offered as another
+/// review the user can open beside this one.
+#[derive(Serialize)]
+pub(crate) struct SubmoduleView {
+    pub(crate) repo_path: String,
+    pub(crate) name: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct CommitHistoryPayload {
     pub(crate) commits: Vec<CommitView>,

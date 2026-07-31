@@ -5,17 +5,17 @@
 export type PaneKind = "review" | "agents" | "terminal";
 
 export type Pane =
-  | { paneId: string; kind: "review" }
+  /// One review of one repo. The page opens on the repo it was launched in; changed
+  /// submodules are further reviews, each with its own session and its own tab title.
+  | { paneId: string; kind: "review"; sessionId: string; title: string }
   | { paneId: string; kind: "agents" }
   | { paneId: string; kind: "terminal"; terminalId: string };
 
-/// Terminals are the only pane you can have several of: opening the review or the agent
-/// monitor twice would just be two views of the same thing.
-export const mapPaneKindToMultiplicity = {
-  review: "single",
-  agents: "single",
-  terminal: "many",
-} satisfies Record<PaneKind, "single" | "many">;
+/// A pane the user asked for, before it has an id.
+export type OpenPaneRequest =
+  | { kind: "review"; sessionId: string; title: string }
+  | { kind: "agents" }
+  | { kind: "terminal" };
 
 export type SplitDirection = "row" | "column";
 
@@ -70,14 +70,34 @@ export function emptyLayout(): WorkspaceLayout {
   };
 }
 
-export function defaultLayout(): WorkspaceLayout {
+export function defaultLayout(sessionId: string): WorkspaceLayout {
   const layout = emptyLayout();
-  return addPane(layout, layout.activeFrameId, { paneId: makeId("pane"), kind: "review" });
+  return addPane(layout, layout.activeFrameId, {
+    paneId: makeId("pane"),
+    kind: "review",
+    sessionId,
+    title: "review",
+  });
 }
 
 /// The top-left frame: its tab strip doubles as the app header.
 export function primaryFrameId(node: LayoutNode): string {
   return frameIdsInLayout(node)[0];
+}
+
+/// What each kind of pane needs to carry. A layout stored by an older version can be
+/// missing these, and a pane without them would render as a nameless tab.
+const mapPaneKindToShapeCheck: {
+  [Kind in PaneKind]: (pane: Extract<Pane, { kind: Kind }>) => boolean;
+} = {
+  review: (pane) => typeof pane.sessionId === "string" && typeof pane.title === "string",
+  agents: () => true,
+  terminal: (pane) => typeof pane.terminalId === "string",
+};
+
+function isCoherentPane(pane: Pane): boolean {
+  const check = mapPaneKindToShapeCheck[pane?.kind] as ((value: Pane) => boolean) | undefined;
+  return Boolean(pane) && typeof pane.paneId === "string" && Boolean(check) && check!(pane);
 }
 
 /// A restored layout is only usable if its tree, its frames and its panes still agree; a
@@ -89,20 +109,36 @@ export function isCoherentLayout(layout: WorkspaceLayout): boolean {
     frameIds.length === Object.keys(layout.frames).length &&
     frameIds.every((frameId) => Boolean(layout.frames[frameId])) &&
     Boolean(layout.frames[layout.activeFrameId]) &&
+    Object.values(layout.panes).every(isCoherentPane) &&
     Object.values(layout.frames).every((frame) =>
       frame.paneIds.every((paneId) => Boolean(layout.panes[paneId])),
     )
   );
 }
 
-/// moonreview is a review tool: opening it shows the review, whatever the last session
-/// left behind. Closing the review tab still works, it just does not outlive the page.
-export function withReviewPane(layout: WorkspaceLayout): WorkspaceLayout {
-  if (findPaneOfKind(layout, "review")) {
+/// moonreview is a review tool: opening it shows the review of the repo it was launched
+/// in, whatever the last session left behind. Closing that tab still works, it just does
+/// not outlive the page.
+export function withReviewPane(layout: WorkspaceLayout, sessionId: string): WorkspaceLayout {
+  if (findReviewPane(layout, sessionId)) {
     return layout;
   }
 
-  return addPane(layout, primaryFrameId(layout.root), { paneId: makeId("pane"), kind: "review" });
+  return addPane(layout, primaryFrameId(layout.root), {
+    paneId: makeId("pane"),
+    kind: "review",
+    sessionId,
+    title: "review",
+  });
+}
+
+/// The pane reviewing one particular session, if it is open.
+export function findReviewPane(layout: WorkspaceLayout, sessionId: string): Pane | null {
+  return (
+    Object.values(layout.panes).find(
+      (pane) => pane.kind === "review" && pane.sessionId === sessionId,
+    ) ?? null
+  );
 }
 
 export function frameIdsInLayout(node: LayoutNode): string[] {
@@ -164,9 +200,67 @@ export function addPaneInNewFrame(
   return addPane(withFrame, newFrameId, pane);
 }
 
+/// How much of the width a new right-hand column takes.
+const RIGHT_COLUMN_FRACTION = 0.35;
+
+/// Put a pane in a new full-height frame down the right of the workspace, which is where
+/// shells live unless the user moves them.
+export function addPaneInRightColumn(layout: WorkspaceLayout, pane: Pane): WorkspaceLayout {
+  const newFrameId = makeId("frame");
+  const newFrame: LayoutNode = { kind: "frame", frameId: newFrameId };
+  const root: LayoutNode =
+    layout.root.kind === "split" && layout.root.direction === "row"
+      ? {
+          ...layout.root,
+          children: [...layout.root.children, newFrame],
+          sizes: [
+            ...layout.root.sizes.map((size) => size * (1 - RIGHT_COLUMN_FRACTION)),
+            RIGHT_COLUMN_FRACTION,
+          ],
+        }
+      : {
+          kind: "split",
+          direction: "row",
+          children: [layout.root, newFrame],
+          sizes: [1 - RIGHT_COLUMN_FRACTION, RIGHT_COLUMN_FRACTION],
+        };
+
+  const withFrame: WorkspaceLayout = {
+    ...layout,
+    root,
+    frames: {
+      ...layout.frames,
+      [newFrameId]: { frameId: newFrameId, paneIds: [], activePaneId: null },
+    },
+  };
+
+  return addPane(withFrame, newFrameId, pane);
+}
+
+/// The frame panes of a kind already live in: the one asked for if it holds one, else
+/// wherever the others are. Keeps shells with shells and reviews with reviews.
+export function frameHoldingKind(
+  layout: WorkspaceLayout,
+  kind: PaneKind,
+  preferredFrameId: string,
+): string | null {
+  const holdsKind = (frameId: string) =>
+    layout.frames[frameId]?.paneIds.some((paneId) => layout.panes[paneId].kind === kind);
+
+  if (holdsKind(preferredFrameId)) {
+    return preferredFrameId;
+  }
+
+  return frameIdsInLayout(layout.root).find(holdsKind) ?? null;
+}
+
 export function focusPane(layout: WorkspaceLayout, paneId: string): WorkspaceLayout {
   const frame = frameHoldingPane(layout, paneId);
   if (!frame) {
+    return layout;
+  }
+  // Already in front: hand back the same layout so a click does not churn the tree.
+  if (frame.activePaneId === paneId && layout.activeFrameId === frame.frameId) {
     return layout;
   }
 

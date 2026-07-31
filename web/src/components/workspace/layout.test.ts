@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   addPane,
   addPaneInNewFrame,
+  addPaneInRightColumn,
   closePane,
   defaultLayout,
   emptyLayout,
   findPaneOfKind,
   focusPane,
   frameHoldingPane,
+  frameHoldingKind,
   frameIdsInLayout,
   isCoherentLayout,
   movePaneToFrame,
@@ -17,7 +19,7 @@ import {
 import type { WorkspaceLayout } from "./layout";
 
 function layoutWithReviewAndTerminal() {
-  const layout = defaultLayout();
+  const layout = defaultLayout("session-root");
   const review = findPaneOfKind(layout, "review")!;
   const withTerminal = addPane(layout, layout.activeFrameId, {
     paneId: "pane-terminal",
@@ -29,7 +31,7 @@ function layoutWithReviewAndTerminal() {
 
 describe("workspace layout", () => {
   it("starts as one frame holding the review", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     expect(frameIdsInLayout(layout.root)).toHaveLength(1);
     expect(findPaneOfKind(layout, "review")).not.toBeNull();
   });
@@ -85,7 +87,7 @@ describe("workspace layout", () => {
   });
 
   it("keeps the last frame even with no tabs left", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
     const closed = closePane(layout, reviewPaneId);
 
@@ -123,7 +125,7 @@ describe("workspace layout", () => {
   });
 
   it("leaves a lone tab alone when dropped on its own frame's edge", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
     const unchanged = movePaneToFrame(layout, reviewPaneId, layout.activeFrameId, "left");
 
@@ -151,7 +153,7 @@ describe("workspace layout", () => {
   });
 
   it("opens a pane in a frame of its own beside the target", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
     const split = addPaneInNewFrame(layout, layout.activeFrameId, "right", {
       paneId: "pane-terminal",
@@ -168,22 +170,69 @@ describe("workspace layout", () => {
     }
   });
 
+  it("opens a pane in a full-height column on the right", () => {
+    const layout = defaultLayout("session-root");
+    const withTerminal = addPaneInRightColumn(layout, {
+      paneId: "pane-terminal",
+      kind: "terminal",
+      terminalId: "terminal-0",
+    });
+
+    expect(withTerminal.root.kind).toBe("split");
+    if (withTerminal.root.kind === "split") {
+      expect(withTerminal.root.direction).toBe("row");
+      expect(withTerminal.root.children[1]).toEqual({
+        kind: "frame",
+        frameId: frameHoldingPane(withTerminal, "pane-terminal")!.frameId,
+      });
+      expect(withTerminal.root.sizes.reduce((sum, size) => sum + size, 0)).toBeCloseTo(1);
+    }
+  });
+
+  it("finds the frame a kind of pane already lives in", () => {
+    const layout = defaultLayout("session-root");
+    const withTerminal = addPaneInRightColumn(layout, {
+      paneId: "pane-terminal",
+      kind: "terminal",
+      terminalId: "terminal-0",
+    });
+    const terminalFrameId = frameHoldingPane(withTerminal, "pane-terminal")!.frameId;
+
+    // Asked for from the review frame, the shell still joins the shells.
+    expect(frameHoldingKind(withTerminal, "terminal", layout.activeFrameId)).toBe(terminalFrameId);
+    expect(frameHoldingKind(withTerminal, "terminal", terminalFrameId)).toBe(terminalFrameId);
+    expect(frameHoldingKind(layout, "terminal", layout.activeFrameId)).toBeNull();
+    // And a review asked for from the shell frame joins the reviews.
+    expect(frameHoldingKind(withTerminal, "review", terminalFrameId)).toBe(layout.activeFrameId);
+  });
+
+  it("rejects a stored layout whose panes predate what they must carry", () => {
+    const layout = defaultLayout("session-root");
+    const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
+    const staleReview = {
+      ...layout,
+      panes: { [reviewPaneId]: { paneId: reviewPaneId, kind: "review" } },
+    } as unknown as WorkspaceLayout;
+
+    expect(isCoherentLayout(staleReview)).toBe(false);
+  });
+
   it("puts the review back when a restored layout has none", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     const withoutReview = closePane(layout, findPaneOfKind(layout, "review")!.paneId);
-    const restored = withReviewPane(withoutReview);
+    const restored = withReviewPane(withoutReview, "session-root");
 
     expect(findPaneOfKind(restored, "review")).not.toBeNull();
     expect(restored.frames[restored.activeFrameId].paneIds).toHaveLength(1);
   });
 
   it("leaves a restored layout that already has the review alone", () => {
-    const layout = defaultLayout();
-    expect(withReviewPane(layout)).toBe(layout);
+    const layout = defaultLayout("session-root");
+    expect(withReviewPane(layout, "session-root")).toBe(layout);
   });
 
   it("rejects a stored layout whose tree and frames disagree", () => {
-    const layout = defaultLayout();
+    const layout = defaultLayout("session-root");
     expect(isCoherentLayout(layout)).toBe(true);
     expect(isCoherentLayout({ ...layout, frames: {} })).toBe(false);
     expect(isCoherentLayout({ ...layout, panes: {} })).toBe(false);

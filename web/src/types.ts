@@ -134,3 +134,9 @@ export type AgentLogPayload = {
   dispatch_key: string;
   text: string;
 };
+
+/// A changed submodule of a reviewed repo, offered as another review to open.
+export type Submodule = {
+  repo_path: string;
+  name: string;
+};

@@ -3,33 +3,45 @@ import { AgentMonitorPane } from "./AgentMonitorPane";
 import { ReviewPane } from "./ReviewPane";
 import { TerminalPane } from "./TerminalPane";
 import type { Pane, PaneKind } from "./layout";
+import type { SessionState } from "../../types";
 
 type PaneDefinition<Kind extends PaneKind> = {
-  /// Shown on the tab and on the header button that opens the pane.
-  title: string;
+  /// Shown on the tab. A review names the repo it shows, which is only known once its
+  /// state has loaded; until then it falls back to the name it was opened under.
+  title: (pane: Extract<Pane, { kind: Kind }>, reviewData: SessionState | null) => string;
   render: (pane: Extract<Pane, { kind: Kind }>) => ReactNode;
 };
 
-export const mapPaneKindToDefinition: { [Kind in PaneKind]: PaneDefinition<Kind> } = {
+function repoLabel(data: SessionState): string {
+  return data.branch_name ? `${data.repo_name} / ${data.branch_name}` : data.repo_name;
+}
+
+const mapPaneKindToDefinition: { [Kind in PaneKind]: PaneDefinition<Kind> } = {
   review: {
-    title: "review",
-    render: () => <ReviewPane />,
+    title: (pane, reviewData) => (reviewData ? repoLabel(reviewData) : pane.title),
+    render: (pane) => <ReviewPane sessionId={pane.sessionId} />,
   },
   agents: {
-    title: "agents",
+    title: () => "agents",
     render: () => <AgentMonitorPane />,
   },
   terminal: {
-    title: "terminal",
+    title: () => "terminal",
     render: (pane) => <TerminalPane paneId={pane.paneId} terminalId={pane.terminalId} />,
   },
 };
 
-export const paneKinds = Object.keys(mapPaneKindToDefinition) as PaneKind[];
-
-export function renderPane(pane: Pane): ReactNode {
-  const definition = mapPaneKindToDefinition[pane.kind] as PaneDefinition<PaneKind> & {
+function definitionFor(pane: Pane) {
+  return mapPaneKindToDefinition[pane.kind] as PaneDefinition<PaneKind> & {
+    title: (value: Pane, reviewData: SessionState | null) => string;
     render: (value: Pane) => ReactNode;
   };
-  return definition.render(pane);
+}
+
+export function paneTitle(pane: Pane, reviewData: SessionState | null = null): string {
+  return definitionFor(pane).title(pane, reviewData);
+}
+
+export function renderPane(pane: Pane): ReactNode {
+  return definitionFor(pane).render(pane);
 }

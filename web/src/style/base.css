@@ -118,18 +118,6 @@ body {
   text-decoration: none;
 }
 
-.header-repo-name {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 500;
-  /* Same line box as its neighbours in the centre group, so they share a baseline. */
-  line-height: 1.2;
-  letter-spacing: 0.01em;
-  text-align: right;
-}
-
 .header-review-label {
   min-width: 0;
   overflow: hidden;
@@ -165,15 +153,13 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 1rem;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
 }
 
 @container frame (max-width: 900px) {
-  .header-review-label,
-  .header-repo-name {
+  .header-review-label {
     display: none;
   }
 }
@@ -498,7 +484,8 @@ body.workspace-resizing {
 }
 
 .frame-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 0.4rem;
   flex: 0 0 auto;
@@ -506,51 +493,54 @@ body.workspace-resizing {
   border-bottom: 1px solid var(--line);
   background: var(--header-bg);
   padding: 0 0.5rem;
-  overflow-x: auto;
   user-select: none;
 }
 
-/* The strip that doubles as the app header keeps its actions pinned to the right and
-   what is being reviewed centred across the whole strip. */
+/* Equal side zones with the centre between them: what is being reviewed sits on the middle
+   of the strip whatever the tabs do, and neither side can grow into it. */
+.frame-tabs-start {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.frame-tabs-end {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.frame-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.frame-tab-list::-webkit-scrollbar {
+  display: none;
+}
+
 .frame-tabs-primary {
-  position: relative;
   padding-left: 0.35rem;
 }
 
-/* Every frame ends its strip with its own [+]; in the header strip the app controls have
-   already claimed the free space. */
-.frame-tab-menu {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-.frame-tabs-primary .frame-tab-menu {
-  margin-left: 0.75rem;
-}
-
 .header-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
+  grid-column: 2;
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  max-width: min(42rem, 45%);
   min-width: 0;
-  transform: translate(-50%, -50%);
-  /* Sits over the strip, so only its own controls take clicks. */
-  pointer-events: none;
-}
-
-.header-center > * {
-  pointer-events: auto;
-}
-
-/* A frame holding only the review needs no tab title; every other tab keeps one. */
-.frame-tabs-lone-review .frame-tab {
-  display: none;
+  padding: 0 1rem;
+  white-space: nowrap;
 }
 
 .frame-tab {
@@ -562,6 +552,14 @@ body.workspace-resizing {
   padding: 0 0.3rem;
   color: var(--muted);
   cursor: grab;
+  white-space: nowrap;
+}
+
+/* A long repo or branch name shortens rather than pushing the other tabs out of reach. */
+.frame-tab > button:first-child {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .frame-tab-active {
@@ -721,6 +719,15 @@ body.workspace-resizing {
   gap: 1rem;
   width: 100%;
   height: 100%;
+  /* Keeps the diff and the sidebar off the frame's border. */
+  padding: 0 5px;
+}
+
+.review-pane-opening {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 0.8rem;
 }
 
 .review-pane-scroll {

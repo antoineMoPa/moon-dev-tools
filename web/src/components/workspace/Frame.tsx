@@ -2,7 +2,8 @@ import { useCallback, useState } from "react";
 import { HeaderActions, HeaderBrand, HeaderCenter, OpenWindowMenu } from "../Header";
 import { useFrameRects } from "./frameRects";
 import { frameHoldingPane, frameIdsInLayout, primaryFrameId } from "./layout";
-import { mapPaneKindToDefinition } from "./paneRegistry";
+import { paneTitle } from "./paneRegistry";
+import { useReviewStoreFor } from "../../reviewStores";
 import { useWorkspace } from "./workspaceState";
 import type { DropSide, Pane } from "./layout";
 
@@ -38,10 +39,6 @@ export function Frame({ frameId }: { frameId: string }) {
   const [hoveredDropSide, setHoveredDropSide] = useState<DropSide | null>(null);
   const frame = layout.frames[frameId];
   const isActiveFrame = layout.activeFrameId === frameId;
-  // A frame showing nothing but the review is moonreview itself: naming that tab adds
-  // nothing. Every other tab keeps its title, however few there are.
-  const hasLoneReview =
-    frame.paneIds.length === 1 && layout.panes[frame.paneIds[0]].kind === "review";
   // The top-left frame carries the app header, so there is only ever one of them.
   const isPrimaryFrame = primaryFrameId(layout.root) === frameId;
   // With a single frame there is nothing to tell apart, so the focus outline is just noise.
@@ -98,9 +95,7 @@ export function Frame({ frameId }: { frameId: string }) {
       }}
     >
       <div
-        className={`frame-tabs${isPrimaryFrame ? " frame-tabs-primary" : ""}${
-          hasLoneReview ? " frame-tabs-lone-review" : ""
-        }`}
+        className={`frame-tabs${isPrimaryFrame ? " frame-tabs-primary" : ""}`}
         onDragOver={(event) => {
           if (draggedPaneId) {
             event.preventDefault();
@@ -111,25 +106,31 @@ export function Frame({ frameId }: { frameId: string }) {
           dropPane("tabs");
         }}
       >
-        {isPrimaryFrame ? <HeaderBrand /> : null}
-        {frame.paneIds.map((paneId) => (
-          <FrameTab
-            key={paneId}
-            pane={layout.panes[paneId]}
-            active={paneId === frame.activePaneId}
-            onFocus={() => focusPaneById(paneId)}
-            onClose={() => closePaneById(paneId)}
-            onDragStart={() => setDraggedPaneId(paneId)}
-            onDragEnd={() => setDraggedPaneId(null)}
-            onDragOverTab={(insertAfter) => reorderWhileDragging(paneId, insertAfter)}
-            onDropBefore={() => dropPane("tabs", paneId)}
-            dragged={draggedPaneId === paneId}
-            dragging={draggedPaneId !== null}
-          />
-        ))}
+        {/* Three zones: the tabs, what is being reviewed, and the app controls. The tabs
+            scroll within their own zone, so a long row of them never reaches the others. */}
+        <div className="frame-tabs-start">
+          {isPrimaryFrame ? <HeaderBrand /> : null}
+          <div className="frame-tab-list">
+            {frame.paneIds.map((paneId) => (
+              <FrameTab
+                key={paneId}
+                pane={layout.panes[paneId]}
+                active={paneId === frame.activePaneId}
+                onFocus={() => focusPaneById(paneId)}
+                onClose={() => closePaneById(paneId)}
+                onDragStart={() => setDraggedPaneId(paneId)}
+                onDragEnd={() => setDraggedPaneId(null)}
+                onDragOverTab={(insertAfter) => reorderWhileDragging(paneId, insertAfter)}
+                onDropBefore={() => dropPane("tabs", paneId)}
+                dragged={draggedPaneId === paneId}
+                dragging={draggedPaneId !== null}
+              />
+            ))}
+          </div>
+        </div>
         {isPrimaryFrame ? <HeaderCenter /> : null}
-        {isPrimaryFrame ? <HeaderActions /> : null}
-        <div className="frame-tab-menu">
+        <div className="frame-tabs-end">
+          {isPrimaryFrame ? <HeaderActions /> : null}
           <OpenWindowMenu frameId={frameId} />
         </div>
       </div>
@@ -208,7 +209,8 @@ function FrameTab({
   onDragOverTab,
   onDropBefore,
 }: FrameTabProps) {
-  const title = mapPaneKindToDefinition[pane.kind].title;
+  const reviewStore = useReviewStoreFor(pane.kind === "review" ? pane.sessionId : null);
+  const title = paneTitle(pane, reviewStore?.state.data ?? null);
   const classes = ["frame-tab"];
   if (active) {
     classes.push("frame-tab-active");
