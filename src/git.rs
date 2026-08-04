@@ -61,6 +61,29 @@ pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathB
 }
 
 pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
+    if let Some([before, after]) = &diff_target.comparison {
+        let diff = run_git_allow_status(
+            repo_path,
+            &[
+                "diff",
+                "--no-index",
+                "--diff-algorithm=histogram",
+                "--no-color",
+                "--no-prefix",
+                "--unified=3",
+                "--",
+                before,
+                after,
+            ],
+            &[0, 1],
+        )?;
+        let mut hunks = parse_diff(repo_path, &diff, false)?;
+        for hunk in &mut hunks {
+            hunk.file_path = after.clone();
+        }
+        return Ok(hunks);
+    }
+
     if let Some(base) = &diff_target.base {
         let diff = run_target_diff(repo_path, base, diff_target.pathspec.as_deref())?;
         return parse_diff(repo_path, &diff, false);
@@ -556,8 +579,11 @@ fn split_diff_sections(diff: &str) -> Vec<Vec<String>> {
 
 fn parse_file_path(section: &[String]) -> Option<String> {
     for line in section {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            return Some(path.to_string());
+        if let Some(path) = line
+            .strip_prefix("+++ ")
+            .filter(|path| *path != "/dev/null")
+        {
+            return Some(path.strip_prefix("b/").unwrap_or(path).to_string());
         }
     }
 
@@ -859,12 +885,14 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
         return Ok(DiffTarget {
             base: Some(base.trim().to_string()),
             pathspec: Some(pathspec.trim().to_string()),
+            comparison: None,
         });
     }
 
     Ok(DiffTarget {
         base: Some(value),
         pathspec: None,
+        comparison: None,
     })
 }
 
@@ -977,6 +1005,30 @@ mod tests {
         assert_eq!(hunks.len(), 1);
         assert_eq!(hunks[0].file_path, "example.txt");
         assert!(hunks[0].staged);
+        assert_eq!(diff_line_counts(&hunks[0].patch), (1, 1));
+    }
+
+    #[test]
+    fn collect_hunks_compares_two_files_without_a_git_repository() {
+        // Arrange
+        let temp = TestDir::new();
+        let before = temp.path.join("before.json");
+        let after = temp.path.join("after.json");
+        fs::write(&before, "{\"value\": 1}\n").expect("failed to write before file");
+        fs::write(&after, "{\"value\": 2}\n").expect("failed to write after file");
+        let target = DiffTarget {
+            base: None,
+            pathspec: None,
+            comparison: Some([before.display().to_string(), after.display().to_string()]),
+        };
+
+        // Act
+        let hunks = collect_hunks(&temp.path, &target).expect("failed to compare files");
+
+        // Assert
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, after.display().to_string());
+        assert!(!hunks[0].staged);
         assert_eq!(diff_line_counts(&hunks[0].patch), (1, 1));
     }
 
@@ -1273,6 +1325,7 @@ mod tests {
             &DiffTarget {
                 base: None,
                 pathspec: Some("src".to_string()),
+                comparison: None,
             },
         )
         .expect("failed to collect hunks");

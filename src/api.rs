@@ -80,6 +80,7 @@ pub(crate) struct RepoSession {
 pub(crate) struct DiffTarget {
     pub(crate) base: Option<String>,
     pub(crate) pathspec: Option<String>,
+    pub(crate) comparison: Option<[String; 2]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -454,8 +455,8 @@ pub(crate) fn ensure_session_is_writable(
     session_id: &str,
 ) -> Result<(), AppError> {
     with_session(state, session_id, |session| {
-        if session.diff_target.base.is_some() {
-            bail!("range diffs are read-only");
+        if session.diff_target.base.is_some() || session.diff_target.comparison.is_some() {
+            bail!("this review is read-only");
         }
         Ok(())
     })
@@ -511,6 +512,7 @@ pub(crate) fn session_id_for_view(
         path.display().to_string(),
         diff_target.base.clone(),
         diff_target.pathspec.clone(),
+        diff_target.comparison.clone(),
         active_commit.map(ToOwned::to_owned),
     ))
 }

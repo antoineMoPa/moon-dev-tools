@@ -43,6 +43,12 @@ moonreview
 
 Run `moonreview` inside any git repository you want to review.
 
+Pass two paths to compare arbitrary files in a read-only review:
+
+```bash
+moonreview a.txt b.txt
+```
+
 ## Stopping the server
 
 ```bash

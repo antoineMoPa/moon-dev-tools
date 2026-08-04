@@ -20,19 +20,15 @@ use crate::{
 enum CliCommand {
     Help,
     Version,
-    Serve {
-        logs: bool,
-    },
-    Review {
-        target: ReviewTarget,
-        logs: bool,
-    },
+    Serve { logs: bool },
+    Review { target: ReviewTarget, logs: bool },
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum ReviewTarget {
     WorkingTree,
     CurrentDirectory,
+    Comparison([String; 2]),
     Diff(String),
     Commit(String),
 }
@@ -71,7 +67,7 @@ fn launch_review(target: ReviewTarget, logs: bool) -> Result<()> {
     let current_dir = env::current_dir()?;
     let repo_path = canonicalize_repo(&current_dir)?;
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
-    let open_request = review_open_request(&repo_path, target, current_dir_pathspec)?;
+    let open_request = review_open_request(&repo_path, target, current_dir_pathspec, &current_dir)?;
     if logs {
         return launch_review_with_foreground_server(repo_path, open_request);
     }
@@ -103,6 +99,7 @@ fn review_open_request(
     repo_path: &Path,
     target: ReviewTarget,
     current_dir_pathspec: Option<String>,
+    current_dir: &Path,
 ) -> Result<ReviewOpenRequest> {
     match target {
         ReviewTarget::WorkingTree => Ok(ReviewOpenRequest {
@@ -113,6 +110,24 @@ fn review_open_request(
             diff_target: DiffTarget {
                 base: None,
                 pathspec: current_dir_pathspec,
+                comparison: None,
+            },
+            active_commit: None,
+        }),
+        ReviewTarget::Comparison(paths) => Ok(ReviewOpenRequest {
+            diff_target: DiffTarget {
+                base: None,
+                pathspec: None,
+                comparison: Some(paths.map(|path| {
+                    let path = Path::new(&path);
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        current_dir.join(path)
+                    }
+                    .display()
+                    .to_string()
+                })),
             },
             active_commit: None,
         }),
@@ -263,6 +278,11 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
             },
             logs,
         }),
+        [command, ..] if command == "diff" || command == "serve" => bail!("{}", help_text()),
+        [before, after] => Ok(CliCommand::Review {
+            target: ReviewTarget::Comparison([before.clone(), after.clone()]),
+            logs,
+        }),
         _ => bail!("{}", help_text()),
     }
 }
@@ -279,6 +299,7 @@ Tiny local code review UI for git.
 Usage:
   moonreview
   moonreview .
+  moonreview <before-path> <after-path>
   moonreview <commit>
   moonreview -ns
   moonreview --logs
@@ -291,12 +312,14 @@ Usage:
 Examples:
   moonreview
   moonreview .
+  moonreview before.json after.json
   moonreview 4542abe
   moonreview diff dev
   moonreview diff dev:./
 
 Run `moonreview` inside any git repository you want to review.
 Run `moonreview .` to review only the current directory.
+Pass two paths to review a read-only comparison of those files.
 
 Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
 Changed submodules are offered inside the review, as extra review windows you can open from [+].
@@ -383,6 +406,7 @@ mod tests {
             Path::new("/repo"),
             ReviewTarget::WorkingTree,
             Some("src".to_string()),
+            Path::new("/repo/src"),
         )
         .expect("expected review request");
 
@@ -397,11 +421,43 @@ mod tests {
             Path::new("/repo"),
             ReviewTarget::CurrentDirectory,
             Some("src".to_string()),
+            Path::new("/repo/src"),
         )
         .expect("expected review request");
 
         assert_eq!(request.diff_target.base, None);
         assert_eq!(request.diff_target.pathspec.as_deref(), Some("src"));
+        assert_eq!(request.active_commit, None);
+    }
+
+    #[test]
+    fn parse_two_paths_as_file_comparison() {
+        assert_eq!(
+            parse(&["a.txt", "b.txt"]),
+            CliCommand::Review {
+                target: ReviewTarget::Comparison(["a.txt".to_string(), "b.txt".to_string()]),
+                logs: false,
+            }
+        );
+    }
+
+    #[test]
+    fn comparison_paths_are_relative_to_current_directory() {
+        let request = review_open_request(
+            Path::new("/repo"),
+            ReviewTarget::Comparison(["a.txt".to_string(), "nested/b.txt".to_string()]),
+            Some("src".to_string()),
+            Path::new("/repo/src"),
+        )
+        .expect("expected review request");
+
+        assert_eq!(
+            request.diff_target.comparison,
+            Some([
+                "/repo/src/a.txt".to_string(),
+                "/repo/src/nested/b.txt".to_string()
+            ])
+        );
         assert_eq!(request.active_commit, None);
     }
 

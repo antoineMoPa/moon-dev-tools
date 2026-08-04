@@ -409,11 +409,17 @@ async fn session_state(
             apply_commit_status(&mut commits, active_commit, active_commit_status);
             apply_commit_status(&mut history_commits, active_commit, active_commit_status);
         }
-        let local_change_summary = local_change_summary_from_status(
-            &session.repo_path,
-            session.diff_target.pathspec.as_deref(),
-        )?;
-        let read_only = session.diff_target.base.is_some() || session.active_commit.is_some();
+        let local_change_summary = if session.diff_target.comparison.is_some() {
+            Default::default()
+        } else {
+            local_change_summary_from_status(
+                &session.repo_path,
+                session.diff_target.pathspec.as_deref(),
+            )?
+        };
+        let read_only = session.diff_target.base.is_some()
+            || session.diff_target.comparison.is_some()
+            || session.active_commit.is_some();
         let views = hunks
             .into_iter()
             .map(|hunk| {
