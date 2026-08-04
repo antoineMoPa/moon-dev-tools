@@ -6,6 +6,7 @@ import type {
   PatchPayload,
   SessionState,
   Submodule,
+  TerminalCommand,
 } from "./types";
 
 function parseSessionId(pathname: string): string {
@@ -64,9 +65,13 @@ export function terminalSocketUrl(terminalId: string): string {
 
 /// The shell starts in the repo of the session it is created against, so a shell opened
 /// while reviewing a submodule starts in that submodule.
-export function createTerminal(sessionId: string): Promise<{ terminal_id: string }> {
+export function createTerminal(
+  sessionId: string,
+  command?: TerminalCommand,
+): Promise<{ terminal_id: string }> {
   return request<{ terminal_id: string }>(`/api/session/${sessionId}/terminals`, {
     method: "POST",
+    body: JSON.stringify({ command: command ?? null }),
   });
 }
 

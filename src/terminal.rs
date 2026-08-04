@@ -23,7 +23,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
-use crate::api::{AppError, AppState};
+use crate::api::{AgentKind, AppError, AppState};
 
 const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
 /// How much shell output we keep so a reopened tab can replay what it missed.
@@ -35,6 +35,11 @@ const BROADCAST_CAPACITY: usize = 256;
 enum ClientMessage {
     Input { data: String },
     Resize { cols: u16, rows: u16 },
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CreateTerminalRequest {
+    command: Option<AgentKind>,
 }
 
 #[derive(Serialize)]
@@ -122,7 +127,11 @@ impl TerminalRegistry {
         let _ = child.wait();
     }
 
-    fn spawn(self: &Arc<Self>, repo_path: &Path) -> anyhow::Result<String> {
+    fn spawn(
+        self: &Arc<Self>,
+        repo_path: &Path,
+        program: Option<AgentKind>,
+    ) -> anyhow::Result<String> {
         let pty = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -130,8 +139,16 @@ impl TerminalRegistry {
             pixel_height: 0,
         })?;
 
-        let mut command = CommandBuilder::new(login_shell());
-        command.arg("-l");
+        let mut command = match program {
+            None | Some(AgentKind::None) => {
+                let mut command = CommandBuilder::new(login_shell());
+                command.arg("-l");
+                command
+            }
+            Some(AgentKind::Claude) => CommandBuilder::new("claude"),
+            Some(AgentKind::Codex) => CommandBuilder::new("codex"),
+            Some(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
+        };
         command.cwd(repo_path);
         command.env("TERM", "xterm-256color");
         let child = pty.slave.spawn_command(command)?;
@@ -185,10 +202,11 @@ impl TerminalRegistry {
 pub(crate) async fn create_terminal(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    Json(request): Json<CreateTerminalRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let repo_path =
         crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    let terminal_id = state.terminals.spawn(&repo_path)?;
+    let terminal_id = state.terminals.spawn(&repo_path, request.command)?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 

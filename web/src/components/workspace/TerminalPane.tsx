@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { fetchTerminalIds, terminalSocketUrl } from "../../api";
 import { usePaneVisible } from "./PaneHost";
 import { useWorkspace } from "./workspaceState";
+import type { TerminalCommand } from "./layout";
 
 // The terminal stays dark regardless of the app theme.
 const terminalTheme = {
@@ -16,7 +17,15 @@ const terminalTheme = {
 
 /// A view onto a shell that runs in the moonreview server. Closing the tab detaches this
 /// socket but leaves the shell running, so reopening it resumes where it left off.
-export function TerminalPane({ paneId, terminalId }: { paneId: string; terminalId: string }) {
+export function TerminalPane({
+  paneId,
+  terminalId,
+  command,
+}: {
+  paneId: string;
+  terminalId: string;
+  command?: TerminalCommand;
+}) {
   const { restartTerminalPane, closePaneById } = useWorkspace();
   const paneVisible = usePaneVisible();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -81,14 +90,18 @@ export function TerminalPane({ paneId, terminalId }: { paneId: string; terminalI
       void fetchTerminalIds()
         .then(({ terminal_ids }) => {
           if (terminal_ids.includes(terminalId)) {
-            terminal.write("\r\n\x1b[2m[disconnected — press enter for a new shell]\x1b[0m\r\n");
+            terminal.write(
+              `\r\n\x1b[2m[disconnected — press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
+            );
             setShellExited(true);
             return;
           }
           closePaneById(paneId);
         })
         .catch(() => {
-          terminal.write("\r\n\x1b[2m[disconnected — press enter for a new shell]\x1b[0m\r\n");
+          terminal.write(
+            `\r\n\x1b[2m[disconnected — press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
+          );
           setShellExited(true);
         });
     });
@@ -150,7 +163,7 @@ export function TerminalPane({ paneId, terminalId }: { paneId: string; terminalI
         <div className="terminal-pane-restart">
           <span className="muted">disconnected</span>
           <button type="button" onClick={() => restartTerminalPane(paneId)}>
-            [new shell]
+            [new {command ?? "shell"}]
           </button>
         </div>
       ) : null}

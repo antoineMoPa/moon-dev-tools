@@ -22,12 +22,14 @@ const mapPaneKindToDefinition: { [Kind in PaneKind]: PaneDefinition<Kind> } = {
     render: (pane) => <ReviewPane sessionId={pane.sessionId} />,
   },
   agents: {
-    title: () => "agents",
+    title: () => "comment agents",
     render: () => <AgentMonitorPane />,
   },
   terminal: {
-    title: () => "terminal",
-    render: (pane) => <TerminalPane paneId={pane.paneId} terminalId={pane.terminalId} />,
+    title: (pane) => pane.command ?? "terminal",
+    render: (pane) => (
+      <TerminalPane paneId={pane.paneId} terminalId={pane.terminalId} command={pane.command} />
+    ),
   },
 };
 

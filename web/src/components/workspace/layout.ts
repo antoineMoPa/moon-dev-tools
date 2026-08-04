@@ -2,20 +2,23 @@
 /// one of which is visible. Every function here is pure: it takes a layout and returns the
 /// next one, so the React state is a plain value that can be stored and restored.
 
+import type { TerminalCommand } from "../../types";
+
 export type PaneKind = "review" | "agents" | "terminal";
+export type { TerminalCommand } from "../../types";
 
 export type Pane =
   /// One review of one repo. The page opens on the repo it was launched in; changed
   /// submodules are further reviews, each with its own session and its own tab title.
   | { paneId: string; kind: "review"; sessionId: string; title: string }
   | { paneId: string; kind: "agents" }
-  | { paneId: string; kind: "terminal"; terminalId: string };
+  | { paneId: string; kind: "terminal"; terminalId: string; command?: TerminalCommand };
 
 /// A pane the user asked for, before it has an id.
 export type OpenPaneRequest =
   | { kind: "review"; sessionId: string; title: string }
   | { kind: "agents" }
-  | { kind: "terminal" };
+  | { kind: "terminal"; command?: TerminalCommand };
 
 export type SplitDirection = "row" | "column";
 

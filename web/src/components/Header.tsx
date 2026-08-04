@@ -45,7 +45,12 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const commands = uiCommandsFor(workspace.layout, getRootSessionId());
+  const reviewStore = useReviewStoreFor(workspace.focusedReviewSessionId);
+  const commands = uiCommandsFor(
+    workspace.layout,
+    getRootSessionId(),
+    reviewStore?.state.data?.available_agents,
+  );
 
   useEffect(() => {
     if (!menuRect) {

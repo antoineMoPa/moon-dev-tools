@@ -226,12 +226,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
 
     // Shells start where the user is reading, which for a submodule review is its folder.
-    void createTerminal(focusedReviewSessionId).then(({ terminal_id }) => {
+    void createTerminal(focusedReviewSessionId, request.command).then(({ terminal_id }) => {
       setLayout((current) =>
         openPaneInLayout(current, targetFrameId, {
           paneId: makeId("pane"),
           kind: "terminal",
           terminalId: terminal_id,
+          command: request.command,
         }),
       );
     });
@@ -279,7 +280,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   /// The shell behind a terminal tab is gone (it exited, or the server restarted): give the
   /// tab a fresh shell instead of making the user close and reopen it.
   function restartTerminalPane(paneId: string) {
-    void createTerminal(focusedReviewSessionId).then(({ terminal_id }) => {
+    const pane = layout.panes[paneId];
+    const command = pane?.kind === "terminal" ? pane.command : undefined;
+    void createTerminal(focusedReviewSessionId, command).then(({ terminal_id }) => {
       setLayout((current) => {
         const pane = current.panes[paneId];
         if (pane?.kind !== "terminal") {

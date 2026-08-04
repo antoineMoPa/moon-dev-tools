@@ -8,7 +8,7 @@ describe("uiCommandsFor", () => {
     const withReview = defaultLayout(rootSessionId);
 
     expect(uiCommandsFor(withReview, rootSessionId).map((command) => command.title)).toEqual([
-      "agents",
+      "comment agents",
       "terminal",
     ]);
 
@@ -24,8 +24,32 @@ describe("uiCommandsFor", () => {
   it("offers the main review when it is closed", () => {
     expect(uiCommandsFor(emptyLayout(), "root").map((command) => command.title)).toEqual([
       "review",
-      "agents",
+      "comment agents",
       "terminal",
+    ]);
+  });
+
+  it("offers direct terminals only for installed agents", () => {
+    const commands = uiCommandsFor(emptyLayout(), "root", [
+      { kind: "none", label: "None", available: true },
+      { kind: "claude", label: "Claude", available: false },
+      { kind: "codex", label: "Codex", available: true },
+      { kind: "opencode", label: "OpenCode", available: true },
+    ]);
+
+    expect(commands.slice(-2)).toEqual([
+      {
+        id: "open-opencode",
+        title: "opencode",
+        description: "Open OpenCode in a terminal",
+        request: { kind: "terminal", command: "opencode" },
+      },
+      {
+        id: "open-codex",
+        title: "codex",
+        description: "Open Codex in a terminal",
+        request: { kind: "terminal", command: "codex" },
+      },
     ]);
   });
 });
@@ -39,7 +63,7 @@ describe("filterUiCommands", () => {
 
   it("matches case-insensitive terms across the searchable text", () => {
     expect(filterUiCommands(commands, "OPEN AGENT").map((command) => command.title)).toEqual([
-      "agents",
+      "comment agents",
     ]);
   });
 

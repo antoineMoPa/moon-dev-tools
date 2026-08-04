@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getRootSessionId } from "../../api";
+import { useReviewStoreFor } from "../../reviewStores";
 import { filterUiCommands, uiCommandsFor } from "./commands";
 import { useWorkspace } from "./workspaceState";
 import type { UiCommand } from "./commands";
@@ -11,7 +12,12 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-  const commands = uiCommandsFor(workspace.layout, getRootSessionId());
+  const reviewStore = useReviewStoreFor(workspace.focusedReviewSessionId);
+  const commands = uiCommandsFor(
+    workspace.layout,
+    getRootSessionId(),
+    reviewStore?.state.data?.available_agents,
+  );
   const matches = filterUiCommands(commands, query);
 
   function closePalette() {

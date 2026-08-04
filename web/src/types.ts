@@ -1,4 +1,5 @@
 export type AgentKind = "none" | "claude" | "codex" | "opencode";
+export type TerminalCommand = Exclude<AgentKind, "none">;
 
 export const COMMENT_DISPATCH_STATUS = {
   idle: "idle",
