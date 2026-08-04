@@ -6,7 +6,8 @@
     "build": "node ./web/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "bin-release": "./scripts/bin-release.sh"
+    "bin-release": "./scripts/bin-release.sh",
+    "publish-flow": "./scripts/publish-flow.sh"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
