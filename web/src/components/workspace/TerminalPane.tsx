@@ -42,6 +42,25 @@ export function TerminalPane({ paneId, terminalId }: { paneId: string; terminalI
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(container);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || event.altKey || event.shiftKey) {
+        return true;
+      }
+
+      const shortcuts: Record<string, string> = event.metaKey && !event.ctrlKey
+        ? { ArrowLeft: "\x01", ArrowRight: "\x05", Backspace: "\x15" }
+        : event.ctrlKey && !event.metaKey
+          ? { ArrowLeft: "\x1bb", ArrowRight: "\x1bf", Backspace: "\x17" }
+          : {};
+      const input = shortcuts[event.key];
+      if (input === undefined) {
+        return true;
+      }
+
+      event.preventDefault();
+      terminal.input(input);
+      return false;
+    });
     if (container.clientWidth > 0 && container.clientHeight > 0) {
       fitAddon.fit();
     }
