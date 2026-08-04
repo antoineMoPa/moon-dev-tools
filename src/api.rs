@@ -103,6 +103,7 @@ pub(crate) struct SessionPayload {
     pub(crate) patch_preview_line_limit: usize,
     pub(crate) available_agents: Vec<AgentOption>,
     pub(crate) selected_agent: AgentKind,
+    pub(crate) full_file_path: Option<String>,
     pub(crate) hunks: Vec<HunkView>,
     pub(crate) review_comments: Vec<ReviewCommentView>,
     pub(crate) export_text: String,

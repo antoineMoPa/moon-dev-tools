@@ -9,7 +9,13 @@ type FullFileModalProps = {
   onClose: () => void;
 };
 
-export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalProps) {
+type FullFileContentProps = {
+  filePath: string;
+  lineNumber?: number | null;
+  idPrefix: string;
+};
+
+function FullFileContent({ filePath, lineNumber, idPrefix }: FullFileContentProps) {
   const {
     state: { sessionId },
   } = useReviewStore();
@@ -45,26 +51,15 @@ export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalPr
   }, [filePath, sessionId]);
 
   useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-
-  useEffect(() => {
     if (!lineNumber || loadError) {
       return;
     }
 
     const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`modal-L${lineNumber}`)?.scrollIntoView({ block: "center" });
+      document.getElementById(`${idPrefix}-L${lineNumber}`)?.scrollIntoView({ block: "center" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [lineNumber, loadError, content]);
+  }, [lineNumber, loadError, content, idPrefix]);
 
   const highlightedFileHtml = useMemo(
     () => hljs.highlightAuto(content || " ").value || "&nbsp;",
@@ -75,12 +70,58 @@ export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalPr
     [content],
   );
 
+  if (loadError) {
+    return <div className="panel-message panel-message-error">{loadError}</div>;
+  }
+
   return (
-    <div
-      className="full-file-modal-backdrop"
-      role="presentation"
-      onClick={onClose}
-    >
+    <div className="full-file-code">
+      <div className="full-file-gutter" aria-hidden="true">
+        {lineNumbers.map((currentLineNumber) => (
+          <a
+            key={currentLineNumber}
+            id={`${idPrefix}-L${currentLineNumber}`}
+            className={`full-file-line-number ${
+              lineNumber === currentLineNumber ? "full-file-line-target" : ""
+            }`.trim()}
+            href={`#${idPrefix}-L${currentLineNumber}`}
+          >
+            {currentLineNumber}
+          </a>
+        ))}
+      </div>
+      <pre className="full-file-code-block">
+        <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedFileHtml }} />
+      </pre>
+    </div>
+  );
+}
+
+export function FullFileView({ filePath }: { filePath: string }) {
+  return (
+    <section className="panel full-file-view">
+      <div className="full-file-view-head">
+        <h2>{filePath}</h2>
+      </div>
+      <FullFileContent filePath={filePath} idPrefix="file" />
+    </section>
+  );
+}
+
+export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalProps) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="full-file-modal-backdrop" role="presentation" onClick={onClose}>
       <section
         className="panel full-file-modal"
         role="dialog"
@@ -89,37 +130,10 @@ export function FullFileModal({ filePath, lineNumber, onClose }: FullFileModalPr
         onClick={(event) => event.stopPropagation()}
       >
         <div className="full-file-view-head">
-          <div>
-            <h2>{filePath}</h2>
-          </div>
+          <h2>{filePath}</h2>
           <button type="button" onClick={onClose}>Close</button>
         </div>
-        {loadError ? (
-          <div className="panel-message panel-message-error">{loadError}</div>
-        ) : (
-          <div className="full-file-code">
-            <div className="full-file-gutter" aria-hidden="true">
-              {lineNumbers.map((currentLineNumber) => (
-                <a
-                  key={currentLineNumber}
-                  id={`modal-L${currentLineNumber}`}
-                  className={`full-file-line-number ${
-                    lineNumber === currentLineNumber ? "full-file-line-target" : ""
-                  }`.trim()}
-                  href={`#modal-L${currentLineNumber}`}
-                >
-                  {currentLineNumber}
-                </a>
-              ))}
-            </div>
-            <pre className="full-file-code-block">
-              <code
-                className="hljs"
-                dangerouslySetInnerHTML={{ __html: highlightedFileHtml }}
-              />
-            </pre>
-          </div>
-        )}
+        <FullFileContent filePath={filePath} lineNumber={lineNumber} idPrefix="modal" />
       </section>
     </div>
   );

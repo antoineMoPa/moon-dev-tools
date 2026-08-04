@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -16,7 +16,7 @@ use axum::{
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
-        CommitHistoryQuery, CommitReviewStatus, CommitSelectionRequest, DiffHunk,
+        CommitHistoryQuery, CommitReviewStatus, CommitSelectionRequest, DiffHunk, DiffTarget,
         FileContentPayload, FileQuery,
         FileReviewedRequest, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
         ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
@@ -384,6 +384,12 @@ async fn session_state(
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
         let hunks = collect_session_hunks(session)?;
+        let full_file_path = unchanged_file_path(
+            &session.repo_path,
+            &session.diff_target,
+            session.active_commit.as_deref(),
+            !hunks.is_empty(),
+        );
         let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
         let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
         let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
@@ -476,6 +482,7 @@ async fn session_state(
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
             available_agents: available_agents.clone(),
             selected_agent: session.selected_agent,
+            full_file_path,
             review_comments: build_review_comments(session, &views),
             export_text: build_export_text(&session_id, &views),
             hunks: views,
@@ -483,6 +490,27 @@ async fn session_state(
     })?;
 
     Ok(Json(session))
+}
+
+fn unchanged_file_path(
+    repo_path: &Path,
+    diff_target: &DiffTarget,
+    active_commit: Option<&str>,
+    has_hunks: bool,
+) -> Option<String> {
+    if has_hunks
+        || active_commit.is_some()
+        || diff_target.base.is_some()
+        || diff_target.comparison.is_some()
+    {
+        return None;
+    }
+
+    let pathspec = diff_target.pathspec.as_ref()?;
+    repo_path
+        .join(pathspec)
+        .is_file()
+        .then(|| pathspec.clone())
 }
 
 async fn commit_history(
@@ -874,4 +902,64 @@ async fn unstage_file(
     )
     .map_err(AppError)?;
     Ok("ok")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use super::*;
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn unchanged_file_path_only_selects_clean_local_files() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "moonreview-server-test-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(repo_path.join("src")).expect("failed to create test directory");
+        fs::write(repo_path.join("src/example.rs"), "fn main() {}\n")
+            .expect("failed to write test file");
+
+        let file_target = DiffTarget {
+            base: None,
+            pathspec: Some("src/example.rs".to_string()),
+            comparison: None,
+        };
+        assert_eq!(
+            unchanged_file_path(&repo_path, &file_target, None, false).as_deref(),
+            Some("src/example.rs")
+        );
+        assert_eq!(unchanged_file_path(&repo_path, &file_target, None, true), None);
+        assert_eq!(
+            unchanged_file_path(&repo_path, &file_target, Some("abc123"), false),
+            None
+        );
+
+        let directory_target = DiffTarget {
+            pathspec: Some("src".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            unchanged_file_path(&repo_path, &directory_target, None, false),
+            None
+        );
+
+        let diff_target = DiffTarget {
+            base: Some("main".to_string()),
+            pathspec: Some("src/example.rs".to_string()),
+            comparison: None,
+        };
+        assert_eq!(
+            unchanged_file_path(&repo_path, &diff_target, None, false),
+            None
+        );
+
+        fs::remove_dir_all(repo_path).expect("failed to remove test directory");
+    }
 }

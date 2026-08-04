@@ -117,6 +117,7 @@ export type SessionState = {
   patch_preview_line_limit: number;
   available_agents: AgentOption[];
   selected_agent: AgentKind;
+  full_file_path?: string | null;
   hunks: Hunk[];
   review_comments: ReviewComment[];
   export_text: string;

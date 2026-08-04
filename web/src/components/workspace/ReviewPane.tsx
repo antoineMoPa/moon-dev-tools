@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Footer } from "../Footer";
+import { FullFileView } from "../FullFileModal";
 import { LeftSidebar } from "../LeftSidebar";
 import { Hunks } from "../hunks/Hunks";
 import { ReviewScrollProvider } from "./reviewScroll";
@@ -329,7 +330,9 @@ function ReviewPaneContent({ focused }: { focused: boolean }) {
 
         <div className="review-pane-scroll" ref={scrollRef}>
           <section className="review-main">
-            {showReviewComplete ? (
+            {data.full_file_path ? (
+              <FullFileView filePath={data.full_file_path} />
+            ) : showReviewComplete ? (
               <Success />
             ) : (
               <>
