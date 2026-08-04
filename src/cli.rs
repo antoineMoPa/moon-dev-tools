@@ -1,7 +1,7 @@
 use std::{
     env,
     net::TcpStream,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::Duration,
@@ -28,6 +28,7 @@ enum CliCommand {
 enum ReviewTarget {
     WorkingTree,
     CurrentDirectory,
+    Path(String),
     Comparison([String; 2]),
     Diff(String),
     Commit(String),
@@ -114,6 +115,14 @@ fn review_open_request(
             },
             active_commit: None,
         }),
+        ReviewTarget::Path(path) => Ok(ReviewOpenRequest {
+            diff_target: DiffTarget {
+                base: None,
+                pathspec: Some(repo_relative_pathspec(repo_path, current_dir, &path)?),
+                comparison: None,
+            },
+            active_commit: None,
+        }),
         ReviewTarget::Comparison(paths) => Ok(ReviewOpenRequest {
             diff_target: DiffTarget {
                 base: None,
@@ -149,6 +158,42 @@ fn review_open_request(
             active_commit: None,
         }),
     }
+}
+
+fn repo_relative_pathspec(repo_path: &Path, current_dir: &Path, path: &str) -> Result<String> {
+    let path = Path::new(path);
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        current_dir.join(path)
+    };
+    let resolved = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path(&candidate));
+    let relative = resolved
+        .strip_prefix(repo_path)
+        .context("review path is outside the repository")?;
+    if relative.as_os_str().is_empty() {
+        bail!("review path must identify a file or directory inside the repository");
+    }
+
+    Ok(relative
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn is_sha_like(value: &str) -> bool {
@@ -274,7 +319,7 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
             target: if is_sha_like(target) {
                 ReviewTarget::Commit(target.clone())
             } else {
-                ReviewTarget::Diff(target.clone())
+                ReviewTarget::Path(target.clone())
             },
             logs,
         }),
@@ -299,6 +344,7 @@ Tiny local code review UI for git.
 Usage:
   moonreview
   moonreview .
+  moonreview <path>
   moonreview <before-path> <after-path>
   moonreview <commit>
   moonreview -ns
@@ -312,6 +358,7 @@ Usage:
 Examples:
   moonreview
   moonreview .
+  moonreview src/main.rs
   moonreview before.json after.json
   moonreview 4542abe
   moonreview diff dev
@@ -319,6 +366,7 @@ Examples:
 
 Run `moonreview` inside any git repository you want to review.
 Run `moonreview .` to review only the current directory.
+Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.
 
 Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
@@ -401,6 +449,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_single_path_as_working_tree_pathspec() {
+        assert_eq!(
+            parse(&["packages/app/src/example.ts"]),
+            CliCommand::Review {
+                target: ReviewTarget::Path("packages/app/src/example.ts".to_string()),
+                logs: false,
+            }
+        );
+    }
+
+    #[test]
     fn working_tree_review_ignores_current_directory_pathspec() {
         let request = review_open_request(
             Path::new("/repo"),
@@ -427,6 +486,24 @@ mod tests {
 
         assert_eq!(request.diff_target.base, None);
         assert_eq!(request.diff_target.pathspec.as_deref(), Some("src"));
+        assert_eq!(request.active_commit, None);
+    }
+
+    #[test]
+    fn single_path_review_uses_repo_relative_pathspec() {
+        let request = review_open_request(
+            Path::new("/repo"),
+            ReviewTarget::Path("src/example.ts".to_string()),
+            Some("packages/app".to_string()),
+            Path::new("/repo/packages/app"),
+        )
+        .expect("expected review request");
+
+        assert_eq!(request.diff_target.base, None);
+        assert_eq!(
+            request.diff_target.pathspec.as_deref(),
+            Some("packages/app/src/example.ts")
+        );
         assert_eq!(request.active_commit, None);
     }
 
