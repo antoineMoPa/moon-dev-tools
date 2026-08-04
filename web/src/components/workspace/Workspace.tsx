@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { CommandPalette } from "./CommandPalette";
 import { Frame } from "./Frame";
 import { PaneHost } from "./PaneHost";
 import { WorkspaceSurface } from "./frameRects";
@@ -17,6 +18,7 @@ export function Workspace() {
 
   return (
     <WorkspaceSurface>
+      <CommandPalette />
       <LayoutBranch node={layout.root} path={[]} />
       {Object.values(layout.panes).map((pane) => (
         <PaneHost key={pane.paneId} pane={pane} />

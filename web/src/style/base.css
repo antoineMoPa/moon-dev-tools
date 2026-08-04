@@ -407,6 +407,110 @@ select {
   color: var(--accent);
 }
 
+/* A single app-wide action search, opened before focused panes can consume its shortcut. */
+.command-palette-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: rgba(0, 0, 0, 0.28);
+  padding: min(15vh, 8rem) 1rem 1rem;
+}
+
+.command-palette {
+  width: min(38rem, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: var(--float-shadow);
+}
+
+.command-palette-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  border-bottom: 1px solid var(--line);
+  padding: 0.8rem 0.9rem;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.command-palette-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.command-palette-search input::placeholder {
+  color: var(--muted);
+}
+
+.command-palette-search kbd {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.15rem 0.3rem;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.command-palette-results {
+  max-height: min(22rem, 50vh);
+  overflow-y: auto;
+  padding: 0.3rem;
+}
+
+.command-palette-item {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+}
+
+.command-palette-item span {
+  font-size: 0.86rem;
+}
+
+.command-palette-item small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.command-palette-item-selected {
+  background: var(--control-active-bg);
+}
+
+.command-palette-item-selected span {
+  color: var(--accent);
+}
+
+.command-palette-empty {
+  padding: 1.3rem 0.65rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.command-palette-hint {
+  border-top: 1px solid var(--line);
+  padding: 0.4rem 0.9rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.67rem;
+  text-align: right;
+}
+
 /* The workspace fills everything under the header: a tree of splits whose leaves are
    frames of tabs, with the tab contents drawn on top of them. */
 .workspace {

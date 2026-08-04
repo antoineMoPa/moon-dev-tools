@@ -3,9 +3,8 @@ import { createPortal } from "react-dom";
 import { useTheme } from "../theme";
 import { getRootSessionId } from "../api";
 import { useReviewStoreFor } from "../reviewStores";
+import { uiCommandsFor } from "./workspace/commands";
 import { useWorkspace } from "./workspace/workspaceState";
-import { findPaneOfKind, findReviewPane } from "./workspace/layout";
-import type { OpenPaneRequest } from "./workspace/layout";
 import type { SessionState } from "../types";
 
 /// What the review is currently pointed at: the working tree, or one commit.
@@ -39,35 +38,6 @@ export function HeaderBrand() {
   );
 }
 
-type OpenableWindow = {
-  key: string;
-  title: string;
-  request: OpenPaneRequest;
-};
-
-/// What the menu offers: the review of the repo this page was opened on, the agent monitor,
-/// and always another shell. Submodule reviews are not listed — they open as tabs on their
-/// own when the submodule has changes.
-function openableWindowsFor(workspace: ReturnType<typeof useWorkspace>): OpenableWindow[] {
-  const rootSessionId = getRootSessionId();
-
-  return [
-    ...(findReviewPane(workspace.layout, rootSessionId)
-      ? []
-      : [
-          {
-            key: rootSessionId,
-            title: "review",
-            request: { kind: "review" as const, sessionId: rootSessionId, title: "review" },
-          },
-        ]),
-    ...(findPaneOfKind(workspace.layout, "agents")
-      ? []
-      : [{ key: "agents", title: "agents", request: { kind: "agents" as const } }]),
-    { key: "terminal", title: "terminal", request: { kind: "terminal" as const } },
-  ];
-}
-
 /// Each frame's button for opening a pane into it, with the kinds behind a popover. The
 /// popover is rendered into the body so the tab strip it lives in cannot clip it.
 export function OpenWindowMenu({ frameId }: { frameId: string }) {
@@ -75,7 +45,7 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const openableWindows = openableWindowsFor(workspace);
+  const commands = uiCommandsFor(workspace.layout, getRootSessionId());
 
   useEffect(() => {
     if (!menuRect) {
@@ -131,18 +101,18 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
               role="menu"
               style={{ top: menuRect.bottom + 4, right: window.innerWidth - menuRect.right }}
             >
-              {openableWindows.map((window) => (
+              {commands.map((command) => (
                 <button
-                  key={window.key}
+                  key={command.id}
                   type="button"
                   role="menuitem"
                   className="pane-menu-item"
                   onClick={() => {
-                    workspace.openPane(window.request, frameId);
+                    workspace.openPane(command.request, frameId);
                     setMenuRect(null);
                   }}
                 >
-                  {window.title}
+                  {command.title}
                 </button>
               ))}
             </div>,
