@@ -47,7 +47,7 @@ pub(crate) fn round_button(ui: &mut Ui, glyph: &str, diameter: f32, palette: &Pa
             rect.center(),
             egui::Align2::CENTER_CENTER,
             glyph,
-            egui::FontId::proportional(diameter * 0.62),
+            egui::FontId::proportional(diameter * 0.72),
             ink,
         );
     }

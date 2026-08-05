@@ -306,13 +306,6 @@ impl Backend for RemoteBackend {
         )
     }
 
-    fn stage_selection(&self, session_id: &str, hunk_id: &str, selection: &str) -> Result<()> {
-        self.post(
-            &format!("/api/session/{session_id}/stage-selection"),
-            &json!({ "hunk_id": hunk_id, "selection": selection }),
-        )
-    }
-
     fn stage_file(&self, session_id: &str, file_path: &str) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/stage-file"),

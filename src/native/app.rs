@@ -32,6 +32,15 @@ const POLL_INTERVAL: Duration = Duration::from_millis(900);
 /// The same, for a window that is not focused.
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+/// What the window was asked to do with its tabs this frame. Both the menu bar and the
+/// keyboard can ask, and on macOS one ⌘W can arrive as both, so the request is a single slot
+/// that is acted on once a frame rather than a call made from wherever it came in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabAction {
+    New,
+    Close,
+}
+
 /// Where a new shell's pane lands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TerminalPlacement {
@@ -46,7 +55,16 @@ pub(crate) enum TerminalPlacement {
 /// Terminals attach on a worker thread, because a remote one opens a socket. The emulator
 /// itself is `!Send`, so the finished attachment is handed back here to be turned into a
 /// pane on the UI thread.
-type AttachInbox = Arc<Mutex<Vec<(String, Result<TerminalAttachment>)>>>;
+type AttachInbox = Arc<Mutex<Vec<AttachedTerminal>>>;
+
+/// A shell that finished attaching, waiting for the UI thread to turn it into a live pane.
+struct AttachedTerminal {
+    terminal_id: String,
+    attachment: Result<TerminalAttachment>,
+    /// Whether it should take the keyboard once drawn: set for a shell the user just opened,
+    /// not for one being reattached because a restored layout mentions it.
+    focus: bool,
+}
 
 pub(crate) struct App {
     pub(crate) model: Model,
@@ -60,6 +78,9 @@ pub(crate) struct App {
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<String>,
+    pending_tab_action: Option<TabAction>,
+    /// A shell that has just been opened and should take the keyboard on its first frame.
+    focus_terminal: Option<String>,
     /// The macOS menu bar, if this platform has one.
     menu: Option<NativeMenu>,
     /// Where each frame and tab was drawn this frame, so a released drag resolves against
@@ -72,9 +93,18 @@ pub(crate) struct App {
     /// Parsed diffs, keyed by hunk. Word diffing a hunk is quadratic in its line lengths,
     /// which a file like `Cargo.lock` has thousands of, so it must not happen per frame.
     diffs: HashMap<String, CachedDiff>,
+    /// What each hunk card measured the last time it was drawn, so the diff pane can skip the
+    /// ones that are scrolled out of sight instead of laying them out again.
+    pub(crate) hunk_heights: HashMap<String, f32>,
+    /// Image diffs, decoded from the `data:` URIs they arrive as and keyed by a hash of the
+    /// URI. `None` marks one that could not be read, so it is not retried every frame.
+    pub(crate) decoded_images: HashMap<u64, Option<(&'static str, Arc<[u8]>)>>,
     /// Set whenever the palette has to be pushed into the context it is drawing into, which
     /// is the first frame and every theme switch.
     needs_style: bool,
+    /// Whether the context being drawn into has egui's image loaders. Installing them twice
+    /// would stack a second copy of each, so this is set once and never cleared.
+    loaders_installed: bool,
 }
 
 struct CachedDiff {
@@ -88,8 +118,6 @@ impl App {
     /// Built from a bare [`egui::Context`] rather than an `eframe::CreationContext`, so the
     /// UI tests can drive the real window contents without a real window.
     pub(crate) fn new(ctx: egui::Context, launch: Launch) -> Self {
-        egui_extras::install_image_loaders(&ctx);
-
         let theme = if ctx.theme() == egui::Theme::Dark {
             ThemeMode::Dark
         } else {
@@ -134,12 +162,17 @@ impl App {
                 .unwrap_or_else(Instant::now),
             pending_action: None,
             pending_close: None,
+            pending_tab_action: None,
+            focus_terminal: None,
             menu: None,
             frame_rects: Vec::new(),
             tab_rects: Vec::new(),
             tab_grab_offset: egui::Vec2::ZERO,
             diffs: HashMap::new(),
+            hunk_heights: HashMap::new(),
+            decoded_images: HashMap::new(),
             needs_style: true,
+            loaders_installed: false,
         };
 
         if let Some(open) = launch.open {
@@ -201,6 +234,7 @@ impl App {
             .flat_map(|review| review.hunks().iter().map(|hunk| hunk.id.clone()))
             .collect();
         self.diffs.retain(|hunk_id, _| live.contains(hunk_id));
+        self.hunk_heights.retain(|hunk_id, _| live.contains(hunk_id));
     }
 
     fn open_review(&mut self, open: OpenSessionRequest) {
@@ -304,9 +338,6 @@ impl App {
             Some("adopt-shells".to_string()),
             move |backend| backend.list_terminals(&session_id),
             |model, result| {
-                let Ok(terminal_ids) = result else {
-                    return;
-                };
                 let known: std::collections::HashSet<String> = model
                     .layout
                     .panes
@@ -317,7 +348,7 @@ impl App {
                     })
                     .collect();
 
-                for terminal_id in terminal_ids {
+                for terminal_id in result.unwrap_or_default() {
                     if known.contains(&terminal_id) {
                         continue;
                     }
@@ -333,6 +364,11 @@ impl App {
                         None => layout::add_pane_in_right_column(layout, pane),
                     };
                 }
+
+                // Whatever the restored shape had room for and nothing filled was a pane from
+                // a previous run, and those are gone. Empty frames go with them.
+                let layout = std::mem::replace(&mut model.layout, layout::empty_layout());
+                model.layout = layout::without_empty_frames(layout);
             },
         );
     }
@@ -510,7 +546,11 @@ impl App {
                         TerminalPlacement::Tab(_) => layout::add_pane_in_right_column(layout, pane),
                     };
                     if let Ok(mut inbox) = inbox.lock() {
-                        inbox.push((terminal_id, attachment));
+                        inbox.push(AttachedTerminal {
+                            terminal_id,
+                            attachment,
+                            focus: true,
+                        });
                     }
                 }
                 Err(error) => model.error(format!("could not start a shell: {error}")),
@@ -536,7 +576,11 @@ impl App {
             move |_model, result| {
                 let attachment = result.and_then(|attachment| attachment);
                 if let Ok(mut inbox) = inbox.lock() {
-                    inbox.push((for_inbox, attachment));
+                    inbox.push(AttachedTerminal {
+                        terminal_id: for_inbox,
+                        attachment,
+                        focus: false,
+                    });
                 }
             },
         );
@@ -550,11 +594,20 @@ impl App {
             std::mem::take(&mut *inbox)
         };
 
-        for (terminal_id, attachment) in ready {
-            match attachment.and_then(|attachment| TerminalPane::new(terminal_id.clone(), attachment))
+        for attached in ready {
+            let AttachedTerminal {
+                terminal_id,
+                attachment,
+                focus,
+            } = attached;
+            match attachment
+                .and_then(|attachment| TerminalPane::new(terminal_id.clone(), attachment))
             {
                 Ok(pane) => {
                     self.terminal_errors.remove(&terminal_id);
+                    if focus {
+                        self.focus_terminal = Some(terminal_id.clone());
+                    }
                     self.terminals.insert(terminal_id, pane);
                 }
                 Err(error) => {
@@ -585,28 +638,31 @@ impl App {
         }
     }
 
-    fn apply_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() && !self.model.palette.open {
-            // A text box has the keyboard; only the palette's own chord still applies.
-            let opened = ctx.input_mut(|input| {
-                input.consume_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    Key::P,
-                ))
-            });
-            if opened {
-                self.model.palette.open = true;
-                self.model.palette.query.clear();
-                self.model.palette.highlighted = 0;
-            }
-            return;
+    /// ⌘W closes the tab in front. Only a workspace with nothing left in it passes the chord
+    /// on to the window itself.
+    fn close_active_tab(&mut self, ctx: &egui::Context) {
+        match self.active_pane().map(|pane| pane.pane_id().to_string()) {
+            Some(pane_id) => self.pending_close = Some(pane_id),
+            None => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
+    }
 
-        // A shell gets every plain keystroke: `s` there means the letter s. Only the
-        // command chords are app-wide.
-        let plain_keys_are_ours = self.active_pane_kind() != Some(PaneKind::Terminal);
+    /// ⌘T and the tab strip's + button both open a shell wherever the workspace has room.
+    pub(crate) fn open_shell_tab(&mut self) {
+        let frame_id = self.model.layout.active_frame_id.clone();
+        self.open_shell_beside(&frame_id);
+    }
 
-        let (open_palette, toggle_theme) = ctx.input_mut(|input| {
+    /// The same, for a shell asked for from a particular frame's tab strip.
+    pub(crate) fn open_shell_beside(&mut self, frame_id: &str) {
+        let placement = self.room_for_a_column(frame_id);
+        self.spawn_terminal(None, placement);
+    }
+
+    fn apply_shortcuts(&mut self, ctx: &egui::Context) {
+        // These reach the app whatever has the keyboard — a shell, the palette, a composer —
+        // because they are about the window's tabs rather than about what is inside one.
+        let (open_palette, new_tab, close_tab) = ctx.input_mut(|input| {
             (
                 input.consume_shortcut(&egui::KeyboardShortcut::new(
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -614,9 +670,40 @@ impl App {
                 )),
                 input.consume_shortcut(&egui::KeyboardShortcut::new(
                     egui::Modifiers::COMMAND,
-                    Key::J,
+                    Key::T,
+                )),
+                input.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    Key::W,
                 )),
             )
+        });
+        if open_palette {
+            self.model.palette.open = true;
+            self.model.palette.query.clear();
+            self.model.palette.highlighted = 0;
+        }
+        if new_tab {
+            self.pending_tab_action = Some(TabAction::New);
+        }
+        if close_tab {
+            self.pending_tab_action = Some(TabAction::Close);
+        }
+
+        if ctx.egui_wants_keyboard_input() && !self.model.palette.open {
+            // A text box has the keyboard, so the rest of the keys are its own.
+            return;
+        }
+
+        // A shell gets every plain keystroke: `s` there means the letter s. Only the
+        // command chords are app-wide.
+        let plain_keys_are_ours = self.active_pane_kind() != Some(PaneKind::Terminal);
+
+        let toggle_theme = ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                Key::J,
+            ))
         });
         let (stage, unstage) = if plain_keys_are_ours {
             ctx.input_mut(|input| {
@@ -629,11 +716,6 @@ impl App {
             (false, false)
         };
 
-        if open_palette {
-            self.model.palette.open = true;
-            self.model.palette.query.clear();
-            self.model.palette.highlighted = 0;
-        }
         if toggle_theme {
             self.set_theme(self.model.theme.toggled());
         }
@@ -809,7 +891,13 @@ impl App {
         };
 
         let font = egui::FontId::monospace(theme::CODE_SIZE);
-        let wants_repaint = pane.ui(ui, &palette, font);
+        // A shell the user just opened starts with the keyboard, so they can type into it
+        // without clicking first.
+        let take_focus = self.focus_terminal.as_deref() == Some(terminal_id);
+        let wants_repaint = pane.ui(ui, &palette, font, take_focus);
+        if take_focus {
+            self.focus_terminal = None;
+        }
         if wants_repaint {
             ui.ctx().request_repaint_after(Duration::from_millis(16));
         }
@@ -906,10 +994,15 @@ impl App {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         // The palette belongs to whichever context is being drawn into, which is not
-        // necessarily the one the app was built with.
+        // necessarily the one the app was built with. Image loaders go the same way: without
+        // them on this context, every image diff draws as a load error.
         if self.needs_style {
             theme::apply(ctx, self.model.theme);
             self.needs_style = false;
+        }
+        if !self.loaders_installed {
+            egui_extras::install_image_loaders(ctx);
+            self.loaders_installed = true;
         }
         self.tasks.drain(&mut self.model);
         self.drain_attachments();
@@ -934,6 +1027,14 @@ impl App {
             self.pending_action = Some(match action {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
+                MenuAction::NewTab => {
+                    self.pending_tab_action = Some(TabAction::New);
+                    continue;
+                }
+                MenuAction::CloseTab => {
+                    self.pending_tab_action = Some(TabAction::Close);
+                    continue;
+                }
                     MenuAction::OpenCommandPalette => {
                     self.model.palette.open = true;
                     self.model.palette.query.clear();
@@ -944,6 +1045,11 @@ impl App {
         }
 
         self.apply_shortcuts(ctx);
+        match self.pending_tab_action.take() {
+            Some(TabAction::New) => self.open_shell_tab(),
+            Some(TabAction::Close) => self.close_active_tab(ctx),
+            None => {}
+        }
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
         self.poll_submodules();

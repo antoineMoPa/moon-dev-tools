@@ -70,6 +70,16 @@ impl Fixture {
         fs::write(path, contents).expect("failed to write the fixture file");
     }
 
+    /// A solid PNG of the given color: the fixture's stand-in for a real picture.
+    fn write_png(&self, relative: &str, color: [u8; 4]) {
+        let path = self.root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create the fixture subdirectory");
+        }
+        let picture = image::RgbaImage::from_pixel(24, 16, image::Rgba(color));
+        picture.save(&path).expect("failed to write the fixture image");
+    }
+
     fn commit(&self, message: &str) {
         run_git_no_output(&self.root, &["add", "-A"]).expect("failed to stage the fixture");
 
@@ -188,6 +198,24 @@ fn the_review_window_draws_the_diff_it_was_opened_on() {
     harness.snapshot("review-dark");
 }
 
+/// A changed image is shown as before and after pictures. They arrive as `data:` URIs, which
+/// egui has no loader for, so this is where a decoding regression turns back into an error box.
+#[test]
+fn a_changed_image_is_drawn_as_before_and_after() {
+    let fixture = Fixture::new("image-diff");
+    fixture.write("README.md", "# fixture\n");
+    fixture.write_png("logo.png", [200, 90, 40, 255]);
+    fixture.commit("Add the logo");
+    fixture.write_png("logo.png", [40, 120, 200, 255]);
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut harness = harness_with_loaded_review(app, ThemeMode::Dark);
+    // Decoding and uploading the texture takes a pass of its own after the diff arrives.
+    harness.run_steps(3);
+
+    harness.snapshot("image-diff");
+}
+
 #[test]
 fn the_review_window_draws_in_the_light_theme_too() {
     let fixture = seeded_fixture("review-light");
@@ -254,6 +282,7 @@ const CHROME_GLYPHS: &str = concat!(
     "\u{1F5D9}",         // close
     "+",                  // open a pane
     "\u{00B7}\u{2212}", // separator, minus sign
+    "\u{2318}", // the command key — shift and return have no glyph, so they are spelled out
 );
 
 #[test]
@@ -523,6 +552,60 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
     harness.snapshot("comment-composer");
 }
 
+/// ⌘W is the window's own chord: it takes the tab in front, not the window around it.
+#[test]
+fn command_w_closes_the_tab_in_front() {
+    let fixture = seeded_fixture("close-tab");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let panes_left = Arc::new(Mutex::new(Vec::<String>::new()));
+    let panes_in_ui = Arc::clone(&panes_left);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mut app = app;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *panes_in_ui.lock().expect("the pane list is poisoned") =
+                app.model.layout.panes.keys().cloned().collect();
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+    assert_eq!(
+        panes_left.lock().expect("the pane list is poisoned").len(),
+        1,
+        "the review should be the one pane open"
+    );
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::W,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.step();
+    harness.run_steps(2);
+
+    assert!(
+        panes_left.lock().expect("the pane list is poisoned").is_empty(),
+        "⌘W should have closed the review pane"
+    );
+}
+
 /// Press and release the primary button at a position, then let the UI settle.
 fn click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
     harness.input_mut().events.extend([
@@ -757,5 +840,81 @@ fn a_held_comment_is_what_the_batch_send_moves() {
             .status,
         CommentDispatchStatus::Batched,
         "a refused send leaves the comment held"
+    );
+}
+
+
+/// A diff of many hunks only lays out the cards on screen, but a jump to a hunk still has to
+/// reach one that is nowhere near the viewport.
+#[test]
+fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
+    let fixture = Fixture::new("scroll-to-hunk");
+    for file in 0..80 {
+        fixture.write(
+            &format!("src/module_{file}/values.rs"),
+            "pub const A: u32 = 1;\npub const B: u32 = 2;\n",
+        );
+    }
+    fixture.commit("Add the modules");
+    for file in 0..80 {
+        fixture.write(
+            &format!("src/module_{file}/values.rs"),
+            "pub const A: u32 = 9;\npub const B: u32 = 2;\n",
+        );
+    }
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let last_hunk_id = Arc::new(Mutex::new(String::new()));
+    let last_in_ui = Arc::clone(&last_hunk_id);
+    let active = Arc::new(Mutex::new(None::<String>));
+    let active_in_ui = Arc::clone(&active);
+    let jump_to = Arc::new(Mutex::new(None::<String>));
+    let jump_in_ui = Arc::clone(&jump_to);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if let Some(hunk_id) = jump_in_ui.lock().expect("poisoned").take() {
+                let session_id = app.model.root_session_id.clone();
+                app.model.review(&session_id).scroll_to_hunk = Some(hunk_id);
+            }
+            app.draw(ui);
+            if let Some(review) = app.model.review_ref(&app.model.root_session_id) {
+                if let Some(hunk) = review.hunks().last() {
+                    *last_in_ui.lock().expect("poisoned") = hunk.id.clone();
+                }
+                ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
+                *active_in_ui.lock().expect("poisoned") = review.active_hunk_id.clone();
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(3);
+
+    let last = last_hunk_id.lock().expect("poisoned").clone();
+    assert!(!last.is_empty(), "the review should have hunks");
+    assert_ne!(
+        active.lock().expect("poisoned").as_deref(),
+        Some(last.as_str()),
+        "the last hunk starts far below the viewport"
+    );
+
+    *jump_to.lock().expect("poisoned") = Some(last.clone());
+    harness.run_steps(4);
+
+    // Only a card that was actually drawn reports the jump, so this is how a skipped one
+    // would show up: the review would never come to rest on it.
+    assert_eq!(
+        active.lock().expect("poisoned").as_deref(),
+        Some(last.as_str()),
+        "jumping should have drawn the hunk and made it the active one"
     );
 }

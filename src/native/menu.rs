@@ -11,6 +11,8 @@ pub(crate) enum MenuAction {
     OpenInBrowser,
     ToggleTheme,
     OpenCommandPalette,
+    NewTab,
+    CloseTab,
 }
 
 #[cfg(target_os = "macos")]
@@ -28,6 +30,8 @@ mod platform {
         open_in_browser: MenuId,
         toggle_theme: MenuId,
         command_palette: MenuId,
+        new_tab: MenuId,
+        close_tab: MenuId,
     }
 
     impl NativeMenu {
@@ -89,13 +93,27 @@ mod platform {
                 ])
                 .ok()?;
 
+            // ⌘W and ⌘T are the window's own items rather than the predefined ones, so the
+            // system does not close the whole window out from under a single tab.
+            let new_tab = MenuItem::new(
+                "New Terminal Tab",
+                true,
+                Some(Accelerator::new(Some(Modifiers::META), Code::KeyT)),
+            );
+            let close_tab = MenuItem::new(
+                "Close Tab",
+                true,
+                Some(Accelerator::new(Some(Modifiers::META), Code::KeyW)),
+            );
+
             let window_menu = Submenu::new("Window", true);
             window_menu
                 .append_items(&[
+                    &new_tab,
+                    &close_tab,
+                    &PredefinedMenuItem::separator(),
                     &PredefinedMenuItem::minimize(None),
                     &PredefinedMenuItem::fullscreen(None),
-                    &PredefinedMenuItem::separator(),
-                    &PredefinedMenuItem::close_window(None),
                 ])
                 .ok()?;
 
@@ -108,6 +126,8 @@ mod platform {
                 open_in_browser: open_in_browser.id().clone(),
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
+                new_tab: new_tab.id().clone(),
+                close_tab: close_tab.id().clone(),
             })
         }
 
@@ -121,6 +141,10 @@ mod platform {
                     MenuAction::ToggleTheme
                 } else if event.id == self.command_palette {
                     MenuAction::OpenCommandPalette
+                } else if event.id == self.new_tab {
+                    MenuAction::NewTab
+                } else if event.id == self.close_tab {
+                    MenuAction::CloseTab
                 } else {
                     continue;
                 };

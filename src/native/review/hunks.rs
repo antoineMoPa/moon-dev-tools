@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use egui::{Align2, CornerRadius, Key, RichText, Sense, Stroke, Ui, vec2};
+use egui::{Align2, CornerRadius, Key, Rect, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
     api::HunkView,
@@ -15,6 +15,7 @@ use crate::{
         app::App,
         model::{Draft, LineSelection, hash_of},
         review::diff::{DiffLine, LineKind, insertion_line},
+        review::image_diff,
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
         widgets,
     },
@@ -286,6 +287,25 @@ fn draw_hunk_card(
         .review_ref(session_id)
         .is_some_and(|review| review.active_hunk_id.as_deref() == Some(hunk.id.as_str()));
 
+    // A card that is scrolled out of sight takes the space it took last time and nothing else.
+    // A review of a thousand hunks is a thousand cards, and laying out every one of them on
+    // every frame is what makes scrolling stagger; only the handful on screen is real work.
+    //
+    // The card being scrolled to is always drawn, because it is the one that has to report
+    // where it landed.
+    if scroll_target != Some(hunk.id.as_str())
+        && let Some(height) = app.hunk_heights.get(&hunk.id).copied()
+    {
+        let skipped = Rect::from_min_size(
+            ui.cursor().min,
+            vec2(ui.available_width(), height),
+        );
+        if !ui.is_rect_visible(skipped) {
+            ui.allocate_exact_size(skipped.size(), Sense::hover());
+            return;
+        }
+    }
+
     let frame = egui::Frame::new()
         .fill(palette.code_bg)
         .stroke(Stroke::new(
@@ -299,7 +319,7 @@ fn draw_hunk_card(
         .show(ui, |ui| {
             draw_hunk_toolbar(app, ui, session_id, hunk, read_only, is_commit_review, palette);
             if let Some(image) = &hunk.image_diff {
-                draw_image_diff(ui, image, palette);
+                image_diff::draw_image_diff(app, ui, image, palette);
                 return;
             }
             draw_hunk_body(app, ui, session_id, hunk, read_only, preview_limit, palette);
@@ -331,6 +351,10 @@ fn draw_hunk_card(
     if response.hovered() && !is_active {
         app.model.review(session_id).active_hunk_id = Some(hunk.id.clone());
     }
+
+    // What it measured this time is what the next frame skips it with.
+    app.hunk_heights
+        .insert(hunk.id.clone(), response.rect.height());
 }
 
 fn draw_hunk_toolbar(
@@ -348,19 +372,9 @@ fn draw_hunk_toolbar(
         .show(ui, |ui| {
             // The actions get a line of their own above the header, so a long move hint or a
             // wide count never squeezes them out to the edge of the card.
-            let selection = current_selection(app, session_id, &hunk.id);
-            if !read_only || is_commit_review || selection.is_some() {
+            if !read_only || is_commit_review {
                 ui.horizontal(|ui| {
-                    draw_hunk_actions(
-                        app,
-                        ui,
-                        session_id,
-                        hunk,
-                        read_only,
-                        is_commit_review,
-                        selection,
-                        palette,
-                    );
+                    draw_hunk_actions(app, ui, session_id, hunk, read_only, is_commit_review, palette);
                 });
             }
 
@@ -430,7 +444,6 @@ fn draw_hunk_actions(
     hunk: &HunkView,
     read_only: bool,
     is_commit_review: bool,
-    selection: Option<String>,
     palette: &Palette,
 ) {
     if !read_only {
@@ -450,20 +463,6 @@ fn draw_hunk_actions(
                 app.tasks
                     .act(session_id, "could not stage the hunk", move |backend| {
                         backend.stage_hunk(&for_call, &hunk_id)
-                    });
-            }
-            if selection.is_some()
-                && widgets::quiet_button(ui, "[stage lines]")
-                    .on_hover_text("stage only the selected lines")
-                    .clicked()
-                && let Some(selection) = &selection
-            {
-                let hunk_id = hunk.id.clone();
-                let for_call = session_id.to_string();
-                let selection = selection.clone();
-                app.tasks
-                    .act(session_id, "could not stage those lines", move |backend| {
-                        backend.stage_selection(&for_call, &hunk_id, &selection)
                     });
             }
         }
@@ -506,13 +505,6 @@ fn draw_hunk_actions(
         }
     }
 
-    if let Some(selection) = selection
-        && widgets::quiet_button(ui, "[comment]")
-            .on_hover_text("write a comment on the selected lines")
-            .clicked()
-    {
-        start_draft(app, session_id, hunk, selection, String::new());
-    }
 }
 
 /// The raw patch lines the user has selected in this hunk, if any.
@@ -565,40 +557,6 @@ fn start_draft(
         selection,
         note,
         focus,
-    });
-}
-
-fn draw_image_diff(ui: &mut Ui, image: &crate::api::ImageDiffView, palette: &Palette) {
-    ui.horizontal(|ui| {
-        for (label, source) in [("before", &image.before_src), ("after", &image.after_src)] {
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(label)
-                        .size(SMALL_SIZE - 1.0)
-                        .color(palette.muted),
-                );
-                match source {
-                    Some(source) => {
-                        ui.add(
-                            egui::Image::new(source.clone())
-                                .max_size(vec2(320.0, 320.0))
-                                .maintain_aspect_ratio(true),
-                        );
-                    }
-                    None => {
-                        ui.label(
-                            RichText::new(if label == "before" {
-                                "(added)"
-                            } else {
-                                "(deleted)"
-                            })
-                            .color(palette.muted),
-                        );
-                    }
-                }
-            });
-            ui.add_space(10.0);
-        }
     });
 }
 
@@ -1183,7 +1141,7 @@ fn draw_composer(
                 draft.focus = false;
             }
 
-            // ⌘⏎ sends without reaching for the mouse, which is how these get written.
+            // ⌘return sends without reaching for the mouse, which is how these get written.
             if entry.has_focus()
                 && ui.input(|input| input.key_pressed(Key::Enter) && input.modifiers.command)
             {
@@ -1202,12 +1160,12 @@ fn draw_composer(
                 let (label, hint) = if has_agent {
                     (
                         format!("send to {}", agent.label()),
-                        "write this comment and hand it over now (⌘⏎)",
+                        "write this comment and hand it over now (⌘return)",
                     )
                 } else {
                     (
                         "save".to_string(),
-                        "keep the comment in the review (⌘⏎)",
+                        "keep the comment in the review (⌘return)",
                     )
                 };
                 if ui

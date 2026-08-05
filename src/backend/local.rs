@@ -122,10 +122,6 @@ impl Backend for LocalBackend {
         service::unstage_hunk(&self.state, session_id, hunk_id)
     }
 
-    fn stage_selection(&self, session_id: &str, hunk_id: &str, selection: &str) -> Result<()> {
-        service::stage_selection(&self.state, session_id, hunk_id, selection)
-    }
-
     fn stage_file(&self, session_id: &str, file_path: &str) -> Result<()> {
         service::stage_file(&self.state, session_id, file_path)
     }

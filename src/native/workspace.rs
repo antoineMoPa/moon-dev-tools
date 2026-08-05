@@ -295,7 +295,7 @@ impl App {
                 ui.painter().text(
                     body_rect.center(),
                     Align2::CENTER_CENTER,
-                    "⌘⇧P to execute a command",
+                    "shift ⌘P to execute a command",
                     egui::FontId::proportional(theme::UI_SIZE),
                     palette.muted,
                 );
@@ -355,8 +355,7 @@ impl App {
                     self.draw_global_actions(ui, palette);
                 }
                 if widgets::round_button(ui, "+", TAB_HEIGHT, palette).clicked() {
-                    let placement = self.room_for_a_column(frame_id);
-                    self.spawn_terminal(None, placement);
+                    self.open_shell_beside(frame_id);
                 }
             });
         });
@@ -513,27 +512,22 @@ impl App {
     /// A new shell goes in its own column down the right of the workspace, unless that would
     /// squeeze that column — or whatever it takes the room from — below a usable width, in
     /// which case it becomes another tab in the frame it was asked for.
-    fn room_for_a_column(&self, frame_id: &str) -> TerminalPlacement {
-        let Some(workspace) = self
+    pub(crate) fn room_for_a_column(&self, frame_id: &str) -> TerminalPlacement {
+        // A shell takes a column of its own only in a workspace that is still one frame wide.
+        // Once the user has split it, whatever they arranged is theirs, and a new shell joins
+        // the tabs of the frame it was asked from.
+        let split_already = layout::frame_ids_in(&self.model.layout.root).len() > 1;
+        let width = self
             .frame_rects
             .iter()
-            .map(|(_, rect)| *rect)
-            .reduce(|whole, rect| whole.union(rect))
-        else {
-            return TerminalPlacement::RightColumn;
-        };
-        let narrowest = self
-            .frame_rects
-            .iter()
-            .map(|(_, rect)| rect.width())
-            .fold(f32::INFINITY, f32::min);
+            .find(|(drawn_id, _)| drawn_id == frame_id)
+            .map(|(_, rect)| rect.width());
 
-        let new_column = workspace.width() * layout::RIGHT_COLUMN_FRACTION;
-        let squeezed = narrowest * (1.0 - layout::RIGHT_COLUMN_FRACTION);
-        if new_column >= MIN_COLUMN_WIDTH && squeezed >= MIN_COLUMN_WIDTH {
-            TerminalPlacement::RightColumn
-        } else {
-            TerminalPlacement::Tab(frame_id.to_string())
+        match width {
+            Some(width) if !split_already && fits_another_column(width) => {
+                TerminalPlacement::RightColumn
+            }
+            _ => TerminalPlacement::Tab(frame_id.to_string()),
         }
     }
 
@@ -649,6 +643,14 @@ impl App {
             before_pane_id.as_deref(),
         );
     }
+}
+
+/// Whether a frame this wide can give up the share a new right-hand column takes without
+/// leaving either side too narrow to work in.
+fn fits_another_column(frame_width: f32) -> bool {
+    let new_column = frame_width * layout::RIGHT_COLUMN_FRACTION;
+    let left_behind = frame_width * (1.0 - layout::RIGHT_COLUMN_FRACTION);
+    new_column >= MIN_COLUMN_WIDTH && left_behind >= MIN_COLUMN_WIDTH
 }
 
 fn drop_side(rect: Rect, strip_rect: Rect, at: egui::Pos2) -> Option<DropSide> {
@@ -774,6 +776,19 @@ mod tests {
             drop_side(rect, strip, pos2(700.0, two_thirds_down)),
             Some(DropSide::Bottom)
         );
+    }
+
+    #[test]
+    fn a_wide_frame_has_room_for_a_shell_beside_it() {
+        assert!(fits_another_column(1440.0));
+        assert!(fits_another_column(1000.0));
+    }
+
+    #[test]
+    fn a_narrow_frame_takes_the_shell_as_a_tab() {
+        // At the window's minimum width, a column would leave both sides too thin to read.
+        assert!(!fits_another_column(720.0));
+        assert!(!fits_another_column(900.0));
     }
 
     #[test]

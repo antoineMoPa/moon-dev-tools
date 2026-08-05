@@ -458,6 +458,29 @@ pub(crate) fn close_pane(mut layout: WorkspaceLayout, pane_id: &str) -> Workspac
     remove_frame(layout, &frame_id)
 }
 
+/// Drop frames that ended up with nothing in them.
+///
+/// A restored arrangement contributes its splits, but the panes that filled them are gone —
+/// a shell does not outlive the run that started it. Whatever the review and the surviving
+/// shells do not fill would otherwise open as empty tabs.
+pub(crate) fn without_empty_frames(mut layout: WorkspaceLayout) -> WorkspaceLayout {
+    let empty: Vec<String> = layout
+        .frames
+        .values()
+        .filter(|frame| frame.pane_ids.is_empty())
+        .map(|frame| frame.frame_id.clone())
+        .collect();
+
+    for frame_id in empty {
+        // The last frame stays even when empty, so the workspace always has a drop target.
+        if layout.frame_ids().len() == 1 {
+            break;
+        }
+        layout = remove_frame(layout, &frame_id);
+    }
+    layout
+}
+
 fn remove_frame(mut layout: WorkspaceLayout, frame_id: &str) -> WorkspaceLayout {
     layout.frames.remove(frame_id);
     layout.root = remove_frame_node(layout.root, frame_id);
@@ -763,6 +786,43 @@ mod tests {
         let layout = move_pane_to_frame(layout, &pane_id, &frame_id, DropSide::Bottom, None);
 
         assert_eq!(layout.frame_ids().len(), 1);
+    }
+
+    #[test]
+    fn a_restored_shape_keeps_only_the_frames_something_landed_in() {
+        // A two column arrangement comes back, but only the review is there to fill it.
+        let stored = default_layout("review-session");
+        let frame_id = stored.active_frame_id.clone();
+        let stored = add_pane(stored, &frame_id, terminal_pane(), None);
+        let terminal_pane_id = stored
+            .frames
+            .get(&frame_id)
+            .expect("expected the frame")
+            .pane_ids
+            .last()
+            .cloned()
+            .expect("expected a terminal pane");
+        let stored =
+            move_pane_to_frame(stored, &terminal_pane_id, &frame_id, DropSide::Right, None);
+        assert_eq!(stored.frame_ids().len(), 2, "the stored shape has two frames");
+
+        let restored = with_review_pane(shape_only(stored), "review-session");
+
+        let pruned = without_empty_frames(restored);
+
+        assert_eq!(pruned.frames.len(), 1, "the empty column should be gone");
+        assert!(
+            pruned.find_review_pane("review-session").is_some(),
+            "the review should have survived the pruning"
+        );
+        assert!(pruned.is_coherent());
+    }
+
+    #[test]
+    fn the_last_frame_stays_even_with_nothing_in_it() {
+        let layout = without_empty_frames(shape_only(default_layout("session")));
+
+        assert_eq!(layout.frame_ids().len(), 1, "a workspace needs a drop target");
     }
 
     #[test]

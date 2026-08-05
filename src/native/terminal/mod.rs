@@ -195,7 +195,16 @@ impl TerminalPane {
     }
 
     /// Draw the pane and handle its input. Returns whether it wants another frame soon.
-    pub(crate) fn ui(&mut self, ui: &mut Ui, palette: &Palette, font: FontId) -> bool {
+    ///
+    /// `take_focus` is set for a shell the user just opened: it starts out with the keyboard,
+    /// the way it would if they had clicked into it.
+    pub(crate) fn ui(
+        &mut self,
+        ui: &mut Ui,
+        palette: &Palette,
+        font: FontId,
+        take_focus: bool,
+    ) -> bool {
         let received = self.pump_output();
         let cell_size = cell_size(ui.painter(), &font);
         let available = ui.available_size();
@@ -207,10 +216,10 @@ impl TerminalPane {
         }
 
         let (response, painter) = ui.allocate_painter(available, Sense::click_and_drag());
-        let focused = response.has_focus();
-        if response.clicked() {
+        if response.clicked() || take_focus {
             response.request_focus();
         }
+        let focused = response.has_focus();
 
         if focused {
             self.handle_input(ui);

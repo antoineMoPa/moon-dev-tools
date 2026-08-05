@@ -65,7 +65,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn unstage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
-    fn stage_selection(&self, session_id: &str, hunk_id: &str, selection: &str) -> Result<()>;
     fn stage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
     fn unstage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
     fn discard_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
