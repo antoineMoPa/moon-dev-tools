@@ -346,6 +346,24 @@ fn draw_hunk_toolbar(
         .fill(palette.control_bg)
         .inner_margin(egui::Margin::symmetric(7, 3))
         .show(ui, |ui| {
+            // The actions get a line of their own above the header, so a long move hint or a
+            // wide count never squeezes them out to the edge of the card.
+            let selection = current_selection(app, session_id, &hunk.id);
+            if !read_only || is_commit_review || selection.is_some() {
+                ui.horizontal(|ui| {
+                    draw_hunk_actions(
+                        app,
+                        ui,
+                        session_id,
+                        hunk,
+                        read_only,
+                        is_commit_review,
+                        selection,
+                        palette,
+                    );
+                });
+            }
+
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(&hunk.header)
@@ -378,10 +396,6 @@ fn draw_hunk_toolbar(
                 if let Some(hint) = &hunk.moved_to {
                     moved_hint(app, ui, session_id, "moved to", hint, palette);
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    draw_hunk_actions(app, ui, session_id, hunk, read_only, is_commit_review, palette);
-                });
             });
         });
 }
@@ -416,13 +430,12 @@ fn draw_hunk_actions(
     hunk: &HunkView,
     read_only: bool,
     is_commit_review: bool,
+    selection: Option<String>,
     palette: &Palette,
 ) {
-    let selection = current_selection(app, session_id, &hunk.id);
-
     if !read_only {
         if hunk.staged {
-            if widgets::quiet_button(ui, "unstage").clicked() {
+            if widgets::quiet_button(ui, "[unstage hunk]").clicked() {
                 let hunk_id = hunk.id.clone();
                 let for_call = session_id.to_string();
                 app.tasks
@@ -431,7 +444,7 @@ fn draw_hunk_actions(
                     });
             }
         } else {
-            if widgets::quiet_button(ui, "stage").on_hover_text("stage this hunk (s)").clicked() {
+            if widgets::quiet_button(ui, "[stage hunk]").on_hover_text("stage this hunk (s)").clicked() {
                 let hunk_id = hunk.id.clone();
                 let for_call = session_id.to_string();
                 app.tasks
@@ -440,7 +453,7 @@ fn draw_hunk_actions(
                     });
             }
             if selection.is_some()
-                && widgets::quiet_button(ui, "stage lines")
+                && widgets::quiet_button(ui, "[stage lines]")
                     .on_hover_text("stage only the selected lines")
                     .clicked()
                 && let Some(selection) = &selection
@@ -460,7 +473,7 @@ fn draw_hunk_actions(
             .review_ref(session_id)
             .is_some_and(|review| review.pending_discard.as_deref() == Some(hunk.id.as_str()));
         if discarding {
-            if widgets::quiet_button_colored(ui, "really discard", palette.warn)
+            if widgets::quiet_button_colored(ui, "[really discard]", palette.warn)
                 .on_hover_text("this throws the change away and cannot be undone")
                 .clicked()
             {
@@ -472,10 +485,10 @@ fn draw_hunk_actions(
                         backend.discard_hunk(&for_call, &hunk_id)
                     });
             }
-            if widgets::quiet_button(ui, "keep").clicked() {
+            if widgets::quiet_button(ui, "[keep]").clicked() {
                 app.model.review(session_id).pending_discard = None;
             }
-        } else if widgets::quiet_button_colored(ui, "discard", palette.warn).clicked() {
+        } else if widgets::quiet_button_colored(ui, "[discard hunk]", palette.warn).clicked() {
             // Discarding is destructive and has no undo, so it takes a second press.
             app.model.review(session_id).pending_discard = Some(hunk.id.clone());
         }
@@ -483,7 +496,7 @@ fn draw_hunk_actions(
 
     if is_commit_review || read_only {
         let next = !hunk.reviewed;
-        if widgets::quiet_button(ui, if next { "mark reviewed" } else { "unmark" }).clicked() {
+        if widgets::quiet_button(ui, if next { "[mark reviewed]" } else { "[mark unreviewed]" }).clicked() {
             let hunk_id = hunk.id.clone();
             let for_call = session_id.to_string();
             app.tasks
@@ -494,7 +507,7 @@ fn draw_hunk_actions(
     }
 
     if let Some(selection) = selection
-        && widgets::quiet_button(ui, "comment")
+        && widgets::quiet_button(ui, "[comment]")
             .on_hover_text("write a comment on the selected lines")
             .clicked()
     {

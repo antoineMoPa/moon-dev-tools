@@ -27,7 +27,6 @@ pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
     OpenInBrowser,
     ToggleTheme,
-    ShowShortcuts,
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -77,11 +76,6 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         title: format!("switch to {}", app.model.theme.toggled().label()),
         description: "Change between the light and dark palette".to_string(),
         action: CommandAction::ToggleTheme,
-    });
-    commands.push(Command {
-        title: "keyboard shortcuts".to_string(),
-        description: "List what the keyboard does".to_string(),
-        action: CommandAction::ShowShortcuts,
     });
 
     // Changed submodules are further reviews the user can open beside this one.
@@ -204,7 +198,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
                     let entry = ui.add(
                         egui::TextEdit::singleline(&mut app.model.palette.query)
-                            .hint_text("open a pane…")
+                            .hint_text("Execute a command…")
                             .desired_width(f32::INFINITY)
                             .margin(egui::Margin::symmetric(7, 5)),
                     );

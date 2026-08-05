@@ -138,7 +138,8 @@ fn icon() -> egui::IconData {
 pub(crate) fn run(launch: Launch) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Moon Review")
+            // The crescent stands in for the app's mark, which the tab strip no longer carries.
+            .with_title("🌚 Moon Review")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([720.0, 420.0])
             .with_app_id("moonreview")

@@ -32,6 +32,17 @@ const POLL_INTERVAL: Duration = Duration::from_millis(900);
 /// The same, for a window that is not focused.
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Where a new shell's pane lands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalPlacement {
+    /// Beside the shells already open, or in a new column down the right if there are none.
+    WithOtherShells,
+    /// A new full-height column down the right of the workspace.
+    RightColumn,
+    /// Another tab in this frame, for a workspace with no room left to split.
+    Tab(String),
+}
+
 /// Terminals attach on a worker thread, because a remote one opens a socket. The emulator
 /// itself is `!Send`, so the finished attachment is handed back here to be turned into a
 /// pane on the UI thread.
@@ -55,6 +66,9 @@ pub(crate) struct App {
     /// what was on screen rather than against geometry derived a second time.
     pub(crate) frame_rects: Vec<(String, egui::Rect)>,
     pub(crate) tab_rects: Vec<(String, String, egui::Rect)>,
+    /// Where inside a tab the pointer grabbed it, so the tab drawn under the pointer keeps the
+    /// spot it was picked up by instead of snapping its corner to the cursor.
+    pub(crate) tab_grab_offset: egui::Vec2,
     /// Parsed diffs, keyed by hunk. Word diffing a hunk is quadratic in its line lengths,
     /// which a file like `Cargo.lock` has thousands of, so it must not happen per frame.
     diffs: HashMap<String, CachedDiff>,
@@ -105,7 +119,6 @@ impl App {
                 palette: Default::default(),
                 agent_log: None,
                 connection,
-                show_shortcuts: false,
                 dragging_pane: None,
                 adopt_shells_pending: false,
                 restored_layout: None,
@@ -124,6 +137,7 @@ impl App {
             menu: None,
             frame_rects: Vec::new(),
             tab_rects: Vec::new(),
+            tab_grab_offset: egui::Vec2::ZERO,
             diffs: HashMap::new(),
             needs_style: true,
         };
@@ -344,7 +358,6 @@ impl App {
         match action {
             CommandAction::OpenPane(request) => self.open_pane(request),
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
-            CommandAction::ShowShortcuts => self.model.show_shortcuts = true,
             CommandAction::OpenInBrowser => self.open_in_browser(),
         }
     }
@@ -447,13 +460,17 @@ impl App {
             }
             OpenPaneRequest::Terminal { command } => {
                 self.model.layout = layout;
-                self.spawn_terminal(command);
+                self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
             }
         }
     }
 
     /// Start a shell on the reviewed repo and open a pane attached to it.
-    fn spawn_terminal(&mut self, command: Option<AgentKind>) {
+    pub(crate) fn spawn_terminal(
+        &mut self,
+        command: Option<AgentKind>,
+        placement: TerminalPlacement,
+    ) {
         let session_id = self.model.root_session_id.clone();
         if session_id.is_empty() {
             self.model.error("no review is open yet");
@@ -475,11 +492,22 @@ impl App {
                         command,
                     };
                     let layout = std::mem::replace(&mut model.layout, layout::empty_layout());
-                    let active_frame = layout.active_frame_id.clone();
-                    model.layout = match layout.frame_holding_kind(PaneKind::Terminal, &active_frame)
-                    {
-                        Some(frame_id) => layout::add_pane(layout, &frame_id, pane, None),
-                        None => layout::add_pane_in_right_column(layout, pane),
+                    model.layout = match &placement {
+                        TerminalPlacement::WithOtherShells => {
+                            let active_frame = layout.active_frame_id.clone();
+                            match layout.frame_holding_kind(PaneKind::Terminal, &active_frame) {
+                                Some(frame_id) => layout::add_pane(layout, &frame_id, pane, None),
+                                None => layout::add_pane_in_right_column(layout, pane),
+                            }
+                        }
+                        TerminalPlacement::RightColumn => {
+                            layout::add_pane_in_right_column(layout, pane)
+                        }
+                        // The frame is gone if it was closed while the shell was starting.
+                        TerminalPlacement::Tab(frame_id) if layout.frames.contains_key(frame_id) => {
+                            layout::add_pane(layout, frame_id, pane, None)
+                        }
+                        TerminalPlacement::Tab(_) => layout::add_pane_in_right_column(layout, pane),
                     };
                     if let Ok(mut inbox) = inbox.lock() {
                         inbox.push((terminal_id, attachment));
@@ -590,19 +618,15 @@ impl App {
                 )),
             )
         });
-        let (help, stage, unstage) = if plain_keys_are_ours {
+        let (stage, unstage) = if plain_keys_are_ours {
             ctx.input_mut(|input| {
                 (
-                    input.consume_shortcut(&egui::KeyboardShortcut::new(
-                        egui::Modifiers::NONE,
-                        Key::Questionmark,
-                    )),
                     input.consume_key(egui::Modifiers::NONE, Key::S),
                     input.consume_key(egui::Modifiers::NONE, Key::U),
                 )
             })
         } else {
-            (false, false, false)
+            (false, false)
         };
 
         if open_palette {
@@ -612,9 +636,6 @@ impl App {
         }
         if toggle_theme {
             self.set_theme(self.model.theme.toggled());
-        }
-        if help {
-            self.model.show_shortcuts = !self.model.show_shortcuts;
         }
         if stage || unstage {
             self.apply_hunk_shortcut(stage);
@@ -843,43 +864,8 @@ impl App {
         ctx.request_repaint_after(Duration::from_millis(120));
     }
 
-    fn draw_shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.model.show_shortcuts {
-            return;
-        }
-        let palette = self.palette_of();
-        let mut open = true;
-        egui::Window::new("Keyboard shortcuts")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                for (keys, what) in SHORTCUTS {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(*keys)
-                                .monospace()
-                                .color(palette.accent),
-                        );
-                        ui.label(RichText::new(*what).color(palette.ink));
-                    });
-                }
-            });
-        self.model.show_shortcuts = open;
-    }
 }
 
-const SHORTCUTS: &[(&str, &str)] = &[
-    ("click a line", "select it and write a comment on it"),
-    ("shift-click", "extend the selection to more lines"),
-    ("⌘⏎", "save the comment being written"),
-    ("s", "stage the hunk under the caret"),
-    ("u", "unstage it again"),
-    ("⌘⇧P", "command palette"),
-    ("⌘J", "switch light and dark"),
-    ("?", "this list"),
-];
 
 /// Where the pane arrangement is kept between runs.
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
@@ -948,8 +934,7 @@ impl App {
             self.pending_action = Some(match action {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
-                MenuAction::ShowShortcuts => CommandAction::ShowShortcuts,
-                MenuAction::OpenCommandPalette => {
+                    MenuAction::OpenCommandPalette => {
                     self.model.palette.open = true;
                     self.model.palette.query.clear();
                     self.model.palette.highlighted = 0;
@@ -969,7 +954,6 @@ impl App {
 
         self.draw_workspace(ui);
         palette::draw(self, ctx);
-        self.draw_shortcuts(ctx);
         self.draw_toasts(ctx);
 
         // Deferred so a pane is never mutated while the tree that holds it is being drawn.

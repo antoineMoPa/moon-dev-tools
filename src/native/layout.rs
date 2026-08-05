@@ -166,7 +166,7 @@ pub(crate) struct WorkspaceLayout {
 
 const MIN_SPLIT_FRACTION: f32 = 0.1;
 /// How much of the width a new right-hand column takes.
-const RIGHT_COLUMN_FRACTION: f32 = 0.35;
+pub(crate) const RIGHT_COLUMN_FRACTION: f32 = 0.35;
 
 pub(crate) fn empty_layout() -> WorkspaceLayout {
     let frame_id = make_id("frame");

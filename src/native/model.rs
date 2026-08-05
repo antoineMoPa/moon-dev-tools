@@ -214,8 +214,6 @@ pub(crate) struct Model {
     pub(crate) adopt_shells_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.
     pub(crate) restored_layout: Option<WorkspaceLayout>,
-    /// Set once the window should ask a frame to close a pane whose terminal has gone.
-    pub(crate) show_shortcuts: bool,
     /// The tab being dragged, if any: its pane id.
     pub(crate) dragging_pane: Option<String>,
 }

@@ -33,6 +33,27 @@ pub(crate) fn quiet_button_colored(ui: &mut Ui, text: &str, ink: Color32) -> Res
     ui.add(egui::Button::new(RichText::new(text).color(ink)).frame(false))
 }
 
+/// A glyph on a filled disc — the tab strip's "new shell" button.
+pub(crate) fn round_button(ui: &mut Ui, glyph: &str, diameter: f32, palette: &Palette) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(diameter, diameter), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let (fill, ink) = if response.hovered() {
+            (palette.control_active_bg, palette.ink)
+        } else {
+            (palette.control_bg, palette.muted)
+        };
+        ui.painter().circle_filled(rect.center(), diameter / 2.0, fill);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            egui::FontId::proportional(diameter * 0.62),
+            ink,
+        );
+    }
+    response
+}
+
 /// A toggle that reads as a segment of a group rather than a checkbox.
 pub(crate) fn segment(ui: &mut Ui, selected: bool, text: &str, palette: &Palette) -> Response {
     let ink = if selected { palette.ink } else { palette.muted };

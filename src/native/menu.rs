@@ -11,7 +11,6 @@ pub(crate) enum MenuAction {
     OpenInBrowser,
     ToggleTheme,
     OpenCommandPalette,
-    ShowShortcuts,
 }
 
 #[cfg(target_os = "macos")]
@@ -29,7 +28,6 @@ mod platform {
         open_in_browser: MenuId,
         toggle_theme: MenuId,
         command_palette: MenuId,
-        shortcuts: MenuId,
     }
 
     impl NativeMenu {
@@ -70,7 +68,6 @@ mod platform {
                     Code::KeyP,
                 )),
             );
-            let shortcuts = MenuItem::new("Keyboard Shortcuts", true, None);
 
             let view_menu = Submenu::new("View", true);
             view_menu
@@ -79,7 +76,6 @@ mod platform {
                     &PredefinedMenuItem::separator(),
                     &toggle_theme,
                     &command_palette,
-                    &shortcuts,
                 ])
                 .ok()?;
 
@@ -112,7 +108,6 @@ mod platform {
                 open_in_browser: open_in_browser.id().clone(),
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
-                shortcuts: shortcuts.id().clone(),
             })
         }
 
@@ -126,8 +121,6 @@ mod platform {
                     MenuAction::ToggleTheme
                 } else if event.id == self.command_palette {
                     MenuAction::OpenCommandPalette
-                } else if event.id == self.shortcuts {
-                    MenuAction::ShowShortcuts
                 } else {
                     continue;
                 };
