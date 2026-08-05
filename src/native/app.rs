@@ -14,6 +14,7 @@ use crate::{
     backend::{Backend, TerminalAttachment},
     native::{
         Launch,
+        bindings::{self, Action, Keymap},
         layout::{self, OpenPaneRequest, Pane, PaneKind, default_layout, make_id},
         menu::{MenuAction, NativeMenu},
         model::{Model, Stage, ToastKind, hash_of},
@@ -81,6 +82,9 @@ pub(crate) struct App {
     pending_tab_action: Option<TabAction>,
     /// A shell that has just been opened and should take the keyboard on its first frame.
     focus_terminal: Option<String>,
+    /// The keyboard, read through the binding table. It holds the state of a prefix chord
+    /// that has begun — the `C-x` of `C-x o` — between frames.
+    keymap: Keymap,
     /// The macOS menu bar, if this platform has one.
     menu: Option<NativeMenu>,
     /// Where each frame and tab was drawn this frame, so a released drag resolves against
@@ -173,6 +177,7 @@ impl App {
             diffs: HashMap::new(),
             hunk_heights: HashMap::new(),
             decoded_images: HashMap::new(),
+            keymap: Keymap::default(),
             needs_style: true,
             loaders_installed: false,
         };
@@ -743,77 +748,69 @@ impl App {
         self.spawn_terminal(None, placement);
     }
 
+    /// Read this frame's keyboard through the binding table and act on what it fired.
     fn apply_shortcuts(&mut self, ctx: &egui::Context) {
-        // These reach the app whatever has the keyboard — a shell, the palette, a composer —
-        // because they are about the window's tabs rather than about what is inside one.
-        let (open_palette, new_tab, close_tab) = ctx.input_mut(|input| {
-            (
-                input.consume_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    Key::P,
-                )),
-                input.consume_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::COMMAND,
-                    Key::T,
-                )),
-                input.consume_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::COMMAND,
-                    Key::W,
-                )),
-            )
-        });
-        if open_palette {
-            self.model.palette.open = true;
-            self.model.palette.query.clear();
-            self.model.palette.highlighted = 0;
-        }
-        if new_tab {
-            self.pending_tab_action = Some(TabAction::New);
-        }
-        let save = ctx.input_mut(|input| {
-            input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                Key::S,
-            ))
-        });
-        if save && let Some(Pane::File { pane_id, session_id, .. }) = self.active_pane().cloned() {
-            self.save_file_pane(&pane_id, &session_id);
-        }
-        if close_tab {
-            self.pending_tab_action = Some(TabAction::Close);
-        }
+        // A shell gets every plain keystroke — `s` there is the letter s — and so does a text
+        // box. Only the chords marked as reaching anywhere are the window's while either has
+        // the keyboard. The palette is the exception: it is the window's own text box.
+        let typing = (ctx.egui_wants_keyboard_input() && !self.model.palette.open)
+            || self.active_pane_kind() == Some(PaneKind::Terminal);
 
-        if ctx.egui_wants_keyboard_input() && !self.model.palette.open {
-            // A text box has the keyboard, so the rest of the keys are its own.
+        for action in self.keymap.resolve(ctx, typing) {
+            self.apply_action(action, ctx);
+        }
+    }
+
+    fn apply_action(&mut self, action: Action, ctx: &egui::Context) {
+        match action {
+            Action::OpenPalette => {
+                self.model.palette.open = true;
+                self.model.palette.query.clear();
+                self.model.palette.highlighted = 0;
+            }
+            Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
+            Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
+            Action::SaveFile => {
+                if let Some(Pane::File { pane_id, session_id, .. }) = self.active_pane().cloned() {
+                    self.save_file_pane(&pane_id, &session_id);
+                }
+            }
+            Action::ToggleTheme => self.set_theme(self.model.theme.toggled()),
+            Action::AdvanceHunk => self.apply_hunk_shortcut(true),
+            Action::ReverseHunk => self.apply_hunk_shortcut(false),
+            Action::FocusNextFrame => self.focus_next_frame(ctx),
+        }
+    }
+
+    /// `C-x o`: hand the keyboard to the next frame of the workspace, wrapping round at the
+    /// end. Frames come back in the order they are laid out, so this walks the workspace the
+    /// way it looks rather than the way its tree happens to be built.
+    fn focus_next_frame(&mut self, ctx: &egui::Context) {
+        let frame_ids = self.model.layout.frame_ids();
+        if frame_ids.len() < 2 {
             return;
         }
+        let at = frame_ids
+            .iter()
+            .position(|id| *id == self.model.layout.active_frame_id)
+            .unwrap_or(0);
+        let next = frame_ids[(at + 1) % frame_ids.len()].clone();
+        self.model.layout.active_frame_id = next.clone();
 
-        // A shell gets every plain keystroke: `s` there means the letter s. Only the
-        // command chords are app-wide.
-        let plain_keys_are_ours = self.active_pane_kind() != Some(PaneKind::Terminal);
-
-        let toggle_theme = ctx.input_mut(|input| {
-            input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                Key::J,
-            ))
-        });
-        let (stage, unstage) = if plain_keys_are_ours {
-            ctx.input_mut(|input| {
-                (
-                    input.consume_key(egui::Modifiers::NONE, Key::S),
-                    input.consume_key(egui::Modifiers::NONE, Key::U),
-                )
-            })
-        } else {
-            (false, false)
-        };
-
-        if toggle_theme {
-            self.set_theme(self.model.theme.toggled());
+        // egui's keyboard has to move too, or the shell left behind would keep the keys.
+        if let Some(focused) = ctx.memory(|memory| memory.focused()) {
+            ctx.memory_mut(|memory| memory.surrender_focus(focused));
         }
-        if stage || unstage {
-            self.apply_hunk_shortcut(stage);
+        // A shell only takes the keyboard when asked to, so a frame showing one asks here.
+        let arriving_at = self
+            .model
+            .layout
+            .frames
+            .get(&next)
+            .and_then(|frame| frame.active_pane_id.as_ref())
+            .and_then(|pane_id| self.model.layout.panes.get(pane_id));
+        if let Some(Pane::Terminal { terminal_id, .. }) = arriving_at {
+            self.focus_terminal = Some(terminal_id.clone());
         }
     }
 
@@ -1004,6 +1001,30 @@ impl App {
         if wants_repaint {
             ui.ctx().request_repaint_after(Duration::from_millis(16));
         }
+    }
+
+    /// A chord that has begun but not finished says so in the corner, the way emacs echoes
+    /// `C-x-`: otherwise a half-typed prefix silently swallows the next key.
+    fn draw_armed_prefix(&mut self, ctx: &egui::Context) {
+        let Some(prefix) = self.keymap.armed_prefix() else {
+            return;
+        };
+        let text = format!("{}-", bindings::describe(prefix));
+        let palette = self.palette_of();
+
+        egui::Area::new("moonreview-armed-prefix".into())
+            .anchor(Align2::LEFT_BOTTOM, vec2(14.0, -14.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(palette.panel)
+                    .stroke(egui::Stroke::new(1.0, palette.line))
+                    .corner_radius(CornerRadius::same(5))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(text).monospace().color(palette.accent));
+                    });
+            });
     }
 
     fn draw_toasts(&mut self, ctx: &egui::Context) {
@@ -1225,6 +1246,7 @@ impl App {
 
         self.draw_workspace(ui);
         palette::draw(self, ctx);
+        self.draw_armed_prefix(ctx);
         self.draw_toasts(ctx);
 
         // Deferred so a pane is never mutated while the tree that holds it is being drawn.

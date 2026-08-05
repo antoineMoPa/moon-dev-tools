@@ -994,7 +994,9 @@ const CHROME_GLYPHS: &str = concat!(
     "\u{23F5}\u{23F7}", // collapse arrows
     "+",                  // open a pane
     "\u{00B7}\u{2212}", // separator, minus sign
-    "\u{2318}", // the command key — shift and return have no glyph, so they are spelled out
+    // The command key is the one modifier the bundled fonts have a glyph for; the rest of a
+    // chord is spelled out, which is what `bindings::describe` does.
+    "\u{2318}",
 );
 
 #[test]
@@ -1726,4 +1728,191 @@ fn settle(harness: &mut Harness<'_>, mut done: impl FnMut() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     }
     false
+}
+
+/// Tab belongs to the shell — it is how a path gets completed — not to egui's focus
+/// traversal. Before the pane locked it, the first Tab moved the keyboard to the next
+/// widget and everything typed after it went nowhere.
+#[test]
+fn tab_stays_with_the_shell_instead_of_moving_focus() {
+    let fixture = seeded_fixture("terminal-tab");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment =
+        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+            .expect("expected to attach to the shell");
+    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
+        .expect("expected the terminal emulator to start");
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    let for_pane = terminal_id.clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame_id = app.model.layout.active_frame_id.clone();
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                app.model.layout = crate::native::layout::add_pane(
+                    layout,
+                    &frame_id,
+                    crate::native::layout::Pane::Terminal {
+                        pane_id: crate::native::layout::make_id("pane"),
+                        terminal_id: for_pane.clone(),
+                        command: None,
+                    },
+                    None,
+                );
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    let ready = settle(&mut harness, || placed.load(Ordering::Relaxed));
+    assert!(ready, "the shell tab was never placed");
+    harness.run_steps(3);
+
+    // Clicking into the shell's body is how it takes the keyboard.
+    click_at(&mut harness, egui::pos2(650.0, 500.0));
+    let before = harness
+        .ctx
+        .memory(|memory| memory.focused())
+        .expect("clicking into the shell should have given it the keyboard");
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.ctx.memory(|memory| memory.focused()),
+        Some(before),
+        "Tab must stay with the shell rather than moving the keyboard on"
+    );
+
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
+/// `C-x o` walks the keyboard round the workspace's frames. The prefix has to survive the
+/// frame it was pressed in — it is two presses, and each one arrives in a pass of its own.
+#[test]
+fn c_x_o_hands_the_keyboard_to_the_next_frame() {
+    let fixture = seeded_fixture("focus-frame");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+
+    let split = Arc::new(AtomicBool::new(false));
+    let split_in_ui = Arc::clone(&split);
+    let frames = Arc::new(Mutex::new((Vec::<String>::new(), String::new())));
+    let frames_in_ui = Arc::clone(&frames);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // A second frame down the right, so there is somewhere for the keyboard to go.
+            if !split_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                app.model.layout = crate::native::layout::add_pane_in_right_column(
+                    layout,
+                    crate::native::layout::Pane::File {
+                        pane_id: crate::native::layout::make_id("pane"),
+                        session_id,
+                        file_path: "src/lib.rs".to_string(),
+                    },
+                );
+                split_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *frames_in_ui.lock().expect("poisoned") = (
+                app.model.layout.frame_ids(),
+                app.model.layout.active_frame_id.clone(),
+            );
+        });
+
+    let ready = settle(&mut harness, || split.load(Ordering::Relaxed));
+    assert!(ready, "the workspace never got its second frame");
+    harness.run_steps(3);
+
+    let (frame_ids, active) = frames.lock().expect("poisoned").clone();
+    assert_eq!(frame_ids.len(), 2, "the test needs two frames to walk between");
+    let started_at = frame_ids
+        .iter()
+        .position(|id| *id == active)
+        .expect("the active frame must be one of them");
+
+    press_key(&mut harness, egui::Key::X, egui::Modifiers::CTRL);
+    let (_, still) = frames.lock().expect("poisoned").clone();
+    assert_eq!(still, active, "C-x on its own moves nothing");
+
+    press_key(&mut harness, egui::Key::O, egui::Modifiers::NONE);
+    let (_, moved_to) = frames.lock().expect("poisoned").clone();
+    assert_eq!(
+        moved_to,
+        frame_ids[(started_at + 1) % frame_ids.len()],
+        "C-x o should have handed the keyboard to the next frame"
+    );
+
+    // And round again, back to where it started.
+    press_key(&mut harness, egui::Key::X, egui::Modifiers::CTRL);
+    press_key(&mut harness, egui::Key::O, egui::Modifiers::NONE);
+    let (_, wrapped) = frames.lock().expect("poisoned").clone();
+    assert_eq!(wrapped, active, "the walk wraps round at the last frame");
+}
+
+/// Press and release a key, then let the UI settle.
+fn press_key(harness: &mut Harness<'_>, key: egui::Key, modifiers: egui::Modifiers) {
+    harness.input_mut().events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    });
+    harness.step();
+    harness.run_steps(2);
 }

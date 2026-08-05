@@ -227,6 +227,19 @@ impl TerminalPane {
         let focused = response.has_focus();
 
         if focused {
+            // Tab, the arrows and Escape are the shell's, not egui's focus traversal: without
+            // this, Tab moved the keyboard to the next widget instead of completing a path.
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                )
+            });
             self.handle_input(ui);
         }
         self.handle_scroll(ui, &response, cell_size);

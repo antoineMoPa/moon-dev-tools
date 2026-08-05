@@ -9,6 +9,7 @@ use crate::{
     api::AgentKind,
     native::{
         app::App,
+        bindings::{self, Action},
         layout::{OpenPaneRequest, PaneKind},
         theme::{Palette, SMALL_SIZE},
     },
@@ -18,6 +19,9 @@ pub(crate) struct Command {
     pub(crate) title: String,
     pub(crate) description: String,
     pub(crate) action: CommandAction,
+    /// The keyboard chord that does the same thing, for the ones that have one. Read out of
+    /// the binding table so the palette cannot drift from what the keyboard actually does.
+    pub(crate) shortcut: Option<&'static [bindings::Press]>,
 }
 
 /// What running a command does. Most open a pane; the rest are the window's own actions,
@@ -48,6 +52,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
                 session_id: root.clone(),
                 title: "review".to_string(),
             }),
+            shortcut: None,
         });
     }
     if app.model.layout.find_pane_of_kind(PaneKind::Agents).is_none() {
@@ -55,12 +60,14 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             title: "comment agents".to_string(),
             description: "Open the comment agent monitor".to_string(),
             action: CommandAction::OpenPane(OpenPaneRequest::Agents),
+            shortcut: None,
         });
     }
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),
         action: CommandAction::OpenPane(OpenPaneRequest::Terminal { command: None }),
+        shortcut: bindings::chord_of(Action::NewShellTab),
     });
 
     // The window's own actions. On macOS these are in the menu bar too; here is where every
@@ -70,12 +77,14 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             title: "open in browser".to_string(),
             description: "Open this review in a browser".to_string(),
             action: CommandAction::OpenInBrowser,
+            shortcut: None,
         });
     }
     commands.push(Command {
         title: format!("switch to {}", app.model.theme.toggled().label()),
         description: "Change between the light and dark palette".to_string(),
         action: CommandAction::ToggleTheme,
+        shortcut: bindings::chord_of(Action::ToggleTheme),
     });
 
     // Changed submodules are further reviews the user can open beside this one.
@@ -87,6 +96,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
                 repo_path: submodule.repo_path.clone(),
                 title: submodule.name.clone(),
             }),
+            shortcut: None,
         });
     }
 
@@ -112,6 +122,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
                 action: CommandAction::OpenPane(OpenPaneRequest::Terminal {
                     command: Some(*kind),
                 }),
+                shortcut: None,
             });
         }
     }
@@ -266,6 +277,16 @@ fn draw_row(
             egui::FontId::proportional(SMALL_SIZE - 1.0),
             palette.muted,
         );
+        // The keyboard's own way to the same command, against the right edge.
+        if let Some(chord) = command.shortcut {
+            ui.painter().text(
+                egui::pos2(rect.max.x - 9.0, rect.center().y),
+                Align2::RIGHT_CENTER,
+                bindings::describe(chord),
+                egui::FontId::proportional(SMALL_SIZE - 1.0),
+                palette.muted,
+            );
+        }
     }
     response
 }
@@ -279,6 +300,7 @@ mod tests {
             title: title.to_string(),
             description: description.to_string(),
             action: CommandAction::OpenPane(OpenPaneRequest::Agents),
+            shortcut: None,
         }
     }
 
