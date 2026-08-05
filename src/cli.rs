@@ -163,14 +163,30 @@ fn review_open_request(
             },
             active_commit: None,
         }),
-        ReviewTarget::Path(path) => Ok(ReviewOpenRequest {
-            diff_target: DiffTarget {
-                base: None,
-                pathspec: Some(repo_relative_pathspec(repo_path, current_dir, &path)?),
-                comparison: None,
-            },
-            active_commit: None,
-        }),
+        ReviewTarget::Path(path) => {
+            // `main..feature` is git's range syntax rather than a file. A file whose name
+            // happens to contain two dots is still a file, so what is on disk wins — the same
+            // way `git diff` decides between a revision and a path.
+            if is_revision_range(&path) && !current_dir.join(&path).exists() {
+                return Ok(ReviewOpenRequest {
+                    diff_target: DiffTarget {
+                        base: Some(path),
+                        pathspec: None,
+                        comparison: None,
+                    },
+                    active_commit: None,
+                });
+            }
+
+            Ok(ReviewOpenRequest {
+                diff_target: DiffTarget {
+                    base: None,
+                    pathspec: Some(repo_relative_pathspec(repo_path, current_dir, &path)?),
+                    comparison: None,
+                },
+                active_commit: None,
+            })
+        }
         ReviewTarget::Comparison(paths) => Ok(ReviewOpenRequest {
             diff_target: DiffTarget {
                 base: None,
@@ -206,6 +222,17 @@ fn review_open_request(
             active_commit: None,
         }),
     }
+}
+
+/// Whether an argument reads as one of git's revision ranges: `main..feature`, or the
+/// symmetric `main...feature`. Both sides have to name something for it to be a range, which
+/// is what keeps `..`, `../` and a file called `a..b` out of it.
+fn is_revision_range(value: &str) -> bool {
+    let Some((left, right)) = value.split_once("..") else {
+        return false;
+    };
+    let right = right.strip_prefix('.').unwrap_or(right);
+    !left.is_empty() && !right.is_empty() && !right.starts_with('/') && !right.starts_with('.')
 }
 
 fn repo_relative_pathspec(repo_path: &Path, current_dir: &Path, path: &str) -> Result<String> {
@@ -548,6 +575,32 @@ mod tests {
                 frontend: Frontend::Native,
             }
         );
+    }
+
+    #[test]
+    fn a_revision_range_is_told_apart_from_a_path() {
+        assert!(is_revision_range("main..egui-version"));
+        assert!(is_revision_range("main...egui-version"));
+        assert!(is_revision_range("release/1.0..main"));
+        assert!(!is_revision_range("src/main.rs"));
+        assert!(!is_revision_range(".."));
+        assert!(!is_revision_range("../sibling/file.rs"));
+        assert!(!is_revision_range("main.."));
+    }
+
+    #[test]
+    fn a_range_of_branches_is_reviewed_as_a_diff_against_its_base() {
+        let request = review_open_request(
+            Path::new("/repo"),
+            ReviewTarget::Path("main..egui-version".to_string()),
+            None,
+            Path::new("/repo"),
+        )
+        .expect("expected review request");
+
+        assert_eq!(request.diff_target.base.as_deref(), Some("main..egui-version"));
+        assert_eq!(request.diff_target.pathspec, None);
+        assert_eq!(request.active_commit, None);
     }
 
     #[test]

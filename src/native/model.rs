@@ -56,12 +56,6 @@ impl LineSelection {
     }
 }
 
-pub(crate) struct FullFileView {
-    pub(crate) file_path: String,
-    pub(crate) content: Option<String>,
-    pub(crate) error: Option<String>,
-}
-
 pub(crate) struct AgentLogView {
     /// The review the dispatch belongs to, so refreshing asks the right one.
     pub(crate) session_id: String,
@@ -90,7 +84,6 @@ pub(crate) struct ReviewState {
     pub(crate) draft: Option<Draft>,
     /// Full patches fetched for hunks whose preview was truncated, keyed by hunk.
     pub(crate) expanded_patches: HashMap<String, String>,
-    pub(crate) full_file: Option<FullFileView>,
     pub(crate) history_loaded: Vec<CommitView>,
     pub(crate) history_has_more: bool,
     pub(crate) loading_history: bool,
@@ -112,7 +105,6 @@ impl ReviewState {
             selecting_in: None,
             draft: None,
             expanded_patches: HashMap::new(),
-            full_file: None,
             history_loaded: Vec::new(),
             history_has_more: false,
             loading_history: false,
@@ -186,6 +178,8 @@ pub(crate) struct Model {
     pub(crate) restored_agent: Option<AgentKind>,
     /// The tab being dragged, if any: its pane id.
     pub(crate) dragging_pane: Option<String>,
+    /// The files open in tabs of their own, keyed by the pane showing each one.
+    pub(crate) file_editors: HashMap<String, crate::native::file_pane::FileEditor>,
 }
 
 impl Model {

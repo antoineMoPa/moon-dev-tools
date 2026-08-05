@@ -300,6 +300,12 @@ pub(crate) struct FileRequest {
     pub(crate) file_path: String,
 }
 
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WriteFileRequest {
+    pub(crate) file_path: String,
+    pub(crate) content: String,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct FileQuery {
     pub(crate) file_path: String,

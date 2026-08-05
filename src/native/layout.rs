@@ -26,6 +26,7 @@ pub(crate) enum PaneKind {
     Review,
     Agents,
     Terminal,
+    File,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -47,6 +48,12 @@ pub(crate) enum Pane {
         #[serde(default)]
         command: Option<AgentKind>,
     },
+    /// One file of the repo being reviewed, open for reading and editing.
+    File {
+        pane_id: String,
+        session_id: String,
+        file_path: String,
+    },
 }
 
 impl Pane {
@@ -54,7 +61,8 @@ impl Pane {
         match self {
             Self::Review { pane_id, .. }
             | Self::Agents { pane_id }
-            | Self::Terminal { pane_id, .. } => pane_id,
+            | Self::Terminal { pane_id, .. }
+            | Self::File { pane_id, .. } => pane_id,
         }
     }
 
@@ -63,6 +71,7 @@ impl Pane {
             Self::Review { .. } => PaneKind::Review,
             Self::Agents { .. } => PaneKind::Agents,
             Self::Terminal { .. } => PaneKind::Terminal,
+            Self::File { .. } => PaneKind::File,
         }
     }
 
@@ -76,6 +85,12 @@ impl Pane {
                 Some(AgentKind::OpenCode) => "opencode".to_string(),
                 _ => "terminal".to_string(),
             },
+            // The name alone: the path is on the pane's own header and on the tab's hover.
+            Self::File { file_path, .. } => file_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(file_path)
+                .to_string(),
         }
     }
 }
@@ -96,6 +111,10 @@ pub(crate) enum OpenPaneRequest {
     Agents,
     Terminal {
         command: Option<AgentKind>,
+    },
+    File {
+        session_id: String,
+        file_path: String,
     },
 }
 

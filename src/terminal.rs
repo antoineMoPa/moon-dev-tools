@@ -256,7 +256,9 @@ impl TerminalRegistry {
                     }
                 }
             }
-            let _ = exited.send(true);
+            // `send` is refused when nothing is subscribed, and would leave the flag false for
+            // whoever asks later; the value has to be set whether or not anyone is listening.
+            exited.send_replace(true);
             registry.remove(&reaped_id);
         });
 

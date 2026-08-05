@@ -99,7 +99,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                     .on_hover_text(format!("show all of {path}"))
                     .clicked()
             {
-                app.open_full_file(session_id, path);
+                app.open_file_pane(session_id, path);
             }
         });
     });

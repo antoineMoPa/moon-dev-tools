@@ -86,6 +86,10 @@ impl Backend for LocalBackend {
         service::hunk_patch(&self.state, session_id, hunk_id)
     }
 
+    fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()> {
+        service::write_session_file(&self.state, session_id, file_path, content)
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         service::session_file(&self.state, session_id, file_path)
     }

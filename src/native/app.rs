@@ -148,6 +148,7 @@ impl App {
                 agent_log: None,
                 connection,
                 dragging_pane: None,
+                file_editors: HashMap::new(),
                 adopt_shells_pending: false,
                 restored_layout: None,
                 restored_agent: None,
@@ -495,6 +496,32 @@ impl App {
                     None,
                 );
             }
+            OpenPaneRequest::File {
+                session_id,
+                file_path,
+            } => {
+                // The same file twice is the same tab: opening it again brings it forward.
+                if let Some(pane) = layout.panes.values().find(|pane| {
+                    matches!(pane, Pane::File { file_path: open, .. } if *open == file_path)
+                }) {
+                    let pane_id = pane.pane_id().to_string();
+                    self.model.layout = layout::focus_pane(layout, &pane_id);
+                    return;
+                }
+                let frame_id = layout
+                    .frame_holding_kind(PaneKind::File, &active_frame)
+                    .unwrap_or_else(|| layout.primary_frame_id());
+                self.model.layout = layout::add_pane(
+                    layout,
+                    &frame_id,
+                    Pane::File {
+                        pane_id: make_id("pane"),
+                        session_id,
+                        file_path,
+                    },
+                    None,
+                );
+            }
             OpenPaneRequest::Terminal { command } => {
                 self.model.layout = layout;
                 self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
@@ -655,6 +682,7 @@ impl App {
     }
 
     pub(crate) fn close_pane(&mut self, pane_id: &str) {
+        self.model.file_editors.remove(pane_id);
         let pane = self.model.layout.panes.get(pane_id).cloned();
         let layout = std::mem::replace(&mut self.model.layout, layout::empty_layout());
         self.model.layout = layout::close_pane(layout, pane_id);
@@ -679,6 +707,25 @@ impl App {
             Some(pane_id) => self.pending_close = Some(pane_id),
             None => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
+    }
+
+    /// A file with edits that are not on disk takes two presses to close, so a stray ⌘W or a
+    /// mis-aimed click cannot throw work away.
+    fn close_would_lose_edits(&mut self, pane_id: &str) -> bool {
+        if !self.file_pane_is_dirty(pane_id) {
+            return false;
+        }
+        let Some(editor) = self.model.file_editors.get_mut(pane_id) else {
+            return false;
+        };
+        if editor.close_confirmed {
+            return false;
+        }
+        editor.close_confirmed = true;
+        let file_path = editor.file_path.clone();
+        self.model
+            .error(format!("{file_path} has unsaved edits — close again to discard them"));
+        true
     }
 
     /// ⌘T and the tab strip's + button both open a shell wherever the workspace has room.
@@ -719,6 +766,15 @@ impl App {
         }
         if new_tab {
             self.pending_tab_action = Some(TabAction::New);
+        }
+        let save = ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                Key::S,
+            ))
+        });
+        if save && let Some(Pane::File { pane_id, session_id, .. }) = self.active_pane().cloned() {
+            self.save_file_pane(&pane_id, &session_id);
         }
         if close_tab {
             self.pending_tab_action = Some(TabAction::Close);
@@ -903,6 +959,15 @@ impl App {
             }
             Pane::Agents { .. } => review::draw_agents(self, ui),
             Pane::Terminal { terminal_id, .. } => self.draw_terminal(ui, terminal_id),
+            Pane::File {
+                pane_id,
+                session_id,
+                file_path,
+            } => {
+                let (pane_id, session_id, file_path) =
+                    (pane_id.clone(), session_id.clone(), file_path.clone());
+                self.draw_file_pane(ui, &pane_id, &session_id, &file_path);
+            }
         }
     }
 
@@ -1163,7 +1228,9 @@ impl App {
         if let Some(action) = self.pending_action.take() {
             self.run_action(action);
         }
-        if let Some(pane_id) = self.pending_close.take() {
+        if let Some(pane_id) = self.pending_close.take()
+            && !self.close_would_lose_edits(&pane_id)
+        {
             self.close_pane(&pane_id);
         }
         self.close_tabs_of_exited_shells();

@@ -66,7 +66,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/session/{session_id}/agent", post(update_agent))
         .route("/api/session/{session_id}/commit", post(update_commit_view))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
-        .route("/api/session/{session_id}/file", get(session_file))
+        .route(
+            "/api/session/{session_id}/file",
+            get(session_file).post(write_session_file),
+        )
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route(
             "/api/session/{session_id}/reviewed-file",
@@ -288,6 +291,16 @@ async fn hunk_patch(
 ) -> Result<Json<PatchPayload>, AppError> {
     mark_activity(&state);
     Ok(Json(service::hunk_patch(&state, &session_id, &hunk_id)?))
+}
+
+async fn write_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::WriteFileRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::write_session_file(&state, &session_id, &request.file_path, &request.content)?;
+    Ok("ok")
 }
 
 async fn session_file(

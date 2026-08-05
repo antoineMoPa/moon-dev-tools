@@ -236,6 +236,13 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/hunk/{hunk_id}"))
     }
 
+    fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/file"),
+            &json!({ "file_path": file_path, "content": content }),
+        )
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         let encoded = urlencode(file_path);
         self.get(&format!(

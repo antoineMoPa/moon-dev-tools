@@ -221,7 +221,7 @@ fn a_shell_that_exits_closes_its_tab() {
     let attachment =
         crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let mut pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
+    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
         .expect("expected the terminal emulator to start");
     pane.send(b"exit\n").expect("expected to write to the shell");
 
@@ -271,20 +271,6 @@ fn a_shell_that_exits_closes_its_tab() {
                 placed_in_ui.store(true, Ordering::Relaxed);
             }
             app.draw(ui);
-            println!(
-                "stage-ready={} placed={} exited={:?}",
-                matches!(app.model.stage, crate::native::model::Stage::Ready),
-                placed_in_ui.load(Ordering::Relaxed),
-                app.terminals.values().map(|t| t.has_exited()).collect::<Vec<_>>(),
-            );
-            println!(
-                "screen={:?}",
-                app.terminals
-                    .values_mut()
-                    .next()
-                    .and_then(|t| t.visible_text().ok())
-                    .map(|text| text.trim().replace('\n', " | ").chars().take(120).collect::<String>()),
-            );
             *panes_in_ui.lock().expect("poisoned") = app
                 .model
                 .layout
@@ -309,6 +295,170 @@ fn a_shell_that_exits_closes_its_tab() {
     }
 
     assert!(closed, "the tab of a shell that exited should have closed");
+}
+
+/// The file tab: a fringe of line numbers beside the text, and the text editable.
+#[test]
+fn a_file_opens_in_a_tab_of_its_own() {
+    let fixture = Fixture::new("file-pane");
+    // One line far wider than the pane: it must scroll sideways rather than wrap, and the
+    // line numbers must stay put while it does.
+    fixture.write(
+        "src/lib.rs",
+        "pub fn greet(name: &str) -> String {\n    format!(\"hello {name}\")\n}\n\npub fn total(values: &[u32], and_a_very_long_parameter_list: &[u32], so_that_this_line_runs_well_past_the_edge_of_the_pane: bool) -> u32 {\n    values.iter().sum()\n}\n",
+    );
+    fixture.commit("Add the library");
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model
+                    .layout
+                    .panes
+                    .values()
+                    .any(|pane| matches!(pane, crate::native::layout::Pane::File { .. }))
+                    && app
+                        .model
+                        .file_editors
+                        .values()
+                        .any(|editor| editor.content_for_test().is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the file tab never opened");
+
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(3);
+    harness.snapshot("file-pane");
+}
+
+/// Editing a file tab writes the file back, and the tab says so until it does.
+#[test]
+fn editing_a_file_tab_saves_it_to_the_working_tree() {
+    let fixture = Fixture::new("file-save");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+    let pane_id = Arc::new(Mutex::new(None::<String>));
+    let pane_in_ui = Arc::clone(&pane_id);
+    let dirty = Arc::new(AtomicBool::new(false));
+    let dirty_in_ui = Arc::clone(&dirty);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let edit = Arc::new(Mutex::new(None::<String>));
+    let edit_in_ui = Arc::clone(&edit);
+    let save = Arc::new(AtomicBool::new(false));
+    let save_in_ui = Arc::clone(&save);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            if let Some(text) = edit_in_ui.lock().expect("poisoned").take()
+                && let Some(id) = pane_in_ui.lock().expect("poisoned").clone()
+                && let Some(editor) = app.model.file_editors.get_mut(&id)
+            {
+                editor.edit_for_test(&text);
+            }
+            if save_in_ui.swap(false, Ordering::Relaxed)
+                && let Some(id) = pane_in_ui.lock().expect("poisoned").clone()
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.save_file_pane(&id, &session_id);
+            }
+
+            app.draw(ui);
+
+            let open_pane = app.model.layout.panes.values().find_map(|pane| match pane {
+                crate::native::layout::Pane::File { pane_id, .. } => Some(pane_id.clone()),
+                _ => None,
+            });
+            if let Some(id) = &open_pane {
+                dirty_in_ui.store(app.file_pane_is_dirty(id), Ordering::Relaxed);
+                loaded_in_ui.store(
+                    app.model
+                        .file_editors
+                        .get(id)
+                        .and_then(|editor| editor.content_for_test())
+                        .is_some(),
+                    Ordering::Relaxed,
+                );
+            }
+            *pane_in_ui.lock().expect("poisoned") = open_pane;
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !loaded.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(loaded.load(Ordering::Relaxed), "the file never loaded");
+    assert!(!dirty.load(Ordering::Relaxed), "a freshly opened file is clean");
+
+    *edit.lock().expect("poisoned") = Some("pub fn two() {}\n".to_string());
+    harness.run_steps(2);
+    assert!(dirty.load(Ordering::Relaxed), "an edit should mark the tab");
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("src/lib.rs")).expect("failed to read"),
+        "pub fn one() {}\n",
+        "nothing should reach the file until it is saved"
+    );
+
+    // The tab carries a dot for as long as the edit is not on disk.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(2);
+    harness.snapshot("file-tab-unsaved");
+
+    save.store(true, Ordering::Relaxed);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && dirty.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!dirty.load(Ordering::Relaxed), "saving should clear the mark");
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("src/lib.rs")).expect("failed to read"),
+        "pub fn two() {}\n",
+        "the edit should be on disk"
+    );
 }
 
 /// Storage the window can be handed in a test, standing in for the one eframe keeps on disk.
@@ -438,11 +588,18 @@ fn an_unchanged_file_opens_as_the_file_itself() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
+            // The file opens as a tab of its own, so what it is showing is looked for there.
             *shown_in_ui.lock().expect("poisoned") = app
                 .model
-                .review_ref(&app.model.root_session_id)
-                .and_then(|review| review.full_file.as_ref())
-                .and_then(|view| view.content.clone());
+                .layout
+                .panes
+                .values()
+                .find_map(|pane| match pane {
+                    crate::native::layout::Pane::File { pane_id, .. } => Some(pane_id.clone()),
+                    _ => None,
+                })
+                .and_then(|pane_id| app.model.file_editors.get(&pane_id))
+                .and_then(|editor| editor.content_for_test());
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -1176,3 +1333,4 @@ fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
         "jumping should have drawn the hunk and made it the active one"
     );
 }
+

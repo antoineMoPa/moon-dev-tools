@@ -83,6 +83,8 @@ const TAB_CLOSE_INSET: f32 = 4.0;
 const TAB_CLOSE_GAP: f32 = 5.0;
 /// Space between one tab and the next.
 const TAB_GAP: f32 = 3.0;
+/// Room before the title for the dot a file with unsaved edits carries.
+const TAB_DOT_SPACE: f32 = 11.0;
 const DIVIDER_THICKNESS: f32 = 5.0;
 /// The narrowest a frame may be left at by opening a shell beside it. Below this, the shell
 /// joins a frame's tabs instead of taking a column of its own.
@@ -395,13 +397,18 @@ impl App {
         };
         let label = widgets::elide_path(&title, 22);
         let pane_id = pane.pane_id().to_string();
+        // A file with edits that are not on disk carries a dot before its name. Drawn rather
+        // than typeset: the bundled fonts have no ● to print.
+        let unsaved = matches!(pane, Pane::File { .. }) && self.file_pane_is_dirty(&pane_id);
 
         let galley = ui.painter().layout_no_wrap(
             label.clone(),
             egui::FontId::proportional(SMALL_SIZE + 1.0),
             if selected { palette.ink } else { palette.muted },
         );
+        let dot_space = if unsaved { TAB_DOT_SPACE } else { 0.0 };
         let width = galley.size().x
+            + dot_space
             + TAB_TEXT_INSET
             + TAB_CLOSE_GAP
             + TAB_CLOSE_SIZE
@@ -454,10 +461,17 @@ impl App {
                     StrokeKind::Inside,
                 );
             }
+            if unsaved {
+                painter.circle_filled(
+                    pos2(rect.min.x + TAB_TEXT_INSET + 3.0, rect.center().y),
+                    3.0,
+                    palette.accent,
+                );
+            }
             let text_height = galley.size().y;
             painter.galley(
                 pos2(
-                    rect.min.x + TAB_TEXT_INSET,
+                    rect.min.x + TAB_TEXT_INSET + dot_space,
                     (rect.center().y - text_height / 2.0).round(),
                 ),
                 galley,

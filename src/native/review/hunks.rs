@@ -47,27 +47,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let is_commit_review = payload.active_commit.is_some();
     let preview_limit = payload.patch_preview_line_limit;
 
-    // A review of one unchanged file has nothing to diff, so the file itself is what it shows,
-    // without waiting to be asked. `cargo run -- package.json` on a file nobody has touched is
-    // a request to read it.
-    let is_the_whole_review = payload.hunks.is_empty() && payload.full_file_path.is_some();
-    if is_the_whole_review
+    // A review of one unchanged file has nothing to diff, so the file opens in a tab of its
+    // own — `moonreview package.json` on a file nobody has touched is a request to read it.
+    if payload.hunks.is_empty()
         && let Some(path) = payload.full_file_path.as_deref()
-        && app
-            .model
-            .review_ref(session_id)
-            .is_some_and(|review| review.full_file.is_none())
     {
-        app.open_full_file(session_id, path);
-    }
-
-    if app
-        .model
-        .review_ref(session_id)
-        .is_some_and(|review| review.full_file.is_some())
-    {
-        draw_full_file(app, ui, session_id, is_the_whole_review, palette);
-        return;
+        app.open_file_pane(session_id, path);
     }
 
     let hunks: Vec<&HunkView> = payload.hunks.iter().collect();
@@ -1234,94 +1219,4 @@ fn draw_composer(
                 },
             )
         });
-}
-
-/// `is_the_whole_review` is set when the session is this one file: there is nothing behind the
-/// view to go back to, so it is not offered a way to close.
-fn draw_full_file(
-    app: &mut App,
-    ui: &mut Ui,
-    session_id: &str,
-    is_the_whole_review: bool,
-    palette: &Palette,
-) {
-    let Some(view) = app
-        .model
-        .review_ref(session_id)
-        .and_then(|review| review.full_file.as_ref())
-    else {
-        return;
-    };
-    let file_path = view.file_path.clone();
-    let content = view.content.clone();
-    let error = view.error.clone();
-
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&file_path).strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !is_the_whole_review && widgets::quiet_button(ui, "close").clicked() {
-                app.model.review(session_id).full_file = None;
-            }
-        });
-    });
-    widgets::divider(ui, palette);
-    ui.add_space(4.0);
-
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if let Some(error) = error {
-                ui.label(RichText::new(error).color(palette.warn));
-                return;
-            }
-            let Some(content) = content else {
-                ui.spinner();
-                return;
-            };
-
-            for (index, line) in content.lines().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{:>5}", index + 1))
-                            .monospace()
-                            .size(CODE_SIZE - 1.0)
-                            .color(palette.muted),
-                    );
-                    ui.label(
-                        RichText::new(line)
-                            .monospace()
-                            .size(CODE_SIZE)
-                            .color(palette.ink),
-                    );
-                });
-            }
-        });
-}
-
-impl App {
-    /// Show a whole file rather than a diff, which is what a review of one clean file is.
-    pub(crate) fn open_full_file(&mut self, session_id: &str, file_path: &str) {
-        self.model.review(session_id).full_file = Some(crate::native::model::FullFileView {
-            file_path: file_path.to_string(),
-            content: None,
-            error: None,
-        });
-
-        let for_call = session_id.to_string();
-        let for_apply = session_id.to_string();
-        let path = file_path.to_string();
-        self.tasks.spawn(
-            move |backend| backend.file_content(&for_call, &path),
-            move |model, result| {
-                let review = model.review(&for_apply);
-                let Some(view) = review.full_file.as_mut() else {
-                    return;
-                };
-                match result {
-                    Ok(payload) => view.content = Some(payload.content),
-                    Err(error) => view.error = Some(format!("{error}")),
-                }
-            },
-        );
-    }
 }

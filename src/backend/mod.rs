@@ -62,6 +62,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn hunk_patch(&self, session_id: &str, hunk_id: &str) -> Result<PatchPayload>;
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload>;
+    fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;
     fn resolve_comment(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;

@@ -382,6 +382,18 @@ pub(crate) fn session_file(
     })
 }
 
+pub(crate) fn write_session_file(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    content: &str,
+) -> Result<()> {
+    crate::api::ensure_session_is_writable(state, session_id)?;
+    crate::api::with_session(state, session_id, |session| {
+        crate::git::write_repo_file(&session.repo_path, file_path, content)
+    })
+}
+
 pub(crate) fn resolve_comment(
     state: &AppState,
     session_id: &str,

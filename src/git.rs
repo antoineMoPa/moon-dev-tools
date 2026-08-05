@@ -392,6 +392,34 @@ pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String
     Ok(content)
 }
 
+/// Write a file in the working tree. Only a file that is already there can be written: this
+/// is an editor for what is being reviewed, not a way to create files anywhere on disk.
+pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {
+    if file_path.trim().is_empty() {
+        bail!("file path cannot be empty");
+    }
+
+    // Both sides are resolved before they are compared: on macOS the repo may be reached
+    // through a symlink (`/var` for `/private/var`), and comparing a resolved path against an
+    // unresolved root would refuse a file that is plainly inside it.
+    let repo_root = repo_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", repo_path.display()))?;
+    let resolved = repo_root
+        .join(file_path)
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {file_path}"))?;
+    if !resolved.starts_with(&repo_root) {
+        bail!("file path is outside the repository");
+    }
+    if !resolved.is_file() {
+        bail!("{file_path} is not a file in the working tree");
+    }
+
+    fs::write(&resolved, content)
+        .with_context(|| format!("failed to write {}", resolved.display()))
+}
+
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
     let mut args = vec![
         "diff",
@@ -1061,6 +1089,73 @@ mod tests {
         assert!(branch_commits.is_empty());
         assert!(history_commits.is_empty());
         assert!(!history_has_more);
+    }
+
+    /// `moonreview main..feature` reviews everything on one branch that is not on the other.
+    /// The range goes to git as it was typed; nothing here has to understand it.
+    #[test]
+    fn a_file_in_the_working_tree_can_be_written_back() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\n").expect("failed to write");
+
+        super::write_repo_file(&repo_root, "lib.rs", "fn two() {}\n").expect("expected the write");
+
+        assert_eq!(
+            fs::read_to_string(repo_root.join("lib.rs")).expect("failed to read back"),
+            "fn two() {}\n"
+        );
+    }
+
+    #[test]
+    fn writing_outside_the_repository_is_refused() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(temp.path.join("outside.txt"), "secrets\n").expect("failed to write");
+
+        let refused = super::write_repo_file(&repo_root, "../outside.txt", "changed\n");
+
+        assert!(refused.is_err(), "a path out of the repo must be refused");
+        assert_eq!(
+            fs::read_to_string(temp.path.join("outside.txt")).expect("failed to read back"),
+            "secrets\n",
+            "and must not have written anything"
+        );
+    }
+
+    #[test]
+    fn a_revision_range_collects_the_hunks_between_two_branches() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\n").expect("failed to write");
+        run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
+        run_git_no_output(&repo_root, &["commit", "-m", "first"]).expect("failed to commit");
+        run_git_no_output(&repo_root, &["branch", "-M", "main"]).expect("failed to name main");
+        run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
+            .expect("failed to branch");
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n")
+            .expect("failed to write");
+        run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
+        run_git_no_output(&repo_root, &["commit", "-m", "second"]).expect("failed to commit");
+
+        let mut session = test_session(repo_root, None);
+        session.diff_target = DiffTarget {
+            base: Some("main..feature".to_string()),
+            pathspec: None,
+            comparison: None,
+        };
+
+        let hunks = collect_session_hunks(&session).expect("expected the range to diff");
+
+        assert_eq!(hunks.len(), 1, "the branch adds one hunk");
+        assert!(
+            hunks[0].patch.contains("fn two()"),
+            "the hunk should be the line the branch added, got:\n{}",
+            hunks[0].patch
+        );
     }
 
     #[test]

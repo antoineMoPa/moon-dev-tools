@@ -2,6 +2,7 @@
 //! the review server in the same process and the same executable.
 
 pub(crate) mod app;
+pub(crate) mod file_pane;
 pub(crate) mod layout;
 pub(crate) mod menu;
 pub(crate) mod model;
