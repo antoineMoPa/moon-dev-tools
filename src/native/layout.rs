@@ -119,7 +119,7 @@ pub(crate) enum OpenPaneRequest {
 }
 
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum SplitDirection {
     Row,
@@ -387,38 +387,70 @@ pub(crate) fn add_pane_in_new_frame(
 
 /// Put a pane in a new full-height frame down the right of the workspace, which is where
 /// shells live unless the user moves them.
-pub(crate) fn add_pane_in_right_column(
+pub(crate) fn add_pane_in_right_column(layout: WorkspaceLayout, pane: Pane) -> WorkspaceLayout {
+    add_pane_against_workspace(layout, DropSide::Right, pane)
+}
+
+/// Put a pane in a frame that runs the whole width or height of the workspace, against one of
+/// its outer edges — beside everything already open rather than beside one frame.
+pub(crate) fn add_pane_against_workspace(
     mut layout: WorkspaceLayout,
+    side: DropSide,
     pane: Pane,
 ) -> WorkspaceLayout {
+    let Some(direction) = side.direction() else {
+        let frame_id = layout.active_frame_id.clone();
+        return add_pane(layout, &frame_id, pane, None);
+    };
     let new_frame_id = make_id("frame");
     let new_frame = LayoutNode::Frame {
         frame_id: new_frame_id.clone(),
     };
+    let at_end = side.offset() == 1;
 
     layout.root = match layout.root {
+        // A split already running the right way takes one more child, and the columns already
+        // there give up an equal share of themselves to it.
         LayoutNode::Split {
-            direction: SplitDirection::Row,
+            direction: existing,
             mut children,
             sizes,
-        } => {
-            children.push(new_frame);
+        } if existing == direction => {
             let mut sizes: Vec<f32> = sizes
                 .into_iter()
                 .map(|size| size * (1.0 - RIGHT_COLUMN_FRACTION))
                 .collect();
-            sizes.push(RIGHT_COLUMN_FRACTION);
+            if at_end {
+                children.push(new_frame);
+                sizes.push(RIGHT_COLUMN_FRACTION);
+            } else {
+                children.insert(0, new_frame);
+                sizes.insert(0, RIGHT_COLUMN_FRACTION);
+            }
             LayoutNode::Split {
-                direction: SplitDirection::Row,
+                direction,
                 children,
                 sizes,
             }
         }
-        root => LayoutNode::Split {
-            direction: SplitDirection::Row,
-            children: vec![root, new_frame],
-            sizes: vec![1.0 - RIGHT_COLUMN_FRACTION, RIGHT_COLUMN_FRACTION],
-        },
+        root => {
+            let (children, sizes) = if at_end {
+                (
+                    vec![root, new_frame],
+                    vec![1.0 - RIGHT_COLUMN_FRACTION, RIGHT_COLUMN_FRACTION],
+                )
+            } else {
+                (
+                    vec![new_frame, root],
+                    vec![RIGHT_COLUMN_FRACTION, 1.0 - RIGHT_COLUMN_FRACTION],
+                )
+            };
+            LayoutNode::Split {
+                direction,
+                children,
+                sizes,
+            }
+        }
     };
 
     layout.frames.insert(
@@ -431,6 +463,24 @@ pub(crate) fn add_pane_in_right_column(
     );
 
     add_pane(layout, &new_frame_id, pane, None)
+}
+
+/// Move a pane that is already open into a frame against one of the workspace's outer edges.
+pub(crate) fn move_pane_against_workspace(
+    layout: WorkspaceLayout,
+    pane_id: &str,
+    side: DropSide,
+) -> WorkspaceLayout {
+    let Some(pane) = layout.panes.get(pane_id).cloned() else {
+        return layout;
+    };
+    // A lone pane moved against the edge it already fills would only rebuild what is there.
+    if layout.frame_ids().len() == 1 && layout.panes.len() == 1 {
+        return layout;
+    }
+
+    let layout = close_pane(layout, pane_id);
+    add_pane_against_workspace(layout, side, pane)
 }
 
 pub(crate) fn focus_pane(mut layout: WorkspaceLayout, pane_id: &str) -> WorkspaceLayout {
@@ -805,6 +855,61 @@ mod tests {
         let layout = move_pane_to_frame(layout, &pane_id, &frame_id, DropSide::Bottom, None);
 
         assert_eq!(layout.frame_ids().len(), 1);
+    }
+
+    #[test]
+    fn a_pane_dropped_against_the_workspace_takes_a_column_beside_everything() {
+        // Two frames stacked one above the other, then a third pane against the right edge.
+        let layout = default_layout("session");
+        let frame_id = layout.active_frame_id.clone();
+        let layout = add_pane(layout, &frame_id, terminal_pane(), None);
+        let stacked = layout
+            .frames
+            .get(&frame_id)
+            .expect("expected the frame")
+            .pane_ids
+            .last()
+            .cloned()
+            .expect("expected a pane to move");
+        let layout = move_pane_to_frame(layout, &stacked, &frame_id, DropSide::Bottom, None);
+        assert!(matches!(
+            layout.root,
+            LayoutNode::Split {
+                direction: SplitDirection::Column,
+                ..
+            }
+        ));
+
+        let layout = add_pane(layout, &frame_id, terminal_pane(), None);
+        let moved = layout
+            .frames
+            .get(&frame_id)
+            .expect("expected the frame")
+            .pane_ids
+            .last()
+            .cloned()
+            .expect("expected a pane to move");
+        let layout = move_pane_against_workspace(layout, &moved, DropSide::Right);
+
+        // The column runs beside the stack rather than inside either half of it.
+        let LayoutNode::Split {
+            direction,
+            children,
+            ..
+        } = &layout.root
+        else {
+            panic!("expected the workspace to be split");
+        };
+        assert!(*direction == SplitDirection::Row, "the column runs down the side");
+        assert_eq!(children.len(), 2);
+        assert!(
+            matches!(&children[1], LayoutNode::Frame { frame_id } if layout
+                .frames
+                .get(frame_id)
+                .is_some_and(|frame| frame.pane_ids.contains(&moved))),
+            "the moved pane should be the whole of the new right-hand column"
+        );
+        assert!(layout.is_coherent());
     }
 
     #[test]

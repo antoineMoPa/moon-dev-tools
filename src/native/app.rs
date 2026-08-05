@@ -367,10 +367,6 @@ impl App {
                     };
                 }
 
-                // Whatever the restored shape had room for and nothing filled was a pane from
-                // a previous run, and those are gone. Empty frames go with them.
-                let layout = std::mem::replace(&mut model.layout, layout::empty_layout());
-                model.layout = layout::without_empty_frames(layout);
             },
         );
     }

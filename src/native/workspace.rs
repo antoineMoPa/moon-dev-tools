@@ -89,6 +89,10 @@ const DIVIDER_THICKNESS: f32 = 5.0;
 /// The narrowest a frame may be left at by opening a shell beside it. Below this, the shell
 /// joins a frame's tabs instead of taking a column of its own.
 const MIN_COLUMN_WIDTH: f32 = 320.0;
+/// How close to the outer edge of the whole arrangement a dropped tab has to land to become a
+/// column or row beside everything, rather than a split of the frame it happens to be over.
+/// Stacked frames have no other way of saying "down the right of both".
+const WORKSPACE_EDGE: f32 = 34.0;
 /// How close to a frame's left or right edge a dropped tab has to land to split it there,
 /// as a share of the frame's width.
 const SIDE_EDGE_FRACTION: f32 = 0.22;
@@ -100,6 +104,12 @@ const UP_DOWN_EDGE_FRACTION: f32 = 0.38;
 impl App {
     pub(crate) fn draw_workspace(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
+        // An empty frame is a leftover — whatever emptied it should have taken it with it —
+        // and the only way to see one is the hint its body draws. Dropping them here means no
+        // path can leave one on screen, whatever it forgot. A workspace with nothing open at
+        // all keeps its single frame: that is a state rather than a leftover.
+        let layout = take_layout(&mut self.model.layout);
+        self.model.layout = layout::without_empty_frames(layout);
         // Frames and tabs record where they were drawn, so a drop lands on what the user was
         // actually looking at rather than on geometry recomputed from the tree.
         self.frame_rects.clear();
@@ -112,6 +122,10 @@ impl App {
                 let node = self.model.layout.root.clone();
                 self.draw_node(ui, &node, root, &[], &palette);
             });
+
+        if self.model.dragging_pane.is_some() {
+            self.draw_workspace_drop_hint(ui, &palette);
+        }
 
         // A drag that ends anywhere resolves here, so releasing outside a frame simply
         // cancels rather than leaving the tab stuck to the pointer.
@@ -192,6 +206,8 @@ impl App {
     }
 
     /// The grab handle between two panes. Returns the split's new sizes while being dragged.
+    #[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
+        parameter struct that only exists to be destructured immediately")]
     fn draw_divider(
         &mut self,
         ui: &mut Ui,
@@ -544,6 +560,35 @@ impl App {
 
     }
 
+    /// Where everything drawn this frame sits, together.
+    fn workspace_rect(&self) -> Option<Rect> {
+        self.frame_rects
+            .iter()
+            .map(|(_, rect)| *rect)
+            .reduce(|whole, rect| whole.union(rect))
+    }
+
+    /// The outer edge a drop at this point lands against, if it is against one at all. This
+    /// wins over the frame under the pointer: the band is narrow, and inside it the only thing
+    /// the user can mean is "beside everything".
+    fn workspace_drop_side(&self, at: egui::Pos2) -> Option<DropSide> {
+        let workspace = self.workspace_rect()?;
+        if !workspace.contains(at) || self.model.layout.frames.len() < 2 {
+            return None;
+        }
+
+        let sides = [
+            (DropSide::Left, at.x - workspace.min.x),
+            (DropSide::Right, workspace.max.x - at.x),
+            (DropSide::Top, at.y - workspace.min.y),
+            (DropSide::Bottom, workspace.max.y - at.y),
+        ];
+        let (side, distance) = sides
+            .into_iter()
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
+        (distance <= WORKSPACE_EDGE).then_some(side)
+    }
+
     /// A new shell goes in its own column down the right of the workspace, unless that would
     /// squeeze that column — or whatever it takes the room from — below a usable width, in
     /// which case it becomes another tab in the frame it was asked for.
@@ -588,6 +633,40 @@ impl App {
         (None, after_last)
     }
 
+    /// The band down the edge of everything, shown while a dragged tab is over it.
+    fn draw_workspace_drop_hint(&self, ui: &mut Ui, palette: &Palette) {
+        let Some(at) = ui.input(|input| input.pointer.hover_pos()) else {
+            return;
+        };
+        let (Some(side), Some(workspace)) = (self.workspace_drop_side(at), self.workspace_rect())
+        else {
+            return;
+        };
+
+        let hint = match side {
+            DropSide::Left => workspace.with_max_x(workspace.min.x + workspace.width() * 0.3),
+            DropSide::Right => workspace.with_min_x(workspace.max.x - workspace.width() * 0.3),
+            DropSide::Top => workspace.with_max_y(workspace.min.y + workspace.height() * 0.3),
+            DropSide::Bottom => workspace.with_min_y(workspace.max.y - workspace.height() * 0.3),
+            DropSide::Tabs => return,
+        };
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            Id::new("workspace-drop-hint"),
+        ));
+        painter.rect_filled(
+            hint.shrink(3.0),
+            CornerRadius::same(5),
+            palette.accent.linear_multiply(0.18),
+        );
+        painter.rect_stroke(
+            hint.shrink(3.0),
+            CornerRadius::same(5),
+            Stroke::new(1.5, palette.accent),
+            StrokeKind::Inside,
+        );
+    }
+
     /// While a tab is being dragged, show where it would land.
     fn draw_drop_hint(
         &self,
@@ -601,6 +680,9 @@ impl App {
             return;
         };
         if !rect.contains(at) {
+            return;
+        }
+        if self.workspace_drop_side(at).is_some() {
             return;
         }
         let Some(side) = drop_side(rect, strip_rect, at) else {
@@ -648,6 +730,14 @@ impl App {
         let Some(at) = at else {
             return;
         };
+
+        // Against the outer edge first: a drop there is about the whole arrangement, not about
+        // whichever frame happens to reach that edge.
+        if let Some(side) = self.workspace_drop_side(at) {
+            let layout = take_layout(&mut self.model.layout);
+            self.model.layout = layout::move_pane_against_workspace(layout, &pane_id, side);
+            return;
+        }
 
         let Some((frame_id, frame_rect)) = self
             .frame_rects

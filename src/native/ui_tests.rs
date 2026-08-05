@@ -560,6 +560,199 @@ fn dragging_a_split_handle_keeps_resizing_past_its_own_width() {
     );
 }
 
+/// A frame with nothing in it is never drawn: the hint its body carries is the only way to
+/// see one, and seeing one means something emptied a frame and left it behind.
+#[test]
+fn a_frame_left_empty_is_dropped_rather_than_drawn() {
+    let fixture = seeded_fixture("empty-frame");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+
+    let frames = Arc::new(Mutex::new(0usize));
+    let frames_in_ui = Arc::clone(&frames);
+    let emptied = Arc::new(AtomicBool::new(false));
+    let emptied_in_ui = Arc::clone(&emptied);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // A second frame whose pane goes away without it — what a forgetful caller leaves.
+            if !emptied_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                let mut layout = crate::native::layout::add_pane_in_right_column(
+                    layout,
+                    crate::native::layout::Pane::Agents {
+                        pane_id: crate::native::layout::make_id("pane"),
+                    },
+                );
+                let stranded = layout.active_frame_id.clone();
+                if let Some(frame) = layout.frames.get_mut(&stranded) {
+                    let pane_ids = std::mem::take(&mut frame.pane_ids);
+                    frame.active_pane_id = None;
+                    for pane_id in pane_ids {
+                        layout.panes.remove(&pane_id);
+                    }
+                }
+                app.model.layout = layout;
+                emptied_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+            *frames_in_ui.lock().expect("poisoned") = app.model.layout.frames.len();
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !emptied.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+
+    assert_eq!(
+        *frames.lock().expect("poisoned"),
+        1,
+        "the stranded frame should have been dropped, leaving the review's own"
+    );
+}
+
+/// With frames stacked one above the other, the far edge of the window is how a tab becomes a
+/// column beside both — the frame it is dropped over would only split itself.
+#[test]
+fn dropping_a_tab_at_the_window_edge_makes_a_column_beside_every_frame() {
+    let fixture = seeded_fixture("edge-drop");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+
+    let shape = Arc::new(Mutex::new(String::new()));
+    let shape_in_ui = Arc::clone(&shape);
+    let tab_rect = Arc::new(Mutex::new(None::<egui::Rect>));
+    let tab_in_ui = Arc::clone(&tab_rect);
+    let stacked = Arc::new(AtomicBool::new(false));
+    let stacked_in_ui = Arc::clone(&stacked);
+    let right_edge = Arc::new(Mutex::new(f32::NEG_INFINITY));
+    let edge_in_ui = Arc::clone(&right_edge);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Two frames, one above the other, and a third tab in the lower one to drag.
+            if !stacked_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                let frame_id = layout.active_frame_id.clone();
+                let layout = crate::native::layout::add_pane(
+                    layout,
+                    &frame_id,
+                    crate::native::layout::Pane::Agents {
+                        pane_id: crate::native::layout::make_id("pane"),
+                    },
+                    None,
+                );
+                let moved = layout
+                    .frames
+                    .get(&frame_id)
+                    .and_then(|frame| frame.pane_ids.last().cloned())
+                    .expect("expected the pane just added");
+                app.model.layout = crate::native::layout::move_pane_to_frame(
+                    layout,
+                    &moved,
+                    &frame_id,
+                    crate::native::layout::DropSide::Bottom,
+                    None,
+                );
+                stacked_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            *shape_in_ui.lock().expect("poisoned") = match &app.model.layout.root {
+                crate::native::layout::LayoutNode::Split {
+                    direction,
+                    children,
+                    ..
+                } => format!("{direction:?}-{}", children.len()),
+                crate::native::layout::LayoutNode::Frame { .. } => "frame".to_string(),
+            };
+            *edge_in_ui.lock().expect("poisoned") = app
+                .frame_rects
+                .iter()
+                .map(|(_, rect)| rect.max.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            // The tab of the lower frame, which is the one this drags.
+            *tab_in_ui.lock().expect("poisoned") = app
+                .tab_rects
+                .iter()
+                .max_by(|(_, _, a), (_, _, b)| {
+                    a.min.y.partial_cmp(&b.min.y).expect("no NaN rects")
+                })
+                .map(|(_, _, rect)| *rect);
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !stacked.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+    assert_eq!(
+        *shape.lock().expect("poisoned"),
+        "Column-2",
+        "the workspace should start as two stacked frames"
+    );
+
+    let from = tab_rect
+        .lock()
+        .expect("poisoned")
+        .expect("expected a tab to drag")
+        .center();
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(from),
+        egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+
+    // Out to the right edge of everything drawn, well past the frame's own edge band.
+    let at_edge = egui::pos2(*right_edge.lock().expect("poisoned") - 4.0, 400.0);
+    for step in 1..=3 {
+        let towards = egui::pos2(from.x + (at_edge.x - from.x) * step as f32 / 3.0, at_edge.y);
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(towards));
+        harness.step();
+    }
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at_edge,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.run_steps(2);
+
+    assert_eq!(
+        *shape.lock().expect("poisoned"),
+        "Row-2",
+        "the tab should have become a column beside the stack, not a split of one frame"
+    );
+}
+
 /// Storage the window can be handed in a test, standing in for the one eframe keeps on disk.
 #[derive(Default)]
 struct RememberedStorage(std::collections::HashMap<String, String>);
