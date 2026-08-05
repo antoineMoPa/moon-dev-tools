@@ -18,6 +18,9 @@ use crate::{
     service::HISTORY_COMMIT_PAGE_SIZE,
 };
 
+/// One line, the same for every file in the list.
+const ROW_HEIGHT: f32 = 20.0;
+
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
     let Some(payload) = app
         .model
@@ -113,7 +116,9 @@ fn draw_file_row(
     palette: &Palette,
 ) {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
+    // One line per file: the name, then the counts and the reviewed tally against the right
+    // edge. A second line for the counts doubled the height of the list for no more meaning.
+    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::click());
     let response = widgets::clickable(response);
     let hovered = response.hovered();
 
@@ -124,7 +129,7 @@ fn draw_file_row(
         }
 
         // The dot on the left is the file's staging state at a glance.
-        let dot = egui::pos2(rect.min.x + 6.0, rect.min.y + 10.0);
+        let dot = egui::pos2(rect.min.x + 6.0, rect.center().y);
         ui.painter()
             .circle_filled(dot, 3.0, stage_status_color(file.status, palette));
 
@@ -133,40 +138,12 @@ fn draw_file_row(
         } else {
             palette.ink
         };
-        ui.painter().text(
-            egui::pos2(rect.min.x + 15.0, rect.min.y + 3.0),
-            Align2::LEFT_TOP,
-            widgets::elide_path(&file.file_name, 30),
-            egui::FontId::proportional(crate::native::theme::UI_SIZE),
-            name_ink,
-        );
-
-        let mut detail = String::new();
-        if file.added_line_count > 0 {
-            detail.push_str(&format!("+{}", widgets::grouped(file.added_line_count)));
-        }
-        if file.removed_line_count > 0 {
-            if !detail.is_empty() {
-                detail.push(' ');
-            }
-            detail.push_str(&format!("−{}", widgets::grouped(file.removed_line_count)));
-        }
-        if let Some(from) = &file.moved_from_file_path {
-            detail.push_str(&format!("  from {}", widgets::elide_path(from, 22)));
-        } else if let Some(to) = &file.moved_to_file_path {
-            detail.push_str(&format!("  to {}", widgets::elide_path(to, 22)));
-        }
-        ui.painter().text(
-            egui::pos2(rect.min.x + 15.0, rect.min.y + 17.0),
-            Align2::LEFT_TOP,
-            detail,
-            egui::FontId::proportional(SMALL_SIZE - 1.0),
-            palette.muted,
-        );
-
+        // Everything to the right of the name is drawn first, so what is left over is what
+        // the name has to fit in.
+        let mut right_edge = rect.max.x - 6.0;
         let reviewed_note = format!("{}/{}", file.reviewed_hunk_count, file.hunk_count);
-        ui.painter().text(
-            egui::pos2(rect.max.x - 6.0, rect.center().y),
+        let drawn = ui.painter().text(
+            egui::pos2(right_edge, rect.center().y),
             Align2::RIGHT_CENTER,
             reviewed_note,
             egui::FontId::proportional(SMALL_SIZE - 1.0),
@@ -176,15 +153,58 @@ fn draw_file_row(
                 palette.muted
             },
         );
+        right_edge = drawn.min.x - 8.0;
+
+        // Removed first: drawn right to left, that puts the added count nearer the name.
+        for (sign, count, ink) in [
+            ('−', file.removed_line_count, palette.removed),
+            ('+', file.added_line_count, palette.added),
+        ] {
+            if count == 0 {
+                continue;
+            }
+            let drawn = ui.painter().text(
+                egui::pos2(right_edge, rect.center().y),
+                Align2::RIGHT_CENTER,
+                format!("{sign}{}", widgets::grouped(count)),
+                egui::FontId::proportional(SMALL_SIZE - 1.0),
+                ink,
+            );
+            right_edge = drawn.min.x - 5.0;
+        }
+
+        let name = widgets::cut_to_fit(
+            ui,
+            &file.file_name,
+            egui::FontId::proportional(crate::native::theme::UI_SIZE),
+            name_ink,
+            (right_edge - (rect.min.x + 15.0)).max(20.0),
+            1,
+        );
+        let name_height = name.size().y;
+        ui.painter().galley(
+            egui::pos2(
+                rect.min.x + 15.0,
+                (rect.center().y - name_height / 2.0).round(),
+            ),
+            name,
+            name_ink,
+        );
     }
 
-    let hover_text = format!(
+    let mut hover_text = format!(
         "{}\n{} hunk{}, {} reviewed",
         file.file_path,
         file.hunk_count,
         if file.hunk_count == 1 { "" } else { "s" },
         file.reviewed_hunk_count
     );
+    // The row has no second line for it any more, so where a file came from is said here.
+    if let Some(from) = &file.moved_from_file_path {
+        hover_text.push_str(&format!("\nmoved from {from}"));
+    } else if let Some(to) = &file.moved_to_file_path {
+        hover_text.push_str(&format!("\nmoved to {to}"));
+    }
     let response = response.on_hover_text(hover_text);
 
     if response.clicked() {

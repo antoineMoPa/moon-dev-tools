@@ -400,6 +400,13 @@ impl App {
         }
     }
 
+    /// Where a file of the review sits on this machine, if the repo is on this machine at all.
+    pub(crate) fn repo_file_path(&self, file_path: &str) -> Option<std::path::PathBuf> {
+        let session_id = self.model.root_session_id.clone();
+        let payload = self.model.review_ref(&session_id)?.payload.as_ref()?;
+        Some(std::path::Path::new(&payload.repo_path).join(file_path))
+    }
+
     fn open_in_browser(&mut self) {
         if !self.serves_web {
             self.model

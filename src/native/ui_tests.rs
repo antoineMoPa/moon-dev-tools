@@ -461,6 +461,105 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
     );
 }
 
+/// A split handle keeps resizing while the pointer runs past it — the drag belongs to the
+/// handle until the button comes up, not to the few points it happened to start on.
+#[test]
+fn dragging_a_split_handle_keeps_resizing_past_its_own_width() {
+    let fixture = seeded_fixture("split-drag");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+
+    let sizes = Arc::new(Mutex::new(Vec::<f32>::new()));
+    let sizes_in_ui = Arc::clone(&sizes);
+    let handle_x = Arc::new(Mutex::new(None::<f32>));
+    let handle_in_ui = Arc::clone(&handle_x);
+    let split = Arc::new(AtomicBool::new(false));
+    let split_in_ui = Arc::clone(&split);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // A second column to have a handle between: the shell pane needs no shell to be
+            // laid out, and this test is about the handle.
+            if !split_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                app.model.layout = crate::native::layout::add_pane_in_right_column(
+                    layout,
+                    crate::native::layout::Pane::Agents {
+                        pane_id: crate::native::layout::make_id("pane"),
+                    },
+                );
+                split_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            if let crate::native::layout::LayoutNode::Split { sizes, .. } = &app.model.layout.root {
+                *sizes_in_ui.lock().expect("poisoned") = sizes.clone();
+            }
+            // The handle sits where the first frame ends.
+            let mut lefts: Vec<f32> = app.frame_rects.iter().map(|(_, r)| r.max.x).collect();
+            lefts.sort_by(|a, b| a.partial_cmp(b).expect("no NaN rects"));
+            *handle_in_ui.lock().expect("poisoned") = lefts.first().copied();
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && sizes.lock().expect("poisoned").len() < 2 {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+
+    let before = sizes.lock().expect("poisoned").clone();
+    assert_eq!(before.len(), 2, "the workspace should be split in two");
+    let handle = handle_x
+        .lock()
+        .expect("poisoned")
+        .expect("the first frame should have been drawn");
+    let at = egui::pos2(handle + 2.0, 400.0);
+
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(at),
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+
+    // Far outside the handle: with the drag registered under an id that moved with it, this
+    // is where resizing used to stop.
+    for step in 1..=4 {
+        let dragged = egui::pos2(at.x - 40.0 * step as f32, at.y);
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(dragged));
+        harness.step();
+    }
+    let after = sizes.lock().expect("poisoned").clone();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    assert!(
+        after[0] < before[0] - 0.05,
+        "dragging left should have given the first column less than it had: {before:?} to {after:?}"
+    );
+}
+
 /// Storage the window can be handed in a test, standing in for the one eframe keeps on disk.
 #[derive(Default)]
 struct RememberedStorage(std::collections::HashMap<String, String>);

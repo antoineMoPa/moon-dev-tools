@@ -15,6 +15,8 @@ use crate::native::{
 
 /// Wide enough for five digits, which covers any file worth opening in a review.
 const FRINGE_WIDTH: f32 = 46.0;
+/// Between the pane's border and what it is showing.
+const PANE_PADDING: i8 = 10;
 
 /// A file being read or edited, and what has happened to it since it was opened.
 pub(crate) struct FileEditor {
@@ -182,34 +184,42 @@ impl App {
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(file_path).strong());
-            if dirty {
-                ui.label(
-                    RichText::new(if saving { "saving…" } else { "unsaved" })
-                        .size(SMALL_SIZE - 1.0)
-                        .color(palette.warn),
-                );
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if dirty && !saving && widgets::quiet_button(ui, "[save]").clicked() {
-                    self.save_file_pane(pane_id, session_id);
+        // The pane's own margin: a frame body runs to the edge of the border, and a file name
+        // or a line of code hard against it reads as a mistake.
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(PANE_PADDING, 6))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(file_path).strong()).selectable(true),
+                    );
+                    if dirty {
+                        ui.label(
+                            RichText::new(if saving { "saving…" } else { "unsaved" })
+                                .size(SMALL_SIZE - 1.0)
+                                .color(palette.warn),
+                        );
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if dirty && !saving && widgets::quiet_button(ui, "[save]").clicked() {
+                            self.save_file_pane(pane_id, session_id);
+                        }
+                    });
+                });
+                widgets::divider(ui, &palette);
+                ui.add_space(4.0);
+
+                if let Some(error) = error {
+                    ui.label(RichText::new(error).color(palette.warn));
+                    return;
                 }
+                if !loaded {
+                    ui.spinner();
+                    return;
+                }
+
+                draw_editor(self, ui, pane_id, &palette);
             });
-        });
-        widgets::divider(ui, &palette);
-        ui.add_space(4.0);
-
-        if let Some(error) = error {
-            ui.label(RichText::new(error).color(palette.warn));
-            return;
-        }
-        if !loaded {
-            ui.spinner();
-            return;
-        }
-
-        draw_editor(self, ui, pane_id, &palette);
     }
 }
 

@@ -167,6 +167,7 @@ impl App {
                             ui,
                             divider_rect,
                             horizontal,
+                            path,
                             index,
                             sizes,
                             usable,
@@ -196,12 +197,16 @@ impl App {
         ui: &mut Ui,
         rect: Rect,
         horizontal: bool,
+        path: &[usize],
         index: usize,
         sizes: &[f32],
         usable: f32,
         palette: &Palette,
     ) -> Option<Vec<f32>> {
-        let id = Id::new(("workspace-divider", rect.min.x as i32, rect.min.y as i32, index));
+        // Named after where the handle is in the tree, not where it is on screen: a drag moves
+        // the handle, and an id that moved with it would be a different widget on the next
+        // frame — egui would drop the drag the moment the pointer left the handle's own width.
+        let id = Id::new(("workspace-divider", path, index));
         let response = ui.interact(rect, id, Sense::drag());
         let cursor = if horizontal {
             CursorIcon::ResizeHorizontal

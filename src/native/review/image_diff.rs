@@ -12,42 +12,114 @@ use egui::{RichText, Ui, vec2};
 
 use crate::{
     api::ImageDiffView,
-    native::{app::App, model::hash_of, theme::{Palette, SMALL_SIZE}},
+    native::{
+        app::App,
+        model::hash_of,
+        theme::{Palette, SMALL_SIZE},
+        widgets,
+    },
 };
 
-/// The longest edge either side of the comparison is drawn at.
-const MAX_IMAGE_EDGE: f32 = 320.0;
+/// The share of the window an image may take vertically. Inside a scroll area a pane is as
+/// tall as it likes, so the window is what the picture has to be measured against.
+const TALLEST_IMAGE_FRACTION: f32 = 0.7;
+/// Between the before and the after.
+const IMAGE_GAP: f32 = 12.0;
+/// Around the whole comparison. The hunk card has no inner margin of its own — a diff's lines
+/// run edge to edge — so the pictures bring their own.
+const IMAGE_PADDING: i8 = 10;
+/// Between a side's label and its picture.
+const LABEL_GAP: f32 = 4.0;
 
-pub(crate) fn draw_image_diff(app: &mut App, ui: &mut Ui, image: &ImageDiffView, palette: &Palette) {
-    ui.horizontal(|ui| {
-        for (label, source, missing) in [
-            ("before", &image.before_src, "(added)"),
-            ("after", &image.after_src, "(deleted)"),
-        ] {
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(label)
-                        .size(SMALL_SIZE - 1.0)
-                        .color(palette.muted),
-                );
-                match source.as_deref().map(|source| image_source(app, source)) {
-                    Some(Some(source)) => {
-                        ui.add(
-                            egui::Image::new(source)
-                                .max_size(vec2(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
-                                .maintain_aspect_ratio(true),
+pub(crate) fn draw_image_diff(
+    app: &mut App,
+    ui: &mut Ui,
+    file_path: &str,
+    image: &ImageDiffView,
+    palette: &Palette,
+) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(IMAGE_PADDING))
+        .show(ui, |ui| {
+            draw_file_link(app, ui, file_path, palette);
+            ui.add_space(8.0);
+
+            // Each side takes half of what is going, scaled up to fill it — a favicon is
+            // otherwise drawn at its own 16 points and is impossible to compare.
+            let half = ((ui.available_width() - IMAGE_GAP) / 2.0).max(80.0);
+            let tallest = ui.ctx().viewport_rect().height() * TALLEST_IMAGE_FRACTION;
+
+            ui.horizontal_top(|ui| {
+                for (label, source, missing) in [
+                    ("before", &image.before_src, "(added)"),
+                    ("after", &image.after_src, "(deleted)"),
+                ] {
+                    ui.vertical(|ui| {
+                        ui.set_width(half);
+                        ui.label(
+                            RichText::new(label)
+                                .size(SMALL_SIZE - 1.0)
+                                .color(palette.muted),
                         );
-                    }
-                    // The side is there but is not a data URI this build knows how to read.
-                    Some(None) => {
-                        ui.label(RichText::new("(cannot read this image)").color(palette.warn));
-                    }
-                    None => {
-                        ui.label(RichText::new(missing).color(palette.muted));
-                    }
+                        ui.add_space(LABEL_GAP);
+                        match source.as_deref().map(|source| image_source(app, source)) {
+                            Some(Some(source)) => {
+                                ui.add(
+                                    egui::Image::new(source)
+                                        .fit_to_exact_size(vec2(half, tallest))
+                                        .maintain_aspect_ratio(true),
+                                );
+                            }
+                            // The side is there but is not a data URI this build can read.
+                            Some(None) => {
+                                ui.label(
+                                    RichText::new("(cannot read this image)").color(palette.warn),
+                                );
+                            }
+                            None => {
+                                ui.label(RichText::new(missing).color(palette.muted));
+                            }
+                        }
+                    });
+                    ui.add_space(IMAGE_GAP);
                 }
             });
-            ui.add_space(10.0);
+        });
+}
+
+/// The image's name, and beside it a way to open the file itself — the pane can only show it
+/// at the size it fits, and comparing pixels needs a real viewer.
+///
+/// The name is a label rather than a button so it can be selected and copied. One widget
+/// cannot both sweep a selection and act on a click, so opening it is its own button.
+fn draw_file_link(app: &mut App, ui: &mut Ui, file_path: &str, palette: &Palette) {
+    let full_path = app.repo_file_path(file_path).filter(|path| path.exists());
+
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(file_path)
+                    .size(SMALL_SIZE)
+                    .color(if full_path.is_some() {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    }),
+            )
+            .selectable(true),
+        );
+
+        // A review served from somewhere else has no local file to open.
+        let Some(full_path) = full_path else {
+            return;
+        };
+        if widgets::quiet_button(ui, "[open]")
+            .on_hover_text(format!("open {}", full_path.display()))
+            .clicked()
+            && let Err(error) = webbrowser::open(&full_path.to_string_lossy())
+        {
+            app.model
+                .error(format!("could not open {file_path}: {error}"));
         }
     });
 }

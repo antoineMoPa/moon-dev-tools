@@ -304,7 +304,7 @@ fn draw_hunk_card(
         .show(ui, |ui| {
             draw_hunk_toolbar(app, ui, session_id, hunk, read_only, is_commit_review, palette);
             if let Some(image) = &hunk.image_diff {
-                image_diff::draw_image_diff(app, ui, image, palette);
+                image_diff::draw_image_diff(app, ui, &hunk.file_path, image, palette);
                 return;
             }
             draw_hunk_body(app, ui, session_id, hunk, read_only, preview_limit, palette);
