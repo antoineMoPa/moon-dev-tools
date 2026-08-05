@@ -177,6 +177,11 @@ impl TerminalPane {
                 }
             }
         }
+        // A local shell's output channel stays open even after the shell is gone, because this
+        // pane is what holds its session alive, so the handle is asked directly.
+        if self.input.has_exited() {
+            self.exited = true;
+        }
         received
     }
 

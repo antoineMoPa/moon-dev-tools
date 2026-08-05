@@ -239,6 +239,7 @@ fn draw_row(
 ) -> egui::Response {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 34.0), egui::Sense::click());
+    let response = crate::native::widgets::clickable(response);
 
     if ui.is_rect_visible(rect) {
         if highlighted {

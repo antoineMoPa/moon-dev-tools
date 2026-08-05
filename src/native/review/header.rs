@@ -55,8 +55,9 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         ui.label(RichText::new(repo_name).strong())
             .on_hover_text(repo_path);
         ui.label(RichText::new("·").color(palette.line));
-        ui.label(RichText::new(label.as_str()).color(palette.accent))
-            .on_hover_text("what this review is pointed at");
+        // The header is one line: a long subject is cut short here and read in full on hover.
+        ui.add(egui::Label::new(RichText::new(label.as_str()).color(palette.accent)).truncate())
+            .on_hover_text(format!("{label}\n\nwhat this review is pointed at"));
 
         if read_only {
             widgets::pill(ui, "read only", palette.muted, palette.status_neutral_bg)
@@ -69,7 +70,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
             if batched > 0 {
                 let has_agent = selected_agent != AgentKind::None;
                 let label = format!("send {batched} to {}", selected_agent.label());
-                let button = ui.add_enabled(has_agent, egui::Button::new(label));
+                let button =
+                    widgets::clickable(ui.add_enabled(has_agent, egui::Button::new(label)));
                 let button = if has_agent {
                     button.on_hover_text("hand every held comment to the agent now")
                 } else {

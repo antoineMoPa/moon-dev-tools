@@ -22,9 +22,24 @@ fn draw_moon(painter: &egui::Painter, center: egui::Pos2, radius: f32, ink: Colo
     painter.circle_filled(center + vec2(radius * 0.55, -radius * 0.3), radius * 0.85, behind);
 }
 
+/// A tab's close mark: two thin strokes, the size of the text beside them.
+fn draw_close_mark(painter: &egui::Painter, center: egui::Pos2, ink: Color32) {
+    let reach = TAB_CLOSE_SIZE * 0.27;
+    let stroke = Stroke::new(1.0, ink);
+    painter.line_segment(
+        [center + vec2(-reach, -reach), center + vec2(reach, reach)],
+        stroke,
+    );
+    painter.line_segment(
+        [center + vec2(reach, -reach), center + vec2(-reach, reach)],
+        stroke,
+    );
+}
+
 /// The light/dark switch: a moon in light mode, a sun in dark mode.
 fn theme_switch(ui: &mut Ui, theme: crate::native::theme::ThemeMode, palette: &Palette) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(17.0, 15.0), Sense::click());
+    let response = widgets::clickable(response);
     if !ui.is_rect_visible(rect) {
         return response;
     }
@@ -393,6 +408,7 @@ impl App {
             + TAB_CLOSE_INSET;
         let (rect, response) =
             ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click_and_drag());
+        let response = widgets::clickable(response);
         self.tab_rects
             .push((frame_id.to_string(), pane_id.clone(), rect));
 
@@ -457,11 +473,11 @@ impl App {
             );
             let hovering_close = !dragging_this && pointer.is_some_and(|at| close_rect.contains(at));
             if !dragging_this && (response.hovered() || selected) {
-                ui.painter().text(
+                // Drawn rather than typeset: the only close glyph the bundled fonts have is a
+                // heavy emoji ✖, and a tab wants the thin ✕ a browser draws.
+                draw_close_mark(
+                    &painter,
                     close_rect.center(),
-                    Align2::CENTER_CENTER,
-                    "\u{1F5D9}",
-                    egui::FontId::proportional(SMALL_SIZE - 1.0),
                     if hovering_close {
                         palette.warn
                     } else {

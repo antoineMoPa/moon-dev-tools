@@ -150,6 +150,7 @@ impl App {
                 dragging_pane: None,
                 adopt_shells_pending: false,
                 restored_layout: None,
+                restored_agent: None,
             },
             tasks,
             terminals: HashMap::new(),
@@ -620,6 +621,39 @@ impl App {
         }
     }
 
+    /// A shell that has ended takes its tab with it, and the frame too when it was the last
+    /// tab there — logging out of a terminal or an agent finishing should leave the workspace
+    /// as it was before the shell was opened.
+    ///
+    /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
+    fn close_tabs_of_exited_shells(&mut self) {
+        let Some(terminal_id) = self
+            .terminals
+            .iter()
+            .find(|(_, terminal)| terminal.has_exited())
+            .map(|(terminal_id, _)| terminal_id.clone())
+        else {
+            return;
+        };
+
+        let pane_id = self.model.layout.panes.values().find_map(|pane| match pane {
+            Pane::Terminal {
+                pane_id,
+                terminal_id: of_pane,
+                ..
+            } if *of_pane == terminal_id => Some(pane_id.clone()),
+            _ => None,
+        });
+
+        match pane_id {
+            Some(pane_id) => self.close_pane(&pane_id),
+            // No tab is showing it, so there is nothing to close but the shell itself.
+            None => {
+                self.terminals.remove(&terminal_id);
+            }
+        }
+    }
+
     pub(crate) fn close_pane(&mut self, pane_id: &str) {
         let pane = self.model.layout.panes.get(pane_id).cloned();
         let layout = std::mem::replace(&mut self.model.layout, layout::empty_layout());
@@ -825,9 +859,10 @@ impl App {
                 }
 
                 ui.add_space(12.0);
-                let go = ui
-                    .add_enabled(!path.is_empty(), egui::Button::new("Open review"))
-                    .clicked();
+                let go = widgets::clickable(
+                    ui.add_enabled(!path.is_empty(), egui::Button::new("Open review")),
+                )
+                .clicked();
 
                 if (go || submitted) && !path.is_empty() {
                     self.model.stage = Stage::Opening;
@@ -957,6 +992,9 @@ impl App {
 
 /// Where the pane arrangement is kept between runs.
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
+/// And where the agent comments get handed to is kept: it belongs to the person reviewing,
+/// not to the session, which is new on every launch.
+const AGENT_STORAGE_KEY: &str = "moonreview-selected-agent";
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -967,6 +1005,9 @@ impl eframe::App for App {
         if let Ok(encoded) = serde_json::to_string(&self.model.layout) {
             storage.set_string(LAYOUT_STORAGE_KEY, encoded);
         }
+        if let Ok(encoded) = serde_json::to_string(&self.selected_agent()) {
+            storage.set_string(AGENT_STORAGE_KEY, encoded);
+        }
     }
 }
 
@@ -976,6 +1017,12 @@ impl App {
     /// A malformed or outdated value is simply ignored: a window that opens on the default
     /// arrangement is a far better outcome than one that refuses to open.
     pub(crate) fn restore_layout_from(&mut self, storage: Option<&dyn eframe::Storage>) {
+        if let Some(encoded) = storage.and_then(|storage| storage.get_string(AGENT_STORAGE_KEY))
+            && let Ok(agent) = serde_json::from_str::<AgentKind>(&encoded)
+        {
+            self.model.restored_agent = Some(agent);
+        }
+
         let Some(encoded) = storage.and_then(|storage| storage.get_string(LAYOUT_STORAGE_KEY))
         else {
             return;
@@ -984,6 +1031,55 @@ impl App {
             Ok(stored) => self.model.restored_layout = Some(stored),
             Err(error) => eprintln!("[moonreview] ignoring a stored layout: {error}"),
         }
+    }
+
+    /// The agent the review in front is pointed at, which is the one worth remembering.
+    fn selected_agent(&self) -> AgentKind {
+        let session_id = self
+            .focused_review_session()
+            .unwrap_or_else(|| self.model.root_session_id.clone());
+        self.model
+            .review_ref(&session_id)
+            .and_then(|review| review.payload.as_ref())
+            .map(|payload| payload.selected_agent)
+            .unwrap_or_default()
+    }
+
+    /// A session starts on no agent at all, so the one the last run ended on is put back — once
+    /// the review has said which agents this machine actually has, since asking for one that is
+    /// no longer installed is refused.
+    fn apply_restored_agent(&mut self) {
+        let Some(agent) = self.model.restored_agent else {
+            return;
+        };
+        let session_id = self.model.root_session_id.clone();
+        let Some(payload) = self
+            .model
+            .review_ref(&session_id)
+            .and_then(|review| review.payload.clone())
+        else {
+            return;
+        };
+
+        self.model.restored_agent = None;
+        if agent == AgentKind::None || payload.selected_agent == agent {
+            return;
+        }
+        // An agent that has since left the machine is simply forgotten: a window that opens
+        // with no agent picked is better than one that opens complaining.
+        if !payload
+            .available_agents
+            .iter()
+            .any(|option| option.kind == agent && option.available)
+        {
+            return;
+        }
+
+        let for_call = session_id.clone();
+        self.tasks
+            .act(&session_id, "could not restore the agent", move |backend| {
+                backend.set_agent(&for_call, agent)
+            });
     }
 }
 
@@ -1056,6 +1152,7 @@ impl App {
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }
+        self.apply_restored_agent();
         self.prune_diff_cache();
 
         self.draw_workspace(ui);
@@ -1069,6 +1166,7 @@ impl App {
         if let Some(pane_id) = self.pending_close.take() {
             self.close_pane(&pane_id);
         }
+        self.close_tabs_of_exited_shells();
 
         // Terminals whose shell has gone stop repainting, so nothing spins on a dead pane.
         let live_terminals = self

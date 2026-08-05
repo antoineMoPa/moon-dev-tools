@@ -13,7 +13,9 @@ use crate::{
     comments::{AnchoredComment, build_anchored_comment_value, parse_anchored_comments},
     native::{
         app::App,
+        layout::OpenPaneRequest,
         model::{Draft, LineSelection, hash_of},
+        palette::CommandAction,
         review::diff::{DiffLine, LineKind, insertion_line},
         review::image_diff,
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
@@ -34,31 +36,43 @@ pub(crate) fn diff_line_id(hunk_id: &str, index: usize) -> egui::Id {
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
     // The payload is shared, so the hunks below are read straight out of it rather than
     // copied — a diff of a lock file is far too much text to clone every frame.
-    let Some((payload, filter)) = app.model.review_ref(session_id).and_then(|review| {
-        review
-            .payload
-            .as_ref()
-            .map(|payload| (Arc::clone(payload), review.filter()))
-    }) else {
+    let Some(payload) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.payload.as_ref().map(Arc::clone))
+    else {
         return;
     };
     let read_only = payload.read_only;
     let is_commit_review = payload.active_commit.is_some();
     let preview_limit = payload.patch_preview_line_limit;
 
-    // A review of one clean file has no hunks; it shows the file instead.
+    // A review of one unchanged file has nothing to diff, so the file itself is what it shows,
+    // without waiting to be asked. `cargo run -- package.json` on a file nobody has touched is
+    // a request to read it.
+    let is_the_whole_review = payload.hunks.is_empty() && payload.full_file_path.is_some();
+    if is_the_whole_review
+        && let Some(path) = payload.full_file_path.as_deref()
+        && app
+            .model
+            .review_ref(session_id)
+            .is_some_and(|review| review.full_file.is_none())
+    {
+        app.open_full_file(session_id, path);
+    }
+
     if app
         .model
         .review_ref(session_id)
         .is_some_and(|review| review.full_file.is_some())
     {
-        draw_full_file(app, ui, session_id, palette);
+        draw_full_file(app, ui, session_id, is_the_whole_review, palette);
         return;
     }
 
-    let hunks = filter.apply(&payload.hunks);
+    let hunks: Vec<&HunkView> = payload.hunks.iter().collect();
     if hunks.is_empty() {
-        draw_empty(app, ui, session_id, palette);
+        draw_empty(ui, palette);
         return;
     }
 
@@ -151,23 +165,9 @@ fn finish_line_sweep(app: &mut App, ui: &Ui, session_id: &str, hunks: &[HunkView
     start_draft(app, session_id, hunk, selection, String::new());
 }
 
-fn draw_empty(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
-    // Hidden by the reviewed filter rather than genuinely absent is worth saying, because the
-    // fix is a click away.
-    let hiding_reviewed = app.model.review_ref(session_id).is_some_and(|review| {
-        !review.show_reviewed && review.hunks().iter().any(|hunk| hunk.reviewed)
-    });
-
+fn draw_empty(ui: &mut Ui, palette: &Palette) {
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() * 0.3);
-        if hiding_reviewed {
-            ui.label(RichText::new("every hunk here is reviewed").color(palette.ink));
-            ui.add_space(5.0);
-            if ui.button("show reviewed hunks").clicked() {
-                app.model.review(session_id).show_reviewed = true;
-            }
-            return;
-        }
         ui.label(RichText::new("nothing to review").color(palette.ink));
         ui.add_space(5.0);
         ui.label(
@@ -655,13 +655,11 @@ fn draw_truncation_notice(
                         .color(palette.muted),
                 );
                 let busy = app.tasks.is_busy(&format!("patch:{}", hunk.id));
-                if ui
-                    .add_enabled(!busy, egui::Button::new(if busy {
-                        "loading…"
-                    } else {
-                        "show the whole hunk"
-                    }))
-                    .clicked()
+                if widgets::clickable(ui.add_enabled(
+                    !busy,
+                    egui::Button::new(if busy { "loading…" } else { "show the whole hunk" }),
+                ))
+                .clicked()
                 {
                     load_full_patch(app, session_id, &hunk.id);
                 }
@@ -1068,12 +1066,17 @@ fn delete_comment(app: &mut App, session_id: &str, hunk: &HunkView, comment_inde
 }
 
 fn open_dispatch_log(app: &mut App, session_id: &str, dispatch_key: &str) {
+    // The agent monitor is what shows a log, so asking for one from a comment card has to
+    // bring that pane up — otherwise the click loads a log nothing is drawing.
+    app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::Agents));
+
     let for_call = session_id.to_string();
+    let for_apply = session_id.to_string();
     let dispatch_key = dispatch_key.to_string();
     app.tasks.spawn(
         move |backend| backend.dispatch_log(&for_call, &dispatch_key),
-        |model, result| match result {
-            Ok(payload) => model.set_agent_log(payload),
+        move |model, result| match result {
+            Ok(payload) => model.set_agent_log(for_apply.clone(), payload),
             Err(error) => model.error(format!("could not read the agent log: {error}")),
         },
     );
@@ -1168,8 +1171,7 @@ fn draw_composer(
                         "keep the comment in the review (⌘return)",
                     )
                 };
-                if ui
-                    .add_enabled(ready, egui::Button::new(label))
+                if widgets::clickable(ui.add_enabled(ready, egui::Button::new(label)))
                     .on_hover_text(hint)
                     .clicked()
                 {
@@ -1178,14 +1180,15 @@ fn draw_composer(
 
                 // The other path holds the comment back so a batch of them can go at once.
                 if has_agent
-                    && ui
-                        .add_enabled(ready, egui::Button::new("hold for batch"))
-                        .on_hover_text("keep it back, to send with the others from the header")
-                        .clicked()
+                    && widgets::clickable(
+                        ui.add_enabled(ready, egui::Button::new("hold for batch")),
+                    )
+                    .on_hover_text("keep it back, to send with the others from the header")
+                    .clicked()
                 {
                     batch = true;
                 }
-                if ui.button("cancel").clicked() {
+                if widgets::clickable(ui.button("cancel")).clicked() {
                     cancel = true;
                 }
             });
@@ -1233,7 +1236,15 @@ fn draw_composer(
         });
 }
 
-fn draw_full_file(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+/// `is_the_whole_review` is set when the session is this one file: there is nothing behind the
+/// view to go back to, so it is not offered a way to close.
+fn draw_full_file(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    is_the_whole_review: bool,
+    palette: &Palette,
+) {
     let Some(view) = app
         .model
         .review_ref(session_id)
@@ -1248,7 +1259,7 @@ fn draw_full_file(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palett
     ui.horizontal(|ui| {
         ui.label(RichText::new(&file_path).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::quiet_button(ui, "close").clicked() {
+            if !is_the_whole_review && widgets::quiet_button(ui, "close").clicked() {
                 app.model.review(session_id).full_file = None;
             }
         });

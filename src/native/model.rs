@@ -7,15 +7,9 @@ use std::{
 };
 
 use crate::{
-    api::{AgentLogPayload, CommitView, HunkView, SessionPayload, SubmoduleView},
+    api::{AgentKind, AgentLogPayload, CommitView, HunkView, SessionPayload, SubmoduleView},
     native::{layout::WorkspaceLayout, theme::ThemeMode},
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarTab {
-    Files,
-    Comments,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToastKind {
@@ -69,6 +63,8 @@ pub(crate) struct FullFileView {
 }
 
 pub(crate) struct AgentLogView {
+    /// The review the dispatch belongs to, so refreshing asks the right one.
+    pub(crate) session_id: String,
     pub(crate) dispatch_key: String,
     pub(crate) text: String,
 }
@@ -84,8 +80,6 @@ pub(crate) struct ReviewState {
     /// Bumped whenever an action changes the repo, so the poll loop refetches promptly.
     pub(crate) refresh_requested: bool,
 
-    pub(crate) sidebar_tab: SidebarTab,
-    pub(crate) show_reviewed: bool,
     pub(crate) collapsed_files: HashSet<String>,
     pub(crate) active_hunk_id: Option<String>,
     /// Set to ask the review pane to bring a hunk into view on the next frame.
@@ -111,8 +105,6 @@ impl ReviewState {
             error: None,
             loading: true,
             refresh_requested: false,
-            sidebar_tab: SidebarTab::Files,
-            show_reviewed: true,
             collapsed_files: HashSet::new(),
             active_hunk_id: None,
             scroll_to_hunk: None,
@@ -139,30 +131,6 @@ impl ReviewState {
         self.payload
             .as_ref()
             .is_some_and(|payload| payload.read_only)
-    }
-
-    /// How the review pane is filtered right now.
-    pub(crate) fn filter(&self) -> HunkFilter {
-        HunkFilter {
-            show_reviewed: self.show_reviewed,
-        }
-    }
-}
-
-/// The sidebar's reviewed toggle, applied to a payload the caller already holds. Keeping this
-/// separate from [`ReviewState`] is what lets the review pane read the hunks through a shared
-/// payload while it still edits the rest of the model.
-pub(crate) struct HunkFilter {
-    pub(crate) show_reviewed: bool,
-}
-
-impl HunkFilter {
-    pub(crate) fn matches(&self, hunk: &HunkView) -> bool {
-        self.show_reviewed || !hunk.reviewed
-    }
-
-    pub(crate) fn apply<'h>(&self, hunks: &'h [HunkView]) -> Vec<&'h HunkView> {
-        hunks.iter().filter(|hunk| self.matches(hunk)).collect()
     }
 }
 
@@ -214,6 +182,8 @@ pub(crate) struct Model {
     pub(crate) adopt_shells_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.
     pub(crate) restored_layout: Option<WorkspaceLayout>,
+    /// The agent the last run ended on, applied to the session once the review opens.
+    pub(crate) restored_agent: Option<AgentKind>,
     /// The tab being dragged, if any: its pane id.
     pub(crate) dragging_pane: Option<String>,
 }
@@ -259,8 +229,9 @@ impl Model {
         }
     }
 
-    pub(crate) fn set_agent_log(&mut self, payload: AgentLogPayload) {
+    pub(crate) fn set_agent_log(&mut self, session_id: String, payload: AgentLogPayload) {
         self.agent_log = Some(AgentLogView {
+            session_id,
             dispatch_key: payload.dispatch_key,
             text: payload.text,
         });

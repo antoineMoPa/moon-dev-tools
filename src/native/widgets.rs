@@ -1,6 +1,8 @@
 //! Small pieces of chrome the review UI reuses: pills, quiet buttons, section headers.
 
-use egui::{Align, Color32, CornerRadius, Layout, Response, RichText, Sense, Stroke, Ui, vec2};
+use egui::{
+    Align, Color32, CornerRadius, CursorIcon, Layout, Response, RichText, Sense, Stroke, Ui, vec2,
+};
 
 use crate::native::theme::{Palette, SMALL_SIZE};
 
@@ -24,13 +26,19 @@ pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32, background: Color32) -
     response
 }
 
+/// The cursor anything clickable shows, the way the web frontend's `cursor: pointer` does.
+/// Everything the pointer can act on goes through here, so the two frontends feel the same.
+pub(crate) fn clickable(response: Response) -> Response {
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
 /// A button with no frame until it is hovered, which is what the dense toolbars use.
 pub(crate) fn quiet_button(ui: &mut Ui, text: &str) -> Response {
-    ui.add(egui::Button::new(text).frame(false))
+    clickable(ui.add(egui::Button::new(text).frame(false)))
 }
 
 pub(crate) fn quiet_button_colored(ui: &mut Ui, text: &str, ink: Color32) -> Response {
-    ui.add(egui::Button::new(RichText::new(text).color(ink)).frame(false))
+    clickable(ui.add(egui::Button::new(RichText::new(text).color(ink)).frame(false)))
 }
 
 /// A glyph on a filled disc — the tab strip's "new shell" button.
@@ -51,19 +59,37 @@ pub(crate) fn round_button(ui: &mut Ui, glyph: &str, diameter: f32, palette: &Pa
             ink,
         );
     }
-    response
+    clickable(response)
 }
 
-/// A toggle that reads as a segment of a group rather than a checkbox.
-pub(crate) fn segment(ui: &mut Ui, selected: bool, text: &str, palette: &Palette) -> Response {
-    let ink = if selected { palette.ink } else { palette.muted };
-    let mut button = egui::Button::new(RichText::new(text).color(ink));
-    if selected {
-        button = button.fill(palette.control_active_bg);
-    } else {
-        button = button.fill(Color32::TRANSPARENT).frame(false);
-    }
-    ui.add(button)
+/// Text laid out to fit a row of fixed height: cut short with an ellipsis rather than wrapped.
+///
+/// A row that cannot grow has to say no to text that does not fit. Wrapping it instead is what
+/// makes a long commit subject run over whatever is drawn on the line below it. The whole text
+/// belongs on the row's hover instead.
+pub(crate) fn cut_to_fit(
+    ui: &Ui,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    max_width: f32,
+    max_rows: usize,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_string(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width,
+        max_rows,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
 }
 
 /// A heading for one section of the sidebar, with an optional action on the right.

@@ -38,6 +38,10 @@ impl TerminalInput for LocalTerminalInput {
     fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         self.session.resize(cols, rows)
     }
+
+    fn has_exited(&self) -> bool {
+        self.session.has_exited()
+    }
 }
 
 impl Backend for LocalBackend {

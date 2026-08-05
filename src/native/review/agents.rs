@@ -102,15 +102,28 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                 return;
             }
 
-            egui::ScrollArea::vertical()
+            // The list fills the pane, so an open log has to be given its share up front —
+            // drawn after a list that had taken every pixel, it landed below the bottom edge
+            // and was never seen.
+            let log_height = app
+                .model
+                .agent_log
+                .is_some()
+                .then(|| (ui.available_height() * 0.45).clamp(120.0, 320.0));
+
+            let list = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .id_salt("agent-monitor-list")
-                .show(ui, |ui| {
-                    for entry in &watched {
-                        draw_row(app, ui, entry, &palette);
-                        ui.add_space(5.0);
-                    }
-                });
+                .id_salt("agent-monitor-list");
+            let list = match log_height {
+                Some(height) => list.max_height((ui.available_height() - height).max(60.0)),
+                None => list,
+            };
+            list.show(ui, |ui| {
+                for entry in &watched {
+                    draw_row(app, ui, entry, &palette);
+                    ui.add_space(5.0);
+                }
+            });
 
             draw_log(app, ui, &palette);
         });
@@ -164,7 +177,7 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
                         );
                     }
                     if comment.dispatch.has_log
-                        && widgets::quiet_button(ui, if showing_log { "log ✓" } else { "log" })
+                        && widgets::quiet_button(ui, if showing_log { "hide log" } else { "log" })
                             .clicked()
                     {
                         if showing_log {
@@ -195,12 +208,13 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
 
 fn load_log(app: &mut App, session_id: &str, dispatch_key: &str) {
     let for_call = session_id.to_string();
+    let for_apply = session_id.to_string();
     let key = dispatch_key.to_string();
     app.tasks.spawn_keyed(
         Some(format!("log:{dispatch_key}")),
         move |backend| backend.dispatch_log(&for_call, &key),
-        |model, result| match result {
-            Ok(payload) => model.set_agent_log(payload),
+        move |model, result| match result {
+            Ok(payload) => model.set_agent_log(for_apply.clone(), payload),
             Err(error) => model.error(format!("could not read the agent log: {error}")),
         },
     );
@@ -212,6 +226,7 @@ fn draw_log(app: &mut App, ui: &mut Ui, palette: &Palette) {
     };
     let text = log.text.clone();
     let key = log.dispatch_key.clone();
+    let session_id = log.session_id.clone();
 
     ui.add_space(6.0);
     widgets::divider(ui, palette);
@@ -229,14 +244,8 @@ fn draw_log(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 app.model.info("agent output copied");
             }
             if widgets::quiet_button(ui, "refresh").clicked() {
-                // A running agent keeps writing, so the log is pulled again on demand.
-                let session_id = app
-                    .model
-                    .reviews
-                    .keys()
-                    .next()
-                    .cloned()
-                    .unwrap_or_default();
+                // A running agent keeps writing, so the log is pulled again on demand — from
+                // the review the dispatch belongs to, which is not always the only one open.
                 load_log(app, &session_id, &key);
             }
         });

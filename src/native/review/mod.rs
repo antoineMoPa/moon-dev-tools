@@ -69,7 +69,7 @@ fn draw_placeholder(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Pale
                 ui.add_space(6.0);
                 ui.label(RichText::new(error).color(palette.warn));
                 ui.add_space(12.0);
-                if ui.button("try again").clicked() {
+                if crate::native::widgets::clickable(ui.button("try again")).clicked() {
                     app.model.review(session_id).refresh_requested = true;
                 }
             }

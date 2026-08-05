@@ -1,7 +1,7 @@
-//! The review's left column: files, commits, and comments.
+//! The review's left column: the files that changed, then the commits they belong to.
 //!
-//! Mirrors `web/src/components/LeftSidebar.tsx` — the same three sections, in the same order,
-//! each row doing the same thing when clicked.
+//! Mirrors `web/src/components/LeftSidebar.tsx`, minus its comments list — comments have a
+//! window of their own.
 
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
 
@@ -9,7 +9,6 @@ use crate::{
     api::{CommitReviewStatus, CommitView},
     native::{
         app::App,
-        model::SidebarTab,
         review::files::{
             FileStageStatus, SidebarFile, build_sidebar_files, local_changes_summary,
         },
@@ -35,50 +34,24 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let active_commit = payload.active_commit.as_deref();
     let local_summary = local_changes_summary(payload.local_change_summary);
     let commits = &payload.commits;
-    let comments = &payload.review_comments;
 
-    let tab = app
-        .model
-        .review_ref(session_id)
-        .map(|review| review.sidebar_tab)
-        .unwrap_or(SidebarTab::Files);
-
-    ui.horizontal(|ui| {
-        if widgets::segment(ui, tab == SidebarTab::Files, "files", palette).clicked() {
-            app.model.review(session_id).sidebar_tab = SidebarTab::Files;
-        }
-        let comment_label = if comments.is_empty() {
-            "comments".to_string()
-        } else {
-            format!("comments {}", comments.iter().filter(|c| !c.resolved).count())
-        };
-        if widgets::segment(ui, tab == SidebarTab::Comments, &comment_label, palette).clicked() {
-            app.model.review(session_id).sidebar_tab = SidebarTab::Comments;
-        }
-    });
-
-
-    ui.add_space(5.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show(ui, |ui| match tab {
-            SidebarTab::Files => {
-                draw_files_section(app, ui, session_id, &files, read_only, is_commit_review, palette);
-                ui.add_space(10.0);
-                widgets::divider(ui, palette);
-                ui.add_space(8.0);
-                draw_commits_section(
-                    app,
-                    ui,
-                    session_id,
-                    commits,
-                    commit_base,
-                    active_commit,
-                    &local_summary,
-                    palette,
-                );
-            }
-            SidebarTab::Comments => draw_comments_section(app, ui, session_id, comments, palette),
+        .show(ui, |ui| {
+            draw_files_section(app, ui, session_id, &files, read_only, is_commit_review, palette);
+            ui.add_space(10.0);
+            widgets::divider(ui, palette);
+            ui.add_space(8.0);
+            draw_commits_section(
+                app,
+                ui,
+                session_id,
+                commits,
+                commit_base,
+                active_commit,
+                &local_summary,
+                palette,
+            );
         });
 }
 
@@ -91,35 +64,15 @@ fn draw_files_section(
     is_commit_review: bool,
     palette: &Palette,
 ) {
-    let show_reviewed = app
-        .model
-        .review_ref(session_id)
-        .map(|review| review.show_reviewed)
-        .unwrap_or(true);
-
-    let visible: Vec<&SidebarFile> = files
-        .iter()
-        .filter(|file| show_reviewed || !file.reviewed)
-        .collect();
-
-    widgets::section_header(ui, "files", palette, |ui| {
-        let mut toggle = show_reviewed;
-        if ui
-            .add(egui::Checkbox::new(&mut toggle, RichText::new("done").size(SMALL_SIZE - 1.0)))
-            .on_hover_text("show files whose hunks are all reviewed")
-            .changed()
-        {
-            app.model.review(session_id).show_reviewed = toggle;
-        }
-    });
+    widgets::section_header(ui, "files", palette, |_ui| {});
     ui.add_space(3.0);
 
-    if visible.is_empty() {
+    if files.is_empty() {
         ui.label(RichText::new("nothing to review here").color(palette.muted));
         return;
     }
 
-    for file in visible {
+    for file in files {
         draw_file_row(app, ui, session_id, file, read_only, is_commit_review, palette);
     }
 }
@@ -143,6 +96,7 @@ fn draw_file_row(
 ) {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
+    let response = widgets::clickable(response);
     let hovered = response.hovered();
 
     if ui.is_rect_visible(rect) {
@@ -247,7 +201,9 @@ fn draw_file_row(
             return;
         }
 
-        if file.status != FileStageStatus::Staged && ui.button("stage the whole file").clicked() {
+        if file.status != FileStageStatus::Staged
+            && widgets::clickable(ui.button("stage the whole file")).clicked()
+        {
             let path = file.file_path.clone();
             let for_call = session_id.to_string();
             app.tasks
@@ -256,7 +212,9 @@ fn draw_file_row(
                 });
             ui.close();
         }
-        if file.status != FileStageStatus::Unstaged && ui.button("unstage the whole file").clicked() {
+        if file.status != FileStageStatus::Unstaged
+            && widgets::clickable(ui.button("unstage the whole file")).clicked()
+        {
             let path = file.file_path.clone();
             let for_call = session_id.to_string();
             app.tasks
@@ -315,7 +273,7 @@ fn draw_file_row(
                     });
                 ui.close();
             }
-            if ui.button("keep it").clicked() {
+            if widgets::clickable(ui.button("keep it")).clicked() {
                 app.model.review(session_id).pending_discard = None;
                 ui.close();
             }
@@ -423,10 +381,10 @@ fn draw_commits_section(
         return;
     }
     ui.add_space(3.0);
-    let button = ui.add_enabled(
+    let button = widgets::clickable(ui.add_enabled(
         !loading,
         egui::Button::new(if loading { "loading…" } else { "show more" }).frame(false),
-    );
+    ));
     if button.clicked() {
         load_more_history(app, session_id, history.len());
     }
@@ -482,6 +440,7 @@ fn draw_commit_row(
 ) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 31.0), Sense::click());
+    let response = widgets::clickable(response);
 
     if ui.is_rect_visible(rect) {
         if active {
@@ -506,11 +465,13 @@ fn draw_commit_row(
             .unwrap_or(0.0);
 
         let available = (rect.width() - 12.0 - sha_width).max(40.0);
-        let galley = ui.painter().layout(
-            subject.to_string(),
+        let galley = widgets::cut_to_fit(
+            ui,
+            subject,
             egui::FontId::proportional(crate::native::theme::UI_SIZE),
             if active { palette.accent } else { palette.ink },
             available,
+            1,
         );
         ui.painter().galley(
             egui::pos2(rect.min.x + 6.0, rect.min.y + 3.0),
@@ -551,101 +512,6 @@ fn draw_commit_row(
     response.on_hover_text(hover).clicked()
 }
 
-fn draw_comments_section(
-    app: &mut App,
-    ui: &mut Ui,
-    session_id: &str,
-    comments: &[crate::api::ReviewCommentView],
-    palette: &Palette,
-) {
-    if comments.is_empty() {
-        ui.label(RichText::new("no comments yet").color(palette.muted));
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new("select lines in a hunk and press c to write one")
-                .size(SMALL_SIZE - 1.0)
-                .color(palette.muted),
-        );
-        return;
-    }
-
-    for comment in comments {
-        let status = status_label(comment);
-        let (rect, response) = ui.allocate_exact_size(
-            vec2(ui.available_width(), 46.0),
-            Sense::click(),
-        );
-
-        if ui.is_rect_visible(rect) {
-            let fill = if comment.resolved {
-                palette.status_resolved_bg
-            } else {
-                palette.status_open_bg
-            };
-            ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
-            if response.hovered() {
-                ui.painter().rect_stroke(
-                    rect,
-                    CornerRadius::same(4),
-                    egui::Stroke::new(1.0, palette.accent),
-                    egui::StrokeKind::Inside,
-                );
-            }
-
-            ui.painter().text(
-                egui::pos2(rect.min.x + 6.0, rect.min.y + 3.0),
-                Align2::LEFT_TOP,
-                widgets::elide_path(&comment.file_path, 32),
-                egui::FontId::proportional(SMALL_SIZE - 1.0),
-                palette.muted,
-            );
-            ui.painter().text(
-                egui::pos2(rect.max.x - 6.0, rect.min.y + 3.0),
-                Align2::RIGHT_TOP,
-                status,
-                egui::FontId::proportional(SMALL_SIZE - 2.0),
-                palette.accent,
-            );
-
-            let galley = ui.painter().layout(
-                comment.comment.clone(),
-                egui::FontId::proportional(crate::native::theme::UI_SIZE),
-                palette.ink,
-                rect.width() - 12.0,
-            );
-            ui.painter().galley(
-                egui::pos2(rect.min.x + 6.0, rect.min.y + 17.0),
-                galley,
-                palette.ink,
-            );
-        }
-
-        let response = response.on_hover_text(format!("{}\n\n{}", comment.selection, comment.comment));
-        if response.clicked() && comment.jumpable {
-            let review = app.model.review(session_id);
-            review.scroll_to_hunk = Some(comment.hunk_id.clone());
-            review.active_hunk_id = Some(comment.hunk_id.clone());
-        }
-
-        if !comment.resolved {
-            response.context_menu(|ui| {
-                if ui.button("mark resolved").clicked() {
-                    let hunk_id = comment.hunk_id.clone();
-                    let index = comment.comment_index;
-                    let for_call = session_id.to_string();
-                    app.tasks
-                        .act(session_id, "could not resolve the comment", move |backend| {
-                            backend.resolve_comment(&for_call, &hunk_id, index)
-                        });
-                    ui.close();
-                }
-            });
-        }
-        ui.add_space(4.0);
-    }
-}
-
-/// What to call a comment's state, preferring what its agent run is doing over open/resolved.
 pub(crate) fn status_label(comment: &crate::api::ReviewCommentView) -> &'static str {
     use crate::api::CommentDispatchStatus as Status;
     match comment.dispatch.status {

@@ -27,6 +27,15 @@ pub(crate) struct TerminalAttachment {
 pub(crate) trait TerminalInput: Send + Sync {
     fn write(&self, data: &[u8]) -> Result<()>;
     fn resize(&self, cols: u16, rows: u16) -> Result<()>;
+
+    /// Whether the shell behind this handle has ended.
+    ///
+    /// A remote tab hears about it by its socket closing, which ends the output channel on its
+    /// own. A local one does not: the pane holds the shell's session alive, so its output
+    /// channel stays open long after the shell is gone, and the pane has to ask.
+    fn has_exited(&self) -> bool {
+        false
+    }
 }
 
 /// Every review operation the native frontend performs. Calls block, so the UI runs them

@@ -198,6 +198,270 @@ fn the_review_window_draws_the_diff_it_was_opened_on() {
     harness.snapshot("review-dark");
 }
 
+/// A shell that ends takes its tab with it: logging out of a terminal, or an agent finishing,
+/// should leave the workspace as it was before the shell was opened.
+#[test]
+fn a_shell_that_exits_closes_its_tab() {
+    let fixture = seeded_fixture("shell-exit");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment =
+        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+            .expect("expected to attach to the shell");
+    let mut pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
+        .expect("expected the terminal emulator to start");
+    pane.send(b"exit\n").expect("expected to write to the shell");
+
+    // The window is built around that shell: one review tab and one shell tab.
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let panes_left = Arc::new(Mutex::new(0usize));
+    let panes_in_ui = Arc::clone(&panes_left);
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    let for_pane = terminal_id.clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Only once the review has opened: opening it replaces the whole arrangement,
+            // which would take a shell tab added before it with it.
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame_id = app.model.layout.active_frame_id.clone();
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                app.model.layout = crate::native::layout::add_pane(
+                    layout,
+                    &frame_id,
+                    crate::native::layout::Pane::Terminal {
+                        pane_id: crate::native::layout::make_id("pane"),
+                        terminal_id: for_pane.clone(),
+                        command: None,
+                    },
+                    None,
+                );
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            println!(
+                "stage-ready={} placed={} exited={:?}",
+                matches!(app.model.stage, crate::native::model::Stage::Ready),
+                placed_in_ui.load(Ordering::Relaxed),
+                app.terminals.values().map(|t| t.has_exited()).collect::<Vec<_>>(),
+            );
+            println!(
+                "screen={:?}",
+                app.terminals
+                    .values_mut()
+                    .next()
+                    .and_then(|t| t.visible_text().ok())
+                    .map(|text| text.trim().replace('\n', " | ").chars().take(120).collect::<String>()),
+            );
+            *panes_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes
+                .values()
+                .filter(|pane| {
+                    matches!(pane, crate::native::layout::Pane::Terminal { terminal_id, .. }
+                        if *terminal_id == for_pane)
+                })
+                .count();
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut closed = false;
+    while Instant::now() < deadline {
+        harness.step();
+        if *panes_left.lock().expect("poisoned") == 0 && placed.load(Ordering::Relaxed) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(closed, "the tab of a shell that exited should have closed");
+}
+
+/// Storage the window can be handed in a test, standing in for the one eframe keeps on disk.
+#[derive(Default)]
+struct RememberedStorage(std::collections::HashMap<String, String>);
+
+impl eframe::Storage for RememberedStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_string(), value);
+    }
+
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
+    fn flush(&mut self) {}
+}
+
+/// The agent belongs to the person reviewing, not to a session that is new every launch, so it
+/// is written out on the way down and asked for again on the way up.
+#[test]
+fn the_agent_the_last_run_ended_on_comes_back() {
+    use eframe::{App as _, Storage as _};
+
+    let fixture = seeded_fixture("agent-memory");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut storage = RememberedStorage::default();
+
+    // A window that ends on Claude says so.
+    let session_id = app.model.root_session_id.clone();
+    let review = app.model.review(&session_id);
+    review.payload = Some(Arc::new(crate::api::SessionPayload {
+        repo_name: "repo".to_string(),
+        branch_name: None,
+        commit_base: None,
+        commits: Vec::new(),
+        history_commits: Vec::new(),
+        history_has_more: false,
+        local_change_summary: Default::default(),
+        active_commit: None,
+        repo_path: "/repo".to_string(),
+        read_only: false,
+        patch_preview_line_limit: 500,
+        available_agents: Vec::new(),
+        selected_agent: crate::api::AgentKind::Claude,
+        full_file_path: None,
+        hunks: Vec::new(),
+        review_comments: Vec::new(),
+        export_text: String::new(),
+    }));
+    app.save(&mut storage);
+
+    assert_eq!(
+        storage.get_string("moonreview-selected-agent").as_deref(),
+        Some("\"claude\""),
+        "the agent should have been written out"
+    );
+
+    // And the next one starts by asking for it back.
+    let mut next = app_for(&fixture.root, ThemeMode::Dark);
+    next.restore_layout_from(Some(&storage));
+
+    assert!(
+        next.model.restored_agent == Some(crate::api::AgentKind::Claude),
+        "the stored agent should be waiting to be applied"
+    );
+}
+
+/// A row of fixed height cannot grow, so text too long for it is cut rather than wrapped —
+/// wrapped text is what used to run over the line below.
+#[test]
+fn a_long_commit_subject_is_cut_to_the_row_it_is_drawn_in() {
+    let subject = "Rework the dispatch queue so held comments survive a restart,         and take the chance to rename everything around it while we are here";
+    let laid_out = Arc::new(Mutex::new((0usize, false)));
+    let in_ui = Arc::clone(&laid_out);
+    let mut harness = Harness::builder().build_ui(move |ui| {
+        let galley = crate::native::widgets::cut_to_fit(
+            ui,
+            subject,
+            egui::FontId::proportional(13.0),
+            egui::Color32::WHITE,
+            220.0,
+            1,
+        );
+        *in_ui.lock().expect("poisoned") = (galley.rows.len(), galley.elided);
+    });
+    harness.run();
+
+    let (rows, elided) = *laid_out.lock().expect("poisoned");
+    assert_eq!(rows, 1, "the subject should have been cut to one row");
+    assert!(elided, "and the row should say it was cut short");
+}
+
+/// Pointed at a file nobody has touched, the review shows the file itself rather than an
+/// empty diff — `moonreview package.json` is a request to read it.
+#[test]
+fn an_unchanged_file_opens_as_the_file_itself() {
+    let fixture = Fixture::new("unchanged-file");
+    fixture.write("package.json", "{\n  \"name\": \"fixture\"\n}\n");
+    fixture.commit("Add the manifest");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let launch = Launch {
+        backend: Arc::new(LocalBackend::new(state)),
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: Some(crate::api::DiffTarget {
+                base: None,
+                pathspec: Some("package.json".to_string()),
+                comparison: None,
+            }),
+            active_commit: None,
+        }),
+        serves_web: false,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+
+    let shown = Arc::new(Mutex::new(None::<String>));
+    let shown_in_ui = Arc::clone(&shown);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *shown_in_ui.lock().expect("poisoned") = app
+                .model
+                .review_ref(&app.model.root_session_id)
+                .and_then(|review| review.full_file.as_ref())
+                .and_then(|view| view.content.clone());
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if shown.lock().expect("poisoned").is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let content = shown.lock().expect("poisoned").clone();
+    assert_eq!(
+        content.as_deref(),
+        Some("{\n  \"name\": \"fixture\"\n}\n"),
+        "the file's own text should be on screen"
+    );
+}
+
 /// A changed image is shown as before and after pictures. They arrive as `data:` URIs, which
 /// egui has no loader for, so this is where a decoding regression turns back into an error box.
 #[test]
@@ -279,7 +543,6 @@ fn the_command_palette_lists_what_can_be_opened() {
 /// characters are all absent. Anything not in here has to be drawn or spelled out.
 const CHROME_GLYPHS: &str = concat!(
     "\u{23F5}\u{23F7}", // collapse arrows
-    "\u{1F5D9}",         // close
     "+",                  // open a pane
     "\u{00B7}\u{2212}", // separator, minus sign
     "\u{2318}", // the command key — shift and return have no glyph, so they are spelled out
@@ -377,8 +640,8 @@ fn a_click_reaches_a_widget_inside_a_frame() {
 
     let fixture = seeded_fixture("clickable");
     let app = app_for(&fixture.root, ThemeMode::Dark);
-    let tab = Arc::new(Mutex::new(None::<&'static str>));
-    let tab_in_ui = Arc::clone(&tab);
+    let collapsed = Arc::new(Mutex::new(false));
+    let collapsed_in_ui = Arc::clone(&collapsed);
     let ready = Arc::new(AtomicBool::new(false));
     let ready_in_ui = Arc::clone(&ready);
     let mut app = app;
@@ -388,14 +651,11 @@ fn a_click_reaches_a_widget_inside_a_frame() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
-            if let Ok(mut tab) = tab_in_ui.lock() {
-                *tab = app
+            if let Ok(mut collapsed) = collapsed_in_ui.lock() {
+                *collapsed = app
                     .model
                     .review_ref(&app.model.root_session_id)
-                    .map(|review| match review.sidebar_tab {
-                        crate::native::model::SidebarTab::Files => "files",
-                        crate::native::model::SidebarTab::Comments => "comments",
-                    });
+                    .is_some_and(|review| review.collapsed_files.contains("src/lib.rs"));
             }
             let loaded = app
                 .model
@@ -415,21 +675,19 @@ fn a_click_reaches_a_widget_inside_a_frame() {
     assert!(ready.load(Ordering::Relaxed), "the review never loaded");
     harness.run_steps(2);
 
-    assert_eq!(
-        *tab.lock().expect("expected the tab"),
-        Some("files"),
-        "the sidebar starts on the files tab"
+    assert!(
+        !*collapsed.lock().expect("poisoned"),
+        "every file starts expanded"
     );
 
-    // The sidebar's tab buttons sit deep inside the frame body, which is what the swallowing
-    // overlay used to cover.
-    harness.get_by_label("comments").click();
+    // A file heading sits deep inside the diff pane, which is what the swallowing overlay
+    // used to cover.
+    harness.get_by_label("\u{23F7} src/lib.rs").click();
     harness.run_steps(2);
 
-    assert_eq!(
-        *tab.lock().expect("expected the tab"),
-        Some("comments"),
-        "clicking the comments tab must switch the sidebar"
+    assert!(
+        *collapsed.lock().expect("poisoned"),
+        "clicking the file heading must collapse it"
     );
 }
 

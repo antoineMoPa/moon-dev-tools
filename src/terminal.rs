@@ -72,6 +72,12 @@ pub(crate) struct TerminalSession {
 }
 
 impl TerminalSession {
+    /// Whether the shell has ended. Set by the reader thread when the pty reaches EOF.
+    #[cfg(feature = "native")]
+    pub(crate) fn has_exited(&self) -> bool {
+        *self.exited.borrow()
+    }
+
     // The native window drives a pty directly; a web tab goes through the websocket.
     #[cfg(feature = "native")]
     pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
