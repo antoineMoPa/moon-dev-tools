@@ -20,8 +20,28 @@ use crate::{
 enum CliCommand {
     Help,
     Version,
-    Serve { logs: bool },
-    Review { target: ReviewTarget, logs: bool },
+    Serve {
+        logs: bool,
+    },
+    Review {
+        target: ReviewTarget,
+        logs: bool,
+        frontend: Frontend,
+    },
+}
+
+/// Which frontend a review opens in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Frontend {
+    /// The desktop window, with the server in the same process.
+    Native,
+    /// A browser tab against a background server, which is how moonreview started out.
+    Web,
+    /// The desktop window, reviewing a repo on another machine through its `serve`.
+    Remote {
+        target: String,
+        repo_path: Option<String>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -60,15 +80,43 @@ pub(crate) fn run() -> Result<()> {
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())
         }
-        CliCommand::Review { target, logs } => launch_review(target, logs),
+        CliCommand::Review {
+            target,
+            logs,
+            frontend,
+        } => launch_review(target, logs, frontend),
     }
 }
 
-fn launch_review(target: ReviewTarget, logs: bool) -> Result<()> {
+fn launch_review(target: ReviewTarget, logs: bool, frontend: Frontend) -> Result<()> {
+    #[cfg(feature = "native")]
+    if let Frontend::Remote { target, repo_path } = &frontend {
+        // The repo lives on the far side, so nothing here is resolved against this machine.
+        let launch = crate::native::launch_remote(target, repo_path.clone())?;
+        return crate::native::run(launch);
+    }
+
     let current_dir = env::current_dir()?;
     let repo_path = canonicalize_repo(&current_dir)?;
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
     let open_request = review_open_request(&repo_path, target, current_dir_pathspec, &current_dir)?;
+
+    #[cfg(feature = "native")]
+    if frontend == Frontend::Native {
+        // The window is the app: it carries the review server with it, so a browser can be
+        // pointed at the same review without a second process.
+        let launch = crate::native::launch_local(
+            OpenSessionRequest {
+                repo_path: repo_path.display().to_string(),
+                diff_target: Some(open_request.diff_target.clone()),
+                active_commit: open_request.active_commit.clone(),
+            },
+            true,
+        )?;
+        return crate::native::run(launch);
+    }
+    let _ = &frontend;
+
     if logs {
         return launch_review_with_foreground_server(repo_path, open_request);
     }
@@ -285,49 +333,78 @@ fn open_review_url_for_session(
 
 fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
     let mut logs = false;
+    let mut web = false;
+    let mut remote: Option<String> = None;
+    let mut remote_repo: Option<String> = None;
     let mut positional = Vec::new();
+    let mut args = args.into_iter();
 
-    for arg in args {
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--logs" => logs = true,
+            "--web" => web = true,
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
+            "--remote" => {
+                remote = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--remote needs an address, e.g. --remote dev-box"))?,
+                );
+            }
+            "--repo" => {
+                remote_repo = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--repo needs a path on the remote machine"))?,
+                );
+            }
+            _ if arg.starts_with("--remote=") => {
+                remote = Some(arg["--remote=".len()..].to_string());
+            }
+            _ if arg.starts_with("--repo=") => {
+                remote_repo = Some(arg["--repo=".len()..].to_string());
+            }
             _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text()),
             _ => positional.push(arg),
         }
     }
 
+    if web && remote.is_some() {
+        bail!("--web and --remote are different frontends; pick one");
+    }
+    if remote_repo.is_some() && remote.is_none() {
+        bail!("--repo names a path on a remote machine, so it needs --remote too");
+    }
+
+    let frontend = match (web, remote) {
+        (true, _) => Frontend::Web,
+        (false, Some(target)) => Frontend::Remote {
+            target,
+            repo_path: remote_repo,
+        },
+        (false, None) => Frontend::Native,
+    };
+    let review = |target: ReviewTarget| CliCommand::Review {
+        target,
+        logs,
+        frontend: frontend.clone(),
+    };
+
     match positional.as_slice() {
-        [] => Ok(CliCommand::Review {
-            target: ReviewTarget::WorkingTree,
-            logs,
-        }),
+        [] => Ok(review(ReviewTarget::WorkingTree)),
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
-        [command] if command == "diff" => Ok(CliCommand::Review {
-            target: ReviewTarget::WorkingTree,
-            logs,
-        }),
-        [command, target] if command == "diff" => Ok(CliCommand::Review {
-            target: ReviewTarget::Diff(target.clone()),
-            logs,
-        }),
-        [target] if target == "." || target == "./" => Ok(CliCommand::Review {
-            target: ReviewTarget::CurrentDirectory,
-            logs,
-        }),
-        [target] => Ok(CliCommand::Review {
-            target: if is_sha_like(target) {
-                ReviewTarget::Commit(target.clone())
-            } else {
-                ReviewTarget::Path(target.clone())
-            },
-            logs,
-        }),
+        [command] if command == "diff" => Ok(review(ReviewTarget::WorkingTree)),
+        [command, target] if command == "diff" => Ok(review(ReviewTarget::Diff(target.clone()))),
+        [target] if target == "." || target == "./" => Ok(review(ReviewTarget::CurrentDirectory)),
+        [target] => Ok(review(if is_sha_like(target) {
+            ReviewTarget::Commit(target.clone())
+        } else {
+            ReviewTarget::Path(target.clone())
+        })),
         [command, ..] if command == "diff" || command == "serve" => bail!("{}", help_text()),
-        [before, after] => Ok(CliCommand::Review {
-            target: ReviewTarget::Comparison([before.clone(), after.clone()]),
-            logs,
-        }),
+        [before, after] => Ok(review(ReviewTarget::Comparison([
+            before.clone(),
+            after.clone(),
+        ]))),
         _ => bail!("{}", help_text()),
     }
 }
@@ -347,10 +424,9 @@ Usage:
   moonreview <path>
   moonreview <before-path> <after-path>
   moonreview <commit>
-  moonreview -ns
-  moonreview --logs
   moonreview diff <target>
-  moonreview diff <target> --logs
+  moonreview --web
+  moonreview --remote <host> [--repo <path>]
   moonreview serve --logs
   moonreview --version
   moonreview --help
@@ -363,18 +439,30 @@ Examples:
   moonreview 4542abe
   moonreview diff dev
   moonreview diff dev:./
+  moonreview --web
+  moonreview --remote dev-box --repo /home/you/project
 
 Run `moonreview` inside any git repository you want to review.
 Run `moonreview .` to review only the current directory.
 Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.
 
-Use `--logs` to run the server in the foreground and print agent/failure logs until you stop it with Ctrl+C.
-Changed submodules are offered inside the review, as extra review windows you can open from [+].
-
 `moonreview <commit>` opens a read-only review of a single commit.
 `moonreview diff <target>` opens a read-only diff review against a git target.
-Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`."
+Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`.
+
+Frontends:
+  By default the review opens in a native window, with the review server inside it. That
+  window also serves the web frontend, so the same review can be opened in a browser.
+  `--web` opens a browser tab against a background server instead.
+  `--remote <host>` opens the window against a `moonreview serve` on another machine, where
+  the repo lives; `--repo <path>` names the path there, and without it the window asks.
+  `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
+
+Use `--logs` with `--web` or `serve` to run the server in the foreground and print
+agent/failure logs until you stop it with Ctrl+C.
+Changed submodules are offered inside the review, as extra reviews you can open from the
+command palette."
 }
 
 fn print_version() {
@@ -433,6 +521,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::WorkingTree,
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -444,6 +533,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::CurrentDirectory,
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -455,6 +545,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Path("packages/app/src/example.ts".to_string()),
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -514,6 +605,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Comparison(["a.txt".to_string(), "b.txt".to_string()]),
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -545,6 +637,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Diff("dev".to_string()),
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -556,6 +649,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Commit("4542abe".to_string()),
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }
@@ -567,6 +661,7 @@ mod tests {
             CliCommand::Review {
                 target: ReviewTarget::Diff("4542abe".to_string()),
                 logs: false,
+                frontend: Frontend::Native,
             }
         );
     }

@@ -7,12 +7,31 @@ edition = "2024"
 name = "moonreview"
 path = "src/main.rs"
 
+[features]
+default = ["native"]
+# The desktop frontend. Building it compiles libghostty-vt from Ghostty source, which
+# needs a Zig 0.15.x toolchain on PATH. Turn it off for a web-only build with no Zig.
+native = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:egui_extras",
+    "dep:image",
+    "dep:libghostty-vt",
+    "dep:muda",
+    "dep:tungstenite",
+]
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["json", "ws"] }
 base64 = "0.22"
+eframe = { version = "0.36", features = ["persistence"], optional = true }
+egui = { version = "0.36", optional = true }
+egui_extras = { version = "0.36", features = ["image"], optional = true }
 futures = "0.3.33"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"], optional = true }
 libc = "0.2"
+libghostty-vt = { version = "0.2.1", optional = true }
 portable-pty = "0.9.0"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,7 +39,17 @@ serde_json = "1"
 sha1 = "0.10"
 textdistance = "1.1.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
 webbrowser = "1"
+
+# The menu bar on macOS is a system-wide bar, not part of the window, so it needs the
+# platform API. Elsewhere the same actions live in the command palette.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false, optional = true }
+
+[dev-dependencies]
+# Renders the real window contents offscreen, so the UI can be checked without a display.
+egui_kittest = { version = "0.36", features = ["wgpu", "snapshot"] }
 
 [build-dependencies]
 serde_json = "1"

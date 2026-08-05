@@ -1,0 +1,1345 @@
+//! The diff itself: unstaged hunks, then staged ones, grouped by file.
+//!
+//! Selecting lines is how everything specific happens here — a comment is anchored to the
+//! lines it was written against, and a partial stage applies exactly those lines. That is
+//! the same contract the web frontend's text selection has, expressed as line ranges.
+
+use std::sync::Arc;
+
+use egui::{Align2, CornerRadius, Key, RichText, Sense, Stroke, Ui, vec2};
+
+use crate::{
+    api::HunkView,
+    comments::{AnchoredComment, build_anchored_comment_value, parse_anchored_comments},
+    native::{
+        app::App,
+        model::{Draft, LineSelection, hash_of},
+        review::diff::{DiffLine, LineKind, insertion_line},
+        theme::{CODE_SIZE, Palette, SMALL_SIZE},
+        widgets,
+    },
+};
+
+const GUTTER_WIDTH: f32 = 74.0;
+const LINE_HEIGHT: f32 = 15.0;
+
+/// One diff line's widget id. Derived from the hunk and the line rather than from the
+/// enclosing `Ui`, so it is the same wherever the line is drawn — which is also what lets the
+/// tests find a line and click it.
+pub(crate) fn diff_line_id(hunk_id: &str, index: usize) -> egui::Id {
+    egui::Id::new(("moonreview-diff-line", hunk_id, index))
+}
+
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    // The payload is shared, so the hunks below are read straight out of it rather than
+    // copied — a diff of a lock file is far too much text to clone every frame.
+    let Some((payload, filter)) = app.model.review_ref(session_id).and_then(|review| {
+        review
+            .payload
+            .as_ref()
+            .map(|payload| (Arc::clone(payload), review.filter()))
+    }) else {
+        return;
+    };
+    let read_only = payload.read_only;
+    let is_commit_review = payload.active_commit.is_some();
+    let preview_limit = payload.patch_preview_line_limit;
+
+    // A review of one clean file has no hunks; it shows the file instead.
+    if app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.full_file.is_some())
+    {
+        draw_full_file(app, ui, session_id, palette);
+        return;
+    }
+
+    let hunks = filter.apply(&payload.hunks);
+    if hunks.is_empty() {
+        draw_empty(app, ui, session_id, palette);
+        return;
+    }
+
+    let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
+    let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
+
+    let scroll_target = app
+        .model
+        .review(session_id)
+        .scroll_to_hunk
+        .take();
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        // Dragging is how lines get selected here, so it must not also mean "scroll" — not
+        // even on a touch screen, where it is the default.
+        .scroll_source(egui::containers::scroll_area::ScrollSource {
+            drag: egui::containers::scroll_area::DragScroll::Never,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            if read_only {
+                draw_section(
+                    app,
+                    ui,
+                    session_id,
+                    if is_commit_review { "commit" } else { "diff" },
+                    &hunks,
+                    read_only,
+                    is_commit_review,
+                    preview_limit,
+                    scroll_target.as_deref(),
+                    palette,
+                );
+                return;
+            }
+
+            draw_section(
+                app,
+                ui,
+                session_id,
+                "unstaged",
+                &unstaged,
+                read_only,
+                is_commit_review,
+                preview_limit,
+                scroll_target.as_deref(),
+                palette,
+            );
+            if !staged.is_empty() {
+                ui.add_space(12.0);
+                draw_section(
+                    app,
+                    ui,
+                    session_id,
+                    "staged",
+                    &staged,
+                    read_only,
+                    is_commit_review,
+                    preview_limit,
+                    scroll_target.as_deref(),
+                    palette,
+                );
+            }
+        });
+
+    finish_line_sweep(app, ui, session_id, &payload.hunks);
+}
+
+/// When the button comes up after a sweep, the run is settled and the composer opens on it.
+fn finish_line_sweep(app: &mut App, ui: &Ui, session_id: &str, hunks: &[HunkView]) {
+    let Some(hunk_id) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.selecting_in.clone())
+    else {
+        return;
+    };
+    if !ui.input(|input| input.pointer.any_released()) {
+        return;
+    }
+    app.model.review(session_id).selecting_in = None;
+
+    let Some(hunk) = hunks.iter().find(|hunk| hunk.id == hunk_id) else {
+        return;
+    };
+    let Some(selection) = current_selection(app, session_id, &hunk_id) else {
+        return;
+    };
+    start_draft(app, session_id, hunk, selection, String::new());
+}
+
+fn draw_empty(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    // Hidden by the reviewed filter rather than genuinely absent is worth saying, because the
+    // fix is a click away.
+    let hiding_reviewed = app.model.review_ref(session_id).is_some_and(|review| {
+        !review.show_reviewed && review.hunks().iter().any(|hunk| hunk.reviewed)
+    });
+
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.3);
+        if hiding_reviewed {
+            ui.label(RichText::new("every hunk here is reviewed").color(palette.ink));
+            ui.add_space(5.0);
+            if ui.button("show reviewed hunks").clicked() {
+                app.model.review(session_id).show_reviewed = true;
+            }
+            return;
+        }
+        ui.label(RichText::new("nothing to review").color(palette.ink));
+        ui.add_space(5.0);
+        ui.label(
+            RichText::new("the working tree is clean")
+                .size(SMALL_SIZE)
+                .color(palette.muted),
+        );
+    });
+}
+
+#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately")]
+fn draw_section(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    title: &str,
+    hunks: &[&HunkView],
+    read_only: bool,
+    is_commit_review: bool,
+    preview_limit: usize,
+    scroll_target: Option<&str>,
+    palette: &Palette,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(title.to_uppercase())
+                .size(SMALL_SIZE - 1.0)
+                .color(palette.muted)
+                .strong(),
+        );
+        ui.label(
+            RichText::new(hunks.len().to_string())
+                .size(SMALL_SIZE - 1.0)
+                .color(palette.muted),
+        );
+    });
+    ui.add_space(4.0);
+
+    if hunks.is_empty() {
+        ui.label(
+            RichText::new(if read_only {
+                "no changes"
+            } else {
+                "everything is staged"
+            })
+            .color(palette.muted),
+        );
+        return;
+    }
+
+    // Hunks arrive grouped by file already; the headings just make that visible.
+    let mut current_file: Option<&str> = None;
+    for hunk in hunks {
+        if current_file != Some(hunk.file_path.as_str()) {
+            current_file = Some(&hunk.file_path);
+            ui.add_space(6.0);
+            draw_file_heading(app, ui, session_id, &hunk.file_path, palette);
+        }
+        draw_hunk_card(
+            app,
+            ui,
+            session_id,
+            hunk,
+            read_only,
+            is_commit_review,
+            preview_limit,
+            scroll_target,
+            palette,
+        );
+        ui.add_space(6.0);
+    }
+}
+
+fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &str, palette: &Palette) {
+    let collapsed = app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.collapsed_files.contains(file_path));
+
+    ui.horizontal(|ui| {
+        let arrow = if collapsed { "\u{23F5}" } else { "\u{23F7}" };
+        if widgets::quiet_button_colored(ui, &format!("{arrow} {file_path}"), palette.ink).clicked() {
+            let review = app.model.review(session_id);
+            if collapsed {
+                review.collapsed_files.remove(file_path);
+            } else {
+                review.collapsed_files.insert(file_path.to_string());
+            }
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately")]
+fn draw_hunk_card(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    read_only: bool,
+    is_commit_review: bool,
+    preview_limit: usize,
+    scroll_target: Option<&str>,
+    palette: &Palette,
+) {
+    if app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.collapsed_files.contains(&hunk.file_path))
+    {
+        return;
+    }
+
+    let is_active = app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.active_hunk_id.as_deref() == Some(hunk.id.as_str()));
+
+    let frame = egui::Frame::new()
+        .fill(palette.code_bg)
+        .stroke(Stroke::new(
+            1.0,
+            if is_active { palette.accent } else { palette.line },
+        ))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(egui::Margin::symmetric(0, 0));
+
+    let response = frame
+        .show(ui, |ui| {
+            draw_hunk_toolbar(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+            if let Some(image) = &hunk.image_diff {
+                draw_image_diff(ui, image, palette);
+                return;
+            }
+            draw_hunk_body(app, ui, session_id, hunk, read_only, preview_limit, palette);
+        })
+        .response;
+
+    // A stripe down the left of the card, so the hunk the keyboard acts on is obvious even
+    // when the pointer has moved on.
+    if is_active {
+        let rect = response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
+            CornerRadius {
+                nw: 5,
+                sw: 5,
+                ne: 0,
+                se: 0,
+            },
+            palette.hunk_active_bg,
+        );
+    }
+
+    if scroll_target == Some(hunk.id.as_str()) {
+        response.scroll_to_me(Some(egui::Align::TOP));
+        app.model.review(session_id).active_hunk_id = Some(hunk.id.clone());
+    }
+
+    // The hunk under the caret is what `s` and `u` act on, so pointing at one selects it.
+    if response.hovered() && !is_active {
+        app.model.review(session_id).active_hunk_id = Some(hunk.id.clone());
+    }
+}
+
+fn draw_hunk_toolbar(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    read_only: bool,
+    is_commit_review: bool,
+    palette: &Palette,
+) {
+    egui::Frame::new()
+        .fill(palette.control_bg)
+        .inner_margin(egui::Margin::symmetric(7, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&hunk.header)
+                        .monospace()
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
+                );
+
+                if hunk.added_line_count > 0 {
+                    ui.label(
+                        RichText::new(format!("+{}", widgets::grouped(hunk.added_line_count)))
+                            .size(SMALL_SIZE)
+                            .color(palette.added),
+                    );
+                }
+                if hunk.removed_line_count > 0 {
+                    ui.label(
+                        RichText::new(format!("−{}", widgets::grouped(hunk.removed_line_count)))
+                            .size(SMALL_SIZE)
+                            .color(palette.removed),
+                    );
+                }
+                if hunk.reviewed {
+                    widgets::pill(ui, "reviewed", palette.accent_2, palette.status_resolved_bg);
+                }
+
+                if let Some(hint) = &hunk.moved_from {
+                    moved_hint(app, ui, session_id, "moved from", hint, palette);
+                }
+                if let Some(hint) = &hunk.moved_to {
+                    moved_hint(app, ui, session_id, "moved to", hint, palette);
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    draw_hunk_actions(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+                });
+            });
+        });
+}
+
+fn moved_hint(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    label: &str,
+    hint: &crate::api::HunkMoveHint,
+    palette: &Palette,
+) {
+    let text = format!("{label} {}", widgets::elide_path(&hint.target_file_path, 26));
+    if widgets::quiet_button_colored(ui, &text, palette.snoozed)
+        .on_hover_text(format!(
+            "{} {}\n{}% similar — click to jump there",
+            hint.target_file_path,
+            hint.target_header,
+            (hint.score * 100.0).round()
+        ))
+        .clicked()
+    {
+        let review = app.model.review(session_id);
+        review.scroll_to_hunk = Some(hint.target_hunk_id.clone());
+    }
+}
+
+fn draw_hunk_actions(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    read_only: bool,
+    is_commit_review: bool,
+    palette: &Palette,
+) {
+    let selection = current_selection(app, session_id, &hunk.id);
+
+    if !read_only {
+        if hunk.staged {
+            if widgets::quiet_button(ui, "unstage").clicked() {
+                let hunk_id = hunk.id.clone();
+                let for_call = session_id.to_string();
+                app.tasks
+                    .act(session_id, "could not unstage the hunk", move |backend| {
+                        backend.unstage_hunk(&for_call, &hunk_id)
+                    });
+            }
+        } else {
+            if widgets::quiet_button(ui, "stage").on_hover_text("stage this hunk (s)").clicked() {
+                let hunk_id = hunk.id.clone();
+                let for_call = session_id.to_string();
+                app.tasks
+                    .act(session_id, "could not stage the hunk", move |backend| {
+                        backend.stage_hunk(&for_call, &hunk_id)
+                    });
+            }
+            if selection.is_some()
+                && widgets::quiet_button(ui, "stage lines")
+                    .on_hover_text("stage only the selected lines")
+                    .clicked()
+                && let Some(selection) = &selection
+            {
+                let hunk_id = hunk.id.clone();
+                let for_call = session_id.to_string();
+                let selection = selection.clone();
+                app.tasks
+                    .act(session_id, "could not stage those lines", move |backend| {
+                        backend.stage_selection(&for_call, &hunk_id, &selection)
+                    });
+            }
+        }
+
+        let discarding = app
+            .model
+            .review_ref(session_id)
+            .is_some_and(|review| review.pending_discard.as_deref() == Some(hunk.id.as_str()));
+        if discarding {
+            if widgets::quiet_button_colored(ui, "really discard", palette.warn)
+                .on_hover_text("this throws the change away and cannot be undone")
+                .clicked()
+            {
+                app.model.review(session_id).pending_discard = None;
+                let hunk_id = hunk.id.clone();
+                let for_call = session_id.to_string();
+                app.tasks
+                    .act(session_id, "could not discard the hunk", move |backend| {
+                        backend.discard_hunk(&for_call, &hunk_id)
+                    });
+            }
+            if widgets::quiet_button(ui, "keep").clicked() {
+                app.model.review(session_id).pending_discard = None;
+            }
+        } else if widgets::quiet_button_colored(ui, "discard", palette.warn).clicked() {
+            // Discarding is destructive and has no undo, so it takes a second press.
+            app.model.review(session_id).pending_discard = Some(hunk.id.clone());
+        }
+    }
+
+    if is_commit_review || read_only {
+        let next = !hunk.reviewed;
+        if widgets::quiet_button(ui, if next { "mark reviewed" } else { "unmark" }).clicked() {
+            let hunk_id = hunk.id.clone();
+            let for_call = session_id.to_string();
+            app.tasks
+                .act(session_id, "could not mark the hunk", move |backend| {
+                    backend.set_reviewed(&for_call, &hunk_id, Some(next))
+                });
+        }
+    }
+
+    if let Some(selection) = selection
+        && widgets::quiet_button(ui, "comment")
+            .on_hover_text("write a comment on the selected lines")
+            .clicked()
+    {
+        start_draft(app, session_id, hunk, selection, String::new());
+    }
+}
+
+/// The raw patch lines the user has selected in this hunk, if any.
+fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<String> {
+    let review = app.model.review_ref(session_id)?;
+    let selection = review.selection?;
+    if selection.hunk_id_hash != hash_of(hunk_id) {
+        return None;
+    }
+    // The lines have to come from the same patch the user was clicking on, which is the
+    // expanded one where the hunk was expanded.
+    let patch = review
+        .expanded_patches
+        .get(hunk_id)
+        .cloned()
+        .or_else(|| {
+            review
+                .hunks()
+                .iter()
+                .find(|hunk| hunk.id == hunk_id)
+                .map(|hunk| hunk.patch_preview.clone())
+        })?;
+
+    let lines = app.diff_lines(hunk_id, &patch);
+    let selected: Vec<&str> = selection
+        .range()
+        .filter_map(|index| lines.get(index))
+        .map(|line| line.text.as_str())
+        .collect();
+    if selected.is_empty() {
+        return None;
+    }
+    Some(selected.join("\n"))
+}
+
+fn start_draft(
+    app: &mut App,
+    session_id: &str,
+    hunk: &HunkView,
+    selection: String,
+    note: String,
+) {
+    // Focus only when the composer is new: re-focusing on every extend would fight the
+    // keyboard while the user is still choosing lines.
+    let focus = note.is_empty();
+    app.model.review(session_id).draft = Some(Draft {
+        hunk_id: hunk.id.clone(),
+        file_path: hunk.file_path.clone(),
+        header: hunk.header.clone(),
+        selection,
+        note,
+        focus,
+    });
+}
+
+fn draw_image_diff(ui: &mut Ui, image: &crate::api::ImageDiffView, palette: &Palette) {
+    ui.horizontal(|ui| {
+        for (label, source) in [("before", &image.before_src), ("after", &image.after_src)] {
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(label)
+                        .size(SMALL_SIZE - 1.0)
+                        .color(palette.muted),
+                );
+                match source {
+                    Some(source) => {
+                        ui.add(
+                            egui::Image::new(source.clone())
+                                .max_size(vec2(320.0, 320.0))
+                                .maintain_aspect_ratio(true),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new(if label == "before" {
+                                "(added)"
+                            } else {
+                                "(deleted)"
+                            })
+                            .color(palette.muted),
+                        );
+                    }
+                }
+            });
+            ui.add_space(10.0);
+        }
+    });
+}
+
+fn draw_hunk_body(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    read_only: bool,
+    preview_limit: usize,
+    palette: &Palette,
+) {
+    // The server sends a preview; the whole patch is fetched only if asked for.
+    let full_patch = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.expanded_patches.get(&hunk.id))
+        .cloned();
+    let patch = full_patch.clone().unwrap_or_else(|| hunk.patch_preview.clone());
+    let lines = app.diff_lines(&hunk.id, &patch);
+
+    let anchored = parse_anchored_comments(&hunk.comment);
+    let mut comment_at: Vec<(usize, usize)> = Vec::new();
+    let mut used = Vec::new();
+    for (index, entry) in anchored.iter().enumerate() {
+        if let Some(at) = insertion_line(&lines, &entry.selection, &used) {
+            used.push(at);
+            comment_at.push((at, index));
+        }
+    }
+    comment_at.sort_unstable();
+
+    // The composer goes below the last selected line, so the run it is about stays together
+    // above it. A saved comment is placed by matching its text, because by then the lines it
+    // was written against may have moved; a draft still knows exactly which lines they are.
+    let draft_at = app.model.review_ref(session_id).and_then(|review| {
+        let draft = review.draft.as_ref().filter(|draft| draft.hunk_id == hunk.id)?;
+        review
+            .selection
+            .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id))
+            .map(|selection| *selection.range().end())
+            .or_else(|| insertion_line(&lines, &draft.selection, &used))
+    });
+
+    for (index, line) in lines.iter().enumerate() {
+        // Hidden lines still count: a selection is matched against the raw patch text, so
+        // the indices have to stay in step with it.
+        if line.is_chrome() {
+            continue;
+        }
+        draw_diff_line(app, ui, session_id, hunk, index, line, palette);
+
+        for (_, comment_index) in comment_at.iter().filter(|(at, _)| *at == index) {
+            if let Some(entry) = anchored.get(*comment_index) {
+                draw_inline_comment(app, ui, session_id, hunk, *comment_index, entry, palette);
+            }
+        }
+        if draft_at == Some(index) {
+            draw_composer(app, ui, session_id, hunk, read_only, palette);
+        }
+    }
+
+    // A draft anchored to lines the preview does not contain still has to be reachable.
+    if draft_at.is_none()
+        && app
+            .model
+            .review_ref(session_id)
+            .and_then(|review| review.draft.as_ref())
+            .is_some_and(|draft| draft.hunk_id == hunk.id)
+    {
+        draw_composer(app, ui, session_id, hunk, read_only, palette);
+    }
+
+    if hunk.patch_line_count > preview_limit && full_patch.is_none() {
+        draw_truncation_notice(app, ui, session_id, hunk, preview_limit, palette);
+    }
+}
+
+fn draw_truncation_notice(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    preview_limit: usize,
+    palette: &Palette,
+) {
+    let hidden = hunk.patch_line_count.saturating_sub(preview_limit);
+    egui::Frame::new()
+        .fill(palette.control_active_bg)
+        .inner_margin(egui::Margin::symmetric(7, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} more lines", widgets::grouped(hidden)))
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
+                );
+                let busy = app.tasks.is_busy(&format!("patch:{}", hunk.id));
+                if ui
+                    .add_enabled(!busy, egui::Button::new(if busy {
+                        "loading…"
+                    } else {
+                        "show the whole hunk"
+                    }))
+                    .clicked()
+                {
+                    load_full_patch(app, session_id, &hunk.id);
+                }
+            });
+        });
+}
+
+fn load_full_patch(app: &mut App, session_id: &str, hunk_id: &str) {
+    let for_call = session_id.to_string();
+    let for_apply = session_id.to_string();
+    let hunk_id = hunk_id.to_string();
+    let for_state = hunk_id.clone();
+
+    app.tasks.spawn_keyed(
+        Some(format!("patch:{hunk_id}")),
+        move |backend| backend.hunk_patch(&for_call, &hunk_id),
+        move |model, result| match result {
+            Ok(payload) => {
+                model
+                    .review(&for_apply)
+                    .expanded_patches
+                    .insert(for_state, payload.patch);
+            }
+            Err(error) => model.error(format!("could not load the hunk: {error}")),
+        },
+    );
+}
+
+fn draw_diff_line(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    index: usize,
+    line: &DiffLine,
+    palette: &Palette,
+) {
+    let width = ui.available_width();
+    let selectable = line.kind.commentable();
+    // Claim the row's space without registering anything for it. A diff of `Cargo.lock` is
+    // tens of thousands of rows, and neither laying out text nor hit-testing a row that is
+    // scrolled out of sight is work worth doing.
+    let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_HEIGHT), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
+    let response = ui.interact(
+        rect,
+        diff_line_id(&hunk.id, index),
+        if selectable {
+            // Dragging is how a run of lines gets picked, the same gesture as sweeping over
+            // text in the web frontend.
+            Sense::click_and_drag()
+        } else {
+            Sense::hover()
+        },
+    );
+
+    let selected = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.selection)
+        .is_some_and(|selection| {
+            selection.hunk_id_hash == hash_of(&hunk.id) && selection.contains(index)
+        });
+
+    // Added and removed lines keep their own tint, and a selected one is tinted again on top
+    // of it — so a selected removal still reads as a removal.
+    if let Some(background) = palette.diff_line_bg(line.kind.prefix()) {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, background);
+    }
+    if selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, palette.line_target_bg);
+        // A solid bar down the left edge: the tint alone is easy to miss against a diff that
+        // is already coloured.
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, vec2(2.5, rect.height())),
+            CornerRadius::ZERO,
+            palette.accent,
+        );
+    }
+    if response.hovered() && selectable && !selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, palette.diff_gutter_bg);
+    }
+
+    draw_gutter(ui, rect, line, palette);
+    draw_line_text(ui, rect, line, palette);
+
+    if !selectable {
+        return;
+    }
+
+    // A drag sweeps a run of lines. It starts on the line pressed, and every line the pointer
+    // passes over extends it — the drag belongs to the line it began on, so each other line
+    // has to notice the pointer itself rather than wait for an event it will never get.
+    let hunk_hash = hash_of(&hunk.id);
+    if response.drag_started() {
+        let review = app.model.review(session_id);
+        review.selection = Some(LineSelection {
+            hunk_id_hash: hunk_hash,
+            anchor: index,
+            head: index,
+        });
+        review.selecting_in = Some(hunk.id.clone());
+        review.active_hunk_id = Some(hunk.id.clone());
+        // The composer waits for the button to come up: opening it mid-sweep would take the
+        // keyboard away while lines are still being chosen.
+        review.draft = None;
+        return;
+    }
+
+    let sweeping_here = app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.selecting_in.as_deref() == Some(hunk.id.as_str()));
+    if sweeping_here {
+        let pointer_here = ui
+            .input(|input| input.pointer.interact_pos())
+            .is_some_and(|at| rect.y_range().contains(at.y));
+        if pointer_here {
+            let review = app.model.review(session_id);
+            if let Some(existing) = review.selection
+                && existing.hunk_id_hash == hunk_hash
+                && existing.head != index
+            {
+                review.selection = Some(LineSelection {
+                    hunk_id_hash: hunk_hash,
+                    anchor: existing.anchor,
+                    head: index,
+                });
+            }
+        }
+        return;
+    }
+
+    if !response.clicked() {
+        return;
+    }
+
+    // Selecting lines and writing a comment are one gesture, the way dragging over text in
+    // the web frontend pops its composer: a click selects and opens the composer at once.
+    let extend = ui.input(|input| input.modifiers.shift);
+    let hunk_hash = hash_of(&hunk.id);
+    let review = app.model.review(session_id);
+    let next = match review.selection {
+        // Shift-click grows the run, which is how a multi-line comment gets its anchor.
+        Some(existing) if extend && existing.hunk_id_hash == hunk_hash => Some(LineSelection {
+            hunk_id_hash: hunk_hash,
+            anchor: existing.anchor,
+            head: index,
+        }),
+        Some(existing)
+            if existing.hunk_id_hash == hunk_hash
+                && existing.anchor == index
+                && existing.head == index =>
+        {
+            // Clicking the one selected line again puts the composer away.
+            None
+        }
+        _ => Some(LineSelection {
+            hunk_id_hash: hunk_hash,
+            anchor: index,
+            head: index,
+        }),
+    };
+    review.selection = next;
+    review.active_hunk_id = Some(hunk.id.clone());
+
+    if next.is_none() {
+        app.model.review(session_id).draft = None;
+        return;
+    }
+
+    let Some(selection) = current_selection(app, session_id, &hunk.id) else {
+        return;
+    };
+    // Extending a run keeps whatever has already been typed.
+    let existing_note = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.draft.as_ref())
+        .filter(|draft| draft.hunk_id == hunk.id)
+        .map(|draft| draft.note.clone())
+        .unwrap_or_default();
+    start_draft(app, session_id, hunk, selection, existing_note);
+}
+
+fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
+    let painter = ui.painter();
+    painter.rect_filled(
+        egui::Rect::from_min_size(rect.min, vec2(GUTTER_WIDTH, rect.height())),
+        CornerRadius::ZERO,
+        palette.diff_gutter_bg,
+    );
+    painter.vline(
+        rect.min.x + GUTTER_WIDTH,
+        rect.y_range(),
+        Stroke::new(1.0, palette.diff_gutter_line),
+    );
+
+    let font = egui::FontId::monospace(CODE_SIZE - 1.0);
+    let number = |value: Option<usize>| {
+        value
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    };
+    painter.text(
+        egui::pos2(rect.min.x + 32.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        number(line.old_line_number),
+        font.clone(),
+        palette.muted,
+    );
+    painter.text(
+        egui::pos2(rect.min.x + 66.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        number(line.new_line_number),
+        font,
+        palette.muted,
+    );
+}
+
+fn draw_line_text(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
+    let font = egui::FontId::monospace(CODE_SIZE);
+    let ink = match line.kind {
+        LineKind::Header => palette.accent_2,
+        LineKind::Other => palette.muted,
+        _ => palette.diff_line_ink(line.kind.prefix()),
+    };
+    let text_origin = egui::pos2(rect.min.x + GUTTER_WIDTH + 6.0, rect.center().y);
+
+    // The prefix column stays fixed so code lines up whatever the change is.
+    let prefix = match line.kind {
+        LineKind::Added => "+",
+        LineKind::Removed => "-",
+        LineKind::Context => " ",
+        _ => "",
+    };
+    if !prefix.is_empty() {
+        ui.painter().text(
+            text_origin,
+            Align2::LEFT_CENTER,
+            prefix,
+            font.clone(),
+            ink,
+        );
+    }
+
+    let body_origin = egui::pos2(
+        text_origin.x + if prefix.is_empty() { 0.0 } else { 9.0 },
+        text_origin.y,
+    );
+
+    let Some(words) = &line.words else {
+        ui.painter().text(
+            body_origin,
+            Align2::LEFT_CENTER,
+            line.body(),
+            font,
+            ink,
+        );
+        return;
+    };
+
+    // Word-level runs: the parts that actually changed get a tinted background so an edited
+    // line reads as an edit rather than a wholesale replacement.
+    let changed_bg = match line.kind {
+        LineKind::Added => palette.added_word_bg,
+        _ => palette.removed_word_bg,
+    };
+    let mut x = body_origin.x;
+    for part in words {
+        let galley = ui.painter().layout_no_wrap(part.text.clone(), font.clone(), ink);
+        let size = galley.size();
+        if part.changed {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(x, rect.min.y + 1.0),
+                    vec2(size.x, rect.height() - 2.0),
+                ),
+                CornerRadius::same(2),
+                changed_bg,
+            );
+        }
+        ui.painter()
+            .galley(egui::pos2(x, rect.center().y - size.y / 2.0), galley, ink);
+        x += size.x;
+    }
+}
+
+fn draw_inline_comment(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    comment_index: usize,
+    entry: &AnchoredComment,
+    palette: &Palette,
+) {
+    let dispatch = hunk.comment_dispatches.get(comment_index).cloned();
+
+    egui::Frame::new()
+        .fill(palette.inline_comment_bg)
+        .stroke(Stroke::new(1.0, palette.inline_comment_border))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .outer_margin(egui::Margin {
+            left: GUTTER_WIDTH as i8 + 6,
+            right: 6,
+            top: 3,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(if entry.resolved { "resolved" } else { "comment" })
+                        .size(SMALL_SIZE - 1.0)
+                        .color(if entry.resolved {
+                            palette.accent_2
+                        } else {
+                            palette.accent
+                        }),
+                );
+
+                if let Some(dispatch) = &dispatch
+                    && dispatch.status != crate::api::CommentDispatchStatus::Idle
+                {
+                    let label = format!("{} · {}", dispatch.agent.label(), dispatch.detail);
+                    let label = label.trim_end_matches(" · ");
+                    if dispatch.status == crate::api::CommentDispatchStatus::Batched {
+                        widgets::pill(ui, label, palette.ink, palette.batch_bg);
+                    } else {
+                        ui.label(
+                            RichText::new(label)
+                                .size(SMALL_SIZE - 1.0)
+                                .color(palette.muted),
+                        );
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(dispatch) = &dispatch {
+                        if dispatch.can_cancel && widgets::quiet_button(ui, "cancel").clicked() {
+                            let hunk_id = hunk.id.clone();
+                            let for_call = session_id.to_string();
+                            app.tasks.act(
+                                session_id,
+                                "could not cancel the run",
+                                move |backend| {
+                                    backend.cancel_dispatch(&for_call, &hunk_id, comment_index)
+                                },
+                            );
+                        }
+                        if dispatch.has_log && widgets::quiet_button(ui, "log").clicked() {
+                            open_dispatch_log(app, session_id, &dispatch.key);
+                        }
+                    }
+                    if !entry.resolved && widgets::quiet_button(ui, "resolve").clicked() {
+                        let hunk_id = hunk.id.clone();
+                        let for_call = session_id.to_string();
+                        app.tasks.act(
+                            session_id,
+                            "could not resolve the comment",
+                            move |backend| {
+                                backend.resolve_comment(&for_call, &hunk_id, comment_index)
+                            },
+                        );
+                    }
+                    if widgets::quiet_button_colored(ui, "delete", palette.warn).clicked() {
+                        delete_comment(app, session_id, hunk, comment_index);
+                    }
+                });
+            });
+
+            ui.label(RichText::new(&entry.comment).color(palette.ink));
+        });
+}
+
+fn delete_comment(app: &mut App, session_id: &str, hunk: &HunkView, comment_index: usize) {
+    let mut anchored = parse_anchored_comments(&hunk.comment);
+    if comment_index >= anchored.len() {
+        return;
+    }
+    anchored.remove(comment_index);
+    let comment = build_anchored_comment_value(&anchored);
+
+    let hunk_id = hunk.id.clone();
+    let for_call = session_id.to_string();
+    app.tasks
+        .act(session_id, "could not delete the comment", move |backend| {
+            backend.set_comment(
+                &for_call,
+                crate::api::CommentRequest {
+                    hunk_id,
+                    comment,
+                    batch: false,
+                },
+            )
+        });
+}
+
+fn open_dispatch_log(app: &mut App, session_id: &str, dispatch_key: &str) {
+    let for_call = session_id.to_string();
+    let dispatch_key = dispatch_key.to_string();
+    app.tasks.spawn(
+        move |backend| backend.dispatch_log(&for_call, &dispatch_key),
+        |model, result| match result {
+            Ok(payload) => model.set_agent_log(payload),
+            Err(error) => model.error(format!("could not read the agent log: {error}")),
+        },
+    );
+}
+
+fn draw_composer(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    read_only: bool,
+    palette: &Palette,
+) {
+    let Some(mut draft) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.draft.clone())
+        .filter(|draft| draft.hunk_id == hunk.id)
+    else {
+        return;
+    };
+    let agent = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.payload.as_ref())
+        .map(|payload| payload.selected_agent)
+        .unwrap_or_default();
+
+    let mut send = false;
+    let mut batch = false;
+    let mut cancel = false;
+
+    egui::Frame::new()
+        .fill(palette.composer_bg)
+        .stroke(Stroke::new(1.0, palette.accent))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .outer_margin(egui::Margin {
+            left: GUTTER_WIDTH as i8 + 6,
+            right: 6,
+            top: 3,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            let line_count = draft.selection.lines().count();
+            ui.label(
+                RichText::new(format!(
+                    "{} {} · {line_count} line{}",
+                    draft.file_path,
+                    draft.header,
+                    if line_count == 1 { "" } else { "s" }
+                ))
+                .size(SMALL_SIZE - 1.0)
+                .color(palette.muted),
+            );
+
+            let entry = ui.add(
+                egui::TextEdit::multiline(&mut draft.note)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("what should change here?"),
+            );
+            if draft.focus {
+                entry.request_focus();
+                draft.focus = false;
+            }
+
+            // ⌘⏎ sends without reaching for the mouse, which is how these get written.
+            if entry.has_focus()
+                && ui.input(|input| input.key_pressed(Key::Enter) && input.modifiers.command)
+            {
+                send = true;
+            }
+            if ui.input(|input| input.key_pressed(Key::Escape)) {
+                cancel = true;
+            }
+
+            ui.horizontal(|ui| {
+                let ready = !draft.note.trim().is_empty();
+                let has_agent = agent != crate::api::AgentKind::None;
+
+                // Saving a comment with an agent selected hands it over there and then; that
+                // is what the server does, so the button has to say so.
+                let (label, hint) = if has_agent {
+                    (
+                        format!("send to {}", agent.label()),
+                        "write this comment and hand it over now (⌘⏎)",
+                    )
+                } else {
+                    (
+                        "save".to_string(),
+                        "keep the comment in the review (⌘⏎)",
+                    )
+                };
+                if ui
+                    .add_enabled(ready, egui::Button::new(label))
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    send = true;
+                }
+
+                // The other path holds the comment back so a batch of them can go at once.
+                if has_agent
+                    && ui
+                        .add_enabled(ready, egui::Button::new("hold for batch"))
+                        .on_hover_text("keep it back, to send with the others from the header")
+                        .clicked()
+                {
+                    batch = true;
+                }
+                if ui.button("cancel").clicked() {
+                    cancel = true;
+                }
+            });
+            let _ = read_only;
+        });
+
+    if cancel {
+        app.model.review(session_id).draft = None;
+        return;
+    }
+
+    if !send && !batch {
+        app.model.review(session_id).draft = Some(draft);
+        return;
+    }
+    if draft.note.trim().is_empty() {
+        app.model.review(session_id).draft = Some(draft);
+        return;
+    }
+
+    // A saved comment joins the ones already on the hunk rather than replacing them.
+    let mut anchored = parse_anchored_comments(&hunk.comment);
+    anchored.push(AnchoredComment {
+        selection: draft.selection.clone(),
+        comment: draft.note.trim().to_string(),
+        resolved: false,
+    });
+    let comment = build_anchored_comment_value(&anchored);
+
+    app.model.review(session_id).draft = None;
+    app.model.review(session_id).selection = None;
+
+    let hunk_id = hunk.id.clone();
+    let for_call = session_id.to_string();
+    app.tasks
+        .act(session_id, "could not save the comment", move |backend| {
+            backend.set_comment(
+                &for_call,
+                crate::api::CommentRequest {
+                    hunk_id,
+                    comment,
+                    batch,
+                },
+            )
+        });
+}
+
+fn draw_full_file(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    let Some(view) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.full_file.as_ref())
+    else {
+        return;
+    };
+    let file_path = view.file_path.clone();
+    let content = view.content.clone();
+    let error = view.error.clone();
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(&file_path).strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::quiet_button(ui, "close").clicked() {
+                app.model.review(session_id).full_file = None;
+            }
+        });
+    });
+    widgets::divider(ui, palette);
+    ui.add_space(4.0);
+
+    egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if let Some(error) = error {
+                ui.label(RichText::new(error).color(palette.warn));
+                return;
+            }
+            let Some(content) = content else {
+                ui.spinner();
+                return;
+            };
+
+            for (index, line) in content.lines().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{:>5}", index + 1))
+                            .monospace()
+                            .size(CODE_SIZE - 1.0)
+                            .color(palette.muted),
+                    );
+                    ui.label(
+                        RichText::new(line)
+                            .monospace()
+                            .size(CODE_SIZE)
+                            .color(palette.ink),
+                    );
+                });
+            }
+        });
+}
+
+impl App {
+    /// Show a whole file rather than a diff, which is what a review of one clean file is.
+    pub(crate) fn open_full_file(&mut self, session_id: &str, file_path: &str) {
+        self.model.review(session_id).full_file = Some(crate::native::model::FullFileView {
+            file_path: file_path.to_string(),
+            content: None,
+            error: None,
+        });
+
+        let for_call = session_id.to_string();
+        let for_apply = session_id.to_string();
+        let path = file_path.to_string();
+        self.tasks.spawn(
+            move |backend| backend.file_content(&for_call, &path),
+            move |model, result| {
+                let review = model.review(&for_apply);
+                let Some(view) = review.full_file.as_mut() else {
+                    return;
+                };
+                match result {
+                    Ok(payload) => view.content = Some(payload.content),
+                    Err(error) => view.error = Some(format!("{error}")),
+                }
+            },
+        );
+    }
+}

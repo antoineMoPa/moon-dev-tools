@@ -58,7 +58,7 @@ fn login_shell() -> String {
 
 /// A shell that lives in the server, not in the browser tab: closing the tab detaches
 /// the websocket while the pty keeps running, so reopening it resumes the same shell.
-struct TerminalSession {
+pub(crate) struct TerminalSession {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
@@ -69,6 +69,27 @@ struct TerminalSession {
     scrollback: Mutex<Scrollback>,
     /// Typing in a shell, and a shell printing output, both keep the server from idling out.
     last_activity: Arc<Mutex<Instant>>,
+}
+
+impl TerminalSession {
+    // The native window drives a pty directly; a web tab goes through the websocket.
+    #[cfg(feature = "native")]
+    pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
+        crate::api::mark_activity(&self.last_activity);
+        self.writer.lock().unwrap().write_all(data)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        self.master.lock().unwrap().resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+        Ok(())
+    }
 }
 
 /// Output chunks kept for replay, oldest dropped once the byte budget is spent.
@@ -111,13 +132,51 @@ impl TerminalRegistry {
         self.sessions.lock().unwrap().get(terminal_id).cloned()
     }
 
+    /// Attach the native window to a shell: everything it has printed so far, then
+    /// everything it prints from here on, delivered to whichever thread owns the
+    /// terminal emulator. Web tabs attach to the same shell over a websocket.
+    #[cfg(feature = "native")]
+    pub(crate) fn attach(
+        &self,
+        terminal_id: &str,
+    ) -> anyhow::Result<(std::sync::mpsc::Receiver<Vec<u8>>, Arc<TerminalSession>)> {
+        let session = self
+            .get(terminal_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
+        // Subscribe before replaying so nothing written in between is lost.
+        let mut output = session.output.subscribe();
+        let replay = session.scrollback.lock().unwrap().replay();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        if !replay.is_empty() {
+            let _ = sender.send(replay);
+        }
+
+        std::thread::spawn(move || {
+            loop {
+                match output.blocking_recv() {
+                    Ok(chunk) => {
+                        if sender.send(chunk).is_err() {
+                            return;
+                        }
+                    }
+                    // Lagged: the window fell behind, keep going with what follows.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+
+        Ok((receiver, session))
+    }
+
     pub(crate) fn terminal_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
         ids.sort();
         ids
     }
 
-    fn remove(&self, terminal_id: &str) {
+    pub(crate) fn remove(&self, terminal_id: &str) {
         let removed = self.sessions.lock().unwrap().remove(terminal_id);
         let Some(session) = removed else {
             return;
@@ -127,7 +186,7 @@ impl TerminalRegistry {
         let _ = child.wait();
     }
 
-    fn spawn(
+    pub(crate) fn spawn(
         self: &Arc<Self>,
         repo_path: &Path,
         program: Option<AgentKind>,

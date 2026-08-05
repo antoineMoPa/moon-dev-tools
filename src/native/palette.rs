@@ -1,0 +1,316 @@
+//! The command palette: everything the workspace can open, searchable.
+//!
+//! The command set mirrors `web/src/components/workspace/commands.ts` so ⌘⇧P offers the
+//! same things in both frontends.
+
+use egui::{Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind, vec2};
+
+use crate::{
+    api::AgentKind,
+    native::{
+        app::App,
+        layout::{OpenPaneRequest, PaneKind},
+        theme::{Palette, SMALL_SIZE},
+    },
+};
+
+pub(crate) struct Command {
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) action: CommandAction,
+}
+
+/// What running a command does. Most open a pane; the rest are the window's own actions,
+/// which on macOS also sit in the menu bar.
+#[derive(Clone)]
+pub(crate) enum CommandAction {
+    OpenPane(OpenPaneRequest),
+    OpenInBrowser,
+    ToggleTheme,
+    ShowShortcuts,
+}
+
+/// The agents that get a "open X in a terminal" command, when they are installed.
+const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
+    (AgentKind::OpenCode, "opencode", "Open OpenCode in a terminal"),
+    (AgentKind::Claude, "claude", "Open Claude in a terminal"),
+    (AgentKind::Codex, "codex", "Open Codex in a terminal"),
+];
+
+pub(crate) fn commands_for(app: &App) -> Vec<Command> {
+    let mut commands = Vec::new();
+    let root = app.model.root_session_id.clone();
+
+    if app.model.layout.find_review_pane(&root).is_none() {
+        commands.push(Command {
+            title: "review".to_string(),
+            description: "Open the main review".to_string(),
+            action: CommandAction::OpenPane(OpenPaneRequest::Review {
+                session_id: root.clone(),
+                title: "review".to_string(),
+            }),
+        });
+    }
+    if app.model.layout.find_pane_of_kind(PaneKind::Agents).is_none() {
+        commands.push(Command {
+            title: "comment agents".to_string(),
+            description: "Open the comment agent monitor".to_string(),
+            action: CommandAction::OpenPane(OpenPaneRequest::Agents),
+        });
+    }
+    commands.push(Command {
+        title: "terminal".to_string(),
+        description: "Open a new shell".to_string(),
+        action: CommandAction::OpenPane(OpenPaneRequest::Terminal { command: None }),
+    });
+
+    // The window's own actions. On macOS these are in the menu bar too; here is where every
+    // platform can reach them.
+    if app.serves_web {
+        commands.push(Command {
+            title: "open in browser".to_string(),
+            description: "Open this review in a browser".to_string(),
+            action: CommandAction::OpenInBrowser,
+        });
+    }
+    commands.push(Command {
+        title: format!("switch to {}", app.model.theme.toggled().label()),
+        description: "Change between the light and dark palette".to_string(),
+        action: CommandAction::ToggleTheme,
+    });
+    commands.push(Command {
+        title: "keyboard shortcuts".to_string(),
+        description: "List what the keyboard does".to_string(),
+        action: CommandAction::ShowShortcuts,
+    });
+
+    // Changed submodules are further reviews the user can open beside this one.
+    for submodule in &app.model.submodules {
+        commands.push(Command {
+            title: submodule.name.clone(),
+            description: format!("Review the changed submodule at {}", submodule.repo_path),
+            action: CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
+                repo_path: submodule.repo_path.clone(),
+                title: submodule.name.clone(),
+            }),
+        });
+    }
+
+    let available: Vec<AgentKind> = app
+        .model
+        .review_ref(&root)
+        .and_then(|review| review.payload.as_ref())
+        .map(|payload| {
+            payload
+                .available_agents
+                .iter()
+                .filter(|agent| agent.available)
+                .map(|agent| agent.kind)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for (kind, title, description) in AGENT_COMMANDS {
+        if available.contains(kind) {
+            commands.push(Command {
+                title: (*title).to_string(),
+                description: (*description).to_string(),
+                action: CommandAction::OpenPane(OpenPaneRequest::Terminal {
+                    command: Some(*kind),
+                }),
+            });
+        }
+    }
+
+    commands
+}
+
+/// Every typed term has to appear somewhere in the title or description, which makes
+/// "term cl" find the Claude terminal.
+pub(crate) fn filter(commands: Vec<Command>, query: &str) -> Vec<Command> {
+    let terms: Vec<String> = query
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect();
+    if terms.is_empty() {
+        return commands;
+    }
+
+    commands
+        .into_iter()
+        .filter(|command| {
+            let searchable = format!("{} {}", command.title, command.description).to_lowercase();
+            terms.iter().all(|term| searchable.contains(term))
+        })
+        .collect()
+}
+
+pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
+    if !app.model.palette.open {
+        return;
+    }
+    let palette = app.palette_of();
+    let matches = filter(commands_for(app), &app.model.palette.query);
+
+    let (dismiss, move_down, move_up, accept) = ctx.input_mut(|input| {
+        (
+            input.key_pressed(Key::Escape),
+            input.key_pressed(Key::ArrowDown),
+            input.key_pressed(Key::ArrowUp),
+            input.key_pressed(Key::Enter),
+        )
+    });
+
+    if dismiss {
+        app.model.palette.open = false;
+        return;
+    }
+    if !matches.is_empty() {
+        let last = matches.len() - 1;
+        if move_down {
+            app.model.palette.highlighted = (app.model.palette.highlighted + 1).min(last);
+        }
+        if move_up {
+            app.model.palette.highlighted = app.model.palette.highlighted.saturating_sub(1);
+        }
+        app.model.palette.highlighted = app.model.palette.highlighted.min(last);
+    }
+
+    let mut chosen: Option<usize> = None;
+    if accept && !matches.is_empty() {
+        chosen = Some(app.model.palette.highlighted);
+    }
+
+    let screen = ctx.viewport_rect();
+    egui::Area::new("moonreview-palette".into())
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_TOP, vec2(0.0, screen.height() * 0.12))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(palette.panel)
+                .stroke(Stroke::new(1.0, palette.line))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(egui::Margin::same(9))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 10],
+                    blur: 28,
+                    spread: 0,
+                    color: Color32::from_black_alpha(60),
+                })
+                .show(ui, |ui| {
+                    ui.set_width((screen.width() * 0.5).clamp(360.0, 560.0));
+
+                    let entry = ui.add(
+                        egui::TextEdit::singleline(&mut app.model.palette.query)
+                            .hint_text("open a pane…")
+                            .desired_width(f32::INFINITY)
+                            .margin(egui::Margin::symmetric(7, 5)),
+                    );
+                    entry.request_focus();
+
+                    ui.add_space(6.0);
+                    if matches.is_empty() {
+                        ui.label(RichText::new("nothing matches").color(palette.muted));
+                        return;
+                    }
+
+                    for (index, command) in matches.iter().enumerate() {
+                        let highlighted = index == app.model.palette.highlighted;
+                        let row = draw_row(ui, command, highlighted, &palette);
+                        if row.clicked() {
+                            chosen = Some(index);
+                        }
+                        if row.hovered() {
+                            app.model.palette.highlighted = index;
+                        }
+                    }
+                });
+        });
+
+    if let Some(index) = chosen
+        && let Some(command) = matches.into_iter().nth(index)
+    {
+        app.model.palette.open = false;
+        app.pending_action = Some(command.action);
+    }
+}
+
+fn draw_row(
+    ui: &mut egui::Ui,
+    command: &Command,
+    highlighted: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 34.0), egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        if highlighted {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(5), palette.control_active_bg);
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(5),
+                Stroke::new(1.0, palette.accent),
+                StrokeKind::Inside,
+            );
+        }
+        ui.painter().text(
+            rect.min + vec2(9.0, 5.0),
+            Align2::LEFT_TOP,
+            &command.title,
+            egui::FontId::proportional(crate::native::theme::UI_SIZE),
+            palette.ink,
+        );
+        ui.painter().text(
+            rect.min + vec2(9.0, 19.0),
+            Align2::LEFT_TOP,
+            &command.description,
+            egui::FontId::proportional(SMALL_SIZE - 1.0),
+            palette.muted,
+        );
+    }
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(title: &str, description: &str) -> Command {
+        Command {
+            title: title.to_string(),
+            description: description.to_string(),
+            action: CommandAction::OpenPane(OpenPaneRequest::Agents),
+        }
+    }
+
+    #[test]
+    fn an_empty_query_keeps_every_command() {
+        let commands = vec![command("review", "Open the main review"), command("terminal", "Open a new shell")];
+
+        assert_eq!(filter(commands, "  ").len(), 2);
+    }
+
+    #[test]
+    fn every_term_has_to_match_somewhere() {
+        let commands = vec![
+            command("terminal", "Open a new shell"),
+            command("claude", "Open Claude in a terminal"),
+        ];
+
+        let matches = filter(commands, "term cl");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].title, "claude");
+    }
+
+    #[test]
+    fn matching_is_case_insensitive_and_searches_descriptions() {
+        let commands = vec![command("comment agents", "Open the comment agent monitor")];
+
+        assert_eq!(filter(commands, "MONITOR").len(), 1);
+    }
+}

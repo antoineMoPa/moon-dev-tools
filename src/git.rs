@@ -1507,7 +1507,7 @@ pub(crate) fn agent_options(
     .into_iter()
     .map(|(kind, label)| crate::api::AgentOption {
         kind,
-        label,
+        label: label.to_string(),
         available: agent_is_available(availability, kind),
     })
     .collect()
