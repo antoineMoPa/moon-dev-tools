@@ -1626,3 +1626,104 @@ fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
     );
 }
 
+
+/// The sidebar's staging dot is also the control for it, the way the web sidebar's status
+/// badge is: one click stages the whole file, the next one takes it back out of the index.
+#[test]
+fn clicking_a_file_staging_dot_stages_the_whole_file() {
+    let fixture = seeded_fixture("stage-dot");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+
+    /// What the file's hunks say about the index, read from inside the UI closure.
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+    struct Staging {
+        hunks: usize,
+        staged: usize,
+    }
+
+    let staging = Arc::new(Mutex::new(Staging::default()));
+    let staging_in_ui = Arc::clone(&staging);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let Some(review) = app.model.review_ref(&app.model.root_session_id) else {
+                return;
+            };
+            let of_file = review
+                .hunks()
+                .iter()
+                .filter(|hunk| hunk.file_path == "src/lib.rs")
+                .fold(Staging::default(), |mut seen, hunk| {
+                    seen.hunks += 1;
+                    seen.staged += usize::from(hunk.staged);
+                    seen
+                });
+            *staging_in_ui.lock().expect("poisoned") = of_file;
+            ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the review never loaded");
+    harness.run_steps(2);
+
+    let before = *staging.lock().expect("poisoned");
+    assert!(before.hunks > 0, "the fixture edits src/lib.rs");
+    assert_eq!(before.staged, 0, "the fixture's edits start unstaged");
+
+    let dot = harness
+        .ctx
+        .read_response(crate::native::review::sidebar::stage_dot_id("src/lib.rs"))
+        .expect("expected the file row's staging dot to have been drawn")
+        .rect;
+    click_at(&mut harness, dot.center());
+
+    // Staging runs on a worker thread and the review is refetched after it, so the model
+    // catches up over the next few frames rather than on the click itself.
+    let all_staged = settle(&mut harness, || {
+        let seen = *staging.lock().expect("poisoned");
+        seen.hunks > 0 && seen.staged == seen.hunks
+    });
+    assert!(
+        all_staged,
+        "clicking the dot should have staged every hunk of the file, saw {:?}",
+        *staging.lock().expect("poisoned")
+    );
+
+    // The dot now reads staged, so the same click has to be the way back out.
+    click_at(&mut harness, dot.center());
+    let all_unstaged = settle(&mut harness, || {
+        let seen = *staging.lock().expect("poisoned");
+        seen.hunks > 0 && seen.staged == 0
+    });
+    assert!(
+        all_unstaged,
+        "clicking the dot again should have unstaged the file, saw {:?}",
+        *staging.lock().expect("poisoned")
+    );
+}
+
+/// Step frames until the condition holds, which is how a background task's result is waited on.
+fn settle(harness: &mut Harness<'_>, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        harness.step();
+        if done() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}

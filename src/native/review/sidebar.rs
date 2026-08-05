@@ -21,6 +21,11 @@ use crate::{
 /// One line, the same for every file in the list.
 const ROW_HEIGHT: f32 = 20.0;
 
+/// The staging dot of a file row, which is also the control that stages it.
+pub(crate) fn stage_dot_id(file_path: &str) -> egui::Id {
+    egui::Id::new(("moonreview-stage-dot", file_path))
+}
+
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
     let Some(payload) = app
         .model
@@ -106,6 +111,24 @@ fn stage_status_color(status: FileStageStatus, palette: &Palette) -> Color32 {
     }
 }
 
+/// Staged goes back to unstaged; anything else — unstaged or half-staged — is staged whole.
+/// The same rule the web sidebar's status badge follows.
+fn toggle_file_stage(app: &mut App, session_id: &str, file: &SidebarFile) {
+    let path = file.file_path.clone();
+    let for_call = session_id.to_string();
+    if file.status == FileStageStatus::Staged {
+        app.tasks
+            .act(session_id, "could not unstage the file", move |backend| {
+                backend.unstage_file(&for_call, &path)
+            });
+    } else {
+        app.tasks
+            .act(session_id, "could not stage the file", move |backend| {
+                backend.stage_file(&for_call, &path)
+            });
+    }
+}
+
 fn draw_file_row(
     app: &mut App,
     ui: &mut Ui,
@@ -122,6 +145,21 @@ fn draw_file_row(
     let response = widgets::clickable(response);
     let hovered = response.hovered();
 
+    // The staging dot doubles as the control for it, the way the web sidebar's status badge
+    // does. It sits on top of the row, so it takes the click the row would otherwise get.
+    let can_stage = !read_only && !is_commit_review;
+    let dot_center = egui::pos2(rect.min.x + 6.0, rect.center().y);
+    let dot_hit = egui::Rect::from_center_size(dot_center, vec2(13.0, ROW_HEIGHT));
+    let dot_response = can_stage.then(|| {
+        let response = ui.interact(dot_hit, stage_dot_id(&file.file_path), Sense::click());
+        let hint = match file.status {
+            FileStageStatus::Staged => "click to unstage the whole file",
+            _ => "click to stage the whole file",
+        };
+        widgets::clickable(response).on_hover_text(hint)
+    });
+    let dot_hovered = dot_response.as_ref().is_some_and(|dot| dot.hovered());
+
     if ui.is_rect_visible(rect) {
         if hovered {
             ui.painter()
@@ -129,9 +167,13 @@ fn draw_file_row(
         }
 
         // The dot on the left is the file's staging state at a glance.
-        let dot = egui::pos2(rect.min.x + 6.0, rect.center().y);
-        ui.painter()
-            .circle_filled(dot, 3.0, stage_status_color(file.status, palette));
+        let dot_ink = stage_status_color(file.status, palette);
+        if dot_hovered {
+            ui.painter()
+                .circle_filled(dot_center, 6.0, palette.control_bg);
+        }
+        let radius = if dot_hovered { 4.0 } else { 3.0 };
+        ui.painter().circle_filled(dot_center, radius, dot_ink);
 
         let name_ink = if file.reviewed {
             palette.muted
@@ -207,7 +249,9 @@ fn draw_file_row(
     }
     let response = response.on_hover_text(hover_text);
 
-    if response.clicked() {
+    if dot_response.is_some_and(|dot| dot.clicked()) {
+        toggle_file_stage(app, session_id, file);
+    } else if response.clicked() {
         let review = app.model.review(session_id);
         review.scroll_to_hunk = review
             .hunks()
