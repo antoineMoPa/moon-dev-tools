@@ -1,953 +1,558 @@
-//! The pane arrangement on screen: nested splits, a tab strip per frame, draggable tabs.
+//! The workspace: which panes are open, where they go, and the shells behind them.
 //!
-//! [`crate::native::layout`] owns what the arrangement *is*; this file owns how it is drawn
-//! and how pointer gestures turn into the next arrangement.
+//! `egui_frames` draws the arrangement and answers the pointer; `egui_tty` is what a shell pane
+//! holds. What is left here is everything only moonreview can decide: where a new pane belongs,
+//! what closing one costs, and which shell a tab is showing.
 
-use egui::{
-    Align, Align2, Color32, CornerRadius, CursorIcon, Id, Layout, Rect, Response, Sense, Stroke,
-    StrokeKind, Ui, UiBuilder, pos2, vec2,
+use std::{sync::Arc, time::Duration};
+
+use egui::{RichText, Ui};
+use egui_frames::{DropSide, FrameId, FramesEvent, Layout, PaneId};
+
+use crate::{
+    api::{AgentKind, OpenSessionRequest},
+    native::{
+        app::{App, AttachedTerminal},
+        panes::{OpenPaneRequest, Pane, PaneKind},
+    },
 };
 
-use crate::native::{
-    app::{App, TerminalPlacement},
-    layout::{self, DropSide, LayoutNode, Pane, SplitDirection, WorkspaceLayout},
-    theme::{self, Palette, SMALL_SIZE},
-    widgets,
-};
-
-/// The moon, drawn: a filled disc with a second disc punched out of it in the panel color.
-/// This is the app's mark, and it must not depend on an emoji font having a glyph for it.
-fn draw_moon(painter: &egui::Painter, center: egui::Pos2, radius: f32, ink: Color32, behind: Color32) {
-    painter.circle_filled(center, radius, ink);
-    painter.circle_filled(center + vec2(radius * 0.55, -radius * 0.3), radius * 0.85, behind);
-}
-
-/// A tab's close mark: two thin strokes, the size of the text beside them.
-fn draw_close_mark(painter: &egui::Painter, center: egui::Pos2, ink: Color32) {
-    let reach = TAB_CLOSE_SIZE * 0.27;
-    let stroke = Stroke::new(1.0, ink);
-    painter.line_segment(
-        [center + vec2(-reach, -reach), center + vec2(reach, reach)],
-        stroke,
-    );
-    painter.line_segment(
-        [center + vec2(reach, -reach), center + vec2(-reach, reach)],
-        stroke,
-    );
-}
-
-/// The light/dark switch: a moon in light mode, a sun in dark mode.
-fn theme_switch(ui: &mut Ui, theme: crate::native::theme::ThemeMode, palette: &Palette) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(17.0, 15.0), Sense::click());
-    let response = widgets::clickable(response);
-    if !ui.is_rect_visible(rect) {
-        return response;
-    }
-
-    let ink = if response.hovered() {
-        palette.accent
-    } else {
-        palette.muted
-    };
-    let center = rect.center();
-    match theme {
-        crate::native::theme::ThemeMode::Light => {
-            draw_moon(ui.painter(), center, 5.5, ink, palette.header_bg);
-        }
-        crate::native::theme::ThemeMode::Dark => {
-            ui.painter().circle_filled(center, 3.5, ink);
-            for step in 0..8 {
-                let angle = std::f32::consts::TAU * step as f32 / 8.0;
-                let direction = vec2(angle.cos(), angle.sin());
-                ui.painter().line_segment(
-                    [center + direction * 5.0, center + direction * 7.0],
-                    Stroke::new(1.0, ink),
-                );
-            }
-        }
-    }
-    response
-}
-
-/// The frame's border, one pixel drawn inside its rect.
-const FRAME_BORDER: f32 = 1.0;
-/// The gap between a tab and the strip's edges — the same on all four sides.
-const TAB_MARGIN: f32 = 4.0;
-const TAB_HEIGHT: f32 = 18.0;
-pub(crate) const TAB_STRIP_HEIGHT: f32 = FRAME_BORDER + TAB_MARGIN * 2.0 + TAB_HEIGHT;
-/// Tab padding: text starts here, and the close mark sits this far from the right edge.
-const TAB_TEXT_INSET: f32 = 8.0;
-const TAB_CLOSE_SIZE: f32 = 12.0;
-const TAB_CLOSE_INSET: f32 = 4.0;
-/// Space between the end of the title and the close mark.
-const TAB_CLOSE_GAP: f32 = 5.0;
-/// Space between one tab and the next.
-const TAB_GAP: f32 = 3.0;
-/// Room before the title for the dot a file with unsaved edits carries.
-const TAB_DOT_SPACE: f32 = 11.0;
-const DIVIDER_THICKNESS: f32 = 5.0;
 /// The narrowest a frame may be left at by opening a shell beside it. Below this, the shell
 /// joins a frame's tabs instead of taking a column of its own.
 const MIN_COLUMN_WIDTH: f32 = 320.0;
-/// How close to the outer edge of the whole arrangement a dropped tab has to land to become a
-/// column or row beside everything, rather than a split of the frame it happens to be over.
-/// Stacked frames have no other way of saying "down the right of both".
-const WORKSPACE_EDGE: f32 = 34.0;
-/// How close to a frame's left or right edge a dropped tab has to land to split it there,
-/// as a share of the frame's width.
-const SIDE_EDGE_FRACTION: f32 = 0.22;
-/// The same for the top and bottom edges, as a share of the frame's body. Deeper than the sides:
-/// a frame is wider than it is tall, so an equal share of the height is a much shorter band, and
-/// reaching a bottom split meant dragging all the way to the window's edge.
-const UP_DOWN_EDGE_FRACTION: f32 = 0.38;
+
+/// Where a new shell's pane lands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalPlacement {
+    /// Beside the shells already open, or in a new column down the right if there are none.
+    WithOtherShells,
+    /// A new full-height column down the right of the workspace.
+    RightColumn,
+    /// Another tab in this frame, for a workspace with no room left to split.
+    Tab(FrameId),
+}
+
+/// The arrangement a run starts from: the shape the last one left behind, with this run's
+/// review in the frame whose tab strip is the app header.
+///
+/// A stored arrangement is worth keeping for its shape — where the user put their columns and
+/// rows. Its panes are not: a review pane names a session that no longer exists, and a shell
+/// pane names a process that died with the last run. Whatever the review and the adopted shells
+/// do not fill is dropped on the first frame drawn.
+pub(crate) fn arrangement_for(stored: Option<Layout<Pane>>, session_id: &str) -> Layout<Pane> {
+    let mut layout = match stored {
+        Some(mut stored) if stored.is_coherent() => {
+            stored.take_panes();
+            stored
+        }
+        _ => Layout::new(),
+    };
+
+    let frame = layout.primary_frame();
+    layout.add_pane(
+        frame,
+        Pane::Review {
+            session_id: session_id.to_string(),
+            title: "review".to_string(),
+        },
+        None,
+    );
+    layout
+}
 
 impl App {
+    /// One frame of the arrangement: drawn, dragged, and whatever the user asked of it done.
     pub(crate) fn draw_workspace(&mut self, ui: &mut Ui) {
-        let palette = self.palette_of();
-        // An empty frame is a leftover — whatever emptied it should have taken it with it —
-        // and the only way to see one is the hint its body draws. Dropping them here means no
-        // path can leave one on screen, whatever it forgot. A workspace with nothing open at
-        // all keeps its single frame: that is a state rather than a leftover.
-        let layout = take_layout(&mut self.model.layout);
-        self.model.layout = layout::without_empty_frames(layout);
-        // Frames and tabs record where they were drawn, so a drop lands on what the user was
-        // actually looking at rather than on geometry recomputed from the tree.
-        self.frame_rects.clear();
-        self.tab_rects.clear();
+        // An empty frame is a leftover — whatever emptied it should have taken it with it — and
+        // the only way to see one is the hint its body draws. Dropping them here means no path
+        // can leave one on screen, whatever it forgot. A workspace with nothing open at all
+        // keeps its single frame: that is a state rather than a leftover.
+        self.model.layout.drop_empty_frames();
+        *self.frames.style_mut() = self.palette_of().frames_style();
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(palette.bg))
-            .show(ui, |ui| {
-                let root = ui.available_rect_before_wrap();
-                let node = self.model.layout.root.clone();
-                self.draw_node(ui, &node, root, &[], &palette);
-            });
+        // The workspace draws moonreview's own panes, so the view it needs is this app: both it
+        // and the arrangement are lent out for the call and put back straight after.
+        let mut frames = std::mem::take(&mut self.frames);
+        let mut layout = std::mem::take(&mut self.model.layout);
+        let events = frames.show(ui, &mut layout, self);
+        self.model.layout = layout;
+        self.frames = frames;
 
-        if self.model.dragging_pane.is_some() {
-            self.draw_workspace_drop_hint(ui, &palette);
-        }
-
-        // A drag that ends anywhere resolves here, so releasing outside a frame simply
-        // cancels rather than leaving the tab stuck to the pointer.
-        let released = ui.ctx().input(|input| input.pointer.any_released());
-        if self.model.dragging_pane.is_some() && released {
-            let at = ui.ctx().input(|input| input.pointer.latest_pos());
-            self.finish_tab_drag(at);
+        for event in events {
+            match event {
+                // Deferred: a pane must not be taken out of the tree that is drawing it.
+                FramesEvent::PaneCloseRequested(pane) => self.pending_close = Some(pane),
+                FramesEvent::NewTabRequested(frame) => self.open_shell_beside(frame),
+            }
         }
     }
 
-    fn draw_node(
-        &mut self,
-        ui: &mut Ui,
-        node: &LayoutNode,
-        rect: Rect,
-        path: &[usize],
-        palette: &Palette,
-    ) {
-        match node {
-            LayoutNode::Frame { frame_id } => {
-                let frame_id = frame_id.clone();
-                self.draw_frame(ui, &frame_id, rect, palette);
+    /// Open a pane where its kind belongs: reviews with reviews, shells with shells, and a
+    /// brand new right-hand column for the first shell.
+    pub(crate) fn open_pane(&mut self, request: OpenPaneRequest) {
+        let active_frame = self.model.layout.active_frame();
+
+        match request {
+            OpenPaneRequest::Review { session_id, title } => {
+                // A review that is already open is brought forward instead of duplicated.
+                if let Some((pane, _)) = self.model.layout.find_pane(|pane| pane.reviews(&session_id))
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Review, active_frame);
+                self.model.review(&session_id);
+                self.model
+                    .layout
+                    .add_pane(frame, Pane::Review { session_id, title }, None);
             }
-            LayoutNode::Split {
-                direction,
-                children,
-                sizes,
-            } => {
-                let horizontal = *direction == SplitDirection::Row;
-                let (child_rects, usable) =
-                    split_child_rects(rect, *direction, sizes, children.len());
-                let mut resized: Option<Vec<f32>> = None;
-
-                for (index, child) in children.iter().enumerate() {
-                    let child_rect = child_rects[index];
-                    let mut child_path = path.to_vec();
-                    child_path.push(index);
-                    self.draw_node(ui, child, child_rect, &child_path, palette);
-
-                    if index + 1 < children.len() {
-                        let divider_rect = if horizontal {
-                            Rect::from_min_size(
-                                pos2(child_rect.max.x, rect.min.y),
-                                vec2(DIVIDER_THICKNESS, rect.height()),
-                            )
-                        } else {
-                            Rect::from_min_size(
-                                pos2(rect.min.x, child_rect.max.y),
-                                vec2(rect.width(), DIVIDER_THICKNESS),
-                            )
-                        };
-                        if let Some(next) = self.draw_divider(
-                            ui,
-                            divider_rect,
-                            horizontal,
-                            path,
-                            index,
-                            sizes,
-                            usable,
-                            palette,
-                        ) {
-                            resized = Some(next);
+            OpenPaneRequest::ReviewRepo { repo_path, title } => {
+                // The session has to exist before a pane can point at it, and creating one runs
+                // git in the repo, so the pane appears once that comes back.
+                self.tasks.spawn(
+                    move |backend| {
+                        backend.open_session(OpenSessionRequest {
+                            repo_path,
+                            diff_target: None,
+                            active_commit: None,
+                        })
+                    },
+                    move |model, result| match result {
+                        Ok(opened) => {
+                            model.review(&opened.session_id);
+                            let frame = model
+                                .layout
+                                .frame_holding(model.layout.active_frame(), |pane| {
+                                    pane.kind() == PaneKind::Review
+                                })
+                                .unwrap_or_else(|| model.layout.primary_frame());
+                            model.layout.add_pane(
+                                frame,
+                                Pane::Review {
+                                    session_id: opened.session_id,
+                                    title,
+                                },
+                                None,
+                            );
                         }
-                    }
-                }
-
-                if let Some(next_sizes) = resized {
-                    let root = std::mem::replace(
-                        &mut self.model.layout.root,
-                        LayoutNode::Frame {
-                            frame_id: String::new(),
-                        },
-                    );
-                    self.model.layout.root = layout::set_split_sizes(root, path, &next_sizes);
-                }
-            }
-        }
-    }
-
-    /// The grab handle between two panes. Returns the split's new sizes while being dragged.
-    #[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
-        parameter struct that only exists to be destructured immediately")]
-    fn draw_divider(
-        &mut self,
-        ui: &mut Ui,
-        rect: Rect,
-        horizontal: bool,
-        path: &[usize],
-        index: usize,
-        sizes: &[f32],
-        usable: f32,
-        palette: &Palette,
-    ) -> Option<Vec<f32>> {
-        // Named after where the handle is in the tree, not where it is on screen: a drag moves
-        // the handle, and an id that moved with it would be a different widget on the next
-        // frame — egui would drop the drag the moment the pointer left the handle's own width.
-        let id = Id::new(("workspace-divider", path, index));
-        let response = ui.interact(rect, id, Sense::drag());
-        let cursor = if horizontal {
-            CursorIcon::ResizeHorizontal
-        } else {
-            CursorIcon::ResizeVertical
-        };
-        if response.hovered() || response.dragged() {
-            ui.ctx().set_cursor_icon(cursor);
-            ui.painter().rect_filled(
-                rect.shrink2(if horizontal {
-                    vec2(1.5, 0.0)
-                } else {
-                    vec2(0.0, 1.5)
-                }),
-                CornerRadius::same(1),
-                palette.accent,
-            );
-        }
-
-        if !response.dragged() {
-            return None;
-        }
-        let delta = if horizontal {
-            response.drag_delta().x
-        } else {
-            response.drag_delta().y
-        };
-        if delta.abs() < f32::EPSILON || usable <= 0.0 {
-            return None;
-        }
-
-        // Dragging a handle trades space between the two panes it sits between, leaving
-        // every other pane in the split alone.
-        let shift = delta / usable;
-        let mut next = sizes.to_vec();
-        if index + 1 >= next.len() {
-            return None;
-        }
-        next[index] += shift;
-        next[index + 1] -= shift;
-        Some(next)
-    }
-
-    fn draw_frame(&mut self, ui: &mut Ui, frame_id: &str, rect: Rect, palette: &Palette) {
-        self.frame_rects.push((frame_id.to_string(), rect));
-        let is_active = self.model.layout.active_frame_id == frame_id;
-        // The accent border says which frame the keyboard is talking to. A window with one
-        // frame has nothing to tell it apart from, so it wears the ordinary border.
-        let marked_active = is_active && self.model.layout.frames.len() > 1;
-        let painter = ui.painter();
-        painter.rect_filled(rect, CornerRadius::same(6), palette.panel);
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(6),
-            Stroke::new(
-                1.0,
-                if marked_active {
-                    palette.accent
-                } else {
-                    palette.line
-                },
-            ),
-            StrokeKind::Inside,
-        );
-
-        let strip_rect = Rect::from_min_size(rect.min, vec2(rect.width(), TAB_STRIP_HEIGHT));
-        let body_rect = pane_body(rect);
-
-        // Tabs sit inside the frame's border with the same margin on every side, so the strip
-        // reads as an even band rather than a row pushed against the top-left corner.
-        let tabs_rect = Rect::from_min_max(
-            pos2(
-                strip_rect.min.x + FRAME_BORDER + TAB_MARGIN,
-                strip_rect.min.y + FRAME_BORDER + TAB_MARGIN,
-            ),
-            pos2(
-                strip_rect.max.x - FRAME_BORDER - TAB_MARGIN,
-                strip_rect.max.y - TAB_MARGIN,
-            ),
-        );
-        let is_primary = self.model.layout.primary_frame_id() == frame_id;
-        ui.scope_builder(UiBuilder::new().max_rect(tabs_rect), |ui| {
-            ui.set_clip_rect(strip_rect);
-            self.draw_tab_strip(ui, frame_id, is_primary, palette);
-        });
-
-        // Stop short of the frame's border on both sides: the border, active or not, stays the
-        // outermost thing drawn on the frame.
-        ui.painter().hline(
-            (rect.min.x + FRAME_BORDER)..=(rect.max.x - FRAME_BORDER),
-            strip_rect.max.y,
-            Stroke::new(1.0, palette.line),
-        );
-
-        let active_pane = self
-            .model
-            .layout
-            .frames
-            .get(frame_id)
-            .and_then(|frame| frame.active_pane_id.clone())
-            .and_then(|pane_id| self.model.layout.panes.get(&pane_id).cloned());
-
-        match active_pane {
-            Some(pane) => {
-                ui.scope_builder(UiBuilder::new().max_rect(body_rect), |ui| {
-                    ui.set_clip_rect(body_rect);
-                    self.draw_pane(ui, &pane);
-                });
-            }
-            None => {
-                ui.painter().text(
-                    body_rect.center(),
-                    Align2::CENTER_CENTER,
-                    "shift ⌘P to execute a command",
-                    egui::FontId::proportional(theme::UI_SIZE),
-                    palette.muted,
-                );
-            }
-        }
-
-        // Clicking anywhere in a frame makes it the one the keyboard talks to.
-        //
-        // This reads the pointer rather than registering a widget: a click-sensing widget the
-        // size of the frame would sit on top of everything drawn inside it and swallow every
-        // click meant for a tab, a diff line or a shell.
-        let pressed_inside = ui.input(|input| {
-            input.pointer.any_pressed()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|at| rect.contains(at))
-        });
-        if pressed_inside && !is_active {
-            let layout = take_layout(&mut self.model.layout);
-            self.model.layout = focus_frame(layout, frame_id);
-        }
-
-        if self.model.dragging_pane.is_some() {
-            self.draw_drop_hint(ui, frame_id, rect, strip_rect, palette);
-        }
-    }
-
-    fn draw_tab_strip(&mut self, ui: &mut Ui, frame_id: &str, is_primary: bool, palette: &Palette) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = TAB_GAP;
-
-            let pane_ids = self
-                .model
-                .layout
-                .frames
-                .get(frame_id)
-                .map(|frame| frame.pane_ids.clone())
-                .unwrap_or_default();
-            let active_pane_id = self
-                .model
-                .layout
-                .frames
-                .get(frame_id)
-                .and_then(|frame| frame.active_pane_id.clone());
-
-            for pane_id in &pane_ids {
-                let Some(pane) = self.model.layout.panes.get(pane_id).cloned() else {
-                    continue;
-                };
-                let selected = active_pane_id.as_deref() == Some(pane_id.as_str());
-                self.draw_tab(ui, frame_id, &pane, selected, palette);
-            }
-
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if is_primary {
-                    self.draw_global_actions(ui, palette);
-                }
-                if widgets::round_button(ui, "+", TAB_HEIGHT, palette).clicked() {
-                    self.open_shell_beside(frame_id);
-                }
-            });
-        });
-    }
-
-    fn draw_tab(
-        &mut self,
-        ui: &mut Ui,
-        frame_id: &str,
-        pane: &Pane,
-        selected: bool,
-        palette: &Palette,
-    ) {
-        // A shell's tab takes the title the running program set, the way a terminal does.
-        let title = match pane {
-            Pane::Terminal { terminal_id, .. } => self
-                .terminals
-                .get(terminal_id)
-                .and_then(|terminal| terminal.title())
-                .unwrap_or_else(|| pane.tab_title()),
-            _ => pane.tab_title(),
-        };
-        let label = widgets::elide_path(&title, 22);
-        let pane_id = pane.pane_id().to_string();
-        // A file with edits that are not on disk carries a dot before its name. Drawn rather
-        // than typeset: the bundled fonts have no ● to print.
-        let unsaved = matches!(pane, Pane::File { .. }) && self.file_pane_is_dirty(&pane_id);
-
-        let galley = ui.painter().layout_no_wrap(
-            label.clone(),
-            egui::FontId::proportional(SMALL_SIZE + 1.0),
-            if selected { palette.ink } else { palette.muted },
-        );
-        let dot_space = if unsaved { TAB_DOT_SPACE } else { 0.0 };
-        let width = galley.size().x
-            + dot_space
-            + TAB_TEXT_INSET
-            + TAB_CLOSE_GAP
-            + TAB_CLOSE_SIZE
-            + TAB_CLOSE_INSET;
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click_and_drag());
-        let response = widgets::clickable(response);
-        self.tab_rects
-            .push((frame_id.to_string(), pane_id.clone(), rect));
-
-        let dragging_this = self.model.dragging_pane.as_deref() == Some(pane_id.as_str());
-        if ui.is_rect_visible(rect) {
-            // A dragged tab rides the pointer, drawn above everything else and holding the spot
-            // it was picked up by. Its slot in the strip stays behind as an outline, so the
-            // strip's other tabs don't jump around underneath the drag.
-            let pointer = ui.input(|input| input.pointer.hover_pos());
-            let (painter, rect) = match (dragging_this, pointer) {
-                (true, Some(at)) => {
-                    ui.painter().rect_stroke(
-                        rect,
-                        CornerRadius::same(4),
-                        Stroke::new(1.0, palette.line),
-                        StrokeKind::Inside,
-                    );
-                    (
-                        ui.ctx()
-                            .layer_painter(egui::LayerId::new(
-                                egui::Order::Foreground,
-                                Id::new("dragged-tab"),
-                            )),
-                        Rect::from_min_size(at - self.tab_grab_offset, rect.size()),
-                    )
-                }
-                _ => (ui.painter().clone(), rect),
-            };
-
-            let fill = if dragging_this || selected {
-                palette.control_active_bg
-            } else if response.hovered() {
-                palette.control_bg
-            } else {
-                Color32::TRANSPARENT
-            };
-            painter.rect_filled(rect, CornerRadius::same(4), fill);
-            if dragging_this {
-                painter.rect_stroke(
-                    rect,
-                    CornerRadius::same(4),
-                    Stroke::new(1.0, palette.accent),
-                    StrokeKind::Inside,
-                );
-            }
-            if unsaved {
-                painter.circle_filled(
-                    pos2(rect.min.x + TAB_TEXT_INSET + 3.0, rect.center().y),
-                    3.0,
-                    palette.accent,
-                );
-            }
-            let text_height = galley.size().y;
-            painter.galley(
-                pos2(
-                    rect.min.x + TAB_TEXT_INSET + dot_space,
-                    (rect.center().y - text_height / 2.0).round(),
-                ),
-                galley,
-                palette.ink,
-            );
-
-            let close_rect = Rect::from_center_size(
-                pos2(
-                    rect.max.x - TAB_CLOSE_INSET - TAB_CLOSE_SIZE / 2.0,
-                    rect.center().y,
-                ),
-                vec2(TAB_CLOSE_SIZE, TAB_CLOSE_SIZE),
-            );
-            let hovering_close = !dragging_this && pointer.is_some_and(|at| close_rect.contains(at));
-            if !dragging_this && (response.hovered() || selected) {
-                // Drawn rather than typeset: the only close glyph the bundled fonts have is a
-                // heavy emoji ✖, and a tab wants the thin ✕ a browser draws.
-                draw_close_mark(
-                    &painter,
-                    close_rect.center(),
-                    if hovering_close {
-                        palette.warn
-                    } else {
-                        palette.muted
+                        Err(error) => model.error(format!("could not open that review: {error}")),
                     },
                 );
             }
-
-            if response.clicked() && hovering_close {
-                self.pending_close = Some(pane_id.clone());
-                return;
+            OpenPaneRequest::Agents => {
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Agents)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Agents, active_frame);
+                self.model.layout.add_pane(frame, Pane::Agents, None);
+            }
+            OpenPaneRequest::File {
+                session_id,
+                file_path,
+            } => {
+                // The same file twice is the same tab: opening it again brings it forward.
+                if let Some((pane, _)) = self.model.layout.find_pane(|pane| {
+                    matches!(pane, Pane::File { file_path: open, .. } if *open == file_path)
+                }) {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::File, active_frame);
+                self.model.layout.add_pane(
+                    frame,
+                    Pane::File {
+                        session_id,
+                        file_path,
+                    },
+                    None,
+                );
+            }
+            OpenPaneRequest::Terminal { command } => {
+                self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
             }
         }
+    }
 
-        if response.clicked() {
-            let layout = take_layout(&mut self.model.layout);
-            self.model.layout = layout::focus_pane(layout, &pane_id);
+    /// Where a pane of this kind goes: with the others of its kind, else the frame whose tab
+    /// strip is the app header.
+    fn frame_for(&self, kind: PaneKind, preferred: FrameId) -> FrameId {
+        self.model
+            .layout
+            .frame_holding(preferred, |pane| pane.kind() == kind)
+            .unwrap_or_else(|| self.model.layout.primary_frame())
+    }
+
+    /// Start a shell on the reviewed repo and open a pane attached to it.
+    pub(crate) fn spawn_terminal(
+        &mut self,
+        command: Option<AgentKind>,
+        placement: TerminalPlacement,
+    ) {
+        let session_id = self.model.root_session_id.clone();
+        if session_id.is_empty() {
+            self.model.error("no review is open yet");
+            return;
         }
-        // Middle-click closes a tab, as it does in a browser.
-        if response.middle_clicked() {
-            self.pending_close = Some(pane_id.clone());
+        let inbox = Arc::clone(&self.attaching);
+
+        self.tasks.spawn(
+            move |backend| {
+                let terminal_id = backend.create_terminal(&session_id, command)?;
+                let attachment = backend.attach_terminal(&session_id, &terminal_id);
+                Ok((terminal_id, attachment))
+            },
+            move |model, result| match result {
+                Ok((terminal_id, attachment)) => {
+                    let pane = Pane::Terminal {
+                        terminal_id: terminal_id.clone(),
+                        command,
+                    };
+                    place_shell(&mut model.layout, &placement, pane);
+                    if let Ok(mut inbox) = inbox.lock() {
+                        inbox.push(AttachedTerminal {
+                            terminal_id,
+                            attachment,
+                            focus: true,
+                        });
+                    }
+                }
+                Err(error) => model.error(format!("could not start a shell: {error}")),
+            },
+        );
+    }
+
+    /// Reattach a shell whose pane is on screen but whose emulator is not — which happens when
+    /// a restored arrangement mentions a terminal this window has not attached yet.
+    pub(crate) fn attach_terminal(&mut self, terminal_id: &str) {
+        let key = format!("attach:{terminal_id}");
+        if self.tasks.is_busy(&key) || self.terminal_errors.contains_key(terminal_id) {
+            return;
         }
-        if response.drag_started() {
-            self.model.dragging_pane = Some(pane_id.clone());
-            self.tab_grab_offset = ui
-                .input(|input| input.pointer.press_origin())
-                .map(|at| at - rect.min)
-                .unwrap_or_else(|| rect.size() / 2.0);
-        }
-        if response.dragged() {
-            ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+        let session_id = self.model.root_session_id.clone();
+        let inbox = Arc::clone(&self.attaching);
+        let terminal_id = terminal_id.to_string();
+        let for_inbox = terminal_id.clone();
+
+        self.tasks.spawn_keyed(
+            Some(key),
+            move |backend| Ok(backend.attach_terminal(&session_id, &terminal_id)),
+            move |_model, result| {
+                let attachment = result.and_then(|attachment| attachment);
+                if let Ok(mut inbox) = inbox.lock() {
+                    inbox.push(AttachedTerminal {
+                        terminal_id: for_inbox,
+                        attachment,
+                        focus: false,
+                    });
+                }
+            },
+        );
+    }
+
+    /// Turn shells that finished attaching into live panes. They arrive from a worker thread,
+    /// because a remote one opens a socket; the emulator itself is `!Send`, so it is built here.
+    pub(crate) fn drain_attachments(&mut self) {
+        let ready = {
+            let Ok(mut inbox) = self.attaching.lock() else {
+                return;
+            };
+            std::mem::take(&mut *inbox)
+        };
+
+        for attached in ready {
+            let AttachedTerminal {
+                terminal_id,
+                attachment,
+                focus,
+            } = attached;
+            let opened = attachment.and_then(|stream| {
+                egui_tty::Terminal::new(stream)
+                    .map(|terminal| terminal.with_label(terminal_id.clone()))
+                    .map_err(|error| anyhow::anyhow!("{error}"))
+            });
+
+            match opened {
+                Ok(mut terminal) => {
+                    self.terminal_errors.remove(&terminal_id);
+                    // A shell the user just opened starts with the keyboard, so they can type
+                    // into it without clicking first.
+                    if focus {
+                        terminal.request_focus();
+                    }
+                    self.terminals.insert(terminal_id, terminal);
+                }
+                Err(error) => {
+                    let message = format!("{error}");
+                    self.model
+                        .error(format!("shell {terminal_id} is unavailable: {message}"));
+                    self.terminal_errors.insert(terminal_id, message);
+                }
+            }
         }
     }
 
-    fn draw_global_actions(&mut self, ui: &mut Ui, palette: &Palette) {
-        // The bundled fonts have no sun or moon glyph, so the switch is drawn rather than
-        // typeset — see the glyph test in `ui_tests`.
-        let next = self.model.theme.toggled();
-        if theme_switch(ui, self.model.theme, palette)
-            .on_hover_text(format!("switch to {} (⌘J)", next.label()))
-            .clicked()
-        {
-            self.set_theme(next);
+    /// Adopt shells the server is already running that this window has no tab for.
+    ///
+    /// A remote server outlives any one window, and the embedded one is shared with the web
+    /// frontend, so a shell started elsewhere is still a shell this window can show.
+    pub(crate) fn adopt_existing_shells(&mut self) {
+        let session_id = self.model.root_session_id.clone();
+        if session_id.is_empty() {
+            return;
         }
 
+        self.tasks.spawn_keyed(
+            Some("adopt-shells".to_string()),
+            move |backend| backend.list_terminals(&session_id),
+            |model, result| {
+                let known: std::collections::HashSet<String> = model
+                    .layout
+                    .panes()
+                    .filter_map(|(_, pane)| match pane {
+                        Pane::Terminal { terminal_id, .. } => Some(terminal_id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                for terminal_id in result.unwrap_or_default() {
+                    if known.contains(&terminal_id) {
+                        continue;
+                    }
+                    place_shell(
+                        &mut model.layout,
+                        &TerminalPlacement::WithOtherShells,
+                        Pane::Terminal {
+                            terminal_id,
+                            command: None,
+                        },
+                    );
+                }
+            },
+        );
     }
 
-    /// Where everything drawn this frame sits, together.
-    fn workspace_rect(&self) -> Option<Rect> {
-        self.frame_rects
+    /// A shell that has ended takes its tab with it, and the frame too when it was the last tab
+    /// there — logging out of a terminal or an agent finishing should leave the workspace as it
+    /// was before the shell was opened.
+    ///
+    /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
+    pub(crate) fn close_tabs_of_exited_shells(&mut self) {
+        let Some(terminal_id) = self
+            .terminals
             .iter()
-            .map(|(_, rect)| *rect)
-            .reduce(|whole, rect| whole.union(rect))
+            .find(|(_, terminal)| terminal.has_exited())
+            .map(|(terminal_id, _)| terminal_id.clone())
+        else {
+            return;
+        };
+
+        let pane = self
+            .model
+            .layout
+            .find_pane(|pane| matches!(pane, Pane::Terminal { terminal_id: of_pane, .. } if *of_pane == terminal_id))
+            .map(|(pane, _)| pane);
+
+        match pane {
+            Some(pane) => self.close_pane(pane),
+            // No tab is showing it, so there is nothing to close but the shell itself.
+            None => {
+                self.terminals.remove(&terminal_id);
+            }
+        }
     }
 
-    /// The outer edge a drop at this point lands against, if it is against one at all. This
-    /// wins over the frame under the pointer: the band is narrow, and inside it the only thing
-    /// the user can mean is "beside everything".
-    fn workspace_drop_side(&self, at: egui::Pos2) -> Option<DropSide> {
-        let workspace = self.workspace_rect()?;
-        if !workspace.contains(at) || self.model.layout.frames.len() < 2 {
-            return None;
-        }
+    pub(crate) fn close_pane(&mut self, pane_id: PaneId) {
+        self.model.file_editors.remove(&pane_id);
+        let closed = self.model.layout.close_pane(pane_id);
 
-        let sides = [
-            (DropSide::Left, at.x - workspace.min.x),
-            (DropSide::Right, workspace.max.x - at.x),
-            (DropSide::Top, at.y - workspace.min.y),
-            (DropSide::Bottom, workspace.max.y - at.y),
-        ];
-        let (side, distance) = sides
-            .into_iter()
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
-        (distance <= WORKSPACE_EDGE).then_some(side)
+        // Closing a shell's tab ends the shell: unlike the web frontend, where a closed tab may
+        // just be a navigation away, this is the only window it had.
+        if let Some(Pane::Terminal { terminal_id, .. }) = closed {
+            self.terminals.remove(&terminal_id);
+            self.terminal_errors.remove(&terminal_id);
+            let session_id = self.model.root_session_id.clone();
+            self.tasks.spawn(
+                move |backend| backend.close_terminal(&session_id, &terminal_id),
+                |model, result| model.report(result, "could not close the shell"),
+            );
+        }
+    }
+
+    /// ⌘T and the tab strip's + button both open a shell wherever the workspace has room.
+    pub(crate) fn open_shell_tab(&mut self) {
+        let frame = self.model.layout.active_frame();
+        self.open_shell_beside(frame);
+    }
+
+    /// The same, for a shell asked for from a particular frame's tab strip.
+    pub(crate) fn open_shell_beside(&mut self, frame: FrameId) {
+        let placement = self.room_for_a_column(frame);
+        self.spawn_terminal(None, placement);
     }
 
     /// A new shell goes in its own column down the right of the workspace, unless that would
     /// squeeze that column — or whatever it takes the room from — below a usable width, in
     /// which case it becomes another tab in the frame it was asked for.
-    pub(crate) fn room_for_a_column(&self, frame_id: &str) -> TerminalPlacement {
+    pub(crate) fn room_for_a_column(&self, frame: FrameId) -> TerminalPlacement {
         // A shell takes a column of its own only in a workspace that is still one frame wide.
         // Once the user has split it, whatever they arranged is theirs, and a new shell joins
         // the tabs of the frame it was asked from.
-        let split_already = layout::frame_ids_in(&self.model.layout.root).len() > 1;
-        let width = self
-            .frame_rects
-            .iter()
-            .find(|(drawn_id, _)| drawn_id == frame_id)
-            .map(|(_, rect)| rect.width());
+        let split_already = self.model.layout.frame_count() > 1;
+        let width = self.frames.frame_rect(frame).map(|rect| rect.width());
 
         match width {
             Some(width) if !split_already && fits_another_column(width) => {
                 TerminalPlacement::RightColumn
             }
-            _ => TerminalPlacement::Tab(frame_id.to_string()),
+            _ => TerminalPlacement::Tab(frame),
         }
     }
 
-    /// Where a tab dropped on this frame's strip would be inserted: the pane it lands before,
-    /// `None` for the end of the strip, and the x a caret would mark that spot at.
-    fn tab_insertion(
-        &self,
-        frame_id: &str,
-        dragged_pane_id: &str,
-        strip_rect: Rect,
-        at: egui::Pos2,
-    ) -> (Option<String>, f32) {
-        let mut after_last = strip_rect.min.x + FRAME_BORDER + TAB_MARGIN;
-        for (tab_frame, tab_pane, rect) in &self.tab_rects {
-            if tab_frame != frame_id || tab_pane == dragged_pane_id {
-                continue;
+    /// The pane in front of the active frame, which is what the keyboard is talking to.
+    pub(crate) fn active_pane(&self) -> Option<(PaneId, &Pane)> {
+        self.model.layout.active_pane()
+    }
+
+    pub(crate) fn active_pane_kind(&self) -> Option<PaneKind> {
+        self.active_pane().map(|(_, pane)| pane.kind())
+    }
+
+    pub(crate) fn active_pane_id(&self) -> Option<PaneId> {
+        self.active_pane().map(|(pane_id, _)| pane_id)
+    }
+
+    /// Where a pane was drawn this frame: the body of the frame holding it, below the tabs.
+    /// Anything that floats over a pane — the find bar — is placed against this.
+    pub(crate) fn pane_rect(&self, pane_id: PaneId) -> Option<egui::Rect> {
+        self.frames.pane_rect(pane_id)
+    }
+
+    /// The review in the frontmost pane of the active frame, if that pane is a review.
+    pub(crate) fn focused_review_session(&self) -> Option<String> {
+        match self.active_pane()?.1 {
+            Pane::Review { session_id, .. } => Some(session_id.clone()),
+            _ => None,
+        }
+    }
+
+    /// `C-x o`: hand the keyboard to the next frame of the workspace, wrapping round at the end.
+    pub(crate) fn focus_next_frame(&mut self, ctx: &egui::Context) {
+        if self.model.layout.frame_count() < 2 {
+            return;
+        }
+        let arrived_at = self.model.layout.focus_next_frame();
+
+        // egui's keyboard has to move too, or the shell left behind would keep the keys.
+        if let Some(focused) = ctx.memory(|memory| memory.focused()) {
+            ctx.memory_mut(|memory| memory.surrender_focus(focused));
+        }
+        // A shell only takes the keyboard when asked to, so a frame showing one asks here.
+        let showing = self
+            .model
+            .layout
+            .frame(arrived_at)
+            .and_then(egui_frames::Frame::active_pane)
+            .and_then(|pane| self.model.layout.pane(pane));
+        if let Some(Pane::Terminal { terminal_id, .. }) = showing
+            && let Some(terminal) = self.terminals.get_mut(&terminal_id.clone())
+        {
+            terminal.request_focus();
+        }
+    }
+
+    /// Draw a shell, or say why there isn't one to draw.
+    pub(crate) fn draw_terminal(&mut self, ui: &mut Ui, pane_id: PaneId, terminal_id: &str) {
+        let palette = self.palette_of();
+        if let Some(error) = self.terminal_errors.get(terminal_id) {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new(error.clone()).color(palette.warn));
+            });
+            return;
+        }
+
+        let Some(terminal) = self.terminals.get_mut(terminal_id) else {
+            self.attach_terminal(terminal_id);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("attaching…").color(palette.muted));
+            });
+            return;
+        };
+
+        // The find bar asks for a search only when its query or its place in the matches moved,
+        // because a search reads the whole scrollback.
+        let searching = self
+            .model
+            .find
+            .as_ref()
+            .filter(|find| find.pane_id == pane_id && find.pending)
+            .map(|find| (find.query.clone(), find.at));
+        let found = searching.map(|(query, at)| terminal.find(&query, at));
+
+        terminal.ui(ui, &palette.terminal_style());
+
+        if let Some(total) = found
+            && let Some(find) = &mut self.model.find
+        {
+            find.found(total);
+        }
+    }
+
+    /// How long until the window is worth drawing again on account of its shells: a live one
+    /// asks for itself, so this is only about the review's own polling.
+    pub(crate) fn has_live_shell(&self) -> bool {
+        self.terminals
+            .values()
+            .any(|terminal| !terminal.has_exited())
+    }
+}
+
+/// Put a shell's pane where the placement says, falling back to a column of its own.
+fn place_shell(layout: &mut Layout<Pane>, placement: &TerminalPlacement, pane: Pane) {
+    let column = |layout: &mut Layout<Pane>, pane| {
+        layout.add_pane_against_edge(DropSide::Right, egui_frames::DEFAULT_EDGE_SHARE, pane);
+    };
+
+    match placement {
+        TerminalPlacement::WithOtherShells => {
+            let active = layout.active_frame();
+            match layout.frame_holding(active, |pane| pane.kind() == PaneKind::Terminal) {
+                Some(frame) => {
+                    layout.add_pane(frame, pane, None);
+                }
+                None => column(layout, pane),
             }
-            if at.x < rect.center().x {
-                return (Some(tab_pane.clone()), rect.min.x - TAB_GAP / 2.0);
-            }
-            after_last = rect.max.x + TAB_GAP / 2.0;
         }
-        (None, after_last)
-    }
-
-    /// The band down the edge of everything, shown while a dragged tab is over it.
-    fn draw_workspace_drop_hint(&self, ui: &mut Ui, palette: &Palette) {
-        let Some(at) = ui.input(|input| input.pointer.hover_pos()) else {
-            return;
-        };
-        let (Some(side), Some(workspace)) = (self.workspace_drop_side(at), self.workspace_rect())
-        else {
-            return;
-        };
-
-        let hint = match side {
-            DropSide::Left => workspace.with_max_x(workspace.min.x + workspace.width() * 0.3),
-            DropSide::Right => workspace.with_min_x(workspace.max.x - workspace.width() * 0.3),
-            DropSide::Top => workspace.with_max_y(workspace.min.y + workspace.height() * 0.3),
-            DropSide::Bottom => workspace.with_min_y(workspace.max.y - workspace.height() * 0.3),
-            DropSide::Tabs => return,
-        };
-        let painter = ui.ctx().layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            Id::new("workspace-drop-hint"),
-        ));
-        painter.rect_filled(
-            hint.shrink(3.0),
-            CornerRadius::same(5),
-            palette.accent.linear_multiply(0.18),
-        );
-        painter.rect_stroke(
-            hint.shrink(3.0),
-            CornerRadius::same(5),
-            Stroke::new(1.5, palette.accent),
-            StrokeKind::Inside,
-        );
-    }
-
-    /// While a tab is being dragged, show where it would land.
-    fn draw_drop_hint(
-        &self,
-        ui: &mut Ui,
-        frame_id: &str,
-        rect: Rect,
-        strip_rect: Rect,
-        palette: &Palette,
-    ) {
-        let Some(at) = ui.input(|input| input.pointer.hover_pos()) else {
-            return;
-        };
-        if !rect.contains(at) {
-            return;
+        TerminalPlacement::RightColumn => column(layout, pane),
+        // The frame is gone if it was closed while the shell was starting.
+        TerminalPlacement::Tab(frame) if layout.frame(*frame).is_some() => {
+            layout.add_pane(*frame, pane, None);
         }
-        if self.workspace_drop_side(at).is_some() {
-            return;
-        }
-        let Some(side) = drop_side(rect, strip_rect, at) else {
-            return;
-        };
-
-        // Landing among the tabs is a caret between two of them — the precise spot the tab takes
-        // — rather than a wash over the whole strip.
-        if side == DropSide::Tabs {
-            let dragged = self.model.dragging_pane.clone().unwrap_or_default();
-            let (_, x) = self.tab_insertion(frame_id, &dragged, strip_rect, at);
-            let top = strip_rect.min.y + FRAME_BORDER + TAB_MARGIN;
-            ui.painter().rect_filled(
-                Rect::from_min_max(pos2(x - 1.0, top), pos2(x + 1.0, top + TAB_HEIGHT)),
-                CornerRadius::same(1),
-                palette.accent,
-            );
-            return;
-        }
-
-        let hint = match side {
-            DropSide::Tabs => strip_rect,
-            DropSide::Left => rect.with_max_x(rect.min.x + rect.width() * 0.5),
-            DropSide::Right => rect.with_min_x(rect.min.x + rect.width() * 0.5),
-            DropSide::Top => rect.with_max_y(rect.min.y + rect.height() * 0.5),
-            DropSide::Bottom => rect.with_min_y(rect.min.y + rect.height() * 0.5),
-        };
-        ui.painter().rect_filled(
-            hint.shrink(3.0),
-            CornerRadius::same(5),
-            palette.accent.linear_multiply(0.18),
-        );
-        ui.painter().rect_stroke(
-            hint.shrink(3.0),
-            CornerRadius::same(5),
-            Stroke::new(1.5, palette.accent),
-            StrokeKind::Inside,
-        );
-    }
-
-    fn finish_tab_drag(&mut self, at: Option<egui::Pos2>) {
-        let Some(pane_id) = self.model.dragging_pane.take() else {
-            return;
-        };
-        let Some(at) = at else {
-            return;
-        };
-
-        // Against the outer edge first: a drop there is about the whole arrangement, not about
-        // whichever frame happens to reach that edge.
-        if let Some(side) = self.workspace_drop_side(at) {
-            let layout = take_layout(&mut self.model.layout);
-            self.model.layout = layout::move_pane_against_workspace(layout, &pane_id, side);
-            return;
-        }
-
-        let Some((frame_id, frame_rect)) = self
-            .frame_rects
-            .iter()
-            .find(|(_, rect)| rect.contains(at))
-            .cloned()
-        else {
-            return;
-        };
-        let strip_rect =
-            Rect::from_min_size(frame_rect.min, vec2(frame_rect.width(), TAB_STRIP_HEIGHT));
-        let Some(side) = drop_side(frame_rect, strip_rect, at) else {
-            return;
-        };
-
-        // Landing on a tab strip means "before whichever tab the pointer is left of" — the same
-        // spot the caret marked while the drag was in flight.
-        let before_pane_id = (side == DropSide::Tabs)
-            .then(|| self.tab_insertion(&frame_id, &pane_id, strip_rect, at).0)
-            .flatten();
-
-        let layout = take_layout(&mut self.model.layout);
-        self.model.layout = layout::move_pane_to_frame(
-            layout,
-            &pane_id,
-            &frame_id,
-            side,
-            before_pane_id.as_deref(),
-        );
+        TerminalPlacement::Tab(_) => column(layout, pane),
     }
 }
 
 /// Whether a frame this wide can give up the share a new right-hand column takes without
 /// leaving either side too narrow to work in.
 fn fits_another_column(frame_width: f32) -> bool {
-    let new_column = frame_width * layout::RIGHT_COLUMN_FRACTION;
-    let left_behind = frame_width * (1.0 - layout::RIGHT_COLUMN_FRACTION);
+    let new_column = frame_width * egui_frames::DEFAULT_EDGE_SHARE;
+    let left_behind = frame_width * (1.0 - egui_frames::DEFAULT_EDGE_SHARE);
     new_column >= MIN_COLUMN_WIDTH && left_behind >= MIN_COLUMN_WIDTH
 }
 
-fn drop_side(rect: Rect, strip_rect: Rect, at: egui::Pos2) -> Option<DropSide> {
-    if strip_rect.contains(at) {
-        return Some(DropSide::Tabs);
-    }
-    if !rect.contains(at) {
-        return None;
-    }
-
-    // Each distance is measured in units of its own edge's band, so a value below 1.0 means the
-    // pointer is inside that band and the smallest value is the band it is deepest into. The
-    // vertical ones start below the tab strip, which claims the top of the frame for itself.
-    let side_band = (rect.width() * SIDE_EDGE_FRACTION).max(1.0);
-    let body_top = strip_rect.max.y;
-    let up_down_band = ((rect.max.y - body_top) * UP_DOWN_EDGE_FRACTION).max(1.0);
-
-    let from_left = (at.x - rect.min.x) / side_band;
-    let from_right = (rect.max.x - at.x) / side_band;
-    let from_top = (at.y - body_top) / up_down_band;
-    let from_bottom = (rect.max.y - at.y) / up_down_band;
-    let nearest = from_left.min(from_right).min(from_top).min(from_bottom);
-
-    if nearest > 1.0 {
-        // Dropped well inside a frame: join its tabs rather than split it.
-        return Some(DropSide::Tabs);
-    }
-    Some(if nearest == from_left {
-        DropSide::Left
-    } else if nearest == from_right {
-        DropSide::Right
-    } else if nearest == from_top {
-        DropSide::Top
-    } else {
-        DropSide::Bottom
-    })
-}
-
-/// Divide a split's area between its children, leaving room for the handles between them.
-/// Returns the child rects and the space the shares were taken from, which is what a drag
-/// on a handle converts pixels into fractions with.
-fn split_child_rects(
-    rect: Rect,
-    direction: SplitDirection,
-    sizes: &[f32],
-    count: usize,
-) -> (Vec<Rect>, f32) {
-    let horizontal = direction == SplitDirection::Row;
-    let total = if horizontal { rect.width() } else { rect.height() };
-    let gaps = DIVIDER_THICKNESS * count.saturating_sub(1) as f32;
-    let usable = (total - gaps).max(1.0);
-    let even = 1.0 / count.max(1) as f32;
-
-    let mut rects = Vec::with_capacity(count);
-    let mut offset = 0.0;
-    for index in 0..count {
-        let extent = usable * sizes.get(index).copied().unwrap_or(even);
-        rects.push(if horizontal {
-            Rect::from_min_size(
-                pos2(rect.min.x + offset, rect.min.y),
-                vec2(extent, rect.height()),
-            )
-        } else {
-            Rect::from_min_size(
-                pos2(rect.min.x, rect.min.y + offset),
-                vec2(rect.width(), extent),
-            )
-        });
-        offset += extent + DIVIDER_THICKNESS;
-    }
-
-    (rects, usable)
-}
-
-/// The area a frame hands its pane: below the tab strip, and clear of the frame's own border
-/// on every other side.
-///
-/// Clear of it rather than up against it. A clip rect that stopped exactly on the border let
-/// a glyph reaching the edge paint over the border pixel itself, which is what made a long
-/// line of a diff look as though it had escaped its frame.
-pub(crate) fn pane_body(rect: Rect) -> Rect {
-    let inset = FRAME_BORDER + 1.0;
-    Rect::from_min_max(
-        pos2(rect.min.x + inset, rect.min.y + TAB_STRIP_HEIGHT),
-        pos2(rect.max.x - inset, rect.max.y - inset),
-    )
-}
-
-fn take_layout(layout: &mut WorkspaceLayout) -> WorkspaceLayout {
-    std::mem::replace(layout, layout::empty_layout())
-}
-
-fn focus_frame(mut layout: WorkspaceLayout, frame_id: &str) -> WorkspaceLayout {
-    if layout.frames.contains_key(frame_id) {
-        layout.active_frame_id = frame_id.to_string();
-    }
-    layout
-}
+/// How often a window with a shell in it redraws. The terminal widget asks for its own frames
+/// while its program is alive; this is the floor under everything else.
+pub(crate) const SHELL_REPAINT_INTERVAL: Duration = Duration::from_millis(33);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn frame(width: f32, height: f32) -> (Rect, Rect) {
-        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height));
-        let strip = Rect::from_min_size(rect.min, vec2(width, TAB_STRIP_HEIGHT));
-        (rect, strip)
-    }
-
-    /// A pane must not be able to paint on the border of the frame holding it, which is what
-    /// made a long diff line look as though it had spilled out of its box.
-    #[test]
-    fn a_pane_is_given_room_strictly_inside_its_frames_border() {
-        let (rect, _) = frame(600.0, 400.0);
-        let body = pane_body(rect);
-
-        let border = rect.shrink(FRAME_BORDER);
-        assert!(
-            body.min.x > border.min.x
-                && body.max.x < border.max.x
-                && body.max.y < border.max.y,
-            "the body {body:?} has to stay inside the border {border:?}"
-        );
-        assert!(
-            body.min.y >= rect.min.y + TAB_STRIP_HEIGHT,
-            "and start below the tab strip"
-        );
-    }
-
-    /// A frame too small to hold anything must not hand out a body that is inside out.
-    #[test]
-    fn a_frame_with_no_room_left_hands_out_nothing_rather_than_a_negative_body() {
-        let (rect, _) = frame(3.0, 3.0);
-        let body = pane_body(rect);
-
-        assert!(body.width() <= 0.0 || body.height() <= 0.0);
-    }
-
-    #[test]
-    fn dropping_on_the_tab_strip_joins_its_tabs() {
-        let (rect, strip) = frame(400.0, 300.0);
-        assert_eq!(drop_side(rect, strip, pos2(200.0, 10.0)), Some(DropSide::Tabs));
-    }
-
-    #[test]
-    fn dropping_near_an_edge_splits_on_that_side() {
-        let (rect, strip) = frame(400.0, 300.0);
-        assert_eq!(drop_side(rect, strip, pos2(10.0, 150.0)), Some(DropSide::Left));
-        assert_eq!(drop_side(rect, strip, pos2(390.0, 150.0)), Some(DropSide::Right));
-        assert_eq!(drop_side(rect, strip, pos2(200.0, 295.0)), Some(DropSide::Bottom));
-    }
-
-    #[test]
-    fn dropping_in_the_middle_joins_the_tabs_rather_than_splitting() {
-        let (rect, strip) = frame(400.0, 300.0);
-        assert_eq!(drop_side(rect, strip, pos2(200.0, 150.0)), Some(DropSide::Tabs));
-    }
-
-    #[test]
-    fn a_bottom_split_is_reachable_without_dragging_to_the_very_edge() {
-        // A wide frame: two thirds of the way down the body is already the bottom band, so the
-        // drag doesn't have to travel to the window's edge to split downwards.
-        let (rect, strip) = frame(1400.0, 900.0);
-        let two_thirds_down = strip.max.y + (rect.max.y - strip.max.y) * 0.7;
-        assert_eq!(
-            drop_side(rect, strip, pos2(700.0, two_thirds_down)),
-            Some(DropSide::Bottom)
-        );
-    }
 
     #[test]
     fn a_wide_frame_has_room_for_a_shell_beside_it() {
@@ -962,48 +567,41 @@ mod tests {
         assert!(!fits_another_column(900.0));
     }
 
-    #[test]
-    fn dropping_outside_a_frame_is_not_a_drop() {
-        let (rect, strip) = frame(400.0, 300.0);
-        assert_eq!(drop_side(rect, strip, pos2(800.0, 150.0)), None);
+    fn shell(id: &str) -> Pane {
+        Pane::Terminal {
+            terminal_id: id.to_string(),
+            command: None,
+        }
     }
 
     #[test]
-    fn split_children_tile_the_area_minus_the_handles() {
-        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0));
+    fn the_first_shell_takes_a_column_and_the_next_one_joins_it() {
+        let mut layout = Layout::with_pane(Pane::Review {
+            session_id: "session".to_string(),
+            title: "review".to_string(),
+        });
 
-        let (rects, usable) = split_child_rects(area, SplitDirection::Row, &[0.65, 0.35], 2);
+        place_shell(&mut layout, &TerminalPlacement::WithOtherShells, shell("a"));
+        assert_eq!(layout.frame_count(), 2, "the first shell takes a column");
 
-        assert_eq!(rects.len(), 2);
-        assert!((usable - (area.width() - DIVIDER_THICKNESS)).abs() < f32::EPSILON);
-        let covered: f32 = rects.iter().map(Rect::width).sum();
-        assert!(
-            (covered - usable).abs() < 0.01,
-            "columns should fill the usable width, got {covered} of {usable}"
-        );
-        assert!(rects.iter().all(|rect| rect.height() == area.height()));
-        // The second column starts after the first one plus the handle between them.
-        assert!((rects[1].min.x - (rects[0].max.x + DIVIDER_THICKNESS)).abs() < 0.01);
+        place_shell(&mut layout, &TerminalPlacement::WithOtherShells, shell("b"));
+        assert_eq!(layout.frame_count(), 2, "the second joins its tabs");
+        assert_eq!(layout.pane_count(), 3);
+        assert!(layout.is_coherent());
     }
 
+    /// A shell takes a moment to start, and the frame it was asked from may be gone by then.
     #[test]
-    fn a_column_split_divides_height_instead_of_width() {
-        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 900.0));
+    fn a_shell_asked_for_from_a_frame_that_has_since_closed_still_opens() {
+        let mut layout = Layout::with_pane(Pane::Agents);
+        let doomed = layout.add_pane_beside(layout.active_frame(), DropSide::Right, shell("gone"));
+        let gone = layout.frame_of(doomed).expect("expected a frame");
+        layout.close_pane(doomed);
+        assert!(layout.frame(gone).is_none(), "the frame went with its shell");
 
-        let (rects, usable) = split_child_rects(area, SplitDirection::Column, &[0.5, 0.5], 2);
+        place_shell(&mut layout, &TerminalPlacement::Tab(gone), shell("a"));
 
-        assert!((usable - (area.height() - DIVIDER_THICKNESS)).abs() < f32::EPSILON);
-        assert!(rects.iter().all(|rect| rect.width() == area.width()));
-        assert!((rects[0].height() - rects[1].height()).abs() < 0.01);
-    }
-
-    #[test]
-    fn missing_sizes_fall_back_to_an_even_split() {
-        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 100.0));
-
-        let (rects, _) = split_child_rects(area, SplitDirection::Row, &[], 3);
-
-        assert_eq!(rects.len(), 3);
-        assert!((rects[0].width() - rects[2].width()).abs() < 0.01);
+        assert_eq!(layout.pane_count(), 2, "the shell landed somewhere");
+        assert!(layout.is_coherent());
     }
 }

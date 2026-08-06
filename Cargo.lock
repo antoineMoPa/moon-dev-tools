@@ -1144,6 +1144,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_frames"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "serde",
+]
+
+[[package]]
 name = "egui_glow"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1176,6 +1184,14 @@ dependencies = [
  "tempfile",
  "toml",
  "wgpu",
+]
+
+[[package]]
+name = "egui_tty"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "libghostty-vt",
 ]
 
 [[package]]
@@ -2439,11 +2455,12 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "egui_frames",
  "egui_kittest",
+ "egui_tty",
  "futures",
  "image",
  "libc",
- "libghostty-vt",
  "muda",
  "portable-pty",
  "reqwest",

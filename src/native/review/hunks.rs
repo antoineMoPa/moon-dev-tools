@@ -13,7 +13,7 @@ use crate::{
     comments::{AnchoredComment, build_anchored_comment_value, parse_anchored_comments},
     native::{
         app::App,
-        layout::OpenPaneRequest,
+        panes::OpenPaneRequest,
         model::{Draft, LineSelection, hash_of},
         palette::CommandAction,
         review::diff::{DiffLine, LineKind, insertion_line},

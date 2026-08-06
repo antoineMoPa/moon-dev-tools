@@ -7,25 +7,25 @@ use std::{
 };
 
 use anyhow::Result;
-use egui::{Align, Align2, CornerRadius, Key, Layout, RichText, Ui, vec2};
+use egui::{Align, Align2, CornerRadius, Key, Layout as UiLayout, RichText, Ui, vec2};
+use egui_frames::{Frames, Layout, PaneId};
 
 use crate::{
     api::{AgentKind, OpenSessionRequest},
-    backend::{Backend, TerminalAttachment},
+    backend::Backend,
     native::{
         Launch,
         bindings::{self, Action, Keymap},
         find, fonts,
-        layout::{self, OpenPaneRequest, Pane, PaneKind, default_layout, make_id},
         menu::{MenuAction, NativeMenu},
         model::{Model, Stage, ToastKind, hash_of},
         palette::{self, CommandAction},
-        review,
+        panes::{Pane, PaneKind},
         review::diff::{DiffLine, build_diff_lines},
         tasks::Tasks,
-        terminal::TerminalPane,
         theme::{self, Palette, ThemeMode},
         widgets,
+        workspace::SHELL_REPAINT_INTERVAL,
     },
 };
 
@@ -43,58 +43,40 @@ pub(crate) enum TabAction {
     Close,
 }
 
-/// Where a new shell's pane lands.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TerminalPlacement {
-    /// Beside the shells already open, or in a new column down the right if there are none.
-    WithOtherShells,
-    /// A new full-height column down the right of the workspace.
-    RightColumn,
-    /// Another tab in this frame, for a workspace with no room left to split.
-    Tab(String),
-}
-
 /// Terminals attach on a worker thread, because a remote one opens a socket. The emulator
 /// itself is `!Send`, so the finished attachment is handed back here to be turned into a
 /// pane on the UI thread.
-type AttachInbox = Arc<Mutex<Vec<AttachedTerminal>>>;
+pub(crate) type AttachInbox = Arc<Mutex<Vec<AttachedTerminal>>>;
 
 /// A shell that finished attaching, waiting for the UI thread to turn it into a live pane.
-struct AttachedTerminal {
-    terminal_id: String,
-    attachment: Result<TerminalAttachment>,
+pub(crate) struct AttachedTerminal {
+    pub(crate) terminal_id: String,
+    pub(crate) attachment: Result<egui_tty::TtyStream>,
     /// Whether it should take the keyboard once drawn: set for a shell the user just opened,
-    /// not for one being reattached because a restored layout mentions it.
-    focus: bool,
+    /// not for one being reattached because a restored arrangement mentions it.
+    pub(crate) focus: bool,
 }
 
 pub(crate) struct App {
     pub(crate) model: Model,
     pub(crate) tasks: Tasks,
-    pub(crate) terminals: HashMap<String, TerminalPane>,
-    attaching: AttachInbox,
+    pub(crate) terminals: HashMap<String, egui_tty::Terminal>,
+    /// The workspace widget: the tab strips, the splits, and a drag in flight.
+    pub(crate) frames: Frames,
+    pub(crate) attaching: AttachInbox,
     /// Panes whose terminal could not be attached, so the pane can say so.
     pub(crate) terminal_errors: HashMap<String, String>,
     pub(crate) serves_web: bool,
     last_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
-    pub(crate) pending_close: Option<String>,
+    pub(crate) pending_close: Option<PaneId>,
     pending_tab_action: Option<TabAction>,
-    /// A shell that has just been opened and should take the keyboard on its first frame.
-    focus_terminal: Option<String>,
     /// The keyboard, read through the binding table. It holds the state of a prefix chord
     /// that has begun — the `C-x` of `C-x o` — between frames.
     keymap: Keymap,
     /// The macOS menu bar, if this platform has one.
     menu: Option<NativeMenu>,
-    /// Where each frame and tab was drawn this frame, so a released drag resolves against
-    /// what was on screen rather than against geometry derived a second time.
-    pub(crate) frame_rects: Vec<(String, egui::Rect)>,
-    pub(crate) tab_rects: Vec<(String, String, egui::Rect)>,
-    /// Where inside a tab the pointer grabbed it, so the tab drawn under the pointer keeps the
-    /// spot it was picked up by instead of snapping its corner to the cursor.
-    pub(crate) tab_grab_offset: egui::Vec2,
     /// Parsed diffs, keyed by hunk. Word diffing a hunk is quadratic in its line lengths,
     /// which a file like `Cargo.lock` has thousands of, so it must not happen per frame.
     diffs: HashMap<String, CachedDiff>,
@@ -149,7 +131,7 @@ impl App {
             model: Model {
                 stage,
                 theme,
-                layout: layout::empty_layout(),
+                layout: Layout::new(),
                 root_session_id: String::new(),
                 reviews: HashMap::new(),
                 submodules: Vec::new(),
@@ -157,7 +139,6 @@ impl App {
                 palette: Default::default(),
                 agent_log: None,
                 connection,
-                dragging_pane: None,
                 file_editors: HashMap::new(),
                 find: None,
                 adopt_shells_pending: false,
@@ -166,6 +147,7 @@ impl App {
             },
             tasks,
             terminals: HashMap::new(),
+            frames: Frames::new(),
             attaching: Arc::new(Mutex::new(Vec::new())),
             terminal_errors: HashMap::new(),
             serves_web: launch.serves_web,
@@ -176,11 +158,7 @@ impl App {
             pending_action: None,
             pending_close: None,
             pending_tab_action: None,
-            focus_terminal: None,
             menu: None,
-            frame_rects: Vec::new(),
-            tab_rects: Vec::new(),
-            tab_grab_offset: egui::Vec2::ZERO,
             diffs: HashMap::new(),
             hunk_heights: HashMap::new(),
             decoded_images: HashMap::new(),
@@ -260,12 +238,10 @@ impl App {
                 Ok(opened) => {
                     model.root_session_id = opened.session_id.clone();
                     // A stored arrangement contributes its splits; the review itself is new.
-                    model.layout = match model.restored_layout.take() {
-                        Some(stored) if stored.is_coherent() => {
-                            layout::with_review_pane(layout::shape_only(stored), &opened.session_id)
-                        }
-                        _ => default_layout(&opened.session_id),
-                    };
+                    model.layout = crate::native::workspace::arrangement_for(
+                        model.restored_layout.take(),
+                        &opened.session_id,
+                    );
                     model.review(&opened.session_id);
                     model.stage = Stage::Ready;
                     model.adopt_shells_pending = true;
@@ -340,51 +316,6 @@ impl App {
         }
     }
 
-    /// Adopt shells the server is already running that this window has no tab for.
-    ///
-    /// A remote server outlives any one window, and the embedded one is shared with the web
-    /// frontend, so a shell started elsewhere is still a shell this window can show.
-    fn adopt_existing_shells(&mut self) {
-        let session_id = self.model.root_session_id.clone();
-        if session_id.is_empty() {
-            return;
-        }
-
-        self.tasks.spawn_keyed(
-            Some("adopt-shells".to_string()),
-            move |backend| backend.list_terminals(&session_id),
-            |model, result| {
-                let known: std::collections::HashSet<String> = model
-                    .layout
-                    .panes
-                    .values()
-                    .filter_map(|pane| match pane {
-                        Pane::Terminal { terminal_id, .. } => Some(terminal_id.clone()),
-                        _ => None,
-                    })
-                    .collect();
-
-                for terminal_id in result.unwrap_or_default() {
-                    if known.contains(&terminal_id) {
-                        continue;
-                    }
-                    let pane = Pane::Terminal {
-                        pane_id: make_id("pane"),
-                        terminal_id,
-                        command: None,
-                    };
-                    let layout = std::mem::replace(&mut model.layout, layout::empty_layout());
-                    let active = layout.active_frame_id.clone();
-                    model.layout = match layout.frame_holding_kind(PaneKind::Terminal, &active) {
-                        Some(frame_id) => layout::add_pane(layout, &frame_id, pane, None),
-                        None => layout::add_pane_in_right_column(layout, pane),
-                    };
-                }
-
-            },
-        );
-    }
-
     fn poll_submodules(&mut self) {
         if self.model.root_session_id.is_empty() {
             return;
@@ -429,298 +360,10 @@ impl App {
         }
     }
 
-    /// Open a pane where its kind belongs: reviews with reviews, shells with shells, and a
-    /// brand new right-hand column for the first shell.
-    pub(crate) fn open_pane(&mut self, request: OpenPaneRequest) {
-        let layout = std::mem::replace(&mut self.model.layout, layout::empty_layout());
-        let active_frame = layout.active_frame_id.clone();
-
-        match request {
-            OpenPaneRequest::Review { session_id, title } => {
-                // A review that is already open is brought forward instead of duplicated.
-                if let Some(pane) = layout.find_review_pane(&session_id) {
-                    let pane_id = pane.pane_id().to_string();
-                    self.model.layout = layout::focus_pane(layout, &pane_id);
-                    return;
-                }
-                let frame_id = layout
-                    .frame_holding_kind(PaneKind::Review, &active_frame)
-                    .unwrap_or_else(|| layout.primary_frame_id());
-                self.model.review(&session_id);
-                self.model.layout = layout::add_pane(
-                    layout,
-                    &frame_id,
-                    Pane::Review {
-                        pane_id: make_id("pane"),
-                        session_id,
-                        title,
-                    },
-                    None,
-                );
-            }
-            OpenPaneRequest::ReviewRepo { repo_path, title } => {
-                self.model.layout = layout;
-                // The session has to exist before a pane can point at it, and creating one
-                // runs git in the repo, so the pane appears once that comes back.
-                self.tasks.spawn(
-                    move |backend| {
-                        backend.open_session(OpenSessionRequest {
-                            repo_path,
-                            diff_target: None,
-                            active_commit: None,
-                        })
-                    },
-                    move |model, result| match result {
-                        Ok(opened) => {
-                            model.review(&opened.session_id);
-                            let layout =
-                                std::mem::replace(&mut model.layout, layout::empty_layout());
-                            let frame_id = layout
-                                .frame_holding_kind(PaneKind::Review, &layout.active_frame_id)
-                                .unwrap_or_else(|| layout.primary_frame_id());
-                            model.layout = layout::add_pane(
-                                layout,
-                                &frame_id,
-                                Pane::Review {
-                                    pane_id: make_id("pane"),
-                                    session_id: opened.session_id,
-                                    title,
-                                },
-                                None,
-                            );
-                        }
-                        Err(error) => {
-                            model.error(format!("could not open that review: {error}"))
-                        }
-                    },
-                );
-            }
-            OpenPaneRequest::Agents => {
-                if let Some(pane) = layout.find_pane_of_kind(PaneKind::Agents) {
-                    let pane_id = pane.pane_id().to_string();
-                    self.model.layout = layout::focus_pane(layout, &pane_id);
-                    return;
-                }
-                let frame_id = layout
-                    .frame_holding_kind(PaneKind::Agents, &active_frame)
-                    .unwrap_or_else(|| layout.primary_frame_id());
-                self.model.layout = layout::add_pane(
-                    layout,
-                    &frame_id,
-                    Pane::Agents {
-                        pane_id: make_id("pane"),
-                    },
-                    None,
-                );
-            }
-            OpenPaneRequest::File {
-                session_id,
-                file_path,
-            } => {
-                // The same file twice is the same tab: opening it again brings it forward.
-                if let Some(pane) = layout.panes.values().find(|pane| {
-                    matches!(pane, Pane::File { file_path: open, .. } if *open == file_path)
-                }) {
-                    let pane_id = pane.pane_id().to_string();
-                    self.model.layout = layout::focus_pane(layout, &pane_id);
-                    return;
-                }
-                let frame_id = layout
-                    .frame_holding_kind(PaneKind::File, &active_frame)
-                    .unwrap_or_else(|| layout.primary_frame_id());
-                self.model.layout = layout::add_pane(
-                    layout,
-                    &frame_id,
-                    Pane::File {
-                        pane_id: make_id("pane"),
-                        session_id,
-                        file_path,
-                    },
-                    None,
-                );
-            }
-            OpenPaneRequest::Terminal { command } => {
-                self.model.layout = layout;
-                self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
-            }
-        }
-    }
-
-    /// Start a shell on the reviewed repo and open a pane attached to it.
-    pub(crate) fn spawn_terminal(
-        &mut self,
-        command: Option<AgentKind>,
-        placement: TerminalPlacement,
-    ) {
-        let session_id = self.model.root_session_id.clone();
-        if session_id.is_empty() {
-            self.model.error("no review is open yet");
-            return;
-        }
-        let inbox = Arc::clone(&self.attaching);
-
-        self.tasks.spawn(
-            move |backend| {
-                let terminal_id = backend.create_terminal(&session_id, command)?;
-                let attachment = backend.attach_terminal(&session_id, &terminal_id);
-                Ok((terminal_id, attachment))
-            },
-            move |model, result| match result {
-                Ok((terminal_id, attachment)) => {
-                    let pane = Pane::Terminal {
-                        pane_id: make_id("pane"),
-                        terminal_id: terminal_id.clone(),
-                        command,
-                    };
-                    let layout = std::mem::replace(&mut model.layout, layout::empty_layout());
-                    model.layout = match &placement {
-                        TerminalPlacement::WithOtherShells => {
-                            let active_frame = layout.active_frame_id.clone();
-                            match layout.frame_holding_kind(PaneKind::Terminal, &active_frame) {
-                                Some(frame_id) => layout::add_pane(layout, &frame_id, pane, None),
-                                None => layout::add_pane_in_right_column(layout, pane),
-                            }
-                        }
-                        TerminalPlacement::RightColumn => {
-                            layout::add_pane_in_right_column(layout, pane)
-                        }
-                        // The frame is gone if it was closed while the shell was starting.
-                        TerminalPlacement::Tab(frame_id) if layout.frames.contains_key(frame_id) => {
-                            layout::add_pane(layout, frame_id, pane, None)
-                        }
-                        TerminalPlacement::Tab(_) => layout::add_pane_in_right_column(layout, pane),
-                    };
-                    if let Ok(mut inbox) = inbox.lock() {
-                        inbox.push(AttachedTerminal {
-                            terminal_id,
-                            attachment,
-                            focus: true,
-                        });
-                    }
-                }
-                Err(error) => model.error(format!("could not start a shell: {error}")),
-            },
-        );
-    }
-
-    /// Reattach a shell whose pane is on screen but whose emulator is not — which happens
-    /// when a restored layout mentions a terminal this window has not attached yet.
-    pub(crate) fn attach_terminal(&mut self, terminal_id: &str) {
-        let key = format!("attach:{terminal_id}");
-        if self.tasks.is_busy(&key) || self.terminal_errors.contains_key(terminal_id) {
-            return;
-        }
-        let session_id = self.model.root_session_id.clone();
-        let inbox = Arc::clone(&self.attaching);
-        let terminal_id = terminal_id.to_string();
-        let for_inbox = terminal_id.clone();
-
-        self.tasks.spawn_keyed(
-            Some(key),
-            move |backend| Ok(backend.attach_terminal(&session_id, &terminal_id)),
-            move |_model, result| {
-                let attachment = result.and_then(|attachment| attachment);
-                if let Ok(mut inbox) = inbox.lock() {
-                    inbox.push(AttachedTerminal {
-                        terminal_id: for_inbox,
-                        attachment,
-                        focus: false,
-                    });
-                }
-            },
-        );
-    }
-
-    fn drain_attachments(&mut self) {
-        let ready = {
-            let Ok(mut inbox) = self.attaching.lock() else {
-                return;
-            };
-            std::mem::take(&mut *inbox)
-        };
-
-        for attached in ready {
-            let AttachedTerminal {
-                terminal_id,
-                attachment,
-                focus,
-            } = attached;
-            match attachment
-                .and_then(|attachment| TerminalPane::new(terminal_id.clone(), attachment))
-            {
-                Ok(pane) => {
-                    self.terminal_errors.remove(&terminal_id);
-                    if focus {
-                        self.focus_terminal = Some(terminal_id.clone());
-                    }
-                    self.terminals.insert(terminal_id, pane);
-                }
-                Err(error) => {
-                    let message = format!("{error}");
-                    self.model
-                        .error(format!("shell {terminal_id} is unavailable: {message}"));
-                    self.terminal_errors.insert(terminal_id, message);
-                }
-            }
-        }
-    }
-
-    /// A shell that has ended takes its tab with it, and the frame too when it was the last
-    /// tab there — logging out of a terminal or an agent finishing should leave the workspace
-    /// as it was before the shell was opened.
-    ///
-    /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
-    fn close_tabs_of_exited_shells(&mut self) {
-        let Some(terminal_id) = self
-            .terminals
-            .iter()
-            .find(|(_, terminal)| terminal.has_exited())
-            .map(|(terminal_id, _)| terminal_id.clone())
-        else {
-            return;
-        };
-
-        let pane_id = self.model.layout.panes.values().find_map(|pane| match pane {
-            Pane::Terminal {
-                pane_id,
-                terminal_id: of_pane,
-                ..
-            } if *of_pane == terminal_id => Some(pane_id.clone()),
-            _ => None,
-        });
-
-        match pane_id {
-            Some(pane_id) => self.close_pane(&pane_id),
-            // No tab is showing it, so there is nothing to close but the shell itself.
-            None => {
-                self.terminals.remove(&terminal_id);
-            }
-        }
-    }
-
-    pub(crate) fn close_pane(&mut self, pane_id: &str) {
-        self.model.file_editors.remove(pane_id);
-        let pane = self.model.layout.panes.get(pane_id).cloned();
-        let layout = std::mem::replace(&mut self.model.layout, layout::empty_layout());
-        self.model.layout = layout::close_pane(layout, pane_id);
-
-        // Closing a shell's tab ends the shell: unlike the web frontend, where a closed tab
-        // may just be a navigation away, this is the only window it had.
-        if let Some(Pane::Terminal { terminal_id, .. }) = pane {
-            self.terminals.remove(&terminal_id);
-            self.terminal_errors.remove(&terminal_id);
-            let session_id = self.model.root_session_id.clone();
-            self.tasks.spawn(
-                move |backend| backend.close_terminal(&session_id, &terminal_id),
-                |model, result| model.report(result, "could not close the shell"),
-            );
-        }
-    }
-
     /// ⌘W closes the tab in front. Only a workspace with nothing left in it passes the chord
     /// on to the window itself.
     fn close_active_tab(&mut self, ctx: &egui::Context) {
-        match self.active_pane().map(|pane| pane.pane_id().to_string()) {
+        match self.active_pane_id() {
             Some(pane_id) => self.pending_close = Some(pane_id),
             None => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
@@ -728,11 +371,11 @@ impl App {
 
     /// A file with edits that are not on disk takes two presses to close, so a stray ⌘W or a
     /// mis-aimed click cannot throw work away.
-    fn close_would_lose_edits(&mut self, pane_id: &str) -> bool {
+    fn close_would_lose_edits(&mut self, pane_id: PaneId) -> bool {
         if !self.file_pane_is_dirty(pane_id) {
             return false;
         }
-        let Some(editor) = self.model.file_editors.get_mut(pane_id) else {
+        let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return false;
         };
         if editor.close_confirmed {
@@ -743,18 +386,6 @@ impl App {
         self.model
             .error(format!("{file_path} has unsaved edits — close again to discard them"));
         true
-    }
-
-    /// ⌘T and the tab strip's + button both open a shell wherever the workspace has room.
-    pub(crate) fn open_shell_tab(&mut self) {
-        let frame_id = self.model.layout.active_frame_id.clone();
-        self.open_shell_beside(&frame_id);
-    }
-
-    /// The same, for a shell asked for from a particular frame's tab strip.
-    pub(crate) fn open_shell_beside(&mut self, frame_id: &str) {
-        let placement = self.room_for_a_column(frame_id);
-        self.spawn_terminal(None, placement);
     }
 
     /// Read this frame's keyboard through the binding table and act on what it fired.
@@ -780,8 +411,9 @@ impl App {
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
             Action::SaveFile => {
-                if let Some(Pane::File { pane_id, session_id, .. }) = self.active_pane().cloned() {
-                    self.save_file_pane(&pane_id, &session_id);
+                if let Some((pane_id, Pane::File { session_id, .. })) = self.active_pane() {
+                    let session_id = session_id.clone();
+                    self.save_file_pane(pane_id, &session_id);
                 }
             }
             Action::ToggleTheme => self.set_theme(self.model.theme.toggled()),
@@ -789,38 +421,6 @@ impl App {
             Action::ReverseHunk => self.apply_hunk_shortcut(false),
             Action::FocusNextFrame => self.focus_next_frame(ctx),
             Action::Find => find::open(self),
-        }
-    }
-
-    /// `C-x o`: hand the keyboard to the next frame of the workspace, wrapping round at the
-    /// end. Frames come back in the order they are laid out, so this walks the workspace the
-    /// way it looks rather than the way its tree happens to be built.
-    fn focus_next_frame(&mut self, ctx: &egui::Context) {
-        let frame_ids = self.model.layout.frame_ids();
-        if frame_ids.len() < 2 {
-            return;
-        }
-        let at = frame_ids
-            .iter()
-            .position(|id| *id == self.model.layout.active_frame_id)
-            .unwrap_or(0);
-        let next = frame_ids[(at + 1) % frame_ids.len()].clone();
-        self.model.layout.active_frame_id = next.clone();
-
-        // egui's keyboard has to move too, or the shell left behind would keep the keys.
-        if let Some(focused) = ctx.memory(|memory| memory.focused()) {
-            ctx.memory_mut(|memory| memory.surrender_focus(focused));
-        }
-        // A shell only takes the keyboard when asked to, so a frame showing one asks here.
-        let arriving_at = self
-            .model
-            .layout
-            .frames
-            .get(&next)
-            .and_then(|frame| frame.active_pane_id.as_ref())
-            .and_then(|pane_id| self.model.layout.panes.get(pane_id));
-        if let Some(Pane::Terminal { terminal_id, .. }) = arriving_at {
-            self.focus_terminal = Some(terminal_id.clone());
         }
     }
 
@@ -869,44 +469,6 @@ impl App {
                 .act(&session_id, "could not unstage the hunk", move |backend| {
                     backend.unstage_hunk(&for_call, &hunk_id)
                 });
-        }
-    }
-
-    /// The pane in front of the active frame, which is what the keyboard is talking to.
-    fn active_pane(&self) -> Option<&Pane> {
-        let frame = self
-            .model
-            .layout
-            .frames
-            .get(&self.model.layout.active_frame_id)?;
-        self.model.layout.panes.get(frame.active_pane_id.as_ref()?)
-    }
-
-    pub(crate) fn active_pane_kind(&self) -> Option<PaneKind> {
-        self.active_pane().map(Pane::kind)
-    }
-
-    pub(crate) fn active_pane_id(&self) -> Option<String> {
-        self.active_pane().map(|pane| pane.pane_id().to_string())
-    }
-
-    /// Where a pane was drawn this frame: the body of the frame holding it, below the tabs.
-    /// Anything that floats over a pane — the find bar — is placed against this.
-    pub(crate) fn pane_rect(&self, pane_id: &str) -> Option<egui::Rect> {
-        let frame = self.model.layout.frame_holding_pane(pane_id)?;
-        let rect = self
-            .frame_rects
-            .iter()
-            .find(|(frame_id, _)| *frame_id == frame.frame_id)
-            .map(|(_, rect)| *rect)?;
-        Some(crate::native::workspace::pane_body(rect))
-    }
-
-    /// The review in the frontmost pane of the active frame, if that pane is a review.
-    pub(crate) fn focused_review_session(&self) -> Option<String> {
-        match self.active_pane()? {
-            Pane::Review { session_id, .. } => Some(session_id.clone()),
-            _ => None,
         }
     }
 
@@ -976,40 +538,11 @@ impl App {
         ctx.request_repaint_after(Duration::from_millis(80));
     }
 
-    /// Draw whatever pane is in front of a frame.
-    pub(crate) fn draw_pane(&mut self, ui: &mut Ui, pane: &Pane) {
-        match pane {
-            Pane::Review { pane_id, session_id, .. } => {
-                let (pane_id, session_id) = (pane_id.clone(), session_id.clone());
-                self.apply_review_find(&pane_id, &session_id);
-                review::draw(self, ui, &session_id);
-            }
-            Pane::Agents { .. } => review::draw_agents(self, ui),
-            Pane::Terminal {
-                pane_id,
-                terminal_id,
-                ..
-            } => {
-                let (pane_id, terminal_id) = (pane_id.clone(), terminal_id.clone());
-                self.draw_terminal(ui, &pane_id, &terminal_id);
-            }
-            Pane::File {
-                pane_id,
-                session_id,
-                file_path,
-            } => {
-                let (pane_id, session_id, file_path) =
-                    (pane_id.clone(), session_id.clone(), file_path.clone());
-                self.draw_file_pane(ui, &pane_id, &session_id, &file_path);
-            }
-        }
-    }
-
     /// Run the find bar's search over a review, and tell the bar what it found.
     ///
     /// A search walks every hunk, so it only happens when the bar asks — a changed query or a
     /// step to another match — rather than on every frame the review draws.
-    fn apply_review_find(&mut self, pane_id: &str, session_id: &str) {
+    pub(crate) fn apply_review_find(&mut self, pane_id: PaneId, session_id: &str) {
         let Some((query, at, pending)) = self
             .model
             .find
@@ -1029,7 +562,7 @@ impl App {
             return;
         }
 
-        let found = review::search::find_all(self, session_id, &query);
+        let found = crate::native::review::search::find_all(self, session_id, &query);
         let current = found.get(at).cloned();
         let review = self.model.review(session_id);
         // Bringing the hunk into view is what makes a match in a file scrolled far away
@@ -1038,52 +571,6 @@ impl App {
         review.find_match = current;
         if let Some(find) = &mut self.model.find {
             find.found(found.len());
-        }
-    }
-
-    fn draw_terminal(&mut self, ui: &mut Ui, pane_id: &str, terminal_id: &str) {
-        let palette = self.palette_of();
-        if let Some(error) = self.terminal_errors.get(terminal_id) {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
-                ui.label(RichText::new(error.clone()).color(palette.warn));
-            });
-            return;
-        }
-
-        let Some(pane) = self.terminals.get_mut(terminal_id) else {
-            self.attach_terminal(terminal_id);
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new("attaching…").color(palette.muted));
-            });
-            return;
-        };
-
-        let font = egui::FontId::monospace(theme::CODE_SIZE);
-        // A shell the user just opened starts with the keyboard, so they can type into it
-        // without clicking first.
-        let take_focus = self.focus_terminal.as_deref() == Some(terminal_id);
-        // The find bar asks for a search only when its query or its place in the matches
-        // moved, because a search reads the whole scrollback.
-        let searching = self
-            .model
-            .find
-            .as_ref()
-            .filter(|find| find.pane_id == pane_id && find.pending)
-            .map(|find| (find.query.clone(), find.at));
-        let found = searching.map(|(query, at)| pane.find(&query, at));
-        let wants_repaint = pane.ui(ui, &palette, font, take_focus);
-        if let Some(total) = found
-            && let Some(find) = &mut self.model.find
-        {
-            find.found(total);
-        }
-        if take_focus {
-            self.focus_terminal = None;
-        }
-        if wants_repaint {
-            ui.ctx().request_repaint_after(Duration::from_millis(16));
         }
     }
 
@@ -1141,7 +628,7 @@ impl App {
                                     ui.allocate_exact_size(vec2(3.0, 15.0), egui::Sense::hover());
                                 ui.painter().rect_filled(rect, CornerRadius::same(2), ink);
                                 ui.label(RichText::new(&toast.text).color(palette.ink));
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
                                     if widgets::quiet_button(ui, "\u{1F5D9}").clicked() {
                                         dismissed = Some(index);
                                     }
@@ -1200,7 +687,7 @@ impl App {
         else {
             return;
         };
-        match serde_json::from_str::<crate::native::layout::WorkspaceLayout>(&encoded) {
+        match serde_json::from_str::<Layout<Pane>>(&encoded) {
             Ok(stored) => self.model.restored_layout = Some(stored),
             Err(error) => eprintln!("[moonreview] ignoring a stored layout: {error}"),
         }
@@ -1343,15 +830,15 @@ impl App {
             self.run_action(action);
         }
         if let Some(pane_id) = self.pending_close.take()
-            && !self.close_would_lose_edits(&pane_id)
+            && !self.close_would_lose_edits(pane_id)
         {
-            self.close_pane(&pane_id);
+            self.close_pane(pane_id);
         }
         self.close_tabs_of_exited_shells();
 
         // Closing the last tab closes the window: an empty workspace has nothing to show and
         // no way back other than the palette.
-        if self.model.layout.panes.is_empty() {
+        if self.model.layout.is_empty() {
             if self.had_panes {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -1360,14 +847,10 @@ impl App {
         }
 
         // Terminals whose shell has gone stop repainting, so nothing spins on a dead pane.
-        let live_terminals = self
-            .terminals
-            .values()
-            .any(|terminal| !terminal.has_exited());
-        if live_terminals {
-            ctx.request_repaint_after(Duration::from_millis(33));
+        ctx.request_repaint_after(if self.has_live_shell() {
+            SHELL_REPAINT_INTERVAL
         } else {
-            ctx.request_repaint_after(POLL_INTERVAL);
-        }
+            POLL_INTERVAL
+        });
     }
 }

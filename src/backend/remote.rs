@@ -20,7 +20,7 @@ use crate::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
     },
-    backend::{Backend, TerminalAttachment, TerminalInput},
+    backend::Backend,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -156,24 +156,26 @@ fn websocket_url(base_url: &str, path: &str) -> String {
 
 /// Both halves of an attached remote shell run on the socket, so writes go through the
 /// same lock the reader thread holds between frames.
-struct RemoteTerminalInput {
+struct RemoteShell {
     socket: Arc<Mutex<SharedSocket>>,
 }
 
 type SharedSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 
-impl TerminalInput for RemoteTerminalInput {
-    fn write(&self, data: &[u8]) -> Result<()> {
+impl egui_tty::Tty for RemoteShell {
+    fn write(&self, data: &[u8]) -> egui_tty::Result<()> {
         let text = String::from_utf8_lossy(data).to_string();
         self.send(&json!({ "type": "input", "data": text }))
+            .map_err(egui_tty::Error::msg)
     }
 
-    fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+    fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
         self.send(&json!({ "type": "resize", "cols": cols, "rows": rows }))
+            .map_err(egui_tty::Error::msg)
     }
 }
 
-impl RemoteTerminalInput {
+impl RemoteShell {
     fn send(&self, message: &serde_json::Value) -> Result<()> {
         let mut socket = self
             .socket
@@ -370,7 +372,7 @@ impl Backend for RemoteBackend {
         ))
     }
 
-    fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<TerminalAttachment> {
+    fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {
         let url = websocket_url(
             &self.base_url,
             &format!("/api/session/{session_id}/terminals/{terminal_id}/socket"),
@@ -421,9 +423,9 @@ impl Backend for RemoteBackend {
             }
         });
 
-        Ok(TerminalAttachment {
+        Ok(egui_tty::TtyStream {
             output,
-            input: Arc::new(RemoteTerminalInput { socket }),
+            tty: Arc::new(RemoteShell { socket }),
         })
     }
 }

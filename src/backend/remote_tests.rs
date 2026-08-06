@@ -164,7 +164,7 @@ fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
         .attach_terminal(&opened.session_id, &terminal_id)
         .expect("expected to attach to the remote shell");
     attachment
-        .input
+        .tty
         .write(b"printf 'remote-ok\\n'\n")
         .expect("expected to write to the remote shell");
 

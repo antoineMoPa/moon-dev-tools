@@ -14,14 +14,34 @@ use std::{
     time::{Duration, Instant},
 };
 
+use egui_frames::PaneId;
 use egui_kittest::Harness;
 
 use crate::{
     api::OpenSessionRequest,
     backend::local::LocalBackend,
     git::run_git_no_output,
-    native::{Launch, app::App, theme::ThemeMode},
+    native::{Launch, app::App, panes::Pane, theme::ThemeMode},
 };
+
+/// Where the window drew its frames this pass.
+fn frame_rects(app: &App) -> Vec<egui::Rect> {
+    app.model
+        .layout
+        .frame_ids()
+        .into_iter()
+        .filter_map(|frame| app.frames.frame_rect(frame))
+        .collect()
+}
+
+/// The same for its tabs, which is what a drag has to start on.
+fn tab_rects(app: &App) -> Vec<egui::Rect> {
+    app.model
+        .layout
+        .panes()
+        .filter_map(|(pane, _)| app.frames.tab_rect(pane))
+        .collect()
+}
 
 /// A throwaway git repo with a commit and some uncommitted work, which is the situation
 /// moonreview exists for.
@@ -221,8 +241,9 @@ fn a_shell_that_exits_closes_its_tab() {
     let attachment =
         crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
-        .expect("expected the terminal emulator to start");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
     pane.send(b"exit\n").expect("expected to write to the shell");
 
     // The window is built around that shell: one review tab and one shell tab.
@@ -253,16 +274,10 @@ fn a_shell_that_exits_closes_its_tab() {
             if !placed_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let frame_id = app.model.layout.active_frame_id.clone();
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                app.model.layout = crate::native::layout::add_pane(
-                    layout,
-                    &frame_id,
-                    crate::native::layout::Pane::Terminal {
-                        pane_id: crate::native::layout::make_id("pane"),
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
                     },
@@ -274,11 +289,9 @@ fn a_shell_that_exits_closes_its_tab() {
             *panes_in_ui.lock().expect("poisoned") = app
                 .model
                 .layout
-                .panes
-                .values()
-                .filter(|pane| {
-                    matches!(pane, crate::native::layout::Pane::Terminal { terminal_id, .. }
-                        if *terminal_id == for_pane)
+                .panes()
+                .filter(|(_, pane)| {
+                    matches!(pane, Pane::Terminal { terminal_id, .. } if *terminal_id == for_pane)
                 })
                 .count();
         });
@@ -330,9 +343,8 @@ fn a_file_opens_in_a_tab_of_its_own() {
             ready_in_ui.store(
                 app.model
                     .layout
-                    .panes
-                    .values()
-                    .any(|pane| matches!(pane, crate::native::layout::Pane::File { .. }))
+                    .panes()
+                    .any(|(_, pane)| matches!(pane, Pane::File { .. }))
                     && app
                         .model
                         .file_editors
@@ -365,7 +377,7 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
 
     let app = app_for(&fixture.root, ThemeMode::Dark);
     let mut app = app;
-    let pane_id = Arc::new(Mutex::new(None::<String>));
+    let pane_id = Arc::new(Mutex::new(None::<PaneId>));
     let pane_in_ui = Arc::clone(&pane_id);
     let dirty = Arc::new(AtomicBool::new(false));
     let dirty_in_ui = Arc::clone(&dirty);
@@ -390,30 +402,31 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             if let Some(text) = edit_in_ui.lock().expect("poisoned").take()
-                && let Some(id) = pane_in_ui.lock().expect("poisoned").clone()
+                && let Some(id) = *pane_in_ui.lock().expect("poisoned")
                 && let Some(editor) = app.model.file_editors.get_mut(&id)
             {
                 editor.edit_for_test(&text);
             }
             if save_in_ui.swap(false, Ordering::Relaxed)
-                && let Some(id) = pane_in_ui.lock().expect("poisoned").clone()
+                && let Some(id) = *pane_in_ui.lock().expect("poisoned")
             {
                 let session_id = app.model.root_session_id.clone();
-                app.save_file_pane(&id, &session_id);
+                app.save_file_pane(id, &session_id);
             }
 
             app.draw(ui);
 
-            let open_pane = app.model.layout.panes.values().find_map(|pane| match pane {
-                crate::native::layout::Pane::File { pane_id, .. } => Some(pane_id.clone()),
-                _ => None,
-            });
-            if let Some(id) = &open_pane {
+            let open_pane = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                .map(|(pane_id, _)| pane_id);
+            if let Some(id) = open_pane {
                 dirty_in_ui.store(app.file_pane_is_dirty(id), Ordering::Relaxed);
                 loaded_in_ui.store(
                     app.model
                         .file_editors
-                        .get(id)
+                        .get(&id)
                         .and_then(|editor| editor.content_for_test())
                         .is_some(),
                     Ordering::Relaxed,
@@ -485,26 +498,21 @@ fn dragging_a_split_handle_keeps_resizing_past_its_own_width() {
             if !split_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                app.model.layout = crate::native::layout::add_pane_in_right_column(
-                    layout,
-                    crate::native::layout::Pane::Agents {
-                        pane_id: crate::native::layout::make_id("pane"),
-                    },
+                app.model.layout.add_pane_against_edge(
+                    egui_frames::DropSide::Right,
+                    egui_frames::DEFAULT_EDGE_SHARE,
+                    Pane::Agents,
                 );
                 split_in_ui.store(true, Ordering::Relaxed);
             }
 
             app.draw(ui);
 
-            if let crate::native::layout::LayoutNode::Split { sizes, .. } = &app.model.layout.root {
+            if let egui_frames::LayoutNode::Split { sizes, .. } = app.model.layout.root() {
                 *sizes_in_ui.lock().expect("poisoned") = sizes.clone();
             }
             // The handle sits where the first frame ends.
-            let mut lefts: Vec<f32> = app.frame_rects.iter().map(|(_, r)| r.max.x).collect();
+            let mut lefts: Vec<f32> = frame_rects(&app).iter().map(|r| r.max.x).collect();
             lefts.sort_by(|a, b| a.partial_cmp(b).expect("no NaN rects"));
             *handle_in_ui.lock().expect("poisoned") = lefts.first().copied();
         });
@@ -581,30 +589,18 @@ fn a_frame_left_empty_is_dropped_rather_than_drawn() {
             if !emptied_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
+                let stranded = app.model.layout.add_pane_against_edge(
+                    egui_frames::DropSide::Right,
+                    egui_frames::DEFAULT_EDGE_SHARE,
+                    Pane::Agents,
                 );
-                let mut layout = crate::native::layout::add_pane_in_right_column(
-                    layout,
-                    crate::native::layout::Pane::Agents {
-                        pane_id: crate::native::layout::make_id("pane"),
-                    },
-                );
-                let stranded = layout.active_frame_id.clone();
-                if let Some(frame) = layout.frames.get_mut(&stranded) {
-                    let pane_ids = std::mem::take(&mut frame.pane_ids);
-                    frame.active_pane_id = None;
-                    for pane_id in pane_ids {
-                        layout.panes.remove(&pane_id);
-                    }
-                }
-                app.model.layout = layout;
+                // Its pane taken out from under it, which is what a forgetful caller leaves.
+                app.model.layout.close_pane(stranded);
                 emptied_in_ui.store(true, Ordering::Relaxed);
             }
 
             app.draw(ui);
-            *frames_in_ui.lock().expect("poisoned") = app.model.layout.frames.len();
+            *frames_in_ui.lock().expect("poisoned") = app.model.layout.frame_count();
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -646,57 +642,32 @@ fn dropping_a_tab_at_the_window_edge_makes_a_column_beside_every_frame() {
             if !stacked_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                let frame_id = layout.active_frame_id.clone();
-                let layout = crate::native::layout::add_pane(
-                    layout,
-                    &frame_id,
-                    crate::native::layout::Pane::Agents {
-                        pane_id: crate::native::layout::make_id("pane"),
-                    },
-                    None,
-                );
-                let moved = layout
-                    .frames
-                    .get(&frame_id)
-                    .and_then(|frame| frame.pane_ids.last().cloned())
-                    .expect("expected the pane just added");
-                app.model.layout = crate::native::layout::move_pane_to_frame(
-                    layout,
-                    &moved,
-                    &frame_id,
-                    crate::native::layout::DropSide::Bottom,
-                    None,
-                );
+                let frame = app.model.layout.active_frame();
+                let moved = app.model.layout.add_pane(frame, Pane::Agents, None);
+                app.model
+                    .layout
+                    .move_pane_to_frame(moved, frame, egui_frames::DropSide::Bottom, None);
                 stacked_in_ui.store(true, Ordering::Relaxed);
             }
 
             app.draw(ui);
 
-            *shape_in_ui.lock().expect("poisoned") = match &app.model.layout.root {
-                crate::native::layout::LayoutNode::Split {
+            *shape_in_ui.lock().expect("poisoned") = match app.model.layout.root() {
+                egui_frames::LayoutNode::Split {
                     direction,
                     children,
                     ..
                 } => format!("{direction:?}-{}", children.len()),
-                crate::native::layout::LayoutNode::Frame { .. } => "frame".to_string(),
+                egui_frames::LayoutNode::Frame { .. } => "frame".to_string(),
             };
-            *edge_in_ui.lock().expect("poisoned") = app
-                .frame_rects
+            *edge_in_ui.lock().expect("poisoned") = frame_rects(&app)
                 .iter()
-                .map(|(_, rect)| rect.max.x)
+                .map(|rect| rect.max.x)
                 .fold(f32::NEG_INFINITY, f32::max);
             // The tab of the lower frame, which is the one this drags.
-            *tab_in_ui.lock().expect("poisoned") = app
-                .tab_rects
-                .iter()
-                .max_by(|(_, _, a), (_, _, b)| {
-                    a.min.y.partial_cmp(&b.min.y).expect("no NaN rects")
-                })
-                .map(|(_, _, rect)| *rect);
+            *tab_in_ui.lock().expect("poisoned") = tab_rects(&app)
+                .into_iter()
+                .max_by(|a, b| a.min.y.partial_cmp(&b.min.y).expect("no NaN rects"));
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -884,12 +855,8 @@ fn an_unchanged_file_opens_as_the_file_itself() {
             *shown_in_ui.lock().expect("poisoned") = app
                 .model
                 .layout
-                .panes
-                .values()
-                .find_map(|pane| match pane {
-                    crate::native::layout::Pane::File { pane_id, .. } => Some(pane_id.clone()),
-                    _ => None,
-                })
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                .map(|(pane_id, _)| pane_id)
                 .and_then(|pane_id| app.model.file_editors.get(&pane_id))
                 .and_then(|editor| editor.content_for_test());
         });
@@ -1052,7 +1019,7 @@ fn a_terminal_pane_runs_a_shell_and_shows_its_output() {
         crate::backend::Backend::attach_terminal(&backend, &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
 
-    let mut pane = crate::native::terminal::TerminalPane::new(terminal_id, attachment)
+    let mut pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start");
 
     // A login shell prints a prompt first; the marker is what this waits for.
@@ -1062,7 +1029,7 @@ fn a_terminal_pane_runs_a_shell_and_shows_its_output() {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut screen = String::new();
     while Instant::now() < deadline {
-        pane.pump();
+        pane.poll();
         screen = pane.visible_text().expect("expected to read the grid");
         // Twice: once as the echoed command, once as its output.
         if screen.matches("moonreview-ok").count() >= 2 {
@@ -1077,7 +1044,7 @@ fn a_terminal_pane_runs_a_shell_and_shows_its_output() {
     );
     assert!(!pane.has_exited(), "the shell should still be running");
 
-    crate::backend::Backend::close_terminal(&backend, &opened.session_id, pane.terminal_id.as_str())
+    crate::backend::Backend::close_terminal(&backend, &opened.session_id, &terminal_id)
         .expect("expected the shell to close");
 }
 
@@ -1268,7 +1235,7 @@ fn command_w_closes_the_tab_in_front() {
     let fixture = seeded_fixture("close-tab");
     let app = app_for(&fixture.root, ThemeMode::Dark);
 
-    let panes_left = Arc::new(Mutex::new(Vec::<String>::new()));
+    let panes_left = Arc::new(Mutex::new(Vec::<PaneId>::new()));
     let panes_in_ui = Arc::clone(&panes_left);
     let ready = Arc::new(AtomicBool::new(false));
     let ready_in_ui = Arc::clone(&ready);
@@ -1279,7 +1246,7 @@ fn command_w_closes_the_tab_in_front() {
         .build_ui(move |ui| {
             app.draw(ui);
             *panes_in_ui.lock().expect("the pane list is poisoned") =
-                app.model.layout.panes.keys().cloned().collect();
+                app.model.layout.panes().map(|(pane_id, _)| pane_id).collect();
             ready_in_ui.store(
                 app.model
                     .review_ref(&app.model.root_session_id)
@@ -1776,8 +1743,9 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
     let attachment =
         crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
-        .expect("expected the terminal emulator to start");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
 
     let launch = Launch {
         backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
@@ -1802,16 +1770,10 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
             if !placed_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let frame_id = app.model.layout.active_frame_id.clone();
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                app.model.layout = crate::native::layout::add_pane(
-                    layout,
-                    &frame_id,
-                    crate::native::layout::Pane::Terminal {
-                        pane_id: crate::native::layout::make_id("pane"),
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
                     },
@@ -1863,7 +1825,7 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
 
     let split = Arc::new(AtomicBool::new(false));
     let split_in_ui = Arc::clone(&split);
-    let frames = Arc::new(Mutex::new((Vec::<String>::new(), String::new())));
+    let frames = Arc::new(Mutex::new((Vec::<egui_frames::FrameId>::new(), None)));
     let frames_in_ui = Arc::clone(&frames);
 
     let mut harness = Harness::builder()
@@ -1875,14 +1837,10 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
                 let session_id = app.model.root_session_id.clone();
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                app.model.layout = crate::native::layout::add_pane_in_right_column(
-                    layout,
-                    crate::native::layout::Pane::File {
-                        pane_id: crate::native::layout::make_id("pane"),
+                app.model.layout.add_pane_against_edge(
+                    egui_frames::DropSide::Right,
+                    egui_frames::DEFAULT_EDGE_SHARE,
+                    Pane::File {
                         session_id,
                         file_path: "src/lib.rs".to_string(),
                     },
@@ -1892,7 +1850,7 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
             app.draw(ui);
             *frames_in_ui.lock().expect("poisoned") = (
                 app.model.layout.frame_ids(),
-                app.model.layout.active_frame_id.clone(),
+                Some(app.model.layout.active_frame()),
             );
         });
 
@@ -1902,6 +1860,7 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
 
     let (frame_ids, active) = frames.lock().expect("poisoned").clone();
     assert_eq!(frame_ids.len(), 2, "the test needs two frames to walk between");
+    let active = active.expect("expected a frame to have the keyboard");
     let started_at = frame_ids
         .iter()
         .position(|id| *id == active)
@@ -1909,13 +1868,13 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
 
     press_key(&mut harness, egui::Key::X, egui::Modifiers::CTRL);
     let (_, still) = frames.lock().expect("poisoned").clone();
-    assert_eq!(still, active, "C-x on its own moves nothing");
+    assert_eq!(still, Some(active), "C-x on its own moves nothing");
 
     press_key(&mut harness, egui::Key::O, egui::Modifiers::NONE);
     let (_, moved_to) = frames.lock().expect("poisoned").clone();
     assert_eq!(
         moved_to,
-        frame_ids[(started_at + 1) % frame_ids.len()],
+        Some(frame_ids[(started_at + 1) % frame_ids.len()]),
         "C-x o should have handed the keyboard to the next frame"
     );
 
@@ -1923,7 +1882,7 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
     press_key(&mut harness, egui::Key::X, egui::Modifiers::CTRL);
     press_key(&mut harness, egui::Key::O, egui::Modifiers::NONE);
     let (_, wrapped) = frames.lock().expect("poisoned").clone();
-    assert_eq!(wrapped, active, "the walk wraps round at the last frame");
+    assert_eq!(wrapped, Some(active), "the walk wraps round at the last frame");
 }
 
 /// Press and release a key, then let the UI settle.
@@ -1963,8 +1922,9 @@ fn dragging_over_a_shell_selects_its_text() {
     let attachment =
         crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
-        .expect("expected the terminal emulator to start");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
 
     // Enough marked-up lines to fill the grid, so wherever the drag lands it lands on one.
     pane.send(b"i=0; while [ $i -lt 200 ]; do printf 'moonreviewline%s\\n' $i; i=$((i+1)); done\n")
@@ -2003,16 +1963,10 @@ fn dragging_over_a_shell_selects_its_text() {
             if !placed_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let frame_id = app.model.layout.active_frame_id.clone();
-                let layout = std::mem::replace(
-                    &mut app.model.layout,
-                    crate::native::layout::empty_layout(),
-                );
-                app.model.layout = crate::native::layout::add_pane(
-                    layout,
-                    &frame_id,
-                    crate::native::layout::Pane::Terminal {
-                        pane_id: crate::native::layout::make_id("pane"),
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
                     },
@@ -2022,11 +1976,7 @@ fn dragging_over_a_shell_selects_its_text() {
             }
             app.draw(ui);
 
-            let rect = app
-                .frame_rects
-                .iter()
-                .find(|(frame_id, _)| *frame_id == app.model.layout.active_frame_id)
-                .map(|(_, rect)| *rect);
+            let rect = app.frames.frame_rect(app.model.layout.active_frame());
             if let Some(pane) = app.terminals.get_mut(&for_pane)
                 && let Ok(mut seen) = seen_in_ui.lock()
             {
@@ -2285,26 +2235,26 @@ fn a_shell_stays_readable_across_a_theme_round_trip() {
     let attachment =
         crate::backend::Backend::attach_terminal(&backend, &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let mut pane = crate::native::terminal::TerminalPane::new(terminal_id, attachment)
+    let mut pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start");
 
-    pane.set_theme_for_test(ThemeMode::Dark);
-    let dark = pane.drawn_colors();
+    pane.set_color_scheme(egui_tty::ColorScheme::Dark);
+    let dark = pane.drawn_colors().expect("expected the shell's colors");
     assert_ne!(dark.0, dark.1, "a fresh dark shell is readable");
 
-    pane.set_theme_for_test(ThemeMode::Light);
-    let light = pane.drawn_colors();
+    pane.set_color_scheme(egui_tty::ColorScheme::Light);
+    let light = pane.drawn_colors().expect("expected the shell's colors");
     assert_ne!(light.0, light.1, "and so is a light one");
 
-    pane.set_theme_for_test(ThemeMode::Dark);
-    let back = pane.drawn_colors();
+    pane.set_color_scheme(egui_tty::ColorScheme::Dark);
+    let back = pane.drawn_colors().expect("expected the shell's colors");
     assert_ne!(
         back.0, back.1,
         "text and background must not come back as one colour"
     );
     assert_eq!(back, dark, "dark has to look the way it did before");
 
-    crate::backend::Backend::close_terminal(&backend, &opened.session_id, pane.terminal_id.as_str())
+    crate::backend::Backend::close_terminal(&backend, &opened.session_id, &terminal_id)
         .expect("expected the shell to close");
 }
 

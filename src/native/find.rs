@@ -8,7 +8,9 @@
 
 use egui::{Color32, CornerRadius, Key, RichText, Stroke};
 
-use crate::native::{app::App, layout::PaneKind, model::ToastKind, theme::SMALL_SIZE};
+use egui_frames::PaneId;
+
+use crate::native::{app::App, model::ToastKind, panes::PaneKind, theme::SMALL_SIZE};
 
 /// The panes that have something for a find bar to look through. The agent monitor is a list
 /// of what the agents are doing rather than a document, so ⌘F says so instead of opening a
@@ -18,7 +20,7 @@ const SEARCHABLE: &[PaneKind] = &[PaneKind::Review, PaneKind::Terminal, PaneKind
 /// The find bar, and the search it is running.
 pub(crate) struct Find {
     /// The pane being searched. The bar closes when that pane does.
-    pub(crate) pane_id: String,
+    pub(crate) pane_id: PaneId,
     pub(crate) query: String,
     /// Which match is the current one, counting from zero.
     pub(crate) at: usize,
@@ -32,7 +34,7 @@ pub(crate) struct Find {
 }
 
 impl Find {
-    fn new(pane_id: String) -> Self {
+    fn new(pane_id: PaneId) -> Self {
         Self {
             pane_id,
             query: String::new(),
@@ -94,11 +96,11 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         return;
     };
     // A pane that has been closed takes its find bar with it.
-    if !app.model.layout.panes.contains_key(&find.pane_id) {
+    if !app.model.layout.contains(find.pane_id) {
         app.model.find = None;
         return;
     }
-    let Some(rect) = app.pane_rect(&find.pane_id) else {
+    let Some(rect) = app.pane_rect(find.pane_id) else {
         return;
     };
 
@@ -210,8 +212,16 @@ fn tally(find: &Find) -> String {
 mod tests {
     use super::*;
 
+    /// A pane to hang a bar on. Names come from an arrangement, so the test builds one.
+    fn a_pane() -> PaneId {
+        egui_frames::Layout::with_pane(())
+            .active_pane()
+            .expect("expected the pane just opened")
+            .0
+    }
+
     fn find_with(total: usize) -> Find {
-        let mut find = Find::new("pane-1".to_string());
+        let mut find = Find::new(a_pane());
         find.query = "x".to_string();
         find.found(total);
         find

@@ -10,7 +10,7 @@ use crate::{
     native::{
         app::App,
         bindings::{self, Action},
-        layout::{OpenPaneRequest, PaneKind},
+        panes::{OpenPaneRequest, PaneKind},
         theme::{Palette, SMALL_SIZE},
     },
 };
@@ -44,7 +44,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let mut commands = Vec::new();
     let root = app.model.root_session_id.clone();
 
-    if app.model.layout.find_review_pane(&root).is_none() {
+    if app.model.layout.find_pane(|pane| pane.reviews(&root)).is_none() {
         commands.push(Command {
             title: "review".to_string(),
             description: "Open the main review".to_string(),
@@ -55,7 +55,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: None,
         });
     }
-    if app.model.layout.find_pane_of_kind(PaneKind::Agents).is_none() {
+    if app
+        .model
+        .layout
+        .find_pane(|pane| pane.kind() == PaneKind::Agents)
+        .is_none()
+    {
         commands.push(Command {
             title: "comment agents".to_string(),
             description: "Open the comment agent monitor".to_string(),

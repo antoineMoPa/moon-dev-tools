@@ -6,6 +6,7 @@
 //! together, so a line number is always beside its line.
 
 use egui::{Align, Layout, RichText, Ui, vec2};
+use egui_frames::PaneId;
 
 use crate::native::{
     app::App,
@@ -69,15 +70,15 @@ impl App {
     /// Deferred like every other pane change: this is called from inside the draw of the pane
     /// asking for it, and the tree holding that pane must not be rebuilt underneath it.
     pub(crate) fn open_file_pane(&mut self, session_id: &str, file_path: &str) {
-        let already_open = self.model.layout.panes.values().any(|pane| {
-            matches!(pane, crate::native::layout::Pane::File { file_path: open, .. }
+        let already_open = self.model.layout.panes().any(|(_, pane)| {
+            matches!(pane, crate::native::panes::Pane::File { file_path: open, .. }
                 if open == file_path)
         });
         if already_open || self.pending_action.is_some() {
             return;
         }
         self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
-            crate::native::layout::OpenPaneRequest::File {
+            crate::native::panes::OpenPaneRequest::File {
                 session_id: session_id.to_string(),
                 file_path: file_path.to_string(),
             },
@@ -85,20 +86,20 @@ impl App {
     }
 
     /// The file a pane is showing, fetched on first sight.
-    fn ensure_file_editor(&mut self, pane_id: &str, session_id: &str, file_path: &str) {
-        if self.model.file_editors.contains_key(pane_id) {
+    fn ensure_file_editor(&mut self, pane_id: PaneId, session_id: &str, file_path: &str) {
+        if self.model.file_editors.contains_key(&pane_id) {
             return;
         }
         self.model
             .file_editors
-            .insert(pane_id.to_string(), FileEditor::loading(file_path.to_string()));
+            .insert(pane_id, FileEditor::loading(file_path.to_string()));
         self.load_file(pane_id, session_id, file_path);
     }
 
-    fn load_file(&mut self, pane_id: &str, session_id: &str, file_path: &str) {
+    fn load_file(&mut self, pane_id: PaneId, session_id: &str, file_path: &str) {
         let for_call = session_id.to_string();
         let path = file_path.to_string();
-        let for_apply = pane_id.to_string();
+        let for_apply = pane_id;
         self.tasks.spawn_keyed(
             Some(format!("file:{pane_id}")),
             move |backend| backend.file_content(&for_call, &path),
@@ -119,8 +120,8 @@ impl App {
     }
 
     /// Write the file a pane is editing back to the working tree.
-    pub(crate) fn save_file_pane(&mut self, pane_id: &str, session_id: &str) {
-        let Some(editor) = self.model.file_editors.get_mut(pane_id) else {
+    pub(crate) fn save_file_pane(&mut self, pane_id: PaneId, session_id: &str) {
+        let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };
         if editor.saving || !editor.is_dirty() {
@@ -133,7 +134,7 @@ impl App {
         let for_call = session_id.to_string();
         let for_write = file_path.clone();
         let written = content.clone();
-        let for_apply = pane_id.to_string();
+        let for_apply = pane_id;
         self.tasks.spawn_keyed(
             Some(format!("save:{pane_id}")),
             move |backend| backend.write_file(&for_call, &for_write, &written),
@@ -160,23 +161,23 @@ impl App {
 
     /// Everything a tab strip needs to know about a file pane: its title, and whether it has
     /// unsaved edits to mark.
-    pub(crate) fn file_pane_is_dirty(&self, pane_id: &str) -> bool {
+    pub(crate) fn file_pane_is_dirty(&self, pane_id: PaneId) -> bool {
         self.model
             .file_editors
-            .get(pane_id)
+            .get(&pane_id)
             .is_some_and(FileEditor::is_dirty)
     }
 
     pub(crate) fn draw_file_pane(
         &mut self,
         ui: &mut Ui,
-        pane_id: &str,
+        pane_id: PaneId,
         session_id: &str,
         file_path: &str,
     ) {
         let palette = self.palette_of();
         self.ensure_file_editor(pane_id, session_id, file_path);
-        let Some(editor) = self.model.file_editors.get(pane_id) else {
+        let Some(editor) = self.model.file_editors.get(&pane_id) else {
             return;
         };
         let dirty = editor.is_dirty();
@@ -251,7 +252,7 @@ pub(crate) fn matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>>
         .collect()
 }
 
-fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: &str, palette: &Palette) {
+fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
     let font = egui::FontId::monospace(CODE_SIZE);
     let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
     // The find bar over this pane, if there is one. Read out before the editor is borrowed,
@@ -273,7 +274,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: &str, palette: &Palette) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
-                let Some(editor) = app.model.file_editors.get_mut(pane_id) else {
+                let Some(editor) = app.model.file_editors.get_mut(&pane_id) else {
                     return;
                 };
                 let line_count = editor.edited.lines().count().max(1);

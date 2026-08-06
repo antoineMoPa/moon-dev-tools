@@ -24,6 +24,7 @@ Requirements:
 - [Zig](https://ziglang.org/) 0.15.x, for the native window's terminal
 
 ```bash
+git submodule update --init --recursive   # egui_frames and egui_tty, see Crates below
 cargo install --path .
 moonreview
 ```
@@ -149,6 +150,22 @@ pkill moonreview
 ```
 
 A standalone `serve` also times out after 30 minutes of inactivity.
+
+## Crates
+
+Two pieces of the native window are libraries in their own right, kept as submodules under
+`crates/` and published separately:
+
+- [**egui_frames**](crates/egui_frames) — tabs, splits and draggable panes for egui. The
+  arrangement moonreview's window is made of, with nothing about reviews in it.
+- [**egui_tty**](crates/egui_tty) — a terminal emulator widget for egui, on Ghostty's VT engine.
+  What a shell tab holds.
+
+After cloning, pull them in:
+
+```bash
+git submodule update --init --recursive
+```
 
 ## Development
 

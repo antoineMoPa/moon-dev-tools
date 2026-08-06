@@ -6,13 +6,12 @@ pub(crate) mod bindings;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
-pub(crate) mod layout;
 pub(crate) mod menu;
 pub(crate) mod model;
 pub(crate) mod palette;
+pub(crate) mod panes;
 pub(crate) mod review;
 pub(crate) mod tasks;
-pub(crate) mod terminal;
 pub(crate) mod theme;
 #[cfg(test)]
 mod ui_tests;

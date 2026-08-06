@@ -1,0 +1,8 @@
+[submodule "crates/egui_frames"]
+	path = crates/egui_frames
+	url = git@github.com:antoineMoPa/egui_frames.git
+	branch = main
+[submodule "crates/egui_tty"]
+	path = crates/egui_tty
+	url = git@github.com:antoineMoPa/egui_tty.git
+	branch = main

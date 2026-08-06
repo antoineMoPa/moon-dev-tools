@@ -191,6 +191,44 @@ impl Palette {
     }
 }
 
+impl Palette {
+    /// The palette as the workspace widget wants it, so frames and tabs are drawn in the same
+    /// colors as everything else.
+    pub(crate) fn frames_style(&self) -> egui_frames::FramesStyle {
+        egui_frames::FramesStyle {
+            background: self.bg,
+            frame_fill: self.panel,
+            border: self.line,
+            active_border: self.accent,
+            tab_fill: self.control_bg,
+            active_tab_fill: self.control_active_bg,
+            text: self.ink,
+            inactive_text: self.muted,
+            accent: self.accent,
+            close_hover: self.warn,
+            font: FontId::proportional(SMALL_SIZE + 1.0),
+            ..egui_frames::FramesStyle::default()
+        }
+    }
+
+    /// The same, for a shell. A terminal's own colors come from the emulator rather than from
+    /// here, so all it takes from the palette is which way round they run.
+    pub(crate) fn terminal_style(&self) -> egui_tty::TerminalStyle {
+        egui_tty::TerminalStyle {
+            font: FontId::monospace(CODE_SIZE),
+            scheme: match self.mode {
+                ThemeMode::Light => egui_tty::ColorScheme::Light,
+                ThemeMode::Dark => egui_tty::ColorScheme::Dark,
+            },
+            cursor: self.accent,
+            bold_ink: self.ink,
+            notice_ink: self.muted,
+            error_ink: self.warn,
+            ..egui_tty::TerminalStyle::default()
+        }
+    }
+}
+
 /// Text roles the app uses. `TextStyle::Name` keeps them addressable from any widget.
 pub(crate) const CODE_SIZE: f32 = 12.0;
 pub(crate) const UI_SIZE: f32 = 13.0;

@@ -6,9 +6,11 @@ use std::{
     sync::Arc,
 };
 
+use egui_frames::{Layout, PaneId};
+
 use crate::{
     api::{AgentKind, AgentLogPayload, CommitView, HunkView, SessionPayload, SubmoduleView},
-    native::{layout::WorkspaceLayout, theme::ThemeMode},
+    native::{panes::Pane, theme::ThemeMode},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -167,7 +169,8 @@ pub(crate) enum Stage {
 pub(crate) struct Model {
     pub(crate) stage: Stage,
     pub(crate) theme: ThemeMode,
-    pub(crate) layout: WorkspaceLayout,
+    /// The panes, and the frames and splits they are arranged in.
+    pub(crate) layout: Layout<Pane>,
     /// The review the window was launched on. Submodule reviews are opened beside it.
     pub(crate) root_session_id: String,
     pub(crate) reviews: HashMap<String, ReviewState>,
@@ -180,13 +183,11 @@ pub(crate) struct Model {
     /// Set once a review is open, so the window picks up shells the server already has.
     pub(crate) adopt_shells_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.
-    pub(crate) restored_layout: Option<WorkspaceLayout>,
+    pub(crate) restored_layout: Option<Layout<Pane>>,
     /// The agent the last run ended on, applied to the session once the review opens.
     pub(crate) restored_agent: Option<AgentKind>,
-    /// The tab being dragged, if any: its pane id.
-    pub(crate) dragging_pane: Option<String>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
-    pub(crate) file_editors: HashMap<String, crate::native::file_pane::FileEditor>,
+    pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
     /// The find bar, when one is open, and the pane it is searching.
     pub(crate) find: Option<crate::native::find::Find>,
 }

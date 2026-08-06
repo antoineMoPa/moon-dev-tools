@@ -11,7 +11,7 @@ use crate::{
         FileContentPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
         SubmoduleView, server_url,
     },
-    backend::{Backend, TerminalAttachment, TerminalInput},
+    backend::Backend,
     service,
     terminal::TerminalSession,
 };
@@ -26,19 +26,22 @@ impl LocalBackend {
     }
 }
 
-struct LocalTerminalInput {
+/// A shell running in this process, as something a terminal pane can type into.
+struct LocalShell {
     session: Arc<TerminalSession>,
 }
 
-impl TerminalInput for LocalTerminalInput {
-    fn write(&self, data: &[u8]) -> Result<()> {
-        self.session.write_input(data)
+impl egui_tty::Tty for LocalShell {
+    fn write(&self, data: &[u8]) -> egui_tty::Result<()> {
+        self.session.write_input(data).map_err(egui_tty::Error::msg)
     }
 
-    fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        self.session.resize(cols, rows)
+    fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
+        self.session.resize(cols, rows).map_err(egui_tty::Error::msg)
     }
 
+    /// The pane is what holds this shell's session alive, so its output channel stays open
+    /// long after the shell itself is gone. Nothing but the session knows.
     fn has_exited(&self) -> bool {
         self.session.has_exited()
     }
@@ -162,11 +165,11 @@ impl Backend for LocalBackend {
         Ok(())
     }
 
-    fn attach_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<TerminalAttachment> {
+    fn attach_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {
         let (output, session) = self.state.terminals.attach(terminal_id)?;
-        Ok(TerminalAttachment {
+        Ok(egui_tty::TtyStream {
             output,
-            input: Arc::new(LocalTerminalInput { session }),
+            tty: Arc::new(LocalShell { session }),
         })
     }
 }

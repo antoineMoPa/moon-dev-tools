@@ -16,28 +16,6 @@ use crate::api::{
     OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
 };
 
-/// One attached shell: bytes the shell has written, and a handle to write back to it.
-pub(crate) struct TerminalAttachment {
-    pub(crate) output: std::sync::mpsc::Receiver<Vec<u8>>,
-    /// Shared so the terminal's own reply callback can hold a handle without borrowing
-    /// the widget that owns it.
-    pub(crate) input: std::sync::Arc<dyn TerminalInput>,
-}
-
-pub(crate) trait TerminalInput: Send + Sync {
-    fn write(&self, data: &[u8]) -> Result<()>;
-    fn resize(&self, cols: u16, rows: u16) -> Result<()>;
-
-    /// Whether the shell behind this handle has ended.
-    ///
-    /// A remote tab hears about it by its socket closing, which ends the output channel on its
-    /// own. A local one does not: the pane holds the shell's session alive, so its output
-    /// channel stays open long after the shell is gone, and the pane has to ask.
-    fn has_exited(&self) -> bool {
-        false
-    }
-}
-
 /// Every review operation the native frontend performs. Calls block, so the UI runs them
 /// on worker threads — a remote backend is a network round-trip.
 pub(crate) trait Backend: Send + Sync + 'static {
@@ -83,5 +61,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
-    fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<TerminalAttachment>;
+    /// Attach to a shell: everything it has printed, and a handle to type into it. This is
+    /// what a terminal pane is built from — see [`egui_tty::TtyStream`].
+    fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream>;
 }
