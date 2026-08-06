@@ -68,6 +68,19 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: None,
         });
     }
+    if app
+        .model
+        .layout
+        .find_pane(|pane| pane.kind() == PaneKind::Tasks)
+        .is_none()
+    {
+        commands.push(Command {
+            title: "moontasks".to_string(),
+            description: "Open the task board and the agents working on it".to_string(),
+            action: CommandAction::OpenPane(OpenPaneRequest::Tasks),
+            shortcut: None,
+        });
+    }
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),

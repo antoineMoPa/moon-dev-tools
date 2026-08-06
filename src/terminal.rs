@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     env,
     io::{Read, Write},
-    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -56,9 +55,37 @@ fn login_shell() -> String {
     env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
+/// What to start a shell as. The plain case is a login shell in the reviewed repo; a task's
+/// agent adds the program, its arguments, and the environment that tells it which task it is
+/// working in.
+pub(crate) struct TerminalSpec {
+    pub(crate) cwd: std::path::PathBuf,
+    /// The program to run. `None` is the login shell.
+    pub(crate) program: Option<AgentKind>,
+    pub(crate) args: Vec<String>,
+    pub(crate) env: Vec<(String, String)>,
+    /// The task this shell belongs to, if any. An owned shell is the task's to list and to
+    /// close, so it stays out of the workspace's own shells.
+    pub(crate) owner: Option<String>,
+}
+
+impl TerminalSpec {
+    /// A shell of the workspace's own: no program, no task.
+    pub(crate) fn shell(cwd: std::path::PathBuf, program: Option<AgentKind>) -> Self {
+        Self {
+            cwd,
+            program,
+            args: Vec::new(),
+            env: Vec::new(),
+            owner: None,
+        }
+    }
+}
+
 /// A shell that lives in the server, not in the browser tab: closing the tab detaches
 /// the websocket while the pty keeps running, so reopening it resumes the same shell.
 pub(crate) struct TerminalSession {
+    owner: Option<String>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
@@ -121,6 +148,10 @@ impl Scrollback {
 
 pub(crate) struct TerminalRegistry {
     sessions: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    /// Tells this run of the server's shells from a previous one's. A task writes down the
+    /// shell its agent is in, and that record outlives the process, so a counter starting
+    /// over at zero would let a new shell answer to an old task's name.
+    run: String,
     next_id: AtomicU64,
     last_activity: Arc<Mutex<Instant>>,
 }
@@ -129,6 +160,7 @@ impl TerminalRegistry {
     pub(crate) fn new(last_activity: Arc<Mutex<Instant>>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            run: crate::moontasks::store::new_uuid()[..8].to_string(),
             next_id: AtomicU64::new(0),
             last_activity,
         }
@@ -176,10 +208,39 @@ impl TerminalRegistry {
         Ok((receiver, session))
     }
 
+    /// The shells the workspace has of its own — a task's shells are the task's to show.
     pub(crate) fn terminal_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
+        let mut ids: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.owner.is_none())
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
         ids.sort();
         ids
+    }
+
+    /// Whether this shell is still one the server has, which is what tells a task's recorded
+    /// agent run from one that ended — or that died with a previous run of the server.
+    pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(terminal_id)
+    }
+
+    /// End every shell belonging to one task, which is what finishing the task does.
+    pub(crate) fn remove_owned_by(&self, owner: &str) {
+        let owned: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.owner.as_deref() == Some(owner))
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
+        for terminal_id in owned {
+            self.remove(&terminal_id);
+        }
     }
 
     pub(crate) fn remove(&self, terminal_id: &str) {
@@ -192,11 +253,7 @@ impl TerminalRegistry {
         let _ = child.wait();
     }
 
-    pub(crate) fn spawn(
-        self: &Arc<Self>,
-        repo_path: &Path,
-        program: Option<AgentKind>,
-    ) -> anyhow::Result<String> {
+    pub(crate) fn spawn(self: &Arc<Self>, spec: TerminalSpec) -> anyhow::Result<String> {
         let pty = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -204,7 +261,7 @@ impl TerminalRegistry {
             pixel_height: 0,
         })?;
 
-        let mut command = match program {
+        let mut command = match spec.program {
             None | Some(AgentKind::None) => {
                 let mut command = CommandBuilder::new(login_shell());
                 command.arg("-l");
@@ -214,8 +271,14 @@ impl TerminalRegistry {
             Some(AgentKind::Codex) => CommandBuilder::new("codex"),
             Some(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
         };
-        command.cwd(repo_path);
+        for argument in &spec.args {
+            command.arg(argument);
+        }
+        command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
+        for (name, value) in &spec.env {
+            command.env(name, value);
+        }
         let child = pty.slave.spawn_command(command)?;
         // The slave handle must be dropped so the reader sees EOF once the shell exits.
         drop(pty.slave);
@@ -225,8 +288,13 @@ impl TerminalRegistry {
         let (output, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (exited, _) = watch::channel(false);
 
-        let terminal_id = format!("terminal-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let terminal_id = format!(
+            "terminal-{}-{}",
+            self.run,
+            self.next_id.fetch_add(1, Ordering::Relaxed)
+        );
         let session = Arc::new(TerminalSession {
+            owner: spec.owner,
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
             child: Mutex::new(child),
@@ -273,7 +341,9 @@ pub(crate) async fn create_terminal(
 ) -> Result<impl IntoResponse, AppError> {
     let repo_path =
         crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    let terminal_id = state.terminals.spawn(&repo_path, request.command)?;
+    let terminal_id = state
+        .terminals
+        .spawn(TerminalSpec::shell(repo_path, request.command))?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 

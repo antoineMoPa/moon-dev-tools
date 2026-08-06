@@ -16,6 +16,35 @@ use crate::{
     server,
 };
 
+/// What the window opens on, which is the whole difference between the three executables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Frame {
+    /// `moonreview`: the review of the repo.
+    Review,
+    /// `moontasks`: the task board, and the agents working through it.
+    Tasks,
+    /// `moonshell`: a shell in the repo.
+    Shell,
+}
+
+/// What each executable is called, and the one line of help that says what it opens.
+const FRAME_PROGRAMS: &[(Frame, &str, &str)] = &[
+    (Frame::Review, "moonreview", "a review of the repo"),
+    (Frame::Tasks, "moontasks", "the task board"),
+    (Frame::Shell, "moonshell", "a shell in the repo"),
+];
+
+impl Frame {
+    /// The name of the executable that opens on this frame.
+    pub(crate) fn program(self) -> &'static str {
+        FRAME_PROGRAMS
+            .iter()
+            .find(|(frame, _, _)| *frame == self)
+            .map(|(_, program, _)| *program)
+            .expect("every frame has an executable")
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum CliCommand {
     Help,
@@ -23,6 +52,8 @@ enum CliCommand {
     Serve {
         logs: bool,
     },
+    /// The moontasks MCP server, on stdio. Agents start this, not people.
+    Mcp,
     Review {
         target: ReviewTarget,
         logs: bool,
@@ -60,14 +91,14 @@ struct ReviewOpenRequest {
     active_commit: Option<String>,
 }
 
-pub(crate) fn run() -> Result<()> {
-    match parse_cli_args(env::args().skip(1).collect::<Vec<_>>())? {
+pub(crate) fn run(frame: Frame) -> Result<()> {
+    match parse_cli_args(env::args().skip(1).collect::<Vec<_>>(), frame)? {
         CliCommand::Help => {
-            print_help();
+            print_help(frame);
             Ok(())
         }
         CliCommand::Version => {
-            print_version();
+            print_version(frame);
             Ok(())
         }
         CliCommand::Serve { logs } => {
@@ -80,19 +111,25 @@ pub(crate) fn run() -> Result<()> {
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())
         }
+        CliCommand::Mcp => crate::moontasks::mcp::run(),
         CliCommand::Review {
             target,
             logs,
             frontend,
-        } => launch_review(target, logs, frontend),
+        } => launch_review(target, logs, frontend, frame),
     }
 }
 
-fn launch_review(target: ReviewTarget, logs: bool, frontend: Frontend) -> Result<()> {
+fn launch_review(
+    target: ReviewTarget,
+    logs: bool,
+    frontend: Frontend,
+    frame: Frame,
+) -> Result<()> {
     #[cfg(feature = "native")]
     if let Frontend::Remote { target, repo_path } = &frontend {
         // The repo lives on the far side, so nothing here is resolved against this machine.
-        let launch = crate::native::launch_remote(target, repo_path.clone())?;
+        let launch = crate::native::launch_remote(target, repo_path.clone(), frame)?;
         return crate::native::run(launch);
     }
 
@@ -112,10 +149,11 @@ fn launch_review(target: ReviewTarget, logs: bool, frontend: Frontend) -> Result
                 active_commit: open_request.active_commit.clone(),
             },
             true,
+            frame,
         )?;
         return crate::native::run(launch);
     }
-    let _ = &frontend;
+    let _ = (&frontend, frame);
 
     if logs {
         return launch_review_with_foreground_server(repo_path, open_request);
@@ -358,7 +396,7 @@ fn open_review_url_for_session(
     Ok(format!("{}/review/{}", server_url(), opened.session_id))
 }
 
-fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
+fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     let mut logs = false;
     let mut web = false;
     let mut remote: Option<String> = None;
@@ -390,7 +428,7 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
             _ if arg.starts_with("--repo=") => {
                 remote_repo = Some(arg["--repo=".len()..].to_string());
             }
-            _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text()),
+            _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text_for(frame)),
             _ => positional.push(arg),
         }
     }
@@ -419,6 +457,7 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
     match positional.as_slice() {
         [] => Ok(review(ReviewTarget::WorkingTree)),
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
+        [command] if command == "mcp" => Ok(CliCommand::Mcp),
         [command] if command == "diff" => Ok(review(ReviewTarget::WorkingTree)),
         [command, target] if command == "diff" => Ok(review(ReviewTarget::Diff(target.clone()))),
         [target] if target == "." || target == "./" => Ok(review(ReviewTarget::CurrentDirectory)),
@@ -427,73 +466,102 @@ fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
         } else {
             ReviewTarget::Path(target.clone())
         })),
-        [command, ..] if command == "diff" || command == "serve" => bail!("{}", help_text()),
+        [command, ..] if command == "diff" || command == "serve" || command == "mcp" => {
+            bail!("{}", help_text_for(frame))
+        }
         [before, after] => Ok(review(ReviewTarget::Comparison([
             before.clone(),
             after.clone(),
         ]))),
-        _ => bail!("{}", help_text()),
+        _ => bail!("{}", help_text_for(frame)),
     }
 }
 
-fn print_help() {
-    println!("{}", help_text());
+fn print_help(frame: Frame) {
+    println!("{}", help_text_for(frame));
 }
 
-fn help_text() -> &'static str {
-    "moonreview
+/// The help of whichever executable was run: the same review options either way, with the
+/// frame it opens on at the top and the other two named at the bottom.
+fn help_text_for(frame: Frame) -> String {
+    let program = frame.program();
+    let opens = FRAME_PROGRAMS
+        .iter()
+        .find(|(candidate, _, _)| *candidate == frame)
+        .map(|(_, _, opens)| *opens)
+        .expect("every frame says what it opens");
+    let siblings: Vec<String> = FRAME_PROGRAMS
+        .iter()
+        .filter(|(candidate, _, _)| *candidate != frame)
+        .map(|(_, name, opens)| format!("  {name} — opens on {opens}"))
+        .collect();
 
-Tiny local code review UI for git.
+    format!(
+        "{program}
+
+Tiny local code review UI for git. This one opens on {opens}.
 
 Usage:
-  moonreview
-  moonreview .
-  moonreview <path>
-  moonreview <before-path> <after-path>
-  moonreview <commit>
-  moonreview diff <target>
-  moonreview --web
-  moonreview --remote <host> [--repo <path>]
-  moonreview serve --logs
-  moonreview --version
-  moonreview --help
+  {program}
+  {program} .
+  {program} <path>
+  {program} <before-path> <after-path>
+  {program} <commit>
+  {program} diff <target>
+  {program} --web
+  {program} --remote <host> [--repo <path>]
+  {program} serve --logs
+  {program} mcp
+  {program} --version
+  {program} --help
 
 Examples:
-  moonreview
-  moonreview .
-  moonreview src/main.rs
-  moonreview before.json after.json
-  moonreview 4542abe
-  moonreview diff dev
-  moonreview diff dev:./
-  moonreview --web
-  moonreview --remote dev-box --repo /home/you/project
+  {program}
+  {program} .
+  {program} src/main.rs
+  {program} before.json after.json
+  {program} 4542abe
+  {program} diff dev
+  {program} --web
+  {program} --remote dev-box --repo /home/you/project
 
-Run `moonreview` inside any git repository you want to review.
-Run `moonreview .` to review only the current directory.
+Run `{program}` inside any git repository you want to work in.
+Run `{program} .` to limit the review to the current directory.
 Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.
 
-`moonreview <commit>` opens a read-only review of a single commit.
-`moonreview diff <target>` opens a read-only diff review against a git target.
+`{program} <commit>` opens a read-only review of a single commit.
+`{program} diff <target>` opens a read-only diff review against a git target.
 Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`.
 
+The other frames, which are the same window opened on something else:
+{siblings}
+
 Frontends:
-  By default the review opens in a native window, with the review server inside it. That
-  window also serves the web frontend, so the same review can be opened in a browser.
+  By default the window carries the review server inside it, so the same review can be
+  opened in a browser.
   `--web` opens a browser tab against a background server instead.
-  `--remote <host>` opens the window against a `moonreview serve` on another machine, where
-  the repo lives; `--repo <path>` names the path there, and without it the window asks.
+  `--remote <host>` opens the window against a `serve` on another machine, where the repo
+  lives; `--repo <path>` names the path there, and without it the window asks.
   `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
+
+Moontasks:
+  The moontasks board is a sprint board over the `.moontasks` folder of the repo, with an
+  agent running behind each card. `moontasks` opens on it; the other two reach it from the
+  command palette.
+  `mcp` is the MCP server those agents use to move their own card; moonreview starts it for
+  them, so there is no reason to run it by hand.
 
 Use `--logs` with `--web` or `serve` to run the server in the foreground and print
 agent/failure logs until you stop it with Ctrl+C.
 Changed submodules are offered inside the review, as extra reviews you can open from the
-command palette."
+command palette.",
+        siblings = siblings.join("\n")
+    )
 }
 
-fn print_version() {
-    println!("moonreview {}", env!("MOONREVIEW_VERSION"));
+fn print_version(frame: Frame) {
+    println!("{} {}", frame.program(), env!("MOONREVIEW_VERSION"));
 }
 
 fn ensure_server_running(logs: bool) -> Result<()> {
@@ -537,8 +605,11 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> CliCommand {
-        parse_cli_args(args.iter().map(|arg| arg.to_string()).collect())
-            .expect("expected CLI args to parse")
+        parse_cli_args(
+            args.iter().map(|arg| arg.to_string()).collect(),
+            Frame::Review,
+        )
+        .expect("expected CLI args to parse")
     }
 
     #[test]
@@ -731,7 +802,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_options() {
-        let error = parse_cli_args(vec!["-ns".to_string()])
+        let error = parse_cli_args(vec!["-ns".to_string()], Frame::Review)
             .expect_err("expected an unknown option to be rejected");
 
         assert!(error.to_string().contains("unknown option: -ns"));

@@ -182,6 +182,114 @@ fn the_api_the_web_frontend_calls_still_answers() {
     assert_eq!(health.text().expect("failed to read health"), "ok");
 }
 
+/// The board over HTTP, which is the path a window pointed at another machine takes.
+#[test]
+fn a_task_can_be_created_worked_in_and_moved_over_http() {
+    let served = serve("tasks");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let created: serde_json::Value = served
+        .client
+        .post(&tasks_url)
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none" }))
+        .send()
+        .expect("failed to create a task")
+        .error_for_status()
+        .expect("the server refused to create a task")
+        .json()
+        .expect("failed to decode the task");
+    let task_id = created["id"].as_str().expect("expected a task id").to_string();
+
+    assert!(task_id.starts_with("fix-the-login-page-"));
+    assert_eq!(created["status"], "todo");
+    // The folder is the task, and it is the repo's to keep.
+    assert!(
+        served.root.join(".moontasks").join(&task_id).is_dir(),
+        "the task folder should be in the repo"
+    );
+
+    // A shell opened in the task belongs to the task, not to the workspace's own shells.
+    let opened: serde_json::Value = served
+        .client
+        .post(format!("{tasks_url}/{task_id}/resources"))
+        .json(&serde_json::json!({ "kind": "shell", "agent": "none" }))
+        .send()
+        .expect("failed to start a shell")
+        .error_for_status()
+        .expect("the server refused to start a shell")
+        .json()
+        .expect("failed to decode the shell");
+    let terminal_id = opened["terminal_id"]
+        .as_str()
+        .expect("expected a terminal id")
+        .to_string();
+
+    let workspace_shells: serde_json::Value = served
+        .client
+        .get(format!(
+            "{}/api/session/{session_id}/terminals",
+            served.base_url
+        ))
+        .send()
+        .expect("failed to list shells")
+        .json()
+        .expect("failed to decode the shells");
+    assert!(
+        !workspace_shells["terminal_ids"]
+            .as_array()
+            .expect("expected an array")
+            .contains(&serde_json::json!(terminal_id)),
+        "a task's shell is the task's to show"
+    );
+
+    let board = |served: &Served| -> serde_json::Value {
+        served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board")
+    };
+
+    let tasks = board(&served);
+    assert_eq!(tasks.as_array().expect("expected an array").len(), 1);
+    let resource = &tasks[0]["resources"][0];
+    assert_eq!(resource["kind"], "shell");
+    assert_eq!(resource["running"], true);
+    let resource_id = resource["id"].as_str().expect("expected a resource id").to_string();
+
+    served
+        .client
+        .post(format!("{tasks_url}/{task_id}/resources/{resource_id}/stop"))
+        .json(&serde_json::json!({}))
+        .send()
+        .expect("failed to stop the shell")
+        .error_for_status()
+        .expect("the server refused to stop the shell");
+    assert_eq!(board(&served)[0]["resources"][0]["running"], false);
+
+    served
+        .client
+        .post(format!("{tasks_url}/{task_id}/status"))
+        .json(&serde_json::json!({ "status": "in_local_review" }))
+        .send()
+        .expect("failed to move the task")
+        .error_for_status()
+        .expect("the server refused to move the task");
+    assert_eq!(board(&served)[0]["status"], "in_local_review");
+
+    served
+        .client
+        .delete(format!("{tasks_url}/{task_id}"))
+        .send()
+        .expect("failed to delete the task")
+        .error_for_status()
+        .expect("the server refused to delete the task");
+    assert!(board(&served).as_array().expect("expected an array").is_empty());
+}
+
 #[test]
 fn an_unknown_session_is_refused_rather_than_panicking() {
     let served = serve("unknown");

@@ -21,7 +21,12 @@ use crate::{
     api::OpenSessionRequest,
     backend::local::LocalBackend,
     git::run_git_no_output,
-    native::{Launch, app::App, panes::Pane, theme::ThemeMode},
+    native::{
+        Launch,
+        app::App,
+        panes::{Pane, PaneKind},
+        theme::ThemeMode,
+    },
 };
 
 /// Where the window drew its frames this pass.
@@ -130,6 +135,11 @@ impl Drop for Fixture {
 
 /// Build the window over a local backend, with no web server: the tests are about the UI.
 fn app_for(repo_path: &Path, theme: ThemeMode) -> App {
+    app_for_frame(repo_path, theme, crate::cli::Frame::Review)
+}
+
+/// The same, opened on whichever of the three executables' frames.
+fn app_for_frame(repo_path: &Path, theme: ThemeMode, frame: crate::cli::Frame) -> App {
     let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
     let launch = Launch {
         backend: Arc::new(LocalBackend::new(state)),
@@ -139,6 +149,7 @@ fn app_for(repo_path: &Path, theme: ThemeMode) -> App {
             active_commit: None,
         }),
         serves_web: false,
+        frame,
     };
 
     let mut app = App::new(egui::Context::default(), launch);
@@ -255,6 +266,7 @@ fn a_shell_that_exits_closes_its_tab() {
             active_commit: None,
         }),
         serves_web: false,
+        frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
     app.set_theme(ThemeMode::Dark);
@@ -280,6 +292,7 @@ fn a_shell_that_exits_closes_its_tab() {
                     Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
+                        task_id: None,
                     },
                     None,
                 );
@@ -724,38 +737,17 @@ fn dropping_a_tab_at_the_window_edge_makes_a_column_beside_every_frame() {
     );
 }
 
-/// Storage the window can be handed in a test, standing in for the one eframe keeps on disk.
-#[derive(Default)]
-struct RememberedStorage(std::collections::HashMap<String, String>);
-
-impl eframe::Storage for RememberedStorage {
-    fn get_string(&self, key: &str) -> Option<String> {
-        self.0.get(key).cloned()
-    }
-
-    fn set_string(&mut self, key: &str, value: String) {
-        self.0.insert(key.to_string(), value);
-    }
-
-    fn remove_string(&mut self, key: &str) {
-        self.0.remove(key);
-    }
-
-    fn flush(&mut self) {}
-}
-
 /// The agent belongs to the person reviewing, not to a session that is new every launch, so it
-/// is written out on the way down and asked for again on the way up.
+/// is written to `~/.moonreview/settings.json` and asked for again on the way up.
 #[test]
 fn the_agent_the_last_run_ended_on_comes_back() {
-    use eframe::{App as _, Storage as _};
-
     let fixture = seeded_fixture("agent-memory");
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
-    let mut storage = RememberedStorage::default();
 
-    // A window that ends on Claude says so.
+    // A window that ends on Claude says so. The restored agent is cleared first: until it has
+    // been put back, the session still reads as no agent at all.
     let session_id = app.model.root_session_id.clone();
+    app.model.restored_agent = None;
     let review = app.model.review(&session_id);
     review.payload = Some(Arc::new(crate::api::SessionPayload {
         repo_name: "repo".to_string(),
@@ -776,22 +768,26 @@ fn the_agent_the_last_run_ended_on_comes_back() {
         review_comments: Vec::new(),
         export_text: String::new(),
     }));
-    app.save(&mut storage);
+    app.remember_selected_agent();
 
     assert_eq!(
-        storage.get_string("moonreview-selected-agent").as_deref(),
-        Some("\"claude\""),
-        "the agent should have been written out"
+        crate::settings::load().selected_agent,
+        crate::api::AgentKind::Claude,
+        "the agent should have been written to the settings file"
     );
 
     // And the next one starts by asking for it back.
-    let mut next = app_for(&fixture.root, ThemeMode::Dark);
-    next.restore_layout_from(Some(&storage));
+    let next = app_for(&fixture.root, ThemeMode::Dark);
 
-    assert!(
-        next.model.restored_agent == Some(crate::api::AgentKind::Claude),
-        "the stored agent should be waiting to be applied"
+    assert_eq!(
+        next.model.restored_agent,
+        Some(crate::api::AgentKind::Claude),
+        "the saved agent should be waiting to be applied"
     );
+
+    if let Some(path) = crate::settings::path() {
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// A row of fixed height cannot grow, so text too long for it is cut rather than wrapped —
@@ -840,6 +836,7 @@ fn an_unchanged_file_opens_as_the_file_itself() {
             active_commit: None,
         }),
         serves_web: false,
+        frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
     app.set_theme(ThemeMode::Dark);
@@ -906,6 +903,220 @@ fn the_review_window_draws_in_the_light_theme_too() {
     harness.snapshot("review-light");
 }
 
+/// The board is the repo's `.moontasks` folder, so the fixture writes the folder and the
+/// window is expected to show exactly what is in it.
+#[test]
+fn the_moontasks_board_draws_what_is_in_the_repo() {
+    let fixture = seeded_fixture("board");
+    // Written by hand rather than through the service: the ids a real one generates carry a
+    // uuid, and the point here is a picture that is the same on every run.
+    for (task_id, title, status) in [
+        ("write-the-parser-1111", "Write the parser", "todo"),
+        ("fix-the-login-page-2222", "Fix the login page", "in_progress"),
+        ("drop-the-old-api-3333", "Drop the old API", "in_local_review"),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"{status}\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    // The new-task box is opened rather than clicked for: where the `+` lands depends on the
+    // column, and what this checks is the box it opens.
+    let compose = Arc::new(AtomicBool::new(false));
+    let compose_in_ui = Arc::clone(&compose);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            // Only once the review has opened: opening it replaces the whole arrangement.
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            if compose_in_ui.load(Ordering::Relaxed) {
+                app.model.board.composer_open = true;
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 3,
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the three tasks out of .moontasks"
+    );
+
+    harness.run_steps(3);
+    harness.snapshot("moontasks-board");
+
+    // And the new-task box the `+` on the TODO column opens, standing where its card will go.
+    compose.store(true, Ordering::Relaxed);
+    // Its title box has focus, and a blinking caret would make the image differ run to run.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(3);
+    harness.snapshot("moontasks-new-task");
+}
+
+/// The three executables are the same window opened on three different things, which is the
+/// whole of what tells them apart.
+#[test]
+fn each_executable_opens_on_its_own_frame() {
+    for (frame, expected) in [
+        (crate::cli::Frame::Review, PaneKind::Review),
+        (crate::cli::Frame::Tasks, PaneKind::Tasks),
+        // `moonshell` has to start a shell before it has a pane, so this one also checks that
+        // a window which opens empty does not stay empty.
+        (crate::cli::Frame::Shell, PaneKind::Terminal),
+    ] {
+        let fixture = seeded_fixture(&format!("frame-{expected:?}").to_lowercase());
+        let app = app_for_frame(&fixture.root, ThemeMode::Dark, frame);
+        let opened = Arc::new(Mutex::new(None));
+        let opened_in_ui = Arc::clone(&opened);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .wgpu()
+            .build_ui({
+                let mut app = app;
+                move |ui| {
+                    app.draw(ui);
+                    *opened_in_ui.lock().expect("poisoned") = app
+                        .model
+                        .layout
+                        .active_pane()
+                        .map(|(_, pane)| pane.kind());
+                }
+            });
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            harness.step();
+            if *opened.lock().expect("poisoned") == Some(expected) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            *opened.lock().expect("poisoned"),
+            Some(expected),
+            "{frame:?} should have opened on {expected:?}"
+        );
+    }
+}
+
+/// A card is moved between columns by dragging it, which is the only way to move one — the
+/// arrows that used to do it are gone.
+#[test]
+fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
+    let fixture = seeded_fixture("board-drag");
+    let task_id = "write-the-parser-1111";
+    fixture.write(
+        &format!(".moontasks/{task_id}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // Where the card is drawn, and which column it is in, both read back out of the window.
+    let seen = Arc::new(Mutex::new((egui::Rect::NOTHING, String::new())));
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+
+            if let Some(task) = app.model.board.tasks.first() {
+                ready_in_ui.store(true, Ordering::Relaxed);
+                let title = ui.ctx().read_response(egui::Id::new((
+                    "moontask-card",
+                    &task.id,
+                )));
+                *seen_in_ui.lock().expect("poisoned") = (
+                    title.map(|response| response.rect).unwrap_or(egui::Rect::NOTHING),
+                    task.status.wire_name().to_string(),
+                );
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(3);
+
+    let (handle, status) = seen.lock().expect("poisoned").clone();
+    assert_eq!(status, "todo", "the card starts in TODO");
+    assert!(handle.is_positive(), "the card's drag handle was never drawn");
+
+    // One column to the right, which is IN PROGRESS.
+    let onto = handle.center() + egui::vec2(COLUMN_STRIDE, 40.0);
+    drag_from_to(&mut harness, handle.center(), onto);
+
+    // The move is written to `.moontasks` and read back, so the board has to poll to see it.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        harness.step();
+        if seen.lock().expect("poisoned").1 == "in_progress" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert_eq!(
+        seen.lock().expect("poisoned").1,
+        "in_progress",
+        "dropping the card on IN PROGRESS should have moved it there"
+    );
+}
+
+/// How far apart two columns of the board are drawn, which is what a drag has to cover to
+/// reach the next one.
+const COLUMN_STRIDE: f32 = 298.0;
+
 #[test]
 fn the_command_palette_lists_what_can_be_opened() {
     let fixture = seeded_fixture("palette");
@@ -962,6 +1173,7 @@ const CHROME_GLYPHS: &str = concat!(
     "+",                  // open a pane
     "\u{00B7}\u{2212}", // separator, minus sign
     "\u{2039}\u{203A}\u{00D7}", // the find bar's previous, next and close
+    "\u{23F4}\u{23F5}",         // the board's move-a-card-along arrows
     // The command key is the one modifier the bundled fonts have a glyph for; the rest of a
     // chord is spelled out, which is what `bindings::describe` does.
     "\u{2318}",
@@ -1755,6 +1967,7 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
             active_commit: None,
         }),
         serves_web: false,
+        frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
     app.set_theme(ThemeMode::Dark);
@@ -1776,6 +1989,7 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
                     Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
+                        task_id: None,
                     },
                     None,
                 );
@@ -1938,6 +2152,7 @@ fn dragging_over_a_shell_selects_its_text() {
             active_commit: None,
         }),
         serves_web: false,
+        frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
     app.set_theme(ThemeMode::Dark);
@@ -1969,6 +2184,7 @@ fn dragging_over_a_shell_selects_its_text() {
                     Pane::Terminal {
                         terminal_id: for_pane.clone(),
                         command: None,
+                        task_id: None,
                     },
                     None,
                 );

@@ -135,6 +135,40 @@ impl ReviewState {
     }
 }
 
+/// The moontasks board: the tasks the server last reported, and what is being typed into it.
+///
+/// The board is the repo's `.moontasks` folder, which anything may write to, so nothing here
+/// is authoritative — it is the last answer, redrawn until the next one arrives.
+#[derive(Default)]
+pub(crate) struct BoardState {
+    pub(crate) tasks: Vec<crate::moontasks::TaskView>,
+    pub(crate) error: Option<String>,
+    pub(crate) loaded: bool,
+    /// Whether the new-task box is open in the TODO column, and the title and agent being
+    /// entered into it.
+    pub(crate) composer_open: bool,
+    /// Set when the box has just opened, so it takes the keyboard once.
+    pub(crate) composer_focus: bool,
+    pub(crate) new_title: String,
+    pub(crate) new_agent: AgentKind,
+    /// Set when something changed the board, so the next frame refetches rather than waiting
+    /// out the poll interval.
+    pub(crate) refresh_requested: bool,
+    /// The task whose delete button has been pressed once, so a stray click cannot throw a
+    /// task's folder away.
+    pub(crate) pending_delete: Option<String>,
+    /// A shell a board action just started, waiting for the window to open a tab on it. The
+    /// backend call finishes on a worker thread, which is in no position to touch the panes.
+    pub(crate) opened_shell: Option<OpenedShell>,
+}
+
+/// A shell the board started and wants shown.
+pub(crate) struct OpenedShell {
+    pub(crate) terminal_id: String,
+    pub(crate) command: Option<AgentKind>,
+    pub(crate) task_id: String,
+}
+
 /// The command palette, and the query typed into it.
 pub(crate) struct PaletteState {
     pub(crate) open: bool,
@@ -177,11 +211,14 @@ pub(crate) struct Model {
     pub(crate) submodules: Vec<SubmoduleView>,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) palette: PaletteState,
+    pub(crate) board: BoardState,
     pub(crate) agent_log: Option<AgentLogView>,
     /// `local`, or the address of the server this window is reviewing through.
     pub(crate) connection: String,
     /// Set once a review is open, so the window picks up shells the server already has.
     pub(crate) adopt_shells_pending: bool,
+    /// The same, for the shell `moonshell` opens on: it needs a session to start in.
+    pub(crate) open_shell_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.
     pub(crate) restored_layout: Option<Layout<Pane>>,
     /// The agent the last run ended on, applied to the session once the review opens.

@@ -20,12 +20,13 @@ use crate::{
 
 /// Which of the four a pane is, for the questions that only care about the kind: where a new
 /// one belongs, and whether ⌘F has anything to search.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PaneKind {
     Review,
     Agents,
     Terminal,
     File,
+    Tasks,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -39,12 +40,18 @@ pub(crate) enum Pane {
         terminal_id: String,
         #[serde(default)]
         command: Option<AgentKind>,
+        /// The moontasks task this shell belongs to, if it is one of a task's. A task's shell
+        /// outlives its tab — closing the tab lets go of it rather than ending it.
+        #[serde(default)]
+        task_id: Option<String>,
     },
     /// One file of the repo being reviewed, open for reading and editing.
     File {
         session_id: String,
         file_path: String,
     },
+    /// The moontasks board of the repo being reviewed.
+    Tasks,
 }
 
 impl Pane {
@@ -54,6 +61,7 @@ impl Pane {
             Self::Agents => PaneKind::Agents,
             Self::Terminal { .. } => PaneKind::Terminal,
             Self::File { .. } => PaneKind::File,
+            Self::Tasks => PaneKind::Tasks,
         }
     }
 
@@ -73,6 +81,7 @@ impl Pane {
                 .next()
                 .unwrap_or(file_path)
                 .to_string(),
+            Self::Tasks => "moontasks".to_string(),
         }
     }
 
@@ -99,10 +108,18 @@ pub(crate) enum OpenPaneRequest {
     Terminal {
         command: Option<AgentKind>,
     },
+    /// A shell the server already has, opened in a tab of its own. This is how a task's agent
+    /// is brought back on screen after its tab was closed.
+    AttachTerminal {
+        terminal_id: String,
+        command: Option<AgentKind>,
+        task_id: Option<String>,
+    },
     File {
         session_id: String,
         file_path: String,
     },
+    Tasks,
 }
 
 impl PaneView<Pane> for App {
@@ -145,6 +162,7 @@ impl PaneView<Pane> for App {
                 let (session_id, file_path) = (session_id.clone(), file_path.clone());
                 self.draw_file_pane(ui, pane_id, &session_id, &file_path);
             }
+            Pane::Tasks => crate::native::board::draw(self, ui),
         }
     }
 

@@ -21,6 +21,10 @@ use crate::{
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
     },
     backend::Backend,
+    moontasks::{
+        CreateTaskRequest, StartResourceRequest, TaskStatus, TaskStatusRequest, TaskView,
+        TerminalOpened,
+    },
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -340,6 +344,65 @@ impl Backend for RemoteBackend {
         self.post(
             &format!("/api/session/{session_id}/discard-batch"),
             &json!({ "hunk_ids": hunk_ids }),
+        )
+    }
+
+    fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>> {
+        self.get(&format!("/api/session/{session_id}/tasks"))
+    }
+
+    fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView> {
+        self.post_json(&format!("/api/session/{session_id}/tasks"), request)
+    }
+
+    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/status"),
+            &TaskStatusRequest { status },
+        )
+    }
+
+    fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {
+        self.delete(&format!("/api/session/{session_id}/tasks/{task_id}"))
+    }
+
+    fn start_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: StartResourceRequest,
+    ) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/tasks/{task_id}/resources"),
+            &request,
+        )?;
+        Ok(opened.terminal_id)
+    }
+
+    fn resume_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!(
+                "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"
+            ),
+            &json!({}),
+        )?;
+        Ok(opened.terminal_id)
+    }
+
+    fn stop_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop"),
+            &json!({}),
         )
     }
 

@@ -216,7 +216,7 @@ pub(crate) struct AgentAvailability {
     pub(crate) opencode: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum AgentKind {
     #[default]

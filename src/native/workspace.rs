@@ -11,6 +11,7 @@ use egui_frames::{DropSide, FrameId, FramesEvent, Layout, PaneId};
 
 use crate::{
     api::{AgentKind, OpenSessionRequest},
+    cli::Frame,
     native::{
         app::{App, AttachedTerminal},
         panes::{OpenPaneRequest, Pane, PaneKind},
@@ -39,7 +40,11 @@ pub(crate) enum TerminalPlacement {
 /// rows. Its panes are not: a review pane names a session that no longer exists, and a shell
 /// pane names a process that died with the last run. Whatever the review and the adopted shells
 /// do not fill is dropped on the first frame drawn.
-pub(crate) fn arrangement_for(stored: Option<Layout<Pane>>, session_id: &str) -> Layout<Pane> {
+pub(crate) fn arrangement_for(
+    stored: Option<Layout<Pane>>,
+    session_id: &str,
+    frame: Frame,
+) -> Layout<Pane> {
     let mut layout = match stored {
         Some(mut stored) if stored.is_coherent() => {
             stored.take_panes();
@@ -48,15 +53,21 @@ pub(crate) fn arrangement_for(stored: Option<Layout<Pane>>, session_id: &str) ->
         _ => Layout::new(),
     };
 
-    let frame = layout.primary_frame();
-    layout.add_pane(
-        frame,
-        Pane::Review {
-            session_id: session_id.to_string(),
-            title: "review".to_string(),
-        },
-        None,
-    );
+    let primary = layout.primary_frame();
+    match frame {
+        Frame::Review => layout.add_pane(
+            primary,
+            Pane::Review {
+                session_id: session_id.to_string(),
+                title: "review".to_string(),
+            },
+            None,
+        ),
+        Frame::Tasks => layout.add_pane(primary, Pane::Tasks, None),
+        // A shell has to be started before there is a pane to show it, so this window opens
+        // with nothing in it and the shell arrives a moment later.
+        Frame::Shell => return layout,
+    };
     layout
 }
 
@@ -175,6 +186,42 @@ impl App {
             OpenPaneRequest::Terminal { command } => {
                 self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
             }
+            OpenPaneRequest::AttachTerminal {
+                terminal_id,
+                command,
+                task_id,
+            } => {
+                // The shell is already running on the server; all this opens is a way to see it.
+                if let Some((pane, _)) = self.model.layout.find_pane(
+                    |pane| matches!(pane, Pane::Terminal { terminal_id: open, .. } if *open == terminal_id),
+                ) {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                place_shell(
+                    &mut self.model.layout,
+                    &TerminalPlacement::WithOtherShells,
+                    Pane::Terminal {
+                        terminal_id: terminal_id.clone(),
+                        command,
+                        task_id,
+                    },
+                );
+                self.attach_terminal(&terminal_id);
+            }
+            OpenPaneRequest::Tasks => {
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Tasks)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Tasks, active_frame);
+                self.model.layout.add_pane(frame, Pane::Tasks, None);
+                self.model.board.refresh_requested = true;
+            }
         }
     }
 
@@ -211,6 +258,7 @@ impl App {
                     let pane = Pane::Terminal {
                         terminal_id: terminal_id.clone(),
                         command,
+                        task_id: None,
                     };
                     place_shell(&mut model.layout, &placement, pane);
                     if let Ok(mut inbox) = inbox.lock() {
@@ -329,6 +377,7 @@ impl App {
                         Pane::Terminal {
                             terminal_id,
                             command: None,
+                            task_id: None,
                         },
                     );
                 }
@@ -372,9 +421,21 @@ impl App {
 
         // Closing a shell's tab ends the shell: unlike the web frontend, where a closed tab may
         // just be a navigation away, this is the only window it had.
-        if let Some(Pane::Terminal { terminal_id, .. }) = closed {
+        //
+        // A task's shell is the exception. It belongs to the task rather than to the tab, and
+        // keeps running with nothing attached until the task reaches DONE, so the user can come
+        // back to the agent they closed.
+        if let Some(Pane::Terminal {
+            terminal_id,
+            task_id,
+            ..
+        }) = closed
+        {
             self.terminals.remove(&terminal_id);
             self.terminal_errors.remove(&terminal_id);
+            if task_id.is_some() {
+                return;
+            }
             let session_id = self.model.root_session_id.clone();
             self.tasks.spawn(
                 move |backend| backend.close_terminal(&session_id, &terminal_id),
@@ -571,6 +632,7 @@ mod tests {
         Pane::Terminal {
             terminal_id: id.to_string(),
             command: None,
+            task_id: None,
         }
     }
 

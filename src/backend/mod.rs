@@ -11,9 +11,12 @@ mod remote_tests;
 
 use anyhow::Result;
 
-use crate::api::{
-    AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-    OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
+use crate::{
+    api::{
+        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
+        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
+    },
+    moontasks::{CreateTaskRequest, StartResourceRequest, TaskStatus, TaskView},
 };
 
 /// Every review operation the native frontend performs. Calls block, so the UI runs them
@@ -57,6 +60,27 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn unstage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
     fn discard_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn discard_hunks(&self, session_id: &str, hunk_ids: &[String]) -> Result<()>;
+
+    /// The moontasks board of the repo this session reviews, and what running it.
+    fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>>;
+    fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
+    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()>;
+    fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()>;
+    /// Start a shell or an agent in a task, and answer with the shell it runs in.
+    fn start_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: StartResourceRequest,
+    ) -> Result<String>;
+    fn resume_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<String>;
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str)
+    -> Result<()>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;

@@ -3,9 +3,23 @@ name = "moon-review"
 version = "0.1.0"
 edition = "2024"
 
+# One library, three executables. They differ only in what the window opens on, so the whole
+# of each is a call into the library with a different frame — see `src/bin`.
+[lib]
+name = "moonreview"
+path = "src/lib.rs"
+
 [[bin]]
 name = "moonreview"
-path = "src/main.rs"
+path = "src/bin/moonreview.rs"
+
+[[bin]]
+name = "moontasks"
+path = "src/bin/moontasks.rs"
+
+[[bin]]
+name = "moonshell"
+path = "src/bin/moonshell.rs"
 
 [features]
 default = ["native"]

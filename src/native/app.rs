@@ -16,11 +16,11 @@ use crate::{
     native::{
         Launch,
         bindings::{self, Action, Keymap},
-        find, fonts,
+        board, find, fonts,
         menu::{MenuAction, NativeMenu},
         model::{Model, Stage, ToastKind, hash_of},
         palette::{self, CommandAction},
-        panes::{Pane, PaneKind},
+        panes::{OpenPaneRequest, Pane, PaneKind},
         review::diff::{DiffLine, build_diff_lines},
         tasks::Tasks,
         theme::{self, Palette, ThemeMode},
@@ -33,6 +33,9 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_millis(900);
 /// The same, for a window that is not focused.
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How often an open moontasks board rereads `.moontasks`. Slower than a review: reading it
+/// is a directory walk, and a card moves at the pace an agent works rather than a keystroke.
+const BOARD_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
 /// What the window was asked to do with its tabs this frame. Both the menu bar and the
 /// keyboard can ask, and on macOS one ⌘W can arrive as both, so the request is a single slot
@@ -68,6 +71,7 @@ pub(crate) struct App {
     pub(crate) terminal_errors: HashMap<String, String>,
     pub(crate) serves_web: bool,
     last_poll: Instant,
+    last_board_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
@@ -97,6 +101,10 @@ pub(crate) struct App {
     /// Whether the workspace has ever held a pane. An empty one means the last tab was
     /// closed and the window is done; before the first review opens it means nothing yet.
     had_panes: bool,
+    /// Which of the three executables this is, and so what the window opens on.
+    frame: crate::cli::Frame,
+    /// What `~/.moonreview/settings.json` said, and what it will be written back as.
+    settings: crate::settings::Settings,
 }
 
 struct CachedDiff {
@@ -118,6 +126,7 @@ impl App {
 
         let tasks = Tasks::new(Arc::clone(&launch.backend), ctx);
         let connection = launch.backend.describe();
+        let settings = crate::settings::load();
 
         let stage = match &launch.open {
             Some(_) => Stage::Opening,
@@ -137,13 +146,17 @@ impl App {
                 submodules: Vec::new(),
                 toasts: Vec::new(),
                 palette: Default::default(),
+                board: Default::default(),
                 agent_log: None,
                 connection,
                 file_editors: HashMap::new(),
                 find: None,
                 adopt_shells_pending: false,
+                open_shell_pending: false,
                 restored_layout: None,
-                restored_agent: None,
+                // The agent the person last picked, put back once the review says this
+                // machine still has it.
+                restored_agent: Some(settings.selected_agent),
             },
             tasks,
             terminals: HashMap::new(),
@@ -154,6 +167,9 @@ impl App {
             // Backdated so the first frame fetches instead of waiting out an interval.
             last_poll: Instant::now()
                 .checked_sub(POLL_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            last_board_poll: Instant::now()
+                .checked_sub(BOARD_POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
             pending_action: None,
             pending_close: None,
@@ -167,6 +183,8 @@ impl App {
             loaders_installed: false,
             fonts_installed: false,
             had_panes: false,
+            frame: launch.frame,
+            settings,
         };
 
         if let Some(open) = launch.open {
@@ -232,19 +250,25 @@ impl App {
     }
 
     fn open_review(&mut self, open: OpenSessionRequest) {
+        let frame = self.frame;
         self.tasks.spawn(
             move |backend| backend.open_session(open),
-            |model, result| match result {
+            move |model, result| match result {
                 Ok(opened) => {
                     model.root_session_id = opened.session_id.clone();
-                    // A stored arrangement contributes its splits; the review itself is new.
+                    // A stored arrangement contributes its splits; what goes in it is new.
                     model.layout = crate::native::workspace::arrangement_for(
                         model.restored_layout.take(),
                         &opened.session_id,
+                        frame,
                     );
                     model.review(&opened.session_id);
                     model.stage = Stage::Ready;
                     model.adopt_shells_pending = true;
+                    model.board.refresh_requested = true;
+                    // `moonshell` opens on a shell, which has to be started before there is
+                    // anything to draw.
+                    model.open_shell_pending = frame == crate::cli::Frame::Shell;
                 }
                 Err(error) => {
                     let message = format!("{error}");
@@ -314,6 +338,52 @@ impl App {
                 },
             );
         }
+    }
+
+    /// Refetch the moontasks board while a pane is showing it.
+    ///
+    /// The board is a folder anything may write to — an agent moving its own card, a second
+    /// window, a text editor — so the only way to know what is on it is to read it again.
+    fn poll_board(&mut self) {
+        if self.model.root_session_id.is_empty() || !board::is_open(self) {
+            return;
+        }
+        let due = self.last_board_poll.elapsed() >= BOARD_POLL_INTERVAL;
+        if !due && !self.model.board.refresh_requested {
+            return;
+        }
+        if due {
+            self.last_board_poll = Instant::now();
+        }
+        self.model.board.refresh_requested = false;
+
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn_keyed(
+            Some("tasks".to_string()),
+            move |backend| backend.list_tasks(&session_id),
+            |model, result| {
+                model.board.loaded = true;
+                match result {
+                    Ok(tasks) => {
+                        model.board.error = None;
+                        model.board.tasks = tasks;
+                    }
+                    Err(error) => model.board.error = Some(format!("{error}")),
+                }
+            },
+        );
+    }
+
+    /// Open a tab on a shell the board just started.
+    fn open_shell_the_board_started(&mut self) {
+        let Some(opened) = self.model.board.opened_shell.take() else {
+            return;
+        };
+        self.open_pane(OpenPaneRequest::AttachTerminal {
+            terminal_id: opened.terminal_id,
+            command: opened.command,
+            task_id: Some(opened.task_id),
+        });
     }
 
     fn poll_submodules(&mut self) {
@@ -650,11 +720,10 @@ impl App {
 }
 
 
-/// Where the pane arrangement is kept between runs.
+/// Where the pane arrangement is kept between runs. Which agent comments go to is not here:
+/// that belongs to the person rather than to the window, so it lives in
+/// [`crate::settings`] — one file, in their home directory, that they can read and edit.
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
-/// And where the agent comments get handed to is kept: it belongs to the person reviewing,
-/// not to the session, which is new on every launch.
-const AGENT_STORAGE_KEY: &str = "moonreview-selected-agent";
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -665,9 +734,6 @@ impl eframe::App for App {
         if let Ok(encoded) = serde_json::to_string(&self.model.layout) {
             storage.set_string(LAYOUT_STORAGE_KEY, encoded);
         }
-        if let Ok(encoded) = serde_json::to_string(&self.selected_agent()) {
-            storage.set_string(AGENT_STORAGE_KEY, encoded);
-        }
     }
 }
 
@@ -677,12 +743,6 @@ impl App {
     /// A malformed or outdated value is simply ignored: a window that opens on the default
     /// arrangement is a far better outcome than one that refuses to open.
     pub(crate) fn restore_layout_from(&mut self, storage: Option<&dyn eframe::Storage>) {
-        if let Some(encoded) = storage.and_then(|storage| storage.get_string(AGENT_STORAGE_KEY))
-            && let Ok(agent) = serde_json::from_str::<AgentKind>(&encoded)
-        {
-            self.model.restored_agent = Some(agent);
-        }
-
         let Some(encoded) = storage.and_then(|storage| storage.get_string(LAYOUT_STORAGE_KEY))
         else {
             return;
@@ -703,6 +763,29 @@ impl App {
             .and_then(|review| review.payload.as_ref())
             .map(|payload| payload.selected_agent)
             .unwrap_or_default()
+    }
+
+    /// Keep `settings.json` in step with the selector at the top of the review.
+    ///
+    /// Written when the choice changes rather than on a clock: the file is one line, and a
+    /// selector nobody has touched should leave it exactly as the user last left it — or as
+    /// they last edited it by hand.
+    pub(crate) fn remember_selected_agent(&mut self) {
+        // Before the restored agent has been put back, the session still reads as `None`, and
+        // writing that would throw away the very choice being restored.
+        if self.model.restored_agent.is_some() {
+            return;
+        }
+        let selected = self.selected_agent();
+        if selected == self.settings.selected_agent {
+            return;
+        }
+
+        self.settings.selected_agent = selected;
+        if let Err(error) = crate::settings::store(&self.settings) {
+            // Worth saying once, but not worth a toast every frame: the review still works.
+            eprintln!("[moonreview] could not save settings: {error}");
+        }
     }
 
     /// A session starts on no agent at all, so the one the last run ended on is put back — once
@@ -813,10 +896,17 @@ impl App {
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
         self.poll_submodules();
+        self.poll_board();
+        self.open_shell_the_board_started();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }
+        if std::mem::take(&mut self.model.open_shell_pending) {
+            let primary = self.model.layout.primary_frame();
+            self.spawn_terminal(None, crate::native::workspace::TerminalPlacement::Tab(primary));
+        }
         self.apply_restored_agent();
+        self.remember_selected_agent();
         self.prune_diff_cache();
 
         self.draw_workspace(ui);

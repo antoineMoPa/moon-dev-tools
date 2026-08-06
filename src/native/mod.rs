@@ -3,6 +3,7 @@
 
 pub(crate) mod app;
 pub(crate) mod bindings;
+pub(crate) mod board;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
@@ -39,11 +40,17 @@ pub(crate) struct Launch {
     pub(crate) open: Option<OpenSessionRequest>,
     /// Whether a browser can reach this review, which decides if the window offers the link.
     pub(crate) serves_web: bool,
+    /// What the window opens on: which of the three executables this is.
+    pub(crate) frame: crate::cli::Frame,
 }
 
 /// Review the repo on this machine. The window and the web frontend end up sharing one
 /// server, in this process, so the same review is open in both.
-pub(crate) fn launch_local(open: OpenSessionRequest, serve_web: bool) -> Result<Launch> {
+pub(crate) fn launch_local(
+    open: OpenSessionRequest,
+    serve_web: bool,
+    frame: crate::cli::Frame,
+) -> Result<Launch> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = server::build_state(last_activity);
 
@@ -76,11 +83,16 @@ pub(crate) fn launch_local(open: OpenSessionRequest, serve_web: bool) -> Result<
         backend: Arc::new(LocalBackend::new(state)),
         open: Some(open),
         serves_web: serve_web,
+        frame,
     })
 }
 
 /// Review a repo on another machine through its `moonreview serve`.
-pub(crate) fn launch_remote(target: &str, repo_path: Option<String>) -> Result<Launch> {
+pub(crate) fn launch_remote(
+    target: &str,
+    repo_path: Option<String>,
+    frame: crate::cli::Frame,
+) -> Result<Launch> {
     let backend = RemoteBackend::connect(target)?;
     let open = repo_path.map(|repo_path| OpenSessionRequest {
         repo_path,
@@ -92,6 +104,7 @@ pub(crate) fn launch_remote(target: &str, repo_path: Option<String>) -> Result<L
         backend: Arc::new(backend),
         open,
         serves_web: true,
+        frame,
     })
 }
 
@@ -139,10 +152,11 @@ fn icon() -> egui::IconData {
 }
 
 pub(crate) fn run(launch: Launch) -> Result<()> {
+    let title = format!("🌚 {}", launch.frame.program());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             // The crescent stands in for the app's mark, which the tab strip no longer carries.
-            .with_title("🌚 Moon Review")
+            .with_title(title)
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([720.0, 420.0])
             .with_app_id("moonreview")

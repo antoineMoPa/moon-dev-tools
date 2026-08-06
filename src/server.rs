@@ -22,6 +22,9 @@ use crate::{
         ServerState, SessionOpened, SessionPayload, SubmoduleView, bind_host, port, server_url,
     },
     git::detect_agent_availability,
+    moontasks::{
+        self, CreateTaskRequest, StartResourceRequest, TaskStatusRequest, TaskView, TerminalOpened,
+    },
     service,
 };
 
@@ -101,6 +104,27 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
+        .route(
+            "/api/session/{session_id}/tasks",
+            get(list_tasks).post(create_task),
+        )
+        .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/status",
+            post(set_task_status),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources",
+            post(start_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume",
+            post(resume_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop",
+            post(stop_task_resource),
+        )
         .route(
             "/api/session/{session_id}/terminals",
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
@@ -458,6 +482,81 @@ async fn discard_hunk(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     service::discard_hunk(&state, &session_id, &request.hunk_id)?;
+    Ok("ok")
+}
+
+async fn list_tasks(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<TaskView>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::list_tasks(&state, &session_id)?))
+}
+
+async fn create_task(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<CreateTaskRequest>,
+) -> Result<Json<TaskView>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::create_task(
+        &state,
+        &session_id,
+        &request,
+    )?))
+}
+
+async fn delete_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_task(&state, &session_id, &task_id)?;
+    Ok("ok")
+}
+
+async fn set_task_status(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskStatusRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_task_status(&state, &session_id, &task_id, request.status)?;
+    Ok("ok")
+}
+
+async fn start_task_resource(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<StartResourceRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
+    }))
+}
+
+async fn resume_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::resume_resource(
+            &state,
+            &session_id,
+            &task_id,
+            &resource_id,
+        )?,
+    }))
+}
+
+async fn stop_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::stop_resource(&state, &session_id, &task_id, &resource_id)?;
     Ok("ok")
 }
 

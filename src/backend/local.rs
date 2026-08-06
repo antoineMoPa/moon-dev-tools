@@ -12,6 +12,7 @@ use crate::{
         SubmoduleView, server_url,
     },
     backend::Backend,
+    moontasks::{self, CreateTaskRequest, StartResourceRequest, TaskStatus, TaskView},
     service,
     terminal::TerminalSession,
 };
@@ -149,11 +150,56 @@ impl Backend for LocalBackend {
         service::discard_hunks(&self.state, session_id, hunk_ids)
     }
 
+    fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>> {
+        moontasks::service::list_tasks(&self.state, session_id)
+    }
+
+    fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView> {
+        moontasks::service::create_task(&self.state, session_id, request)
+    }
+
+    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()> {
+        moontasks::service::set_task_status(&self.state, session_id, task_id, status)
+    }
+
+    fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {
+        moontasks::service::delete_task(&self.state, session_id, task_id)
+    }
+
+    fn start_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: StartResourceRequest,
+    ) -> Result<String> {
+        moontasks::service::start_resource(&self.state, session_id, task_id, request)
+    }
+
+    fn resume_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<String> {
+        moontasks::service::resume_resource(&self.state, session_id, task_id, resource_id)
+    }
+
+    fn stop_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<()> {
+        moontasks::service::stop_resource(&self.state, session_id, task_id, resource_id)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         let repo_path = crate::api::with_session(&self.state, session_id, |session| {
             Ok(session.repo_path.clone())
         })?;
-        self.state.terminals.spawn(&repo_path, command)
+        self.state
+            .terminals
+            .spawn(crate::terminal::TerminalSpec::shell(repo_path, command))
     }
 
     fn list_terminals(&self, _session_id: &str) -> Result<Vec<String>> {

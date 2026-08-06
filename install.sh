@@ -4,6 +4,9 @@ set -eu
 
 REPO="${MOONREVIEW_REPO:-antoineMoPa/moonreview}"
 INSTALL_DIR="${MOONREVIEW_INSTALL_DIR:-$HOME/.local/bin}"
+# The three executables. They are one program opened on three different things, and they ship
+# together, but an archive from before the split holds only the first.
+PROGRAMS="moonreview moontasks moonshell"
 INSTALL_PATH="${INSTALL_DIR}/moonreview"
 DOWNLOAD_BASE_URL="${MOONREVIEW_DOWNLOAD_BASE_URL:-}"
 
@@ -132,7 +135,19 @@ curl -fsSL "$CHECKSUM_URL" -o "${TMP_DIR}/${CHECKSUM_NAME}"
 
 mkdir -p "$INSTALL_DIR"
 tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TMP_DIR"
-install -m 0755 "${TMP_DIR}/moonreview" "$INSTALL_PATH"
+
+if [ ! -f "${TMP_DIR}/moonreview" ]; then
+    echo "moonreview installer: the archive does not contain moonreview." >&2
+    exit 1
+fi
+
+installed=""
+for program in $PROGRAMS; do
+    if [ -f "${TMP_DIR}/${program}" ]; then
+        install -m 0755 "${TMP_DIR}/${program}" "${INSTALL_DIR}/${program}"
+        installed="${installed} ${program}"
+    fi
+done
 
 path_updated="no"
 current_shell_hint=""
@@ -154,7 +169,7 @@ case ":$PATH:" in
         ;;
 esac
 
-echo "Installed moonreview to ${INSTALL_PATH}"
+echo "Installed${installed} to ${INSTALL_DIR}"
 "$INSTALL_PATH" --help >/dev/null 2>&1 || true
 
 if [ "$path_updated" = "yes" ]; then
@@ -166,4 +181,10 @@ if [ -n "$current_shell_hint" ]; then
     echo "  ${current_shell_hint}"
 fi
 
-echo "Run: moonreview"
+echo "Run: moonreview   — a review of the repo"
+for program in $installed; do
+    case "$program" in
+        moontasks) echo "     moontasks    — the task board" ;;
+        moonshell) echo "     moonshell    — a shell in the repo" ;;
+    esac
+done
