@@ -197,6 +197,10 @@ impl Backend for RemoteBackend {
         self.label.clone()
     }
 
+    fn reads_this_machine(&self) -> bool {
+        false
+    }
+
     fn web_url(&self, session_id: &str) -> String {
         format!("{}/review/{session_id}", self.base_url)
     }

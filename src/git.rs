@@ -20,6 +20,15 @@ const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     let original_path = path.as_ref().to_path_buf();
+    match find_repo_root(&original_path)? {
+        Some(repo_path) => Ok(repo_path),
+        None => bail!("{} is not inside a git repository", original_path.display()),
+    }
+}
+
+/// The repo a path sits in, or `None` when it sits in no repo at all — which is an answer
+/// rather than a failure for a window that can ask which repo to open.
+pub(crate) fn find_repo_root(path: impl AsRef<Path>) -> Result<Option<PathBuf>> {
     let mut path = path
         .as_ref()
         .canonicalize()
@@ -27,14 +36,12 @@ pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
 
     loop {
         if path.join(".git").exists() {
-            return Ok(path);
+            return Ok(Some(path));
         }
         if !path.pop() {
-            break;
+            return Ok(None);
         }
     }
-
-    bail!("{} is not inside a git repository", original_path.display())
 }
 
 pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathBuf>> {
@@ -1558,11 +1565,7 @@ mod tests {
 }
 
 fn command_exists(command: &str) -> bool {
-    let Some(path_var) = env::var_os("PATH") else {
-        return false;
-    };
-
-    env::split_paths(&path_var).any(|dir| {
+    env::split_paths(crate::shell_path::agent_path()).any(|dir| {
         let candidate = dir.join(command);
         std::fs::metadata(candidate)
             .map(|meta| meta.is_file())

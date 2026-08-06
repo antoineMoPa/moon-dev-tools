@@ -34,6 +34,10 @@ struct DraggedTask(String);
 /// The close mark's box, matching the one on a tab.
 const CLOSE_MARK_SIZE: f32 = 12.0;
 
+/// How many lines of a card's title are shown before the rest is cut. Enough for a sentence
+/// of a task name, short enough that one long title does not push every card down the column.
+const TITLE_ROWS: usize = 3;
+
 /// What a click on the board asked for. Collected while drawing and acted on afterwards, so
 /// nothing changes the pane tree or the task list while either is being read.
 enum BoardAction {
@@ -504,22 +508,31 @@ fn draw_title_handle(
     actions: &mut Vec<BoardAction>,
 ) {
     let _ = actions;
+    let width = handle_width.max(0.0);
+    // Cut rather than wrapped without end: a card sits in a column of a fixed width, and a
+    // title long enough to need a fourth line used to widen the whole column to fit it.
+    let title = widgets::cut_to_fit(
+        ui,
+        &task.title,
+        egui::TextStyle::Body.resolve(ui.style()),
+        palette.ink,
+        width,
+        TITLE_ROWS,
+    );
     let laid_out = ui
         .scope(|ui| {
             // The whole width up to the close mark, so the card is easy to grab rather than
             // only grabbable on the letters of its title.
-            ui.set_min_width(handle_width.max(0.0));
-            ui.add(
-                egui::Label::new(RichText::new(&task.title).color(palette.ink).strong())
-                    .selectable(false),
-            );
+            ui.set_min_width(width);
+            ui.add(egui::Label::new(title).selectable(false));
         })
         .response;
 
     let handle = ui
         .interact(laid_out.rect, drag_id, egui::Sense::click_and_drag())
         .on_hover_cursor(egui::CursorIcon::Grab)
-        .on_hover_text(&task.dir_path);
+        // The title in full, since the card may only have room for the start of it.
+        .on_hover_text(format!("{}\n\n{}", task.title, task.dir_path));
 
     if handle.double_clicked() {
         app.model.board.renaming = Some(crate::native::model::TaskRename {
@@ -530,7 +543,7 @@ fn draw_title_handle(
     }
 }
 
-/// The title being renamed. Enter keeps it, Escape and clicking away throw it away.
+/// The title being renamed. Enter and clicking away keep it, Escape throws it away.
 fn draw_title_editor(
     app: &mut App,
     ui: &mut Ui,
@@ -550,11 +563,10 @@ fn draw_title_editor(
     }
 
     let title = rename.title.clone();
-    let keep = entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-    let abandon = ui.input(|input| input.key_pressed(egui::Key::Escape))
-        || (entry.lost_focus() && !keep);
+    let abandon = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let keep = entry.lost_focus() && !abandon;
 
-    if keep && !title.trim().is_empty() {
+    if keep && !title.trim().is_empty() && title != task.title {
         actions.push(BoardAction::Rename(task.id.clone(), title));
     } else if abandon || keep {
         actions.push(BoardAction::CancelRename);

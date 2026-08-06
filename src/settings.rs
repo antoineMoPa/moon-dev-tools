@@ -15,11 +15,35 @@ use crate::api::AgentKind;
 const SETTINGS_DIR_NAME: &str = ".moonreview";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 
+/// How many projects the launch screen offers. Enough to cover what someone is working on this
+/// week, short enough that the list stays a list rather than a history.
+const RECENT_PROJECTS_KEPT: usize = 8;
+
 #[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(crate) struct Settings {
     /// The agent the review's selector is set to, which is who comments are handed to.
     #[serde(default)]
     pub(crate) selected_agent: AgentKind,
+    /// The projects opened before, most recent first, offered again by the launch screen.
+    #[serde(default)]
+    pub(crate) recent_projects: Vec<String>,
+}
+
+impl Settings {
+    /// Put a project at the head of the recent list. Opening one that is already there moves
+    /// it up rather than listing it twice, and the oldest fall off the end.
+    ///
+    /// Returns whether the list changed, so a reopen of the project already at the head does
+    /// not rewrite the file.
+    pub(crate) fn remember_project(&mut self, path: &str) -> bool {
+        if self.recent_projects.first().is_some_and(|first| first == path) {
+            return false;
+        }
+        self.recent_projects.retain(|recent| recent != path);
+        self.recent_projects.insert(0, path.to_string());
+        self.recent_projects.truncate(RECENT_PROJECTS_KEPT);
+        true
+    }
 }
 
 fn home_settings_path() -> Option<PathBuf> {
@@ -123,10 +147,51 @@ mod tests {
     fn the_file_names_the_agent_in_words() {
         let encoded = serde_json::to_string(&Settings {
             selected_agent: AgentKind::Claude,
+            recent_projects: Vec::new(),
         })
         .expect("expected json");
 
-        assert_eq!(encoded, r#"{"selected_agent":"claude"}"#);
+        assert_eq!(
+            encoded,
+            r#"{"selected_agent":"claude","recent_projects":[]}"#
+        );
+    }
+
+    #[test]
+    fn an_unwritten_recent_list_reads_back_empty() {
+        let settings: Settings = serde_json::from_str("{}").expect("expected the defaults");
+
+        assert!(settings.recent_projects.is_empty());
+    }
+
+    #[test]
+    fn reopening_a_project_moves_it_to_the_head_rather_than_listing_it_twice() {
+        let mut settings = Settings::default();
+        settings.remember_project("/a");
+        settings.remember_project("/b");
+
+        assert!(settings.remember_project("/a"));
+        assert_eq!(settings.recent_projects, vec!["/a".to_string(), "/b".to_string()]);
+    }
+
+    #[test]
+    fn the_project_already_at_the_head_is_left_alone() {
+        let mut settings = Settings::default();
+        settings.remember_project("/a");
+
+        assert!(!settings.remember_project("/a"));
+    }
+
+    #[test]
+    fn the_oldest_projects_fall_off_the_end() {
+        let mut settings = Settings::default();
+        for index in 0..RECENT_PROJECTS_KEPT + 3 {
+            settings.remember_project(&format!("/project-{index}"));
+        }
+
+        assert_eq!(settings.recent_projects.len(), RECENT_PROJECTS_KEPT);
+        assert_eq!(settings.recent_projects[0], "/project-10");
+        assert_eq!(settings.recent_projects[RECENT_PROJECTS_KEPT - 1], "/project-3");
     }
 
     #[test]

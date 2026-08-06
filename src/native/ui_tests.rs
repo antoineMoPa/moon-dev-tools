@@ -323,6 +323,111 @@ fn a_shell_that_exits_closes_its_tab() {
     assert!(closed, "the tab of a shell that exited should have closed");
 }
 
+/// Quitting takes every shell in the window with it, so the first ⌘Q says what it is about to
+/// end and the second one goes through.
+#[test]
+fn quitting_with_a_shell_still_running_asks_first() {
+    let fixture = seeded_fixture("quit-warning");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    // A shell that is left alone, and so is still running when the quit arrives.
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+        frame: crate::cli::Frame::Review,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_in_ui = Arc::clone(&warnings);
+    // A toast stays up for seconds, so the first warning is wiped before the second quit —
+    // otherwise what is on screen afterwards says nothing about which quit put it there.
+    let wipe = Arc::new(AtomicBool::new(false));
+    let wipe_in_ui = Arc::clone(&wipe);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .build_ui(move |ui| {
+            if wipe_in_ui.swap(false, Ordering::Relaxed) {
+                app.model.toasts.clear();
+            }
+            app.draw(ui);
+            *warnings_in_ui.lock().expect("poisoned") = app
+                .model
+                .toasts
+                .iter()
+                .map(|toast| toast.text.clone())
+                .collect();
+        });
+    harness.run_steps(3);
+
+    let close_requested = |harness: &mut Harness<'_>| {
+        harness
+            .input_mut()
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("expected the root viewport")
+            .events
+            .push(egui::ViewportEvent::Close);
+        harness.step();
+    };
+    let warned_about_the_shell = |warnings: &Arc<Mutex<Vec<String>>>| {
+        warnings
+            .lock()
+            .expect("poisoned")
+            .iter()
+            .any(|text| text.contains("still running"))
+    };
+
+    close_requested(&mut harness);
+    assert!(
+        warned_about_the_shell(&warnings),
+        "the first quit should have said the shell is still running"
+    );
+
+    // The second one is the answer to that question, and says nothing new.
+    wipe.store(true, Ordering::Relaxed);
+    harness.step();
+    close_requested(&mut harness);
+    assert!(
+        !warned_about_the_shell(&warnings),
+        "the second quit should have gone through rather than asking again"
+    );
+
+    // The window would have taken the shell with it; the test has to do it by hand.
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
 /// The file tab: a fringe of line numbers beside the text, and the text editable.
 #[test]
 fn a_file_opens_in_a_tab_of_its_own() {
@@ -893,6 +998,116 @@ fn a_changed_image_is_drawn_as_before_and_after() {
     harness.snapshot("image-diff");
 }
 
+/// A window opened from a desktop launcher starts outside every repo, so it has to ask which
+/// one to review — with the folder picker of the OS, since the repo is on this machine.
+#[test]
+fn a_window_with_no_repo_asks_which_one_to_review() {
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            serves_web: false,
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| app.draw(ui));
+    harness.run_steps(3);
+
+    harness.snapshot("repo-prompt");
+}
+
+/// The three executables share the launch screen, so it has to say what the window it is in
+/// front of actually opens — a board is not a review.
+#[test]
+fn the_launch_screen_of_the_board_does_not_offer_a_review() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            serves_web: false,
+            frame: crate::cli::Frame::Tasks,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| app.draw(ui));
+    harness.run_steps(3);
+
+    assert!(
+        harness.query_by_label_contains("moontasks").is_some(),
+        "expected the board's launch screen to name the board's executable"
+    );
+    assert!(
+        harness.query_by_label_contains("review").is_none(),
+        "expected nothing on the board's launch screen to mention reviewing"
+    );
+    assert!(
+        harness.query_by_label_contains("board").is_some(),
+        "expected the board's launch screen to ask which repo's board to open"
+    );
+}
+
+/// Going back to yesterday's project should not mean naming it again, so the launch screen
+/// lists the ones opened before and opens the clicked one.
+#[test]
+fn the_launch_screen_offers_the_projects_opened_before() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let mut saved = crate::settings::Settings::default();
+    saved.remember_project("/home/you/older");
+    saved.remember_project("/home/you/newest");
+    crate::settings::store(&saved).expect("expected the settings to be written");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            serves_web: false,
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| app.draw(ui));
+    harness.run_steps(3);
+    harness.snapshot("repo-prompt-recents");
+
+    // Named by their own directory rather than the whole path.
+    assert!(
+        harness.query_by_label_contains("newest").is_some(),
+        "expected the launch screen to list the project opened last"
+    );
+    assert!(
+        harness.query_by_label_contains("older").is_some(),
+        "expected the launch screen to list the earlier project too"
+    );
+
+    if let Some(path) = crate::settings::path() {
+        let _ = fs::remove_file(path);
+    }
+}
+
 #[test]
 fn the_review_window_draws_in_the_light_theme_too() {
     let fixture = seeded_fixture("review-light");
@@ -981,6 +1196,123 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
     harness.snapshot("moontasks-new-task");
+}
+
+/// Several windows on several projects is the ordinary way to work, so the title bar has to
+/// say which project each one is on.
+#[test]
+fn the_window_is_titled_after_the_project_it_is_open_on() {
+    let fixture = seeded_fixture("window-title");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(Mutex::new(None));
+    let opened_in_ui = Arc::clone(&opened);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .build_ui(move |ui| {
+            app.draw(ui);
+            if let Ok(mut opened) = opened_in_ui.lock() {
+                *opened = app.model.project_path.clone();
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut project = None;
+    while Instant::now() < deadline && project.is_none() {
+        harness.step();
+        project = opened.lock().ok().and_then(|opened| opened.clone());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let project = project.expect("the window never learned which project it is on");
+    let titled = crate::native::app::window_title(crate::cli::Frame::Review, Some(&project));
+    assert!(
+        titled.ends_with(&project),
+        "expected the title to name the project, got {titled:?} for {project:?}"
+    );
+    assert!(
+        titled.starts_with("🌚 moonreview — "),
+        "expected the title to keep naming the executable, got {titled:?}"
+    );
+}
+
+/// The home directory is written the short way, which is how a path is read at a glance.
+#[test]
+fn a_project_under_the_home_directory_is_titled_with_a_tilde() {
+    let home = std::env::var("HOME").expect("expected a home directory");
+
+    let titled = crate::native::app::window_title(
+        crate::cli::Frame::Tasks,
+        Some(&format!("{home}/prog/moonreview")),
+    );
+
+    assert_eq!(titled, "🌚 moontasks — ~/prog/moonreview");
+}
+
+/// A card's title is whatever someone typed on the way past, and some of them are a sentence.
+/// The column is a fixed width, so a long title has to be cut into it rather than widen it —
+/// widening one column used to push the rest of the board off the side of the window.
+#[test]
+fn a_long_task_title_is_cut_into_its_column() {
+    let fixture = seeded_fixture("board-long-title");
+    for (task_id, title, status) in [
+        (
+            "long-title-1111",
+            "Rework the dispatch queue so held comments survive a restart, and take the \
+             chance to rename everything around it while we are here",
+            "todo",
+        ),
+        ("fix-the-login-page-2222", "Fix the login page", "in_progress"),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"{status}\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 2,
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the two tasks out of .moontasks"
+    );
+
+    harness.run_steps(3);
+    harness.snapshot("moontasks-long-title");
 }
 
 /// The three executables are the same window opened on three different things, which is the

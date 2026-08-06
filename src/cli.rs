@@ -12,7 +12,7 @@ use reqwest::blocking::Client;
 
 use crate::{
     api::{DiffTarget, OpenSessionRequest, SessionOpened, client_host, port, server_url},
-    git::{canonicalize_repo, parse_review_target, run_git},
+    git::{canonicalize_repo, find_repo_root, parse_review_target, run_git},
     server,
 };
 
@@ -27,20 +27,97 @@ pub enum Frame {
     Shell,
 }
 
-/// What each executable is called, and the one line of help that says what it opens.
-const FRAME_PROGRAMS: &[(Frame, &str, &str)] = &[
-    (Frame::Review, "moonreview", "a review of the repo"),
-    (Frame::Tasks, "moontasks", "the task board"),
-    (Frame::Shell, "moonshell", "a shell in the repo"),
+/// Every frame, in the order they are named in help and given launchers.
+pub(crate) const FRAMES: &[Frame] = &[Frame::Review, Frame::Tasks, Frame::Shell];
+
+/// Everything that differs between the three executables in name and wording, kept in one
+/// place so a new frame is a row here rather than a branch wherever text is written.
+struct FrameProgram {
+    frame: Frame,
+    /// The name of the executable that opens on this frame.
+    program: &'static str,
+    /// The name a desktop launcher shows: the one the OS puts under the icon.
+    display_name: &'static str,
+    /// What the window opens on, as one line of prose, for the CLI's help.
+    opens: &'static str,
+    /// How the launch screen asks which repo to open.
+    asks_for_repo: &'static str,
+    /// The same, when the repo is on the far side of a remote connection and can only be
+    /// typed out.
+    asks_for_remote_repo: &'static str,
+    /// What the launch screen's button says.
+    opens_button: &'static str,
+}
+
+const FRAME_PROGRAMS: &[FrameProgram] = &[
+    FrameProgram {
+        frame: Frame::Review,
+        program: "moonreview",
+        display_name: "Moonreview",
+        opens: "a review of the repo",
+        asks_for_repo: "Which repo to review:",
+        asks_for_remote_repo: "Path of the repo to review, on that machine:",
+        opens_button: "Open review",
+    },
+    FrameProgram {
+        frame: Frame::Tasks,
+        program: "moontasks",
+        display_name: "Moontasks",
+        opens: "the task board",
+        asks_for_repo: "Which repo to open the board of:",
+        asks_for_remote_repo: "Path of the repo to open the board of, on that machine:",
+        opens_button: "Open board",
+    },
+    FrameProgram {
+        frame: Frame::Shell,
+        program: "moonshell",
+        display_name: "Moonshell",
+        opens: "a shell in the repo",
+        asks_for_repo: "Which repo to open a shell in:",
+        asks_for_remote_repo: "Path of the repo to open a shell in, on that machine:",
+        opens_button: "Open shell",
+    },
 ];
 
 impl Frame {
     /// The name of the executable that opens on this frame.
     pub(crate) fn program(self) -> &'static str {
+        self.entry().program
+    }
+
+    /// The name a desktop launcher shows: the one the OS puts under the icon.
+    #[cfg(feature = "native")]
+    pub(crate) fn display_name(self) -> &'static str {
+        self.entry().display_name
+    }
+
+    /// What the window opens on, as one line of prose.
+    pub(crate) fn opens(self) -> &'static str {
+        self.entry().opens
+    }
+
+    /// How the launch screen asks which repo to open, which depends on whether this machine
+    /// can browse for it.
+    #[cfg(feature = "native")]
+    pub(crate) fn asks_for_repo(self, picks_folders: bool) -> &'static str {
+        let entry = self.entry();
+        if picks_folders {
+            entry.asks_for_repo
+        } else {
+            entry.asks_for_remote_repo
+        }
+    }
+
+    /// What the launch screen's button says.
+    #[cfg(feature = "native")]
+    pub(crate) fn opens_button(self) -> &'static str {
+        self.entry().opens_button
+    }
+
+    fn entry(self) -> &'static FrameProgram {
         FRAME_PROGRAMS
             .iter()
-            .find(|(frame, _, _)| *frame == self)
-            .map(|(_, program, _)| *program)
+            .find(|entry| entry.frame == self)
             .expect("every frame has an executable")
     }
 }
@@ -54,6 +131,8 @@ enum CliCommand {
     },
     /// The moontasks MCP server, on stdio. Agents start this, not people.
     Mcp,
+    /// Write the desktop launcher of each installed executable, so the OS offers them too.
+    InstallLaunchers,
     Review {
         target: ReviewTarget,
         logs: bool,
@@ -112,12 +191,38 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
             runtime.block_on(server::run_server())
         }
         CliCommand::Mcp => crate::moontasks::mcp::run(),
+        CliCommand::InstallLaunchers => install_launchers(),
         CliCommand::Review {
             target,
             logs,
             frontend,
         } => launch_review(target, logs, frontend, frame),
     }
+}
+
+/// `install-launchers` from a terminal: the same writing the window's menu item does, with
+/// what landed where printed rather than shown as a toast.
+#[cfg(feature = "native")]
+fn install_launchers() -> Result<()> {
+    use crate::native::launchers;
+
+    for launcher in launchers::install()? {
+        println!(
+            "{} → {}",
+            launcher.frame.display_name(),
+            launcher.path.display()
+        );
+    }
+    println!(
+        "The OS lists them from {}; rerun this after moving the executables.",
+        launchers::destination_hint()
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "native"))]
+fn install_launchers() -> Result<()> {
+    bail!("this build has no desktop frontend, so a launcher would have no window to open")
 }
 
 fn launch_review(
@@ -134,6 +239,18 @@ fn launch_review(
     }
 
     let current_dir = env::current_dir()?;
+
+    #[cfg(feature = "native")]
+    if frontend == Frontend::Native
+        && target == ReviewTarget::WorkingTree
+        && find_repo_root(&current_dir)?.is_none()
+    {
+        // A launcher opened from the OS starts outside any repo — there is no terminal it could
+        // have inherited one from — so the window asks which repo to open.
+        let launch = crate::native::launch_prompt(frame)?;
+        return crate::native::run(launch);
+    }
+
     let repo_path = canonicalize_repo(&current_dir)?;
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
     let open_request = review_open_request(&repo_path, target, current_dir_pathspec, &current_dir)?;
@@ -458,6 +575,7 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
         [] => Ok(review(ReviewTarget::WorkingTree)),
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
         [command] if command == "mcp" => Ok(CliCommand::Mcp),
+        [command] if command == "install-launchers" => Ok(CliCommand::InstallLaunchers),
         [command] if command == "diff" => Ok(review(ReviewTarget::WorkingTree)),
         [command, target] if command == "diff" => Ok(review(ReviewTarget::Diff(target.clone()))),
         [target] if target == "." || target == "./" => Ok(review(ReviewTarget::CurrentDirectory)),
@@ -466,7 +584,12 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
         } else {
             ReviewTarget::Path(target.clone())
         })),
-        [command, ..] if command == "diff" || command == "serve" || command == "mcp" => {
+        [command, ..]
+            if command == "diff"
+                || command == "serve"
+                || command == "mcp"
+                || command == "install-launchers" =>
+        {
             bail!("{}", help_text_for(frame))
         }
         [before, after] => Ok(review(ReviewTarget::Comparison([
@@ -485,15 +608,17 @@ fn print_help(frame: Frame) {
 /// frame it opens on at the top and the other two named at the bottom.
 fn help_text_for(frame: Frame) -> String {
     let program = frame.program();
-    let opens = FRAME_PROGRAMS
+    let opens = frame.opens();
+    let siblings: Vec<String> = FRAMES
         .iter()
-        .find(|(candidate, _, _)| *candidate == frame)
-        .map(|(_, _, opens)| *opens)
-        .expect("every frame says what it opens");
-    let siblings: Vec<String> = FRAME_PROGRAMS
-        .iter()
-        .filter(|(candidate, _, _)| *candidate != frame)
-        .map(|(_, name, opens)| format!("  {name} — opens on {opens}"))
+        .filter(|candidate| **candidate != frame)
+        .map(|sibling| {
+            format!(
+                "  {name} — opens on {opens}",
+                name = sibling.program(),
+                opens = sibling.opens()
+            )
+        })
         .collect();
 
     format!(
@@ -512,6 +637,7 @@ Usage:
   {program} --remote <host> [--repo <path>]
   {program} serve --logs
   {program} mcp
+  {program} install-launchers
   {program} --version
   {program} --help
 
@@ -536,6 +662,12 @@ Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./
 
 The other frames, which are the same window opened on something else:
 {siblings}
+
+Desktop launchers:
+  `install-launchers` gives each installed executable an entry the OS offers — an application
+  bundle on macOS, a desktop entry on Linux — so they open from Spotlight, Launchpad or an
+  application menu as well as from a shell. The window has the same thing in its menu.
+  A window opened that way starts outside any repo, so it asks which repo to open.
 
 Frontends:
   By default the window carries the review server inside it, so the same review can be
@@ -788,6 +920,24 @@ mod tests {
                 frontend: Frontend::Native,
             }
         );
+    }
+
+    #[test]
+    fn parse_install_launchers_command() {
+        assert_eq!(parse(&["install-launchers"]), CliCommand::InstallLaunchers);
+    }
+
+    /// `install-launchers` takes nothing, so an argument after it is a mistake rather than a
+    /// path to review.
+    #[test]
+    fn install_launchers_takes_no_arguments() {
+        let error = parse_cli_args(
+            vec!["install-launchers".to_string(), "extra".to_string()],
+            Frame::Review,
+        )
+        .expect_err("expected an argument after install-launchers to be rejected");
+
+        assert!(error.to_string().contains("Usage:"));
     }
 
     #[test]

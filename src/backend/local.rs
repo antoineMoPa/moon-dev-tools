@@ -53,6 +53,10 @@ impl Backend for LocalBackend {
         "local".to_string()
     }
 
+    fn reads_this_machine(&self) -> bool {
+        true
+    }
+
     fn web_url(&self, session_id: &str) -> String {
         format!("{}/review/{session_id}", server_url())
     }

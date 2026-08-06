@@ -25,6 +25,10 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// How this connection reads in the UI, e.g. `local` or `dev-box:42000`.
     fn describe(&self) -> String;
 
+    /// Whether the repos this reads are on the machine the window runs on, which is what
+    /// decides if the window can offer a folder picker for them.
+    fn reads_this_machine(&self) -> bool;
+
     /// Where a browser can open the same review, for the "open in browser" action.
     fn web_url(&self, session_id: &str) -> String;
 

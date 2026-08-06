@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    env,
     io::{Read, Write},
     sync::{
         Arc, Mutex,
@@ -49,10 +48,6 @@ pub(crate) struct TerminalCreated {
 #[derive(Serialize)]
 pub(crate) struct TerminalList {
     terminal_ids: Vec<String>,
-}
-
-fn login_shell() -> String {
-    env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
 /// What to start a shell as. The plain case is a login shell in the reviewed repo; a task's
@@ -263,7 +258,7 @@ impl TerminalRegistry {
 
         let mut command = match spec.program {
             None | Some(AgentKind::None) => {
-                let mut command = CommandBuilder::new(login_shell());
+                let mut command = CommandBuilder::new(crate::shell_path::login_shell());
                 command.arg("-l");
                 command
             }
@@ -276,6 +271,9 @@ impl TerminalRegistry {
         }
         command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
+        // The agent is started by name, so it has to be looked up on the PATH the user's shell
+        // has rather than the one a desktop launcher hands this process.
+        command.env("PATH", crate::shell_path::agent_path());
         for (name, value) in &spec.env {
             command.env(name, value);
         }

@@ -13,6 +13,7 @@ pub(crate) enum MenuAction {
     OpenCommandPalette,
     NewTab,
     CloseTab,
+    InstallLaunchers,
 }
 
 #[cfg(target_os = "macos")]
@@ -32,6 +33,7 @@ mod platform {
         command_palette: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
+        install_launchers: MenuId,
     }
 
     impl NativeMenu {
@@ -40,12 +42,18 @@ mod platform {
         pub(crate) fn install(serves_web: bool) -> Option<Self> {
             let menu = Menu::new();
 
+            // Written on demand rather than by the installer, which drops executables on PATH
+            // and knows nothing of Launchpad.
+            let install_launchers = MenuItem::new("Install Desktop Launchers", true, None);
+
             // macOS expects the first submenu to be the application menu, and it is what
             // gives the window a real Quit item.
-            let app_menu = Submenu::new("Moon Review", true);
+            let app_menu = Submenu::new("Moonreview", true);
             app_menu
                 .append_items(&[
                     &PredefinedMenuItem::about(None, None),
+                    &PredefinedMenuItem::separator(),
+                    &install_launchers,
                     &PredefinedMenuItem::separator(),
                     &PredefinedMenuItem::hide(None),
                     &PredefinedMenuItem::hide_others(None),
@@ -129,6 +137,7 @@ mod platform {
                 command_palette: command_palette.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
+                install_launchers: install_launchers.id().clone(),
             })
         }
 
@@ -146,6 +155,8 @@ mod platform {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
+                } else if event.id == self.install_launchers {
+                    MenuAction::InstallLaunchers
                 } else {
                     continue;
                 };

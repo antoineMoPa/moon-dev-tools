@@ -21,6 +21,7 @@ mod server;
 mod server_tests;
 mod service;
 mod settings;
+mod shell_path;
 mod terminal;
 
 use anyhow::Result;

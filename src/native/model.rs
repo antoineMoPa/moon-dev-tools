@@ -239,6 +239,11 @@ pub(crate) struct Model {
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
     /// The find bar, when one is open, and the pane it is searching.
     pub(crate) find: Option<crate::native::find::Find>,
+    /// A project that has just opened, waiting to be written to the recent list. Set on the
+    /// worker thread's result, which is in no position to touch the settings file.
+    pub(crate) opened_project: Option<String>,
+    /// The project this window is on, once one is open. What the title bar says.
+    pub(crate) project_path: Option<String>,
 }
 
 impl Model {

@@ -31,6 +31,7 @@ pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
     OpenInBrowser,
     ToggleTheme,
+    InstallLaunchers,
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -95,6 +96,17 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             title: "open in browser".to_string(),
             description: "Open this review in a browser".to_string(),
             action: CommandAction::OpenInBrowser,
+            shortcut: None,
+        });
+    }
+    // Only the two platforms that have a launcher to write are offered it.
+    if cfg!(any(target_os = "macos", target_os = "linux")) {
+        commands.push(Command {
+            title: "install desktop launchers".to_string(),
+            // Where they land is said by the toast the install leaves, rather than here: it
+            // depends on what this account can write.
+            description: "Give each installed executable an entry the OS offers".to_string(),
+            action: CommandAction::InstallLaunchers,
             shortcut: None,
         });
     }

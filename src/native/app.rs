@@ -23,7 +23,7 @@ use crate::{
         panes::{OpenPaneRequest, Pane, PaneKind},
         review::diff::{DiffLine, build_diff_lines},
         tasks::Tasks,
-        theme::{self, Palette, ThemeMode},
+        theme::{self, Palette, SMALL_SIZE, ThemeMode},
         widgets,
         workspace::SHELL_REPAINT_INTERVAL,
     },
@@ -33,6 +33,11 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_millis(900);
 /// The same, for a window that is not focused.
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a warned-about quit stays armed. The warning is a toast, so this is how long that
+/// toast is up: pressing again while it can still be read is the second press it asks for.
+const QUIT_CONFIRM_WINDOW: Duration =
+    Duration::from_millis((crate::native::model::TOAST_LIFETIME * 1000.0) as u64);
+
 /// How often an open moontasks board rereads `.moontasks`. Slower than a review: reading it
 /// is a directory walk, and a card moves at the pace an agent works rather than a keystroke.
 const BOARD_POLL_INTERVAL: Duration = Duration::from_millis(1500);
@@ -103,6 +108,10 @@ pub(crate) struct App {
     had_panes: bool,
     /// Which of the three executables this is, and so what the window opens on.
     frame: crate::cli::Frame,
+    /// What the title bar was last told to say, so it is only told again when it changes.
+    window_title: String,
+    /// Until when a quit that was warned about goes through unasked.
+    quit_armed_until: Option<Instant>,
     /// What `~/.moonreview/settings.json` said, and what it will be written back as.
     settings: crate::settings::Settings,
 }
@@ -151,6 +160,8 @@ impl App {
                 connection,
                 file_editors: HashMap::new(),
                 find: None,
+                opened_project: None,
+                project_path: None,
                 adopt_shells_pending: false,
                 open_shell_pending: false,
                 restored_layout: None,
@@ -184,6 +195,9 @@ impl App {
             fonts_installed: false,
             had_panes: false,
             frame: launch.frame,
+            // What `run` opened the window with, so the first frame has nothing to say.
+            window_title: window_title(launch.frame, None),
+            quit_armed_until: None,
             settings,
         };
 
@@ -251,6 +265,9 @@ impl App {
 
     fn open_review(&mut self, open: OpenSessionRequest) {
         let frame = self.frame;
+        // Only remembered once the review is actually open: a path that turns out not to be a
+        // repo has no business on the launch screen's list.
+        let repo_path = open.repo_path.clone();
         self.tasks.spawn(
             move |backend| backend.open_session(open),
             move |model, result| match result {
@@ -264,6 +281,8 @@ impl App {
                     );
                     model.review(&opened.session_id);
                     model.stage = Stage::Ready;
+                    model.opened_project = Some(repo_path.clone());
+                    model.project_path = Some(repo_path.clone());
                     model.adopt_shells_pending = true;
                     model.board.refresh_requested = true;
                     // `moonshell` opens on a shell, which has to be started before there is
@@ -408,6 +427,27 @@ impl App {
             CommandAction::OpenPane(request) => self.open_pane(request),
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
             CommandAction::OpenInBrowser => self.open_in_browser(),
+            CommandAction::InstallLaunchers => self.install_launchers(),
+        }
+    }
+
+    /// Write the launchers the OS lists, and say what landed where.
+    fn install_launchers(&mut self) {
+        match crate::native::launchers::install() {
+            Ok(installed) => {
+                let names: Vec<&str> = installed
+                    .iter()
+                    .map(|launcher| launcher.frame.display_name())
+                    .collect();
+                self.model.info(format!(
+                    "{} in {}",
+                    names.join(", "),
+                    crate::native::launchers::destination_hint()
+                ));
+            }
+            Err(error) => self
+                .model
+                .error(format!("could not write the launchers: {error}")),
         }
     }
 
@@ -544,10 +584,21 @@ impl App {
 
     fn draw_prompt(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
+        // A repo on this machine can be pointed at; one on the far side of a remote connection
+        // can only be typed out, since this machine cannot browse for it.
+        let picks_folders = self.backend().reads_this_machine();
+        let mut open_path = None;
+        let mut pick_folder = false;
+
+        let frame = self.frame;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.28);
-                ui.label(RichText::new("🌚 moonreview").size(22.0).strong());
+                ui.label(
+                    RichText::new(format!("🌚 {}", frame.program()))
+                        .size(22.0)
+                        .strong(),
+                );
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("connected to {}", self.model.connection))
@@ -558,14 +609,20 @@ impl App {
                 let Stage::Prompt { repo_path, error } = &mut self.model.stage else {
                     return;
                 };
-                ui.label(RichText::new("Path of the repo to review, on that machine:").color(palette.muted));
+                ui.label(RichText::new(frame.asks_for_repo(picks_folders)).color(palette.muted));
                 ui.add_space(6.0);
-                let entry = ui.add_sized(
-                    vec2(460.0, 24.0),
-                    egui::TextEdit::singleline(repo_path).hint_text("/home/you/project"),
-                );
-                let submitted = entry.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                let path = repo_path.trim().to_string();
+
+                // Browsing for the repo is the whole of it on this machine, so there is
+                // nothing to type; a remote repo cannot be browsed for and has to be.
+                let typed = (!picks_folders).then(|| {
+                    let entry = ui.add_sized(
+                        vec2(460.0, 24.0),
+                        egui::TextEdit::singleline(repo_path).hint_text("/home/you/project"),
+                    );
+                    let submitted =
+                        entry.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+                    (repo_path.trim().to_string(), submitted)
+                });
 
                 if let Some(error) = error {
                     ui.add_space(8.0);
@@ -573,21 +630,71 @@ impl App {
                 }
 
                 ui.add_space(12.0);
-                let go = widgets::clickable(
-                    ui.add_enabled(!path.is_empty(), egui::Button::new("Open review")),
-                )
-                .clicked();
+                ui.horizontal(|ui| {
+                    const BUTTON: egui::Vec2 = egui::vec2(120.0, 24.0);
+                    ui.add_space((ui.available_width() - BUTTON.x).max(0.0) / 2.0);
 
-                if (go || submitted) && !path.is_empty() {
-                    self.model.stage = Stage::Opening;
-                    self.open_review(OpenSessionRequest {
-                        repo_path: path,
-                        diff_target: None,
-                        active_commit: None,
-                    });
+                    match &typed {
+                        None => {
+                            pick_folder = widgets::clickable(
+                                ui.add(egui::Button::new("Choose a repo…").min_size(BUTTON)),
+                            )
+                            .clicked();
+                        }
+                        Some((path, submitted)) => {
+                            let go = widgets::clickable(ui.add_enabled(
+                                !path.is_empty(),
+                                egui::Button::new(frame.opens_button()).min_size(BUTTON),
+                            ))
+                            .clicked();
+                            if (go || *submitted) && !path.is_empty() {
+                                open_path = Some(path.clone());
+                            }
+                        }
+                    }
+                });
+
+                if let Some(recent) = draw_recent_projects(ui, &self.settings, &palette) {
+                    open_path = Some(recent);
                 }
             });
         });
+
+        // Both deferred: the dialog blocks, and opening a review takes `self`.
+        if pick_folder
+            && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone())
+        {
+            open_path = Some(picked);
+        }
+        if let Some(repo_path) = open_path {
+            self.model.stage = Stage::Opening;
+            self.open_review(OpenSessionRequest {
+                repo_path,
+                diff_target: None,
+                active_commit: None,
+            });
+        }
+    }
+
+    /// The OS folder picker, opened where the last project was found so the next one is
+    /// usually a sibling, or on the home directory. What it comes back with is what opens.
+    fn pick_repo_folder(&mut self, ctx: &egui::Context) -> Option<String> {
+        let mut dialog = rfd::FileDialog::new().set_title("Choose a repo");
+        if let Some(recent) = self.settings.recent_projects.first() {
+            let beside = std::path::Path::new(recent).parent().unwrap_or_else(|| {
+                // A project at the filesystem root has no parent to open beside it.
+                std::path::Path::new(recent)
+            });
+            if beside.is_dir() {
+                dialog = dialog.set_directory(beside);
+            }
+        }
+
+        let picked = dialog.pick_folder()?;
+        // The window loses the keyboard to the dialog, and egui only learns that it is back
+        // once something else asks it to draw.
+        ctx.request_repaint();
+        Some(picked.display().to_string())
     }
 
     fn draw_opening(&mut self, ui: &mut Ui) {
@@ -789,6 +896,64 @@ impl App {
         }
     }
 
+    /// Quitting kills every shell the window holds, along with whatever they were in the
+    /// middle of, so the first ⌘Q says so and the second one goes through.
+    ///
+    /// Closing the last shell's tab is not this: it ends that shell deliberately, and the
+    /// window that follows it out has nothing left running to warn about.
+    fn quit_would_kill_shells(&mut self, ctx: &egui::Context) -> bool {
+        if !ctx.input(|input| input.viewport().close_requested()) {
+            return false;
+        }
+        let running = self.running_shells();
+        if running == 0 {
+            return false;
+        }
+        // Armed by the warning, and only for as long as the warning is still on screen: a ⌘Q
+        // an hour later is as much of a surprise as the first one was.
+        if self
+            .quit_armed_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return false;
+        }
+
+        self.quit_armed_until = Some(Instant::now() + QUIT_CONFIRM_WINDOW);
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.model.error(match running {
+            1 => "a shell is still running — quit again to close it".to_string(),
+            running => format!("{running} shells are still running — quit again to close them"),
+        });
+        true
+    }
+
+    /// Say which project this window is on in its title bar. Sent only when it changes: a
+    /// viewport command is a message to the windowing system, not a thing to repeat 60 times a
+    /// second.
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let title = window_title(self.frame, self.model.project_path.as_deref());
+        if title == self.window_title {
+            return;
+        }
+        self.window_title = title.clone();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
+    /// Write a project that has just opened to the head of the recent list, so the next launch
+    /// screen offers it.
+    fn remember_opened_project(&mut self) {
+        let Some(path) = self.model.opened_project.take() else {
+            return;
+        };
+        if !self.settings.remember_project(&path) {
+            return;
+        }
+        if let Err(error) = crate::settings::store(&self.settings) {
+            // Worth saying once, but not worth a toast: the review is open either way.
+            eprintln!("[moonreview] could not save settings: {error}");
+        }
+    }
+
     /// A session starts on no agent at all, so the one the last run ended on is put back — once
     /// the review has said which agents this machine actually has, since asking for one that is
     /// no longer installed is refused.
@@ -849,6 +1014,8 @@ impl App {
             self.fonts_installed = true;
         }
         self.tasks.drain(&mut self.model);
+        self.remember_opened_project();
+        self.update_window_title(ctx);
         self.drain_attachments();
         self.model
             .tick_toasts(ctx.input(|input| input.stable_dt).min(0.25));
@@ -871,6 +1038,7 @@ impl App {
             self.pending_action = Some(match action {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
+                MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
                     continue;
@@ -888,6 +1056,7 @@ impl App {
             });
         }
 
+        self.quit_would_kill_shells(ctx);
         self.apply_shortcuts(ctx);
         match self.pending_tab_action.take() {
             Some(TabAction::New) => self.open_shell_tab(),
@@ -944,4 +1113,86 @@ impl App {
             POLL_INTERVAL
         });
     }
+}
+
+/// How wide the recent projects column is. Wider than the picker button it sits under, so a
+/// project's path has room beside its name.
+const RECENT_COLUMN_WIDTH: f32 = 260.0;
+
+/// What the window is called: the executable, and the project it is open on once there is
+/// one. Several windows on several projects is the ordinary way to work, and the title bar is
+/// the only place that says which is which.
+///
+/// The home directory is written as `~`, which is how a path is read at a glance.
+pub(crate) fn window_title(frame: crate::cli::Frame, project: Option<&str>) -> String {
+    let Some(project) = project else {
+        return format!("🌚 {}", frame.program());
+    };
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .filter(|home| !home.as_os_str().is_empty());
+    let shortened = home
+        .and_then(|home| {
+            std::path::Path::new(project)
+                .strip_prefix(&home)
+                .ok()
+                .map(|rest| format!("~/{}", rest.display()))
+        })
+        .unwrap_or_else(|| project.to_string());
+
+    format!("🌚 {} — {shortened}", frame.program())
+}
+
+/// The projects opened before, under the picker on the launch screen. Clicking one opens it,
+/// which is the whole point: the common case is going back to what you were on yesterday.
+///
+/// Each row says the project's own directory name, with the path it sits under beside it, so
+/// two checkouts of the same repo can be told apart.
+fn draw_recent_projects(
+    ui: &mut Ui,
+    settings: &crate::settings::Settings,
+    palette: &Palette,
+) -> Option<String> {
+    if settings.recent_projects.is_empty() {
+        return None;
+    }
+    let mut open = None;
+
+    ui.add_space(22.0);
+    ui.label(RichText::new("Recent projects").color(palette.muted));
+    ui.add_space(6.0);
+
+    for path in &settings.recent_projects {
+        let directory = std::path::Path::new(path);
+        let name = directory
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        let parent = directory
+            .parent()
+            .map(|parent| parent.display().to_string())
+            .unwrap_or_default();
+
+        let row = ui.horizontal(|ui| {
+            // The rows share a left edge, in a column centred under the picker button.
+            ui.add_space((ui.available_width() - RECENT_COLUMN_WIDTH).max(0.0) / 2.0);
+            ui.label(RichText::new(&name).strong());
+            ui.label(
+                RichText::new(widgets::elide_path(&parent, 52))
+                    .size(SMALL_SIZE)
+                    .color(palette.muted),
+            );
+        });
+        if widgets::clickable(
+            row.response
+                .interact(egui::Sense::click())
+                .on_hover_text(path.as_str()),
+        )
+        .clicked()
+        {
+            open = Some(path.clone());
+        }
+    }
+    open
 }

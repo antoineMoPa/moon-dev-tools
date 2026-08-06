@@ -37,6 +37,7 @@ Requirements:
 ```bash
 git submodule update --init --recursive   # egui_frames and egui_tty, see Crates below
 cargo install --path .                   # installs moonreview, moontasks and moonshell
+moonreview install-launchers             # optional: launchers the OS itself offers
 moonreview
 ```
 
@@ -71,6 +72,27 @@ curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moonreview/main/install
 
 If `~/.local/bin` is not already on your `PATH`, you may need to update your PATH in your
 shells.
+
+## Desktop launchers
+
+`cargo install` leaves three executables on `PATH`, which is all a shell needs. To open them
+from the OS as well — Spotlight and Launchpad on macOS, the application menu on Linux:
+
+```bash
+moonreview install-launchers
+```
+
+It writes one launcher per installed executable: a `.app` bundle in `/Applications` on macOS —
+in `~/Applications` instead, for an account that cannot write the shared folder — and a
+`.desktop` entry in `~/.local/share/applications` on Linux. The window has the same thing in
+its macOS menu bar and in the command palette, as `install desktop launchers`. Each launcher
+runs the executable where it is installed, so `cargo install` over it is also an upgrade of
+what the launcher opens; rerun the command only after moving the executables somewhere else.
+
+A window opened that way starts outside every repo — there is no terminal it could have
+inherited one from — so it asks which repo to review, with the folder picker of the OS.
+
+`install.sh` writes the launchers itself, so a prebuilt install needs nothing further.
 
 ## Usage
 

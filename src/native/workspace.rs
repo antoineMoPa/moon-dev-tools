@@ -22,6 +22,10 @@ use crate::{
 /// joins a frame's tabs instead of taking a column of its own.
 const MIN_COLUMN_WIDTH: f32 = 320.0;
 
+/// A breath between the top of the window and the first frame's border. Frames are separated
+/// from each other by their dividers, so only the window's own top edge reads as cramped.
+const WORKSPACE_TOP_INSET: f32 = 4.0;
+
 /// Where a new shell's pane lands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TerminalPlacement {
@@ -80,6 +84,8 @@ impl App {
         // keeps its single frame: that is a state rather than a leftover.
         self.model.layout.drop_empty_frames();
         *self.frames.style_mut() = self.palette_of().frames_style();
+
+        ui.add_space(WORKSPACE_TOP_INSET);
 
         // The workspace draws moonreview's own panes, so the view it needs is this app: both it
         // and the arrangement are lent out for the call and put back straight after.
@@ -568,9 +574,15 @@ impl App {
     /// How long until the window is worth drawing again on account of its shells: a live one
     /// asks for itself, so this is only about the review's own polling.
     pub(crate) fn has_live_shell(&self) -> bool {
+        self.running_shells() > 0
+    }
+
+    /// How many shells are still going, which is what quitting would take down with it.
+    pub(crate) fn running_shells(&self) -> usize {
         self.terminals
             .values()
-            .any(|terminal| !terminal.has_exited())
+            .filter(|terminal| !terminal.has_exited())
+            .count()
     }
 }
 
