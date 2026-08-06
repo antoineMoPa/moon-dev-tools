@@ -233,10 +233,17 @@ git submodule update --init --recursive
 I usually use this as part of my debug loop:
 
 ```bash
-pkill moon;  cargo install --path . ; moonreview
+pkill moon;  cargo install --path .
+```
+
+To install launchers:
+
+```bash
+moonreview install-launchers # Creates launchers in /Applications
 ```
 
 `cargo install --path .` builds the library once and links the three executables from it.
+
 
 ## Origin of name
 
