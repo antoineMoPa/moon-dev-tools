@@ -298,8 +298,14 @@ fn draw_hunk_card(
             1.0,
             if is_active { palette.accent } else { palette.line },
         ))
-        .corner_radius(CornerRadius::same(5))
-        .inner_margin(egui::Margin::symmetric(0, 0));
+        // Square: a hunk is a block of code, and a rounded box around monospaced rows that
+        // run to its edges reads as a card the code is escaping rather than a frame round it.
+        .corner_radius(CornerRadius::ZERO)
+        // The rows inside take the whole width they are offered, and are painted over the
+        // card's own background and border. Without a margin to sit inside, a full-width row
+        // paints over the border on the right and the card looks like it has burst its edge.
+        .inner_margin(egui::Margin::same(1))
+        .outer_margin(egui::Margin::symmetric(2, 0));
 
     let response = frame
         .show(ui, |ui| {
@@ -318,12 +324,7 @@ fn draw_hunk_card(
         let rect = response.rect;
         ui.painter().rect_filled(
             egui::Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
-            CornerRadius {
-                nw: 5,
-                sw: 5,
-                ne: 0,
-                se: 0,
-            },
+            CornerRadius::ZERO,
             palette.hunk_active_bg,
         );
     }
@@ -915,7 +916,7 @@ fn find_marks(
 /// Behind rather than through it: the line is drawn in word-diff runs, and a highlight that
 /// had to be woven into those runs would have to agree with them about every boundary.
 fn draw_find_marks(
-    ui: &Ui,
+    painter: &egui::Painter,
     rect: egui::Rect,
     line: &DiffLine,
     origin: egui::Pos2,
@@ -926,7 +927,7 @@ fn draw_find_marks(
     let body: Vec<char> = line.body().chars().collect();
     let width_of = |from: usize, to: usize| {
         let text: String = body[from.min(body.len())..to.min(body.len())].iter().collect();
-        ui.painter()
+        painter
             .layout_no_wrap(text, font.clone(), palette.ink)
             .size()
             .x
@@ -940,7 +941,7 @@ fn draw_find_marks(
         );
         // The same tint a text selection gets elsewhere in the window, which is strong
         // enough to pick a match out of a tinted diff line without hiding the code.
-        ui.painter().rect_filled(
+        painter.rect_filled(
             span,
             CornerRadius::same(2),
             palette.accent.linear_multiply(0.35),
@@ -948,7 +949,7 @@ fn draw_find_marks(
         // The one the bar has stepped to is outlined, so stepping through matches is
         // visible without the others disappearing.
         if marks.current == Some((*column, *width)) {
-            ui.painter().rect_stroke(
+            painter.rect_stroke(
                 span,
                 CornerRadius::same(2),
                 Stroke::new(1.0, palette.accent),
@@ -965,6 +966,10 @@ fn draw_line_text(
     palette: &Palette,
     marks: &FindMarks,
 ) {
+    // A diff line is as long as the code is, and the pane does not scroll sideways, so a long
+    // one has to stop at the edge of its row. Without this it carries on over the hunk card's
+    // border and out across whatever the pane is showing beside it.
+    let painter = ui.painter().with_clip_rect(rect);
     let font = egui::FontId::monospace(CODE_SIZE);
     let ink = match line.kind {
         LineKind::Header => palette.accent_2,
@@ -981,13 +986,7 @@ fn draw_line_text(
         _ => "",
     };
     if !prefix.is_empty() {
-        ui.painter().text(
-            text_origin,
-            Align2::LEFT_CENTER,
-            prefix,
-            font.clone(),
-            ink,
-        );
+        painter.text(text_origin, Align2::LEFT_CENTER, prefix, font.clone(), ink);
     }
 
     let body_origin = egui::pos2(
@@ -995,17 +994,11 @@ fn draw_line_text(
         text_origin.y,
     );
     if !marks.is_empty() {
-        draw_find_marks(ui, rect, line, body_origin, &font, marks, palette);
+        draw_find_marks(&painter, rect, line, body_origin, &font, marks, palette);
     }
 
     let Some(words) = &line.words else {
-        ui.painter().text(
-            body_origin,
-            Align2::LEFT_CENTER,
-            line.body(),
-            font,
-            ink,
-        );
+        painter.text(body_origin, Align2::LEFT_CENTER, line.body(), font, ink);
         return;
     };
 
@@ -1017,10 +1010,10 @@ fn draw_line_text(
     };
     let mut x = body_origin.x;
     for part in words {
-        let galley = ui.painter().layout_no_wrap(part.text.clone(), font.clone(), ink);
+        let galley = painter.layout_no_wrap(part.text.clone(), font.clone(), ink);
         let size = galley.size();
         if part.changed {
-            ui.painter().rect_filled(
+            painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(x, rect.min.y + 1.0),
                     vec2(size.x, rect.height() - 2.0),
@@ -1029,8 +1022,7 @@ fn draw_line_text(
                 changed_bg,
             );
         }
-        ui.painter()
-            .galley(egui::pos2(x, rect.center().y - size.y / 2.0), galley, ink);
+        painter.galley(egui::pos2(x, rect.center().y - size.y / 2.0), galley, ink);
         x += size.x;
     }
 }

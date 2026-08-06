@@ -108,13 +108,13 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
     egui::Area::new("moonreview-find".into())
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(rect.max.x - BAR_WIDTH - 14.0, rect.min.y + 8.0))
+        .fixed_pos(egui::pos2(rect.max.x - OUTER_WIDTH - INSET, rect.min.y + INSET))
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.line))
                 .corner_radius(CornerRadius::same(6))
-                .inner_margin(egui::Margin::symmetric(8, 5))
+                .inner_margin(egui::Margin::symmetric(BAR_MARGIN as i8, 5))
                 .shadow(egui::epaint::Shadow {
                     offset: [0, 6],
                     blur: 18,
@@ -189,6 +189,12 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 /// Wide enough for a query worth typing and the controls beside it, and no wider: the box
 /// takes whatever the controls leave, so nothing here is padding.
 const BAR_WIDTH: f32 = 300.0;
+const BAR_MARGIN: f32 = 8.0;
+/// What the bar occupies on screen, which is what it has to be placed by — the margin sits
+/// outside the width the contents were given.
+const OUTER_WIDTH: f32 = BAR_WIDTH + BAR_MARGIN * 2.0;
+/// How far the bar sits from the corner of the pane it belongs to.
+const INSET: f32 = 10.0;
 
 fn tally(find: &Find) -> String {
     if find.query.is_empty() {

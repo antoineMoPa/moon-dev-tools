@@ -112,6 +112,9 @@ pub(crate) struct App {
     loaders_installed: bool,
     /// The same, for the system fonts a shell's output needs to draw its boxes and spinners.
     fonts_installed: bool,
+    /// Whether the workspace has ever held a pane. An empty one means the last tab was
+    /// closed and the window is done; before the first review opens it means nothing yet.
+    had_panes: bool,
 }
 
 struct CachedDiff {
@@ -185,6 +188,7 @@ impl App {
             needs_style: true,
             loaders_installed: false,
             fonts_installed: false,
+            had_panes: false,
         };
 
         if let Some(open) = launch.open {
@@ -895,13 +899,7 @@ impl App {
             .iter()
             .find(|(frame_id, _)| *frame_id == frame.frame_id)
             .map(|(_, rect)| *rect)?;
-        Some(egui::Rect::from_min_max(
-            egui::pos2(
-                rect.min.x,
-                rect.min.y + crate::native::workspace::TAB_STRIP_HEIGHT,
-            ),
-            rect.max,
-        ))
+        Some(crate::native::workspace::pane_body(rect))
     }
 
     /// The review in the frontmost pane of the active frame, if that pane is a review.
@@ -1350,6 +1348,16 @@ impl App {
             self.close_pane(&pane_id);
         }
         self.close_tabs_of_exited_shells();
+
+        // Closing the last tab closes the window: an empty workspace has nothing to show and
+        // no way back other than the palette.
+        if self.model.layout.panes.is_empty() {
+            if self.had_panes {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        } else {
+            self.had_panes = true;
+        }
 
         // Terminals whose shell has gone stop repainting, so nothing spins on a dead pane.
         let live_terminals = self

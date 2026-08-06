@@ -66,6 +66,10 @@ pub(crate) struct TerminalPane {
     /// The theme the emulator's colors were last set for. Setting them is a whole palette's
     /// worth of work, so it happens when the theme changes rather than every frame.
     colored_for: Option<crate::native::theme::ThemeMode>,
+    /// The colors the emulator arrived with, read before the theme was first applied. The
+    /// dark theme is these, put back explicitly — asking the emulator to reset to its own
+    /// defaults does not restore them.
+    emulator_colors: Option<colors::Scheme>,
 }
 
 impl TerminalPane {
@@ -107,6 +111,7 @@ impl TerminalPane {
             pointer: selection::Pointer::new()?,
             hovered_link: None,
             colored_for: None,
+            emulator_colors: None,
         })
     }
 
@@ -186,6 +191,25 @@ impl TerminalPane {
         found.len()
     }
 
+    /// The default foreground and background the grid would be painted with right now.
+    #[cfg(test)]
+    pub(crate) fn drawn_colors(&mut self) -> (Color32, Color32) {
+        let Self {
+            terminal,
+            render_state,
+            ..
+        } = self;
+        let snapshot = render_state.update(terminal).expect("expected a snapshot");
+        let colors = snapshot.colors().expect("expected colors");
+        (color_of(colors.foreground), color_of(colors.background))
+    }
+
+    /// Point the pane at a theme the way a frame of the window would.
+    #[cfg(test)]
+    pub(crate) fn set_theme_for_test(&mut self, mode: crate::native::theme::ThemeMode) {
+        self.color_for(mode);
+    }
+
     /// What ⌘C would put on the clipboard right now.
     #[cfg(test)]
     pub(crate) fn selected_text(&self) -> Option<String> {
@@ -227,6 +251,40 @@ impl TerminalPane {
         received
     }
 
+    /// Put the theme's colors on the emulator, once per theme rather than once per frame.
+    fn color_for(&mut self, mode: crate::native::theme::ThemeMode) {
+        if self.colored_for == Some(mode) {
+            return;
+        }
+        // The first call is also when the emulator's own colors are worth reading: nothing
+        // has overwritten them yet, and the dark theme is made of them.
+        if self.emulator_colors.is_none() {
+            let Self {
+                terminal,
+                render_state,
+                ..
+            } = self;
+            match render_state
+                .update(terminal)
+                .and_then(|snapshot| snapshot.colors())
+            {
+                Ok(colors) => self.emulator_colors = Some(colors::emulator_scheme(&colors)),
+                Err(error) => {
+                    report(Err(anyhow::anyhow!(
+                        "failed to read the terminal's own colors: {error}"
+                    )));
+                    return;
+                }
+            }
+        }
+
+        let Some(emulator) = self.emulator_colors.clone() else {
+            return;
+        };
+        report(colors::apply(&mut self.terminal, &emulator, mode));
+        self.colored_for = Some(mode);
+    }
+
     fn resize(&mut self, cols: u16, rows: u16, cell_size: egui::Vec2) -> anyhow::Result<()> {
         if cols == self.cols && rows == self.rows {
             return Ok(());
@@ -253,10 +311,7 @@ impl TerminalPane {
         take_focus: bool,
     ) -> bool {
         let received = self.pump_output();
-        if self.colored_for != Some(palette.mode) {
-            report(colors::apply(&mut self.terminal, palette.mode));
-            self.colored_for = Some(palette.mode);
-        }
+        self.color_for(palette.mode);
         let cell_size = cell_size(ui.painter(), &font);
         let available = ui.available_size();
 

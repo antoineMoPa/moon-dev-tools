@@ -269,6 +269,9 @@ impl App {
     fn draw_frame(&mut self, ui: &mut Ui, frame_id: &str, rect: Rect, palette: &Palette) {
         self.frame_rects.push((frame_id.to_string(), rect));
         let is_active = self.model.layout.active_frame_id == frame_id;
+        // The accent border says which frame the keyboard is talking to. A window with one
+        // frame has nothing to tell it apart from, so it wears the ordinary border.
+        let marked_active = is_active && self.model.layout.frames.len() > 1;
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::same(6), palette.panel);
         painter.rect_stroke(
@@ -276,16 +279,17 @@ impl App {
             CornerRadius::same(6),
             Stroke::new(
                 1.0,
-                if is_active { palette.accent } else { palette.line },
+                if marked_active {
+                    palette.accent
+                } else {
+                    palette.line
+                },
             ),
             StrokeKind::Inside,
         );
 
         let strip_rect = Rect::from_min_size(rect.min, vec2(rect.width(), TAB_STRIP_HEIGHT));
-        let body_rect = Rect::from_min_max(
-            pos2(rect.min.x, rect.min.y + TAB_STRIP_HEIGHT),
-            rect.max,
-        );
+        let body_rect = pane_body(rect);
 
         // Tabs sit inside the frame's border with the same margin on every side, so the strip
         // reads as an even band rather than a row pushed against the top-left corner.
@@ -323,9 +327,8 @@ impl App {
 
         match active_pane {
             Some(pane) => {
-                let body = body_rect.shrink(1.0);
-                ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
-                    ui.set_clip_rect(body);
+                ui.scope_builder(UiBuilder::new().max_rect(body_rect), |ui| {
+                    ui.set_clip_rect(body_rect);
                     self.draw_pane(ui, &pane);
                 });
             }
@@ -850,6 +853,20 @@ fn split_child_rects(
     (rects, usable)
 }
 
+/// The area a frame hands its pane: below the tab strip, and clear of the frame's own border
+/// on every other side.
+///
+/// Clear of it rather than up against it. A clip rect that stopped exactly on the border let
+/// a glyph reaching the edge paint over the border pixel itself, which is what made a long
+/// line of a diff look as though it had escaped its frame.
+pub(crate) fn pane_body(rect: Rect) -> Rect {
+    let inset = FRAME_BORDER + 1.0;
+    Rect::from_min_max(
+        pos2(rect.min.x + inset, rect.min.y + TAB_STRIP_HEIGHT),
+        pos2(rect.max.x - inset, rect.max.y - inset),
+    )
+}
+
 fn take_layout(layout: &mut WorkspaceLayout) -> WorkspaceLayout {
     std::mem::replace(layout, layout::empty_layout())
 }
@@ -869,6 +886,35 @@ mod tests {
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height));
         let strip = Rect::from_min_size(rect.min, vec2(width, TAB_STRIP_HEIGHT));
         (rect, strip)
+    }
+
+    /// A pane must not be able to paint on the border of the frame holding it, which is what
+    /// made a long diff line look as though it had spilled out of its box.
+    #[test]
+    fn a_pane_is_given_room_strictly_inside_its_frames_border() {
+        let (rect, _) = frame(600.0, 400.0);
+        let body = pane_body(rect);
+
+        let border = rect.shrink(FRAME_BORDER);
+        assert!(
+            body.min.x > border.min.x
+                && body.max.x < border.max.x
+                && body.max.y < border.max.y,
+            "the body {body:?} has to stay inside the border {border:?}"
+        );
+        assert!(
+            body.min.y >= rect.min.y + TAB_STRIP_HEIGHT,
+            "and start below the tab strip"
+        );
+    }
+
+    /// A frame too small to hold anything must not hand out a body that is inside out.
+    #[test]
+    fn a_frame_with_no_room_left_hands_out_nothing_rather_than_a_negative_body() {
+        let (rect, _) = frame(3.0, 3.0);
+        let body = pane_body(rect);
+
+        assert!(body.width() <= 0.0 || body.height() <= 0.0);
     }
 
     #[test]

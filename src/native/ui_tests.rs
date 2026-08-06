@@ -1314,6 +1314,27 @@ fn command_w_closes_the_tab_in_front() {
         panes_left.lock().expect("the pane list is poisoned").is_empty(),
         "⌘W should have closed the review pane"
     );
+
+    // And with nothing left in the workspace, the window goes with it rather than sitting
+    // there empty.
+    assert!(
+        asked_to_close(&harness),
+        "closing the last tab should have closed the window"
+    );
+}
+
+/// Whether the window asked to be closed, which is what quitting looks like from in here.
+fn asked_to_close(harness: &Harness<'_>) -> bool {
+    harness
+        .output()
+        .viewport_output
+        .values()
+        .any(|viewport| {
+            viewport
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::Close))
+        })
 }
 
 /// Press and release the primary button at a position, then let the UI settle.
@@ -2240,4 +2261,67 @@ fn find_searches_a_whole_review_and_steps_through_the_matches() {
         !seen.lock().expect("poisoned").open,
         "Escape should have put the bar away"
     );
+}
+
+/// Switching the theme to light and back must leave a shell readable. It did not: the colours
+/// the pane paints with came back identical, so every line was text the colour of its own
+/// background.
+#[test]
+fn a_shell_stays_readable_across_a_theme_round_trip() {
+    let fixture = seeded_fixture("terminal-theme");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = LocalBackend::new(state);
+    let opened = crate::backend::Backend::open_session(
+        &backend,
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+    let terminal_id = crate::backend::Backend::create_terminal(&backend, &opened.session_id, None)
+        .expect("expected a shell to start");
+    let attachment =
+        crate::backend::Backend::attach_terminal(&backend, &opened.session_id, &terminal_id)
+            .expect("expected to attach to the shell");
+    let mut pane = crate::native::terminal::TerminalPane::new(terminal_id, attachment)
+        .expect("expected the terminal emulator to start");
+
+    pane.set_theme_for_test(ThemeMode::Dark);
+    let dark = pane.drawn_colors();
+    assert_ne!(dark.0, dark.1, "a fresh dark shell is readable");
+
+    pane.set_theme_for_test(ThemeMode::Light);
+    let light = pane.drawn_colors();
+    assert_ne!(light.0, light.1, "and so is a light one");
+
+    pane.set_theme_for_test(ThemeMode::Dark);
+    let back = pane.drawn_colors();
+    assert_ne!(
+        back.0, back.1,
+        "text and background must not come back as one colour"
+    );
+    assert_eq!(back, dark, "dark has to look the way it did before");
+
+    crate::backend::Backend::close_terminal(&backend, &opened.session_id, pane.terminal_id.as_str())
+        .expect("expected the shell to close");
+}
+
+/// A line of code longer than the pane is wide. It has to stop at the edge of its hunk card:
+/// before this, a long line carried on over the card's border and across the pane beside it.
+#[test]
+fn a_diff_line_longer_than_the_pane_stops_at_the_card() {
+    let fixture = Fixture::new("long-diff-line");
+    fixture.write("src/lib.rs", "pub fn short() {}\n");
+    fixture.commit("Add the library");
+    fixture.write(
+        "src/lib.rs",
+        "pub fn short() {}\npub fn a_line_far_wider_than_any_pane(first_parameter: &str, second_parameter: &str, third_parameter: &str, fourth_parameter: &str, fifth_parameter: &str) -> String { String::new() }\n",
+    );
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut harness = harness_with_loaded_review(app, ThemeMode::Dark);
+
+    harness.snapshot("long-diff-line");
 }

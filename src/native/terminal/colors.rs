@@ -5,9 +5,15 @@
 //! scheme. Ghostty's built-in scheme assumes a dark background, so on the light theme it
 //! renders pale text on cream and is unreadable. This file hands the emulator a scheme that
 //! suits whichever theme is on.
+//!
+//! Both themes are set as explicit colors, including the dark one that started as the
+//! emulator's own. Handing the emulator `None` to mean "back to your defaults" does not put
+//! them back, so a shell that had been through the light theme once stayed light — which
+//! against a dark panel is text the color of its own background.
 
 use libghostty_vt::{
     Terminal,
+    render::Colors,
     style::{Palette, PaletteIndex, RgbColor},
 };
 
@@ -39,59 +45,62 @@ const LIGHT_ANSI: &[(PaletteIndex, u32)] = &[
     (PaletteIndex::BRIGHT_WHITE, 0x1d1a16),
 ];
 
-/// Point the emulator at the scheme this theme calls for.
-///
-/// The dark theme is what Ghostty's own defaults were drawn for, so it hands them back rather
-/// than restating them: `None` is how the emulator is told to use its own.
-pub(crate) fn apply(terminal: &mut Terminal<'_, '_>, mode: ThemeMode) -> anyhow::Result<()> {
-    let scheme = match mode {
-        ThemeMode::Dark => None,
-        ThemeMode::Light => Some(light_scheme(terminal)?),
-    };
+/// Everything a terminal has to be told about color.
+#[derive(Clone)]
+pub(crate) struct Scheme {
+    pub(crate) foreground: RgbColor,
+    pub(crate) background: RgbColor,
+    pub(crate) cursor: RgbColor,
+    pub(crate) palette: Palette,
+}
 
-    let (foreground, background, cursor, palette) = match scheme {
-        Some(scheme) => (
-            Some(scheme.foreground),
-            Some(scheme.background),
-            Some(scheme.cursor),
-            Some(scheme.palette),
-        ),
-        None => (None, None, None, None),
+/// The scheme the emulator arrived with, read off the render state before anything has
+/// changed it. This is what the dark theme is — Ghostty's own colors — kept so they can be
+/// put back exactly rather than asked for again.
+pub(crate) fn emulator_scheme(colors: &Colors) -> Scheme {
+    Scheme {
+        foreground: colors.foreground,
+        background: colors.background,
+        cursor: colors.cursor.unwrap_or(colors.foreground),
+        palette: Palette(colors.palette),
+    }
+}
+
+/// Point the emulator at the scheme this theme calls for.
+pub(crate) fn apply(
+    terminal: &mut Terminal<'_, '_>,
+    emulator: &Scheme,
+    mode: ThemeMode,
+) -> anyhow::Result<()> {
+    let scheme = match mode {
+        ThemeMode::Dark => emulator.clone(),
+        ThemeMode::Light => light_from(emulator),
     };
 
     terminal
-        .set_default_fg_color(foreground)
-        .and_then(|terminal| terminal.set_default_bg_color(background))
-        .and_then(|terminal| terminal.set_default_cursor_color(cursor))
-        .and_then(|terminal| terminal.set_default_color_palette(palette))
+        .set_default_fg_color(Some(scheme.foreground))
+        .and_then(|terminal| terminal.set_default_bg_color(Some(scheme.background)))
+        .and_then(|terminal| terminal.set_default_cursor_color(Some(scheme.cursor)))
+        .and_then(|terminal| terminal.set_default_color_palette(Some(scheme.palette)))
         .map_err(|error| anyhow::anyhow!("failed to set the terminal's colors: {error}"))?;
     Ok(())
 }
 
-struct Scheme {
-    foreground: RgbColor,
-    background: RgbColor,
-    cursor: RgbColor,
-    palette: Palette,
-}
-
-/// The light scheme, built by overriding the named colors of Ghostty's default palette. The
-/// 240 entries beyond the named sixteen are a fixed color cube either way, so they are left
-/// as they were.
-fn light_scheme(terminal: &Terminal<'_, '_>) -> anyhow::Result<Scheme> {
-    let mut palette = terminal
-        .default_color_palette()
-        .map_err(|error| anyhow::anyhow!("failed to read the default palette: {error}"))?;
+/// The light scheme, built by overriding the named colors of whatever the emulator started
+/// with. The 240 entries beyond the named sixteen are a fixed color cube either way, so they
+/// are left as they were.
+fn light_from(emulator: &Scheme) -> Scheme {
+    let mut palette = emulator.palette;
     for (index, color) in LIGHT_ANSI {
         palette.0[usize::from(index.0)] = rgb(*color);
     }
 
-    Ok(Scheme {
+    Scheme {
         foreground: rgb(LIGHT_FOREGROUND),
         background: rgb(LIGHT_BACKGROUND),
         cursor: rgb(LIGHT_CURSOR),
         palette,
-    })
+    }
 }
 
 const fn rgb(hex: u32) -> RgbColor {
@@ -105,7 +114,7 @@ const fn rgb(hex: u32) -> RgbColor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libghostty_vt::TerminalOptions;
+    use libghostty_vt::{TerminalOptions, render::RenderState};
 
     fn terminal() -> Terminal<'static, 'static> {
         Terminal::new(TerminalOptions {
@@ -114,6 +123,18 @@ mod tests {
             max_scrollback: 10,
         })
         .expect("expected a terminal")
+    }
+
+    /// What the pane would actually paint with, which is not the same question as what the
+    /// terminal was set to: unset colors are resolved to the emulator's own here.
+    fn drawn(terminal: &mut Terminal<'_, '_>) -> Scheme {
+        let mut state = RenderState::new().expect("expected a render state");
+        let snapshot = state.update(terminal).expect("expected a snapshot");
+        emulator_scheme(&snapshot.colors().expect("expected colors"))
+    }
+
+    fn same(left: RgbColor, right: RgbColor) -> bool {
+        (left.r, left.g, left.b) == (right.r, right.g, right.b)
     }
 
     /// WCAG relative luminance, which is what a contrast ratio is built out of.
@@ -143,99 +164,57 @@ mod tests {
     #[test]
     fn every_light_color_is_readable_on_the_light_background() {
         let mut terminal = terminal();
-        apply(&mut terminal, ThemeMode::Light).expect("expected the colors to be set");
+        let emulator = drawn(&mut terminal);
+        apply(&mut terminal, &emulator, ThemeMode::Light).expect("expected the light colors");
 
-        let background = terminal
-            .default_bg_color()
-            .expect("expected a background")
-            .expect("the light theme sets one");
-        let palette = terminal
-            .default_color_palette()
-            .expect("expected the palette");
-
-        let foreground = terminal
-            .default_fg_color()
-            .expect("expected a foreground")
-            .expect("the light theme sets one");
+        let light = drawn(&mut terminal);
         assert!(
-            contrast(foreground, background) >= 4.5,
+            contrast(light.foreground, light.background) >= 4.5,
             "plain text: {:.2}:1",
-            contrast(foreground, background)
+            contrast(light.foreground, light.background)
         );
-
         for (index, _) in LIGHT_ANSI {
-            let color = palette.0[usize::from(index.0)];
-            let ratio = contrast(color, background);
-            assert!(ratio >= 4.5, "palette entry {} only reaches {ratio:.2}:1", index.0);
+            let color = light.palette.0[usize::from(index.0)];
+            let ratio = contrast(color, light.background);
+            assert!(
+                ratio >= 4.5,
+                "palette entry {} only reaches {ratio:.2}:1",
+                index.0
+            );
         }
     }
 
-    /// The dark theme is what Ghostty's defaults were made for, so switching back to it has
-    /// to hand the emulator's own colors back rather than leave the light ones in place.
-    /// What the pane actually paints with, which is not the same question as what the
-    /// terminal was set to: unset colors are resolved to the emulator's own here.
-    fn drawn_colors(terminal: &mut Terminal<'_, '_>) -> (RgbColor, RgbColor) {
-        let mut state = libghostty_vt::render::RenderState::new().expect("expected a state");
-        let snapshot = state.update(terminal).expect("expected a snapshot");
-        let colors = snapshot.colors().expect("expected colors");
-        (colors.foreground, colors.background)
-    }
-
     /// The reported regression: light and then dark again left a shell drawing its text in
-    /// the same color as its background.
+    /// the same color as its background, because the emulator does not take `None` to mean
+    /// "back to your own colors".
     #[test]
-    fn a_round_trip_through_light_leaves_the_dark_colors_readable() {
+    fn a_round_trip_through_light_puts_the_dark_colors_back_exactly() {
         let mut terminal = terminal();
-        let before = drawn_colors(&mut terminal);
+        let emulator = drawn(&mut terminal);
 
-        apply(&mut terminal, ThemeMode::Light).expect("expected the light colors");
-        apply(&mut terminal, ThemeMode::Dark).expect("expected the dark colors back");
+        apply(&mut terminal, &emulator, ThemeMode::Light).expect("expected the light colors");
+        let light = drawn(&mut terminal);
+        assert!(
+            !same(light.foreground, emulator.foreground),
+            "the light theme really did change something"
+        );
 
-        let after = drawn_colors(&mut terminal);
-        assert_eq!(
-            (after.0.r, after.0.g, after.0.b, after.1.r, after.1.g, after.1.b),
-            (before.0.r, before.0.g, before.0.b, before.1.r, before.1.g, before.1.b),
-            "dark has to come back to where it started"
+        apply(&mut terminal, &emulator, ThemeMode::Dark).expect("expected the dark colors back");
+        let back = drawn(&mut terminal);
+
+        assert!(same(back.foreground, emulator.foreground), "text");
+        assert!(same(back.background, emulator.background), "background");
+        assert!(
+            same(
+                back.palette.0[usize::from(PaletteIndex::RED.0)],
+                emulator.palette.0[usize::from(PaletteIndex::RED.0)]
+            ),
+            "and the palette with them"
         );
         assert!(
-            contrast(after.0, after.1) >= 4.5,
+            contrast(back.foreground, back.background) >= 4.5,
             "text and background have to stay apart, got {:.2}:1",
-            contrast(after.0, after.1)
-        );
-    }
-
-    #[test]
-    fn switching_back_to_dark_gives_the_emulator_its_own_colors_again() {
-        let mut terminal = terminal();
-        let default_red = terminal
-            .default_color_palette()
-            .expect("expected the palette")
-            .0[usize::from(PaletteIndex::RED.0)];
-
-        apply(&mut terminal, ThemeMode::Light).expect("expected the light colors");
-        let light_red = terminal
-            .default_color_palette()
-            .expect("expected the palette")
-            .0[usize::from(PaletteIndex::RED.0)];
-        assert_ne!(
-            (light_red.r, light_red.g, light_red.b),
-            (default_red.r, default_red.g, default_red.b),
-            "the light theme has a red of its own"
-        );
-
-        apply(&mut terminal, ThemeMode::Dark).expect("expected the dark colors");
-        let dark_red = terminal
-            .default_color_palette()
-            .expect("expected the palette")
-            .0[usize::from(PaletteIndex::RED.0)];
-        assert_eq!(
-            (dark_red.r, dark_red.g, dark_red.b),
-            (default_red.r, default_red.g, default_red.b)
-        );
-        assert_eq!(
-            terminal.default_fg_color().expect("expected a read"),
-            None,
-            "and no foreground of its own"
+            contrast(back.foreground, back.background)
         );
     }
 }
