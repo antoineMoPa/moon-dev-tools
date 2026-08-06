@@ -9,9 +9,16 @@
 //! from the shell arrive over a channel, from either the in-process pty or a websocket to
 //! a remote server.
 
+mod colors;
 mod keys;
+mod links;
+mod search;
+mod selection;
 
-use std::sync::{Arc, mpsc};
+use std::{
+    sync::{Arc, mpsc},
+    time::Duration,
+};
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, TextFormat, Ui, text::LayoutJob,
@@ -51,6 +58,14 @@ pub(crate) struct TerminalPane {
     exited: bool,
     /// Cursor blink phase, in seconds since the pane was drawn first.
     blink_clock: f32,
+    /// Ghostty's pointer-to-selection state machine, driven by this pane's mouse events.
+    pointer: selection::Pointer,
+    /// The URL under the pointer, found afresh each frame it moves. Held so the row it is on
+    /// can be drawn underlined without looking it up a second time.
+    hovered_link: Option<links::Link>,
+    /// The theme the emulator's colors were last set for. Setting them is a whole palette's
+    /// worth of work, so it happens when the theme changes rather than every frame.
+    colored_for: Option<crate::native::theme::ThemeMode>,
 }
 
 impl TerminalPane {
@@ -89,6 +104,9 @@ impl TerminalPane {
             rows,
             exited: false,
             blink_clock: 0.0,
+            pointer: selection::Pointer::new()?,
+            hovered_link: None,
+            colored_for: None,
         })
     }
 
@@ -148,6 +166,30 @@ impl TerminalPane {
     #[cfg(test)]
     pub(crate) fn pump(&mut self) -> bool {
         self.pump_output()
+    }
+
+    /// Run a search over the screen and the scrollback, show the `at`th match, and say how
+    /// many there were. Called when the find bar's query or current match changes, not per
+    /// frame: it reads the whole scrollback back as text.
+    pub(crate) fn find(&mut self, query: &str, at: usize) -> usize {
+        let found = search::find_all(&self.terminal, query);
+        match found.get(at) {
+            Some(found) => report(search::show(&mut self.terminal, *found, self.rows)),
+            // Nothing to show, and nothing left highlighted from the last query either.
+            None => report(
+                self.terminal
+                    .set_selection(None)
+                    .map(|_| ())
+                    .map_err(|error| anyhow::anyhow!("failed to clear the selection: {error}")),
+            ),
+        }
+        found.len()
+    }
+
+    /// What ⌘C would put on the clipboard right now.
+    #[cfg(test)]
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        selection::selected_text(&self.terminal)
     }
 
     /// The title the running program set, for the tab strip.
@@ -211,6 +253,10 @@ impl TerminalPane {
         take_focus: bool,
     ) -> bool {
         let received = self.pump_output();
+        if self.colored_for != Some(palette.mode) {
+            report(colors::apply(&mut self.terminal, palette.mode));
+            self.colored_for = Some(palette.mode);
+        }
         let cell_size = cell_size(ui.painter(), &font);
         let available = ui.available_size();
 
@@ -244,8 +290,15 @@ impl TerminalPane {
         }
         self.handle_scroll(ui, &response, cell_size);
 
-        self.blink_clock += ui.input(|input| input.stable_dt).min(0.1);
         let origin = response.rect.min + vec2(PADDING, PADDING);
+        // Only the pane with the keyboard: a ⌘C meant for one shell must not be answered by
+        // every other shell open beside it.
+        if focused {
+            self.handle_clipboard(ui);
+        }
+        self.handle_pointer(ui, &response, origin, cell_size);
+
+        self.blink_clock += ui.input(|input| input.stable_dt).min(0.1);
         let repaint = match self.draw(&painter, origin, cell_size, &font, palette, focused) {
             Ok(cursor_blinking) => cursor_blinking,
             Err(error) => {
@@ -272,6 +325,107 @@ impl TerminalPane {
         }
 
         received || repaint
+    }
+
+    /// Turn the pointer into a selection, and into a click on a link.
+    ///
+    /// Ghostty's gesture machine decides what a press means — one click clears, two select a
+    /// word, three a line — so all this does is tell it where the pointer is and when the
+    /// button went down and up.
+    fn handle_pointer(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        origin: egui::Pos2,
+        cell_size: egui::Vec2,
+    ) {
+        let (pointer_at, pressed, released, now) = ui.input(|input| {
+            (
+                input.pointer.interact_pos(),
+                input.pointer.primary_pressed(),
+                input.pointer.primary_released(),
+                Duration::from_secs_f64(input.time.max(0.0)),
+            )
+        });
+
+        // A pointer past the edge of the grid still belongs to the row and column nearest it,
+        // which is what makes a drag off the bottom select to the end of the line.
+        let cell = pointer_at.map(|at| selection::Cell {
+            x: (((at.x - origin.x) / cell_size.x).floor().max(0.0) as u16).min(self.cols - 1),
+            y: (((at.y - origin.y) / cell_size.y).floor().max(0.0) as u16).min(self.rows - 1),
+        });
+
+        self.hovered_link = match (response.contains_pointer(), cell) {
+            // A link is only worth looking for when nothing is being dragged over it.
+            (true, Some(cell)) if !self.pointer.dragging => {
+                links::link_at(&self.terminal, self.cols, cell.x, cell.y)
+            }
+            _ => None,
+        };
+        if self.hovered_link.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+
+        let Some((cell, at)) = cell.zip(pointer_at) else {
+            return;
+        };
+        let at = (at.x - response.rect.min.x, at.y - response.rect.min.y);
+
+        if pressed && response.contains_pointer() {
+            report(self.pointer.press(&self.terminal, cell, at, now));
+        } else if self.pointer.dragging && released {
+            // A click that never moved is not a selection: it is how a link is opened.
+            let was_a_click = !self.pointer.dragged(&self.terminal);
+            report(self.pointer.release(&self.terminal));
+            if was_a_click
+                && let Some(link) = &self.hovered_link
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(&link.url));
+            }
+        } else if self.pointer.dragging {
+            let geometry = selection::geometry(
+                self.cols,
+                cell_size.x,
+                PADDING,
+                response.rect.height().max(1.0),
+            );
+            // Alt turns a drag into a block selection, which is how a column of output is
+            // taken out of a table without its neighbours.
+            let rectangle = ui.input(|input| input.modifiers.alt);
+            report(
+                self.pointer
+                    .drag(&self.terminal, cell, at, geometry, rectangle),
+            );
+        }
+    }
+
+    /// ⌘C copies whatever is selected and ⌘V pastes into the shell.
+    ///
+    /// The platform turns those chords into events of their own before egui ever sees a key,
+    /// which is why they are handled here rather than through the binding table.
+    fn handle_clipboard(&mut self, ui: &Ui) {
+        let events = ui.input(|input| input.events.clone());
+        for event in &events {
+            match event {
+                egui::Event::Copy | egui::Event::Cut => {
+                    match selection::selected_text(&self.terminal) {
+                        Some(text) if !text.is_empty() => ui.ctx().copy_text(text),
+                        // Nothing is selected, so on the platforms where the copy chord is
+                        // also the interrupt the shell is the one that wanted it. The key
+                        // event itself never arrives, so the byte is sent here instead.
+                        _ if COPY_CHORD_IS_ALSO_INTERRUPT => {
+                            report(self.input.write(&[0x03]));
+                        }
+                        _ => {}
+                    }
+                }
+                egui::Event::Paste(text) => match selection::encode_paste(&self.terminal, text) {
+                    Ok(bytes) => report(self.input.write(&bytes)),
+                    Err(error) => report(Err(error)),
+                },
+                _ => {}
+            }
+        }
     }
 
     fn handle_scroll(&mut self, ui: &Ui, response: &egui::Response, cell_size: egui::Vec2) {
@@ -402,11 +556,13 @@ impl TerminalPane {
             row_iterator,
             cell_iterator,
             blink_clock,
+            hovered_link,
             ..
         } = self;
         // Read before the fields below are borrowed, so the cursor's phase does not depend
         // on how the emulator's own borrows are arranged.
         let blink_clock = *blink_clock;
+        let hovered_link = hovered_link.clone();
 
         let snapshot = render_state
             .update(terminal)
@@ -423,8 +579,16 @@ impl TerminalPane {
 
         let mut y = origin.y;
         let mut text = String::with_capacity(16);
+        let mut row_index: u16 = 0;
 
         while let Some(row) = rows.next() {
+            // The link, if any, is on one row: the cells of every other row skip the check.
+            let underlined = hovered_link
+                .as_ref()
+                .filter(|link| link.row == row_index)
+                .map(|link| link.columns.clone());
+            let mut column_index: u16 = 0;
+
             let mut cells = cell_iterator
                 .update(row)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -464,6 +628,14 @@ impl TerminalPane {
                     bg = Some(fg);
                     fg = swapped;
                 }
+                // The link the pointer is on is underlined, which is what says it can be
+                // clicked at all.
+                if underlined
+                    .as_ref()
+                    .is_some_and(|columns| columns.contains(&column_index))
+                {
+                    underline = true;
+                }
 
                 if let Some(bg) = bg {
                     painter.rect_filled(
@@ -497,6 +669,7 @@ impl TerminalPane {
                 }
 
                 x += cell.x;
+                column_index += 1;
             }
 
             if let Some(mut current) = run.take() {
@@ -509,6 +682,7 @@ impl TerminalPane {
 
             let _ = row.set_dirty(false);
             y += cell.y;
+            row_index += 1;
         }
 
         let mut wants_repaint = false;
@@ -575,6 +749,19 @@ fn draw_cursor(
 }
 
 const PADDING: f32 = 6.0;
+
+/// On macOS the copy chord is ⌘C, which no shell would ever have been sent. Everywhere else
+/// it is Ctrl+C — the chord that interrupts a program — so with nothing selected it has to
+/// reach the shell instead of being swallowed.
+const COPY_CHORD_IS_ALSO_INTERRUPT: bool = !cfg!(target_os = "macos");
+
+/// A pane keeps running whatever the terminal library says: a failed selection is not worth
+/// tearing the shell down over, but it is worth saying out loud.
+fn report(result: anyhow::Result<()>) {
+    if let Err(error) = result {
+        eprintln!("[moonreview] {error}");
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 struct CellStyle {

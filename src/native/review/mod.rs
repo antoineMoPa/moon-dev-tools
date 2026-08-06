@@ -6,6 +6,7 @@ pub(crate) mod files;
 pub(crate) mod header;
 pub(crate) mod image_diff;
 pub(crate) mod hunks;
+pub(crate) mod search;
 pub(crate) mod sidebar;
 
 use egui::{RichText, Ui};

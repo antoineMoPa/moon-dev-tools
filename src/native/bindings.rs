@@ -26,6 +26,8 @@ pub(crate) enum Action {
     ReverseHunk,
     /// Move the keyboard to the next frame of the workspace.
     FocusNextFrame,
+    /// Open the find bar over whichever pane has the keyboard.
+    Find,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -85,6 +87,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::ToggleTheme,
         chord: &[press(Modifiers::COMMAND, Key::J)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::Find,
+        chord: &[press(Modifiers::COMMAND, Key::F)],
         reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, so a program running in a shell no longer gets it. That is the

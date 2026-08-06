@@ -74,7 +74,7 @@ const FRAME_BORDER: f32 = 1.0;
 /// The gap between a tab and the strip's edges — the same on all four sides.
 const TAB_MARGIN: f32 = 4.0;
 const TAB_HEIGHT: f32 = 18.0;
-const TAB_STRIP_HEIGHT: f32 = FRAME_BORDER + TAB_MARGIN * 2.0 + TAB_HEIGHT;
+pub(crate) const TAB_STRIP_HEIGHT: f32 = FRAME_BORDER + TAB_MARGIN * 2.0 + TAB_HEIGHT;
 /// Tab padding: text starts here, and the close mark sits this far from the right edge.
 const TAB_TEXT_INSET: f32 = 8.0;
 const TAB_CLOSE_SIZE: f32 = 12.0;

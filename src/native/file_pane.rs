@@ -224,9 +224,49 @@ impl App {
 }
 
 /// The fringe and the code, scrolling together down the page and apart across it.
+/// Every place the query appears in the text, as character ranges — which is what egui's
+/// text cursor counts in, so a match can be handed straight to the editor as a selection.
+///
+/// Matched without regard for case, the way the find bar does everywhere else.
+pub(crate) fn matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let haystack: Vec<char> = text.to_lowercase().chars().collect();
+    let needle: Vec<char> = query.to_lowercase().chars().collect();
+    // A character that changes length when lowercased would put the character indexes out of
+    // step with the text the editor holds, so that text is matched exactly instead.
+    let (haystack, needle) = if haystack.len() == text.chars().count() {
+        (haystack, needle)
+    } else {
+        (text.chars().collect(), query.chars().collect())
+    };
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return Vec::new();
+    }
+
+    (0..=haystack.len() - needle.len())
+        .filter(|start| haystack[*start..start + needle.len()] == needle[..])
+        .map(|start| start..start + needle.len())
+        .collect()
+}
+
 fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: &str, palette: &Palette) {
     let font = egui::FontId::monospace(CODE_SIZE);
     let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    // The find bar over this pane, if there is one. Read out before the editor is borrowed,
+    // and handed back what the search turned up once the text has been laid out.
+    let searching = app
+        .model
+        .find
+        .as_ref()
+        .filter(|find| find.pane_id == pane_id)
+        .map(|find| Searching {
+            query: find.query.clone(),
+            at: find.at,
+            pending: find.pending,
+        });
+    let mut found: Option<usize> = None;
 
     egui::ScrollArea::vertical()
         .id_salt(("file-pane", pane_id))
@@ -265,16 +305,64 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: &str, palette: &Palette) {
                     .id_salt(("file-pane-code", pane_id))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut editor.edited)
-                                .font(egui::TextStyle::Monospace)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(line_count),
-                        );
+                        let output = egui::TextEdit::multiline(&mut editor.edited)
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(line_count)
+                            .show(ui);
+                        if let Some(searching) = &searching {
+                            found = Some(show_match(ui, &editor.edited, searching, output));
+                        }
                     });
             });
         });
+
+    if let Some(total) = found
+        && let Some(find) = &mut app.model.find
+    {
+        find.found(total);
+    }
+}
+
+/// What the find bar is asking of a file pane this frame.
+struct Searching {
+    query: String,
+    at: usize,
+    pending: bool,
+}
+
+/// Select the current match in the laid-out editor and bring it into view. Returns how many
+/// matches there were, for the bar's tally.
+fn show_match(
+    ui: &mut Ui,
+    text: &str,
+    searching: &Searching,
+    mut output: egui::text_edit::TextEditOutput,
+) -> usize {
+    let matches = matches_in(text, &searching.query);
+    // Only when the bar asks: otherwise every frame would drag the caret back to the match
+    // and the file could not be edited while the bar is open.
+    if !searching.pending {
+        return matches.len();
+    }
+    let Some(range) = matches.get(searching.at) else {
+        return matches.len();
+    };
+
+    let cursors = egui::text::CCursorRange::two(
+        egui::text::CCursor::new(range.start),
+        egui::text::CCursor::new(range.end),
+    );
+    let at = output
+        .galley
+        .pos_from_cursor(egui::text::CCursor::new(range.start))
+        .translate(output.galley_pos.to_vec2());
+    ui.scroll_to_rect(at, Some(egui::Align::Center));
+
+    output.state.cursor.set_char_range(Some(cursors));
+    output.state.store(ui.ctx(), output.response.id);
+    matches.len()
 }
 
 #[cfg(test)]
@@ -290,6 +378,42 @@ mod tests {
             saving: false,
             close_confirmed: false,
         }
+    }
+
+    #[test]
+    fn a_match_is_a_character_range_of_the_text() {
+        let text = "fn greet() {}\nfn greet_again() {}\n";
+        let found = matches_in(text, "greet");
+
+        assert_eq!(found.len(), 2);
+        let first = found[0].clone();
+        assert_eq!(
+            text.chars().skip(first.start).take(first.len()).collect::<String>(),
+            "greet"
+        );
+    }
+
+    #[test]
+    fn case_is_not_what_a_search_is_about() {
+        assert_eq!(matches_in("Cargo.toml", "cargo").len(), 1);
+        assert_eq!(matches_in("Cargo.toml", "CARGO").len(), 1);
+    }
+
+    /// A match past the first line has to count the newline, or the editor would put the
+    /// caret somewhere else entirely.
+    #[test]
+    fn a_match_on_a_later_line_counts_the_line_breaks_before_it() {
+        let text = "one\ntwo\nthree";
+        let found = matches_in(text, "three");
+
+        assert_eq!(found, vec![8..13]);
+    }
+
+    #[test]
+    fn nothing_matches_an_empty_query_or_a_query_that_is_not_there() {
+        assert!(matches_in("hello", "").is_empty());
+        assert!(matches_in("hello", "absent").is_empty());
+        assert!(matches_in("hi", "far too long").is_empty());
     }
 
     #[test]

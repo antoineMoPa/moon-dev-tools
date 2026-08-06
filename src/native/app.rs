@@ -15,6 +15,7 @@ use crate::{
     native::{
         Launch,
         bindings::{self, Action, Keymap},
+        find, fonts,
         layout::{self, OpenPaneRequest, Pane, PaneKind, default_layout, make_id},
         menu::{MenuAction, NativeMenu},
         model::{Model, Stage, ToastKind, hash_of},
@@ -109,6 +110,8 @@ pub(crate) struct App {
     /// Whether the context being drawn into has egui's image loaders. Installing them twice
     /// would stack a second copy of each, so this is set once and never cleared.
     loaders_installed: bool,
+    /// The same, for the system fonts a shell's output needs to draw its boxes and spinners.
+    fonts_installed: bool,
 }
 
 struct CachedDiff {
@@ -153,6 +156,7 @@ impl App {
                 connection,
                 dragging_pane: None,
                 file_editors: HashMap::new(),
+                find: None,
                 adopt_shells_pending: false,
                 restored_layout: None,
                 restored_agent: None,
@@ -180,6 +184,7 @@ impl App {
             keymap: Keymap::default(),
             needs_style: true,
             loaders_installed: false,
+            fonts_installed: false,
         };
 
         if let Some(open) = launch.open {
@@ -779,6 +784,7 @@ impl App {
             Action::AdvanceHunk => self.apply_hunk_shortcut(true),
             Action::ReverseHunk => self.apply_hunk_shortcut(false),
             Action::FocusNextFrame => self.focus_next_frame(ctx),
+            Action::Find => find::open(self),
         }
     }
 
@@ -872,8 +878,30 @@ impl App {
         self.model.layout.panes.get(frame.active_pane_id.as_ref()?)
     }
 
-    fn active_pane_kind(&self) -> Option<PaneKind> {
+    pub(crate) fn active_pane_kind(&self) -> Option<PaneKind> {
         self.active_pane().map(Pane::kind)
+    }
+
+    pub(crate) fn active_pane_id(&self) -> Option<String> {
+        self.active_pane().map(|pane| pane.pane_id().to_string())
+    }
+
+    /// Where a pane was drawn this frame: the body of the frame holding it, below the tabs.
+    /// Anything that floats over a pane — the find bar — is placed against this.
+    pub(crate) fn pane_rect(&self, pane_id: &str) -> Option<egui::Rect> {
+        let frame = self.model.layout.frame_holding_pane(pane_id)?;
+        let rect = self
+            .frame_rects
+            .iter()
+            .find(|(frame_id, _)| *frame_id == frame.frame_id)
+            .map(|(_, rect)| *rect)?;
+        Some(egui::Rect::from_min_max(
+            egui::pos2(
+                rect.min.x,
+                rect.min.y + crate::native::workspace::TAB_STRIP_HEIGHT,
+            ),
+            rect.max,
+        ))
     }
 
     /// The review in the frontmost pane of the active frame, if that pane is a review.
@@ -953,12 +981,20 @@ impl App {
     /// Draw whatever pane is in front of a frame.
     pub(crate) fn draw_pane(&mut self, ui: &mut Ui, pane: &Pane) {
         match pane {
-            Pane::Review { session_id, .. } => {
-                let session_id = session_id.clone();
+            Pane::Review { pane_id, session_id, .. } => {
+                let (pane_id, session_id) = (pane_id.clone(), session_id.clone());
+                self.apply_review_find(&pane_id, &session_id);
                 review::draw(self, ui, &session_id);
             }
             Pane::Agents { .. } => review::draw_agents(self, ui),
-            Pane::Terminal { terminal_id, .. } => self.draw_terminal(ui, terminal_id),
+            Pane::Terminal {
+                pane_id,
+                terminal_id,
+                ..
+            } => {
+                let (pane_id, terminal_id) = (pane_id.clone(), terminal_id.clone());
+                self.draw_terminal(ui, &pane_id, &terminal_id);
+            }
             Pane::File {
                 pane_id,
                 session_id,
@@ -971,7 +1007,43 @@ impl App {
         }
     }
 
-    fn draw_terminal(&mut self, ui: &mut Ui, terminal_id: &str) {
+    /// Run the find bar's search over a review, and tell the bar what it found.
+    ///
+    /// A search walks every hunk, so it only happens when the bar asks — a changed query or a
+    /// step to another match — rather than on every frame the review draws.
+    fn apply_review_find(&mut self, pane_id: &str, session_id: &str) {
+        let Some((query, at, pending)) = self
+            .model
+            .find
+            .as_ref()
+            .filter(|find| find.pane_id == pane_id)
+            .map(|find| (find.query.clone(), find.at, find.pending))
+        else {
+            // No bar on this pane: nothing of a previous search stays marked.
+            let review = self.model.review(session_id);
+            review.find_query.clear();
+            review.find_match = None;
+            return;
+        };
+
+        self.model.review(session_id).find_query = query.clone();
+        if !pending {
+            return;
+        }
+
+        let found = review::search::find_all(self, session_id, &query);
+        let current = found.get(at).cloned();
+        let review = self.model.review(session_id);
+        // Bringing the hunk into view is what makes a match in a file scrolled far away
+        // findable; the mark on the line itself says where in the hunk it is.
+        review.scroll_to_hunk = current.as_ref().map(|found| found.hunk_id.clone());
+        review.find_match = current;
+        if let Some(find) = &mut self.model.find {
+            find.found(found.len());
+        }
+    }
+
+    fn draw_terminal(&mut self, ui: &mut Ui, pane_id: &str, terminal_id: &str) {
         let palette = self.palette_of();
         if let Some(error) = self.terminal_errors.get(terminal_id) {
             ui.vertical_centered(|ui| {
@@ -994,7 +1066,21 @@ impl App {
         // A shell the user just opened starts with the keyboard, so they can type into it
         // without clicking first.
         let take_focus = self.focus_terminal.as_deref() == Some(terminal_id);
+        // The find bar asks for a search only when its query or its place in the matches
+        // moved, because a search reads the whole scrollback.
+        let searching = self
+            .model
+            .find
+            .as_ref()
+            .filter(|find| find.pane_id == pane_id && find.pending)
+            .map(|find| (find.query.clone(), find.at));
+        let found = searching.map(|(query, at)| pane.find(&query, at));
         let wants_repaint = pane.ui(ui, &palette, font, take_focus);
+        if let Some(total) = found
+            && let Some(find) = &mut self.model.find
+        {
+            find.found(total);
+        }
         if take_focus {
             self.focus_terminal = None;
         }
@@ -1189,6 +1275,10 @@ impl App {
             egui_extras::install_image_loaders(ctx);
             self.loaders_installed = true;
         }
+        if !self.fonts_installed {
+            fonts::install(ctx);
+            self.fonts_installed = true;
+        }
         self.tasks.drain(&mut self.model);
         self.drain_attachments();
         self.model
@@ -1246,6 +1336,7 @@ impl App {
 
         self.draw_workspace(ui);
         palette::draw(self, ctx);
+        find::draw(self, ctx);
         self.draw_armed_prefix(ctx);
         self.draw_toasts(ctx);
 

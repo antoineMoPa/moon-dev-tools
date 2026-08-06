@@ -18,6 +18,7 @@ use crate::{
         palette::CommandAction,
         review::diff::{DiffLine, LineKind, insertion_line},
         review::image_diff,
+        review::search,
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
         widgets,
     },
@@ -735,7 +736,8 @@ fn draw_diff_line(
     }
 
     draw_gutter(ui, rect, line, palette);
-    draw_line_text(ui, rect, line, palette);
+    let marks = find_marks(app, session_id, &hunk.id, index, line);
+    draw_line_text(ui, rect, line, palette, &marks);
 
     if !selectable {
         return;
@@ -871,7 +873,98 @@ fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
     );
 }
 
-fn draw_line_text(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
+/// What the find bar wants marked on one line: every match it covers, and which of them the
+/// bar has stepped to.
+#[derive(Default)]
+struct FindMarks {
+    spans: Vec<(usize, usize)>,
+    current: Option<(usize, usize)>,
+}
+
+impl FindMarks {
+    fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+}
+
+fn find_marks(
+    app: &App,
+    session_id: &str,
+    hunk_id: &str,
+    index: usize,
+    line: &DiffLine,
+) -> FindMarks {
+    let Some(review) = app.model.review_ref(session_id) else {
+        return FindMarks::default();
+    };
+    if review.find_query.is_empty() {
+        return FindMarks::default();
+    }
+    FindMarks {
+        spans: search::spans_in(line, &review.find_query),
+        current: review
+            .find_match
+            .as_ref()
+            .filter(|found| found.hunk_id == hunk_id && found.line_index == index)
+            .map(|found| (found.column, found.width)),
+    }
+}
+
+/// Paint the find bar's matches behind the text of a line.
+///
+/// Behind rather than through it: the line is drawn in word-diff runs, and a highlight that
+/// had to be woven into those runs would have to agree with them about every boundary.
+fn draw_find_marks(
+    ui: &Ui,
+    rect: egui::Rect,
+    line: &DiffLine,
+    origin: egui::Pos2,
+    font: &egui::FontId,
+    marks: &FindMarks,
+    palette: &Palette,
+) {
+    let body: Vec<char> = line.body().chars().collect();
+    let width_of = |from: usize, to: usize| {
+        let text: String = body[from.min(body.len())..to.min(body.len())].iter().collect();
+        ui.painter()
+            .layout_no_wrap(text, font.clone(), palette.ink)
+            .size()
+            .x
+    };
+
+    for (column, width) in &marks.spans {
+        let left = origin.x + width_of(0, *column);
+        let span = egui::Rect::from_min_size(
+            egui::pos2(left, rect.min.y + 1.0),
+            vec2(width_of(*column, column + width), rect.height() - 2.0),
+        );
+        // The same tint a text selection gets elsewhere in the window, which is strong
+        // enough to pick a match out of a tinted diff line without hiding the code.
+        ui.painter().rect_filled(
+            span,
+            CornerRadius::same(2),
+            palette.accent.linear_multiply(0.35),
+        );
+        // The one the bar has stepped to is outlined, so stepping through matches is
+        // visible without the others disappearing.
+        if marks.current == Some((*column, *width)) {
+            ui.painter().rect_stroke(
+                span,
+                CornerRadius::same(2),
+                Stroke::new(1.0, palette.accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
+fn draw_line_text(
+    ui: &Ui,
+    rect: egui::Rect,
+    line: &DiffLine,
+    palette: &Palette,
+    marks: &FindMarks,
+) {
     let font = egui::FontId::monospace(CODE_SIZE);
     let ink = match line.kind {
         LineKind::Header => palette.accent_2,
@@ -901,6 +994,9 @@ fn draw_line_text(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette)
         text_origin.x + if prefix.is_empty() { 0.0 } else { 9.0 },
         text_origin.y,
     );
+    if !marks.is_empty() {
+        draw_find_marks(ui, rect, line, body_origin, &font, marks, palette);
+    }
 
     let Some(words) = &line.words else {
         ui.painter().text(

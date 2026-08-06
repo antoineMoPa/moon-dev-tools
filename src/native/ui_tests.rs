@@ -994,6 +994,7 @@ const CHROME_GLYPHS: &str = concat!(
     "\u{23F5}\u{23F7}", // collapse arrows
     "+",                  // open a pane
     "\u{00B7}\u{2212}", // separator, minus sign
+    "\u{2039}\u{203A}\u{00D7}", // the find bar's previous, next and close
     // The command key is the one modifier the bundled fonts have a glyph for; the rest of a
     // chord is spelled out, which is what `bindings::describe` does.
     "\u{2318}",
@@ -1915,4 +1916,328 @@ fn press_key(harness: &mut Harness<'_>, key: egui::Key, modifiers: egui::Modifie
     });
     harness.step();
     harness.run_steps(2);
+}
+
+/// Dragging over a shell selects what the pointer swept, in the real pane with a real pty
+/// behind it. The gesture itself is tested against the emulator directly; this is about the
+/// pane handing egui's pointer to it at all.
+#[test]
+fn dragging_over_a_shell_selects_its_text() {
+    let fixture = seeded_fixture("terminal-select");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment =
+        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+            .expect("expected to attach to the shell");
+    let pane = crate::native::terminal::TerminalPane::new(terminal_id.clone(), attachment)
+        .expect("expected the terminal emulator to start");
+
+    // Enough marked-up lines to fill the grid, so wherever the drag lands it lands on one.
+    pane.send(b"i=0; while [ $i -lt 200 ]; do printf 'moonreviewline%s\\n' $i; i=$((i+1)); done\n")
+        .expect("expected to write to the shell");
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    /// What the test needs back out of the pane each frame.
+    #[derive(Default, Clone)]
+    struct Seen {
+        screen: String,
+        selected: Option<String>,
+        rect: Option<egui::Rect>,
+    }
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+    let for_pane = terminal_id.clone();
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame_id = app.model.layout.active_frame_id.clone();
+                let layout = std::mem::replace(
+                    &mut app.model.layout,
+                    crate::native::layout::empty_layout(),
+                );
+                app.model.layout = crate::native::layout::add_pane(
+                    layout,
+                    &frame_id,
+                    crate::native::layout::Pane::Terminal {
+                        pane_id: crate::native::layout::make_id("pane"),
+                        terminal_id: for_pane.clone(),
+                        command: None,
+                    },
+                    None,
+                );
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+
+            let rect = app
+                .frame_rects
+                .iter()
+                .find(|(frame_id, _)| *frame_id == app.model.layout.active_frame_id)
+                .map(|(_, rect)| *rect);
+            if let Some(pane) = app.terminals.get_mut(&for_pane)
+                && let Ok(mut seen) = seen_in_ui.lock()
+            {
+                seen.screen = pane.visible_text().unwrap_or_default();
+                seen.selected = pane.selected_text();
+                seen.rect = rect;
+            }
+        });
+
+    // Enough of them to have filled the grid, whatever size the pane settled at.
+    let printed = settle(&mut harness, || {
+        seen.lock()
+            .expect("poisoned")
+            .screen
+            .matches("moonreviewline")
+            .count()
+            > 5
+    });
+    assert!(
+        printed,
+        "the shell's output never filled the grid; screen was:\n{}",
+        seen.lock().expect("poisoned").screen
+    );
+    harness.run_steps(2);
+
+    assert!(
+        seen.lock().expect("poisoned").selected.is_none(),
+        "nothing is selected before a drag"
+    );
+
+    let rect = seen
+        .lock()
+        .expect("poisoned")
+        .rect
+        .expect("the shell's frame should have been drawn");
+    // Across the middle of the pane, which the printed lines fill.
+    let middle = rect.center().y;
+    drag_from_to(
+        &mut harness,
+        egui::pos2(rect.min.x + 20.0, middle),
+        egui::pos2(rect.max.x - 20.0, middle),
+    );
+
+    let selected = seen
+        .lock()
+        .expect("poisoned")
+        .selected
+        .clone()
+        .expect("the drag should have selected something");
+    // Where the sweep started is a few cells in from the left, so what comes back is the
+    // tail of the marker rather than the whole of it.
+    assert!(
+        selected.contains("reviewline"),
+        "the drag should have selected the line it swept, got {selected:?}"
+    );
+    assert!(
+        !selected.contains('\n'),
+        "a sweep along one row should not have taken any other, got {selected:?}"
+    );
+
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
+/// Press at one point, sweep to another, release — one pointer gesture, several frames.
+fn drag_from_to(harness: &mut Harness<'_>, from: egui::Pos2, to: egui::Pos2) {
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(from),
+        egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+
+    // A few steps along the way, so the drag is a sweep rather than a jump.
+    for step in 1..=4 {
+        let towards = from + (to - from) * (step as f32 / 4.0);
+        harness.input_mut().events.push(egui::Event::PointerMoved(towards));
+        harness.step();
+    }
+
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.run_steps(2);
+}
+
+/// The glyphs command line tools animate and decorate with. egui's bundled fonts have none
+/// of them, which is why a spinner in a shell was a row of empty boxes until the window
+/// started borrowing a font off the machine it runs on.
+const SHELL_GLYPHS: &str = concat!(
+    "\u{280B}\u{2819}\u{2839}\u{2838}\u{283C}\u{2834}\u{2826}\u{2827}\u{2807}\u{280F}", // the braille spinner
+    "\u{28FE}\u{28FD}\u{28FB}\u{28BF}\u{287F}\u{28DF}\u{28EF}\u{28F7}", // and the fuller one
+    "\u{2714}\u{2716}\u{26A1}\u{23F3}\u{231B}\u{1F504}", // tick, cross, bolt, hourglasses, refresh
+    "\u{1F311}\u{1F312}\u{1F313}\u{1F314}\u{1F315}", // the moon phases some tools spin
+);
+
+#[test]
+fn a_shell_can_draw_the_glyphs_its_tools_animate_with() {
+    let mut harness = Harness::builder().build_ui(|_ui| {});
+    harness.run();
+
+    let borrowed = crate::native::fonts::install(&harness.ctx);
+    assert!(
+        !borrowed.is_empty(),
+        "no system font was found to borrow from; the list in native::fonts needs this platform"
+    );
+    harness.run();
+
+    let mut missing = String::new();
+    harness.ctx.fonts_mut(|fonts| {
+        let font = egui::FontId::monospace(crate::native::theme::CODE_SIZE);
+        for glyph in SHELL_GLYPHS.chars() {
+            if !fonts.has_glyph(&font, glyph) && !missing.contains(glyph) {
+                missing.push(glyph);
+            }
+        }
+    });
+
+    assert!(
+        missing.is_empty(),
+        "these would render as empty boxes in a shell: {missing:?}"
+    );
+}
+
+/// ⌘F over a review searches every hunk it is showing, not only the lines on screen, and
+/// stepping through the matches moves the current one.
+#[test]
+fn find_searches_a_whole_review_and_steps_through_the_matches() {
+    let fixture = seeded_fixture("find-review");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+
+    /// What the test reads back out of the window each frame.
+    #[derive(Default, Clone)]
+    struct Seen {
+        open: bool,
+        query: String,
+        total: usize,
+        at: usize,
+        current_hunk: Option<String>,
+    }
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let session_id = app.model.root_session_id.clone();
+            let current_hunk = app
+                .model
+                .review_ref(&session_id)
+                .and_then(|review| review.find_match.as_ref())
+                .map(|found| found.hunk_id.clone());
+            *seen_in_ui.lock().expect("poisoned") = Seen {
+                open: app.model.find.is_some(),
+                query: app
+                    .model
+                    .find
+                    .as_ref()
+                    .map(|find| find.query.clone())
+                    .unwrap_or_default(),
+                total: app.model.find.as_ref().map(|find| find.total).unwrap_or(0),
+                at: app.model.find.as_ref().map(|find| find.at).unwrap_or(0),
+                current_hunk,
+            };
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    let loaded = settle(&mut harness, || ready.load(Ordering::Relaxed));
+    assert!(loaded, "the review never loaded");
+    harness.run_steps(2);
+    assert!(!seen.lock().expect("poisoned").open, "no bar before ⌘F");
+
+    press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    assert!(
+        seen.lock().expect("poisoned").open,
+        "⌘F should have opened the find bar"
+    );
+
+    // Typed into the bar, which took the keyboard when it opened.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("values".to_string()));
+    harness.step();
+    harness.run_steps(3);
+
+    let after_typing = seen.lock().expect("poisoned").clone();
+    assert_eq!(after_typing.query, "values");
+    // `values` is all over the fixture's second function, on both sides of the diff.
+    assert!(
+        after_typing.total >= 2,
+        "the search should have found every hunk's matches, got {}",
+        after_typing.total
+    );
+    assert_eq!(after_typing.at, 0, "and started on the first one");
+    assert!(
+        after_typing.current_hunk.is_some(),
+        "the review should know which match it is on"
+    );
+
+    // What the bar and the marked matches actually look like over a review.
+    harness.snapshot("find-bar");
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    let after_step = seen.lock().expect("poisoned").clone();
+    assert_eq!(after_step.at, 1, "Enter steps to the next match");
+    assert_eq!(
+        after_step.total, after_typing.total,
+        "stepping does not change what was found"
+    );
+
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(
+        !seen.lock().expect("poisoned").open,
+        "Escape should have put the bar away"
+    );
 }

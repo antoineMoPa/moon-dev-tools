@@ -4,6 +4,8 @@
 pub(crate) mod app;
 pub(crate) mod bindings;
 pub(crate) mod file_pane;
+pub(crate) mod find;
+pub(crate) mod fonts;
 pub(crate) mod layout;
 pub(crate) mod menu;
 pub(crate) mod model;

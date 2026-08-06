@@ -84,6 +84,11 @@ pub(crate) struct ReviewState {
     pub(crate) draft: Option<Draft>,
     /// Full patches fetched for hunks whose preview was truncated, keyed by hunk.
     pub(crate) expanded_patches: HashMap<String, String>,
+    /// What the find bar over this review is looking for, so the lines being drawn can mark
+    /// it. Empty when no bar is open on this pane.
+    pub(crate) find_query: String,
+    /// The one match the bar has stepped to, which is drawn differently from the rest.
+    pub(crate) find_match: Option<crate::native::review::search::Match>,
     pub(crate) history_loaded: Vec<CommitView>,
     pub(crate) history_has_more: bool,
     pub(crate) loading_history: bool,
@@ -105,6 +110,8 @@ impl ReviewState {
             selecting_in: None,
             draft: None,
             expanded_patches: HashMap::new(),
+            find_query: String::new(),
+            find_match: None,
             history_loaded: Vec::new(),
             history_has_more: false,
             loading_history: false,
@@ -180,6 +187,8 @@ pub(crate) struct Model {
     pub(crate) dragging_pane: Option<String>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<String, crate::native::file_pane::FileEditor>,
+    /// The find bar, when one is open, and the pane it is searching.
+    pub(crate) find: Option<crate::native::find::Find>,
 }
 
 impl Model {

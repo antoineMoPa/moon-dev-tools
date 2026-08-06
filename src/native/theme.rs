@@ -29,6 +29,9 @@ impl ThemeMode {
 /// widget has to know which theme is active.
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
+    /// Which theme this is. Terminal panes need it: their colors come from the emulator
+    /// rather than from here, so they have to be told which way round to set them.
+    pub(crate) mode: ThemeMode,
     pub(crate) bg: Color32,
     pub(crate) panel: Color32,
     pub(crate) ink: Color32,
@@ -84,6 +87,7 @@ fn rgba(hex: u32, alpha: u8) -> Color32 {
 
 fn light() -> Palette {
     Palette {
+    mode: ThemeMode::Light,
     bg: rgb(0xf3efe6),
     panel: rgb(0xfffaf2),
     ink: rgb(0x1d1a16),
@@ -123,6 +127,7 @@ fn light() -> Palette {
 
 fn dark() -> Palette {
     Palette {
+    mode: ThemeMode::Dark,
     bg: rgb(0x10141c),
     panel: rgb(0x171d27),
     ink: rgb(0xedf3fb),
