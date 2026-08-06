@@ -459,20 +459,23 @@ fn draw_hunk_actions(
             .review_ref(session_id)
             .is_some_and(|review| review.pending_discard.as_deref() == Some(hunk.id.as_str()));
         if discarding {
-            if widgets::quiet_button_colored(ui, "[really discard]", palette.warn)
-                .on_hover_text("this throws the change away and cannot be undone")
-                .clicked()
-            {
-                app.model.review(session_id).pending_discard = None;
-                let hunk_id = hunk.id.clone();
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not discard the hunk", move |backend| {
-                        backend.discard_hunk(&for_call, &hunk_id)
-                    });
-            }
-            if widgets::quiet_button(ui, "[keep]").clicked() {
-                app.model.review(session_id).pending_discard = None;
+            match widgets::confirm(
+                ui,
+                &palette,
+                "[really discard]",
+                "this throws the change away and cannot be undone",
+            ) {
+                widgets::Confirmed::Yes => {
+                    app.model.review(session_id).pending_discard = None;
+                    let hunk_id = hunk.id.clone();
+                    let for_call = session_id.to_string();
+                    app.tasks
+                        .act(session_id, "could not discard the hunk", move |backend| {
+                            backend.discard_hunk(&for_call, &hunk_id)
+                        });
+                }
+                widgets::Confirmed::No => app.model.review(session_id).pending_discard = None,
+                widgets::Confirmed::Waiting => {}
             }
         } else if widgets::quiet_button_colored(ui, "[discard hunk]", palette.warn).clicked() {
             // Discarding is destructive and has no undo, so it takes a second press.

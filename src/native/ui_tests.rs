@@ -2166,6 +2166,9 @@ fn dragging_over_a_shell_selects_its_text() {
         screen: String,
         selected: Option<String>,
         rect: Option<egui::Rect>,
+        /// What a copy put on the clipboard, read inside the frame that did it: egui hands
+        /// its output to the integration at the end of every pass, so afterwards it is gone.
+        copied: Option<String>,
     }
     let seen = Arc::new(Mutex::new(Seen::default()));
     let seen_in_ui = Arc::clone(&seen);
@@ -2199,6 +2202,14 @@ fn dragging_over_a_shell_selects_its_text() {
                 seen.screen = pane.visible_text().unwrap_or_default();
                 seen.selected = pane.selected_text();
                 seen.rect = rect;
+                if let Some(text) = ui.ctx().output(|output| {
+                    output.commands.iter().find_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                }) {
+                    seen.copied = Some(text);
+                }
             }
         });
 
@@ -2251,6 +2262,36 @@ fn dragging_over_a_shell_selects_its_text() {
     assert!(
         !selected.contains('\n'),
         "a sweep along one row should not have taken any other, got {selected:?}"
+    );
+
+    // Copy takes the selection, and paste goes to the program. Both arrive as events of their
+    // own rather than as keystrokes, so what this checks is that they still reach the pane
+    // through everything the window does to the keyboard on the way.
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.step();
+    harness.run_steps(2);
+    assert_eq!(
+        seen.lock().expect("poisoned").copied.as_deref(),
+        Some(selected.as_str()),
+        "copy should have put the selection on the clipboard"
+    );
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Paste("moonreviewpaste".to_string()));
+    harness.step();
+    harness.run_steps(2);
+    let pasted = settle(&mut harness, || {
+        seen.lock()
+            .expect("poisoned")
+            .screen
+            .contains("moonreviewpaste")
+    });
+    assert!(
+        pasted,
+        "paste should have reached the shell; screen was:\n{}",
+        seen.lock().expect("poisoned").screen
     );
 
     crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)

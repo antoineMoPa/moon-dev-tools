@@ -23,7 +23,8 @@ use crate::{
     },
     git::detect_agent_availability,
     moontasks::{
-        self, CreateTaskRequest, StartResourceRequest, TaskStatusRequest, TaskView, TerminalOpened,
+        self, CreateTaskRequest, StartResourceRequest, TaskStatusRequest, TaskTitleRequest,
+        TaskView, TerminalOpened,
     },
     service,
 };
@@ -124,6 +125,14 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop",
             post(stop_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}",
+            delete(delete_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/title",
+            post(rename_task),
         )
         .route(
             "/api/session/{session_id}/terminals",
@@ -557,6 +566,25 @@ async fn stop_task_resource(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     moontasks::service::stop_resource(&state, &session_id, &task_id, &resource_id)?;
+    Ok("ok")
+}
+
+async fn delete_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_resource(&state, &session_id, &task_id, &resource_id)?;
+    Ok("ok")
+}
+
+async fn rename_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskTitleRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::rename_task(&state, &session_id, &task_id, &request.title)?;
     Ok("ok")
 }
 

@@ -270,6 +270,42 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
         .expect("the server refused to stop the shell");
     assert_eq!(board(&served)[0]["resources"][0]["running"], false);
 
+    // A run that is finished with comes off the task entirely, which `stop` does not do.
+    served
+        .client
+        .delete(format!("{tasks_url}/{task_id}/resources/{resource_id}"))
+        .send()
+        .expect("failed to remove the run")
+        .error_for_status()
+        .expect("the server refused to remove the run");
+    assert!(
+        board(&served)[0]["resources"]
+            .as_array()
+            .expect("expected an array")
+            .is_empty(),
+        "the run should be off the task"
+    );
+
+    served
+        .client
+        .post(format!("{tasks_url}/{task_id}/title"))
+        .json(&serde_json::json!({ "title": "Fix the login page properly" }))
+        .send()
+        .expect("failed to rename the task")
+        .error_for_status()
+        .expect("the server refused to rename the task");
+    let renamed = board(&served);
+    assert_eq!(renamed[0]["title"], "Fix the login page properly");
+    assert_eq!(
+        renamed[0]["id"], task_id,
+        "a rename keeps the folder, which is what everything else points at"
+    );
+    // The review a card opens is the repo's, not anything inside the task folder.
+    assert_eq!(
+        renamed[0]["repo_path"],
+        served.root.canonicalize().expect("expected a path").display().to_string()
+    );
+
     served
         .client
         .post(format!("{tasks_url}/{task_id}/status"))

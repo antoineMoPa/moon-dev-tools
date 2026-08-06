@@ -71,6 +71,44 @@ pub(crate) fn cut_to_fit(
     ui.painter().layout_job(job)
 }
 
+/// What a confirmation came back with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Confirmed {
+    /// Still being asked.
+    Waiting,
+    /// Go ahead.
+    Yes,
+    /// Never mind.
+    No,
+}
+
+/// The second half of a destructive action: what it is about to do, and the way out.
+///
+/// Drawn in place of the control that armed it, so the question is asked where the click was
+/// rather than over the whole window — nothing is nailed down behind it, and reading the
+/// answer is one `match`. Discarding a hunk, discarding a file and deleting a task are all
+/// this same two-press shape.
+///
+/// The caller keeps which thing is armed, because only the caller knows what it is asking
+/// about; this draws the question.
+pub(crate) fn confirm(ui: &mut Ui, palette: &Palette, question: &str, hover: &str) -> Confirmed {
+    let mut answer = Confirmed::Waiting;
+
+    if quiet_button_colored(ui, question, palette.warn)
+        .on_hover_text(hover)
+        .clicked()
+    {
+        answer = Confirmed::Yes;
+    }
+    if quiet_button(ui, "[keep]")
+        .on_hover_text("leave it alone")
+        .clicked()
+    {
+        answer = Confirmed::No;
+    }
+    answer
+}
+
 /// A heading for one section of the sidebar, with an optional action on the right.
 pub(crate) fn section_header(
     ui: &mut Ui,

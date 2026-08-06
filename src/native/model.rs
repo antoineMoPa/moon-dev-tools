@@ -144,22 +144,34 @@ pub(crate) struct BoardState {
     pub(crate) tasks: Vec<crate::moontasks::TaskView>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
-    /// Whether the new-task box is open in the TODO column, and the title and agent being
-    /// entered into it.
+    /// Whether the new-task box is open in the TODO column, and the title being typed into
+    /// it. The agent it will start is not here: that is the one the review's selector holds,
+    /// so picking one on the board and picking one in the review are the same choice.
     pub(crate) composer_open: bool,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) composer_focus: bool,
     pub(crate) new_title: String,
-    pub(crate) new_agent: AgentKind,
     /// Set when something changed the board, so the next frame refetches rather than waiting
     /// out the poll interval.
     pub(crate) refresh_requested: bool,
     /// The task whose delete button has been pressed once, so a stray click cannot throw a
     /// task's folder away.
     pub(crate) pending_delete: Option<String>,
+    /// The same, for a run being taken off a task.
+    pub(crate) pending_resource_delete: Option<String>,
     /// A shell a board action just started, waiting for the window to open a tab on it. The
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
+    /// The task whose title is being edited, if one is.
+    pub(crate) renaming: Option<TaskRename>,
+}
+
+/// A card's title, open for editing after a double click.
+pub(crate) struct TaskRename {
+    pub(crate) task_id: String,
+    pub(crate) title: String,
+    /// Set when the box has just opened, so it takes the keyboard once.
+    pub(crate) focus: bool,
 }
 
 /// A shell the board started and wants shown.

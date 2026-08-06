@@ -83,15 +83,16 @@ mod platform {
                 ])
                 .ok()?;
 
-            let edit_menu = Submenu::new("Edit", true);
-            // Without these the system shortcuts for copy and paste do not reach the window.
-            edit_menu
-                .append_items(&[
-                    &PredefinedMenuItem::copy(None),
-                    &PredefinedMenuItem::paste(None),
-                    &PredefinedMenuItem::select_all(None),
-                ])
-                .ok()?;
+            // There is deliberately no Edit menu.
+            //
+            // The predefined Copy, Paste and Select All items carry ⌘C, ⌘V and ⌘A as their key
+            // equivalents, and macOS hands a chord to the menu bar before the window ever sees
+            // it. Those items act on the `copy:` and `paste:` selectors, which nothing in a
+            // winit window implements, so the chord was swallowed and nothing happened —
+            // while ⌘⇧C, which no menu item claims, fell through to the window and worked.
+            //
+            // Without them the chords reach egui, which turns them into `Event::Copy` and
+            // `Event::Paste` itself. Adding them back takes plain ⌘C away again.
 
             // ⌘W and ⌘T are the window's own items rather than the predefined ones, so the
             // system does not close the whole window out from under a single tab.
@@ -117,7 +118,7 @@ mod platform {
                 ])
                 .ok()?;
 
-            menu.append_items(&[&app_menu, &edit_menu, &view_menu, &window_menu])
+            menu.append_items(&[&app_menu, &view_menu, &window_menu])
                 .ok()?;
             menu.init_for_nsapp();
 

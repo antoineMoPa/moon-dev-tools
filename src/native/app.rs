@@ -753,8 +753,9 @@ impl App {
         }
     }
 
-    /// The agent the review in front is pointed at, which is the one worth remembering.
-    fn selected_agent(&self) -> AgentKind {
+    /// The agent the review in front is pointed at, which is the one worth remembering — and
+    /// the one a new task starts with.
+    pub(crate) fn selected_agent(&self) -> AgentKind {
         let session_id = self
             .focused_review_session()
             .unwrap_or_else(|| self.model.root_session_id.clone());

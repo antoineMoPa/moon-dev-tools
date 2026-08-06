@@ -193,6 +193,19 @@ impl Backend for LocalBackend {
         moontasks::service::stop_resource(&self.state, session_id, task_id, resource_id)
     }
 
+    fn delete_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<()> {
+        moontasks::service::delete_resource(&self.state, session_id, task_id, resource_id)
+    }
+
+    fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()> {
+        moontasks::service::rename_task(&self.state, session_id, task_id, title)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         let repo_path = crate::api::with_session(&self.state, session_id, |session| {
             Ok(session.repo_path.clone())

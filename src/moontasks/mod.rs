@@ -60,6 +60,11 @@ pub(crate) struct CreateTaskRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+pub(crate) struct TaskTitleRequest {
+    pub(crate) title: String,
+}
+
+#[derive(Serialize, Deserialize)]
 pub(crate) struct TaskStatusRequest {
     pub(crate) status: TaskStatus,
 }
@@ -82,8 +87,11 @@ pub(crate) struct TerminalOpened {
 /// | `{mcp_env_toml}` | the task's environment as a TOML inline table, for Codex's `-c` |
 /// | `{session}` | the session id moontasks generated for this run |
 /// | `{brief}` | the standing instructions: which task, and to report back when done |
-/// | `{prompt}` | the work itself, which is the task's title |
-/// | `{briefed_prompt}` | both at once, for an agent with no separate system prompt |
+///
+/// No agent is handed the work as a prompt. Starting one is opening a conversation, not
+/// firing a job off: it comes up knowing which task it is on, and waits to be told what to do
+/// about it. `brief.md` in the task folder is the same text, for an agent with no system
+/// prompt to be given it in.
 ///
 /// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
 /// so an agent that cannot be told its session id is simply run without one.
@@ -105,12 +113,13 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         kind: AgentKind::Claude,
         mcp: &["--mcp-config", "{mcp_json}"],
         env: &[],
+        // The brief and no prompt: it knows the task and the tools from the moment it starts,
+        // and waits at its prompt for the person who created the task to explain the work.
         start: &[
             "--session-id",
             "{session}",
             "--append-system-prompt",
             "{brief}",
-            "{prompt}",
         ],
         resume: &["--resume", "{session}"],
     },
@@ -127,8 +136,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
             "mcp_servers.moontasks.env={mcp_env_toml}",
         ],
         env: &[],
-        // No system prompt of its own to append to, so the brief goes in with the work.
-        start: &["{briefed_prompt}"],
+        start: &[],
         resume: &["resume", "--last"],
     },
     AgentLaunch {
@@ -137,7 +145,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         // OpenCode takes its whole config from the file this names, so the task's copy is
         // what it reads rather than the one in the repo.
         env: &[("OPENCODE_CONFIG", "{mcp_opencode}")],
-        start: &["--prompt", "{briefed_prompt}"],
+        start: &[],
         resume: &["--continue"],
     },
 ];
@@ -155,8 +163,6 @@ pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &[
     "{mcp_env_toml}",
     "{session}",
     "{brief}",
-    "{prompt}",
-    "{briefed_prompt}",
 ];
 
 /// What an agent working in a task is told, beyond the work itself.
@@ -182,7 +188,10 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          it with todo instead, and say plainly what you need.\n\
          \n\
          Notes, plans and scratch files that belong to this task go in the task folder rather \
-         than in the repo."
+         than in the repo.\n\
+         \n\
+         The title above is the name on a card, not the brief. Wait for the person who opened \
+         this session to explain what they actually want before starting on anything."
     )
 }
 

@@ -296,6 +296,49 @@ pub(crate) fn resume_resource(
     Ok(terminal_id)
 }
 
+/// Take a run off a task for good, ending its shell if it is still running.
+///
+/// `stop` keeps the run so it can be resumed; this is for the ones that are finished with.
+pub(crate) fn delete_resource(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    resource_id: &str,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+
+    let Some(at) = metadata
+        .resources
+        .iter()
+        .position(|resource| resource.id == resource_id)
+    else {
+        bail!("that run is not on this task any more");
+    };
+    if let Some(terminal_id) = metadata.resources.remove(at).terminal_id {
+        state.terminals.remove(&terminal_id);
+    }
+    store::write_task(&repo_path, task_id, &metadata)
+}
+
+/// Give a task a different title. The folder keeps the name it was created with, because it
+/// is what everything else — shells, agent sessions, whatever an agent wrote — points at.
+pub(crate) fn rename_task(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    title: &str,
+) -> Result<()> {
+    let title = title.trim();
+    if title.is_empty() {
+        bail!("a task needs a title");
+    }
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+    metadata.title = title.to_string();
+    store::write_task(&repo_path, task_id, &metadata)
+}
+
 /// End one of a task's shells, leaving the run recorded so it can be resumed.
 pub(crate) fn stop_resource(
     state: &AppState,
@@ -466,11 +509,6 @@ fn write_task_files(
             ("{mcp_json}", mcp_json.display().to_string()),
             ("{mcp_opencode}", mcp_opencode.display().to_string()),
             ("{mcp_env_toml}", toml_inline_table(&env)),
-            ("{prompt}", metadata.title.clone()),
-            (
-                "{briefed_prompt}",
-                format!("{brief}\n\nStart on this task now."),
-            ),
             ("{brief}", brief),
         ],
     })
@@ -512,16 +550,15 @@ mod tests {
                     "/repo/.moontasks/task/opencode.json".to_string(),
                 ),
                 ("{mcp_env_toml}", "{ MOONREVIEW_TASK_ID = \"task\" }".to_string()),
-                ("{prompt}", "Fix the login page".to_string()),
-                ("{briefed_prompt}", "the brief, then the work".to_string()),
                 ("{brief}", "the brief".to_string()),
             ],
         }
     }
 
-    /// Claude takes the session id, the brief and the work, all on the way in.
+    /// Claude is given the session id, its MCP server and the brief — and no prompt, so it
+    /// comes up knowing the task and waits to be told what to do about it.
     #[test]
-    fn an_agent_is_told_the_task_the_brief_and_where_its_mcp_server_is() {
+    fn an_agent_is_told_the_task_but_not_set_to_work() {
         let launch = agent_launch(AgentKind::Claude).expect("expected claude to be launchable");
 
         let args = fillings()
@@ -537,7 +574,6 @@ mod tests {
                 "11111111-2222-4333-8444-555555555555",
                 "--append-system-prompt",
                 "the brief",
-                "Fix the login page",
             ]
         );
     }
@@ -577,7 +613,6 @@ mod tests {
                 "mcp_servers.moontasks.args=[\"mcp\"]",
                 "-c",
                 "mcp_servers.moontasks.env={ MOONREVIEW_TASK_ID = \"task\" }",
-                "the brief, then the work",
             ]
         );
     }
@@ -596,10 +631,27 @@ mod tests {
                 "/repo/.moontasks/task/opencode.json".to_string()
             )]
         );
-        assert_eq!(
-            fillings.fill_all(launch.start.iter()),
-            ["--prompt", "the brief, then the work"]
+        assert!(
+            fillings.fill_all(launch.start.iter()).is_empty(),
+            "opencode should come up waiting rather than working"
         );
+    }
+
+    /// Starting an agent opens a conversation rather than firing a job off, so none of the
+    /// three is handed the work.
+    #[test]
+    fn no_agent_is_given_the_task_as_a_prompt() {
+        for launch in crate::moontasks::AGENT_LAUNCHES {
+            let args = fillings()
+                .with_session(Some("11111111-2222-4333-8444-555555555555"))
+                .fill_all(launch.mcp.iter().chain(launch.start.iter()));
+
+            assert!(
+                !args.iter().any(|arg| arg.contains("Fix the login page")),
+                "{:?} should not be started on the work: {args:?}",
+                launch.kind
+            );
+        }
     }
 
     /// The brief is the whole of why an agent reaches for the MCP server at all.

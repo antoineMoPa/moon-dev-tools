@@ -331,33 +331,38 @@ fn draw_file_row(
             .review_ref(session_id)
             .is_some_and(|review| review.pending_discard.as_deref() == Some(file.file_path.as_str()));
         if confirming {
-            if ui
-                .button(RichText::new("really discard the whole file").color(palette.warn))
-                .clicked()
-            {
-                let hunk_ids = app
-                    .model
-                    .review_ref(session_id)
-                    .map(|review| {
-                        review
-                            .hunks()
-                            .iter()
-                            .filter(|hunk| hunk.file_path == file.file_path)
-                            .map(|hunk| hunk.id.clone())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                app.model.review(session_id).pending_discard = None;
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not discard the file", move |backend| {
-                        backend.discard_hunks(&for_call, &hunk_ids)
-                    });
-                ui.close();
-            }
-            if widgets::clickable(ui.button("keep it")).clicked() {
-                app.model.review(session_id).pending_discard = None;
-                ui.close();
+            match widgets::confirm(
+                ui,
+                palette,
+                "[really discard the whole file]",
+                "this throws every change in the file away and cannot be undone",
+            ) {
+                widgets::Confirmed::Yes => {
+                    let hunk_ids = app
+                        .model
+                        .review_ref(session_id)
+                        .map(|review| {
+                            review
+                                .hunks()
+                                .iter()
+                                .filter(|hunk| hunk.file_path == file.file_path)
+                                .map(|hunk| hunk.id.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    app.model.review(session_id).pending_discard = None;
+                    let for_call = session_id.to_string();
+                    app.tasks
+                        .act(session_id, "could not discard the file", move |backend| {
+                            backend.discard_hunks(&for_call, &hunk_ids)
+                        });
+                    ui.close();
+                }
+                widgets::Confirmed::No => {
+                    app.model.review(session_id).pending_discard = None;
+                    ui.close();
+                }
+                widgets::Confirmed::Waiting => {}
             }
         } else if ui
             .button(RichText::new("discard the whole file").color(palette.warn))

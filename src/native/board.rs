@@ -40,11 +40,19 @@ enum BoardAction {
     OpenComposer,
     CloseComposer,
     Create,
+    /// Point the review — and so the next task — at another agent.
+    SelectAgent(AgentKind),
     SetStatus(String, TaskStatus),
     Delete(String),
+    Rename(String, String),
+    CancelRename,
     Start(String, StartResourceRequest),
     Resume(String, String),
     Stop(String, String),
+    /// Take a run off the task for good, rather than leaving it to be resumed.
+    DeleteResource(String, String),
+    ArmResourceDelete(String),
+    CancelResourceDelete,
     /// Bring a task's shell on screen, in a tab of its own.
     OpenShell {
         terminal_id: String,
@@ -114,9 +122,11 @@ fn draw_composer(
     actions: &mut Vec<BoardAction>,
 ) {
     let available = available_agents(app);
-    // An agent that has since left the machine would silently start nothing.
-    if !available.contains(&app.model.board.new_agent) {
-        app.model.board.new_agent = AgentKind::None;
+    // The agent the review's selector is on, which is the one this machine last used. An
+    // agent that has since left it would silently start nothing.
+    let mut agent = app.selected_agent();
+    if !available.contains(&agent) {
+        agent = AgentKind::None;
     }
 
     egui::Frame::new()
@@ -142,18 +152,20 @@ fn draw_composer(
 
             let ready = !app.model.board.new_title.trim().is_empty();
             ui.horizontal(|ui| {
+                let mut picked = agent;
                 egui::ComboBox::from_id_salt("moontasks-new-agent")
-                    .selected_text(agent_label(app.model.board.new_agent))
+                    .selected_text(agent_label(agent))
                     .width(104.0)
                     .show_ui(ui, |ui| {
-                        for agent in &available {
-                            ui.selectable_value(
-                                &mut app.model.board.new_agent,
-                                *agent,
-                                agent_label(*agent),
-                            );
+                        for option in &available {
+                            ui.selectable_value(&mut picked, *option, agent_label(*option));
                         }
                     });
+                // Picking here is picking for the review too — one choice, remembered in one
+                // place, rather than a second agent living beside it.
+                if picked != agent {
+                    actions.push(BoardAction::SelectAgent(picked));
+                }
 
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
                     if close_button(ui, palette)
@@ -362,10 +374,50 @@ fn draw_column(
     ui.add_space(6.0);
 }
 
+/// One card, and the drag that carries it between columns.
+///
+/// The card is picked up by its title, but what moves is the whole box: while a drag is in
+/// flight the card is drawn into a layer of its own and that layer is moved to the cursor,
+/// which is how `egui`'s own drag sources work. Sensing the drag on the title alone is what
+/// leaves the buttons underneath clickable — anything sensing a drag claims everything under
+/// it.
 fn draw_card(
     app: &mut App,
     ui: &mut Ui,
     task: &TaskView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let drag_id = egui::Id::new(("moontask-card", &task.id));
+    if !ui.ctx().is_being_dragged(drag_id) {
+        draw_card_body(app, ui, task, drag_id, palette, actions);
+        return;
+    }
+
+    egui::DragAndDrop::set_payload(ui.ctx(), DraggedTask(task.id.clone()));
+
+    let layer_id = egui::LayerId::new(egui::Order::Tooltip, drag_id);
+    let card = ui
+        .scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+            draw_card_body(app, ui, task, drag_id, palette, actions);
+        })
+        .response;
+
+    // The card is laid out where it belongs and then moved: a widget has to have a place
+    // before it can be drawn, and nothing in a dragged card is interactive anyway.
+    if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+        ui.ctx().transform_layer_shapes(
+            layer_id,
+            egui::emath::TSTransform::from_translation(pointer - card.rect.center()),
+        );
+    }
+}
+
+fn draw_card_body(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    drag_id: egui::Id,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -376,11 +428,13 @@ fn draw_card(
         .inner_margin(egui::Margin::symmetric(8, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            draw_card_title(app, ui, task, palette, actions);
+            draw_card_title(app, ui, task, drag_id, palette, actions);
             ui.add_space(3.0);
 
+            let removing = app.model.board.pending_resource_delete.clone();
             for resource in &task.resources {
-                draw_resource(ui, task, resource, palette, actions);
+                let pending = removing.as_deref() == Some(resource.id.as_str());
+                draw_resource(ui, task, resource, pending, palette, actions);
             }
             if !task.resources.is_empty() {
                 ui.add_space(3.0);
@@ -390,58 +444,121 @@ fn draw_card(
         });
 }
 
-/// The card's title, and the mark that deletes it — up here beside the title rather than
-/// among the actions, which is where a close mark sits on a tab.
+/// The card's title — the handle it is dragged by, the box it is renamed in, and the mark
+/// that deletes it, which sits up here the way a tab's close mark does.
 fn draw_card_title(
     app: &mut App,
     ui: &mut Ui,
     task: &TaskView,
+    drag_id: egui::Id,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
     let pending_delete = app.model.board.pending_delete.as_deref() == Some(task.id.as_str());
-    // The title is what a card is picked up by. The buttons below it stay clickable that way:
-    // a drag source claims everything under it, so it is kept off them.
+    let editing = app.model.board.renaming.as_ref().is_some_and(|rename| rename.task_id == task.id);
     let handle_width = ui.available_width() - CLOSE_MARK_SIZE - ui.spacing().item_spacing.x;
 
     ui.horizontal(|ui| {
-        ui.dnd_drag_source(
-            egui::Id::new(("moontask-card", &task.id)),
-            DraggedTask(task.id.clone()),
-            |ui| {
-                // The whole width up to the close mark, so the card is easy to grab rather
-                // than only grabbable on the letters of its title.
-                ui.set_min_width(handle_width.max(0.0));
-                ui.add(
-                    egui::Label::new(RichText::new(&task.title).color(palette.ink).strong())
-                        .selectable(false),
-                );
-            },
-        )
-        .response
-        .on_hover_text(&task.dir_path);
+        if editing {
+            draw_title_editor(app, ui, task, handle_width, actions);
+        } else {
+            draw_title_handle(app, ui, task, drag_id, handle_width, palette, actions);
+        }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            // The folder and everything an agent left in it goes, so it takes two presses:
-            // the quiet cross first, then a word that says what is about to happen.
-            let pressed = if pending_delete {
-                widgets::quiet_button_colored(ui, "delete?", palette.warn)
-                    .on_hover_text("Press again to delete the task folder")
-                    .clicked()
-            } else {
-                close_button(ui, palette)
-                    .on_hover_text("Delete this task and its folder")
-                    .clicked()
-            };
-            if pressed {
-                if pending_delete {
-                    actions.push(BoardAction::Delete(task.id.clone()));
-                } else {
-                    app.model.board.pending_delete = Some(task.id.clone());
+            // The folder and everything an agent left in it goes, so the cross asks first —
+            // the same two-press shape discarding a hunk has.
+            if pending_delete {
+                match widgets::confirm(
+                    ui,
+                    palette,
+                    "[really delete]",
+                    "this deletes the task folder and everything in it, and cannot be undone",
+                ) {
+                    widgets::Confirmed::Yes => {
+                        app.model.board.pending_delete = None;
+                        actions.push(BoardAction::Delete(task.id.clone()));
+                    }
+                    widgets::Confirmed::No => app.model.board.pending_delete = None,
+                    widgets::Confirmed::Waiting => {}
                 }
+            } else if close_button(ui, palette)
+                .on_hover_text("Delete this task and its folder")
+                .clicked()
+            {
+                app.model.board.pending_delete = Some(task.id.clone());
             }
         });
     });
+}
+
+/// The title as it usually reads: what the card is dragged by, and what a double click opens
+/// for renaming.
+fn draw_title_handle(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    drag_id: egui::Id,
+    handle_width: f32,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let _ = actions;
+    let laid_out = ui
+        .scope(|ui| {
+            // The whole width up to the close mark, so the card is easy to grab rather than
+            // only grabbable on the letters of its title.
+            ui.set_min_width(handle_width.max(0.0));
+            ui.add(
+                egui::Label::new(RichText::new(&task.title).color(palette.ink).strong())
+                    .selectable(false),
+            );
+        })
+        .response;
+
+    let handle = ui
+        .interact(laid_out.rect, drag_id, egui::Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::Grab)
+        .on_hover_text(&task.dir_path);
+
+    if handle.double_clicked() {
+        app.model.board.renaming = Some(crate::native::model::TaskRename {
+            task_id: task.id.clone(),
+            title: task.title.clone(),
+            focus: true,
+        });
+    }
+}
+
+/// The title being renamed. Enter keeps it, Escape and clicking away throw it away.
+fn draw_title_editor(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    handle_width: f32,
+    actions: &mut Vec<BoardAction>,
+) {
+    let Some(rename) = &mut app.model.board.renaming else {
+        return;
+    };
+    let entry = ui.add_sized(
+        vec2(handle_width.max(40.0), ui.spacing().interact_size.y),
+        egui::TextEdit::singleline(&mut rename.title).hint_text("Task title"),
+    );
+    if std::mem::take(&mut rename.focus) {
+        entry.request_focus();
+    }
+
+    let title = rename.title.clone();
+    let keep = entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let abandon = ui.input(|input| input.key_pressed(egui::Key::Escape))
+        || (entry.lost_focus() && !keep);
+
+    if keep && !title.trim().is_empty() {
+        actions.push(BoardAction::Rename(task.id.clone(), title));
+    } else if abandon || keep {
+        actions.push(BoardAction::CancelRename);
+    }
 }
 
 /// One shell or agent run of a task: what it is, whether it is still going, and the way back
@@ -450,6 +567,7 @@ fn draw_resource(
     ui: &mut Ui,
     task: &TaskView,
     resource: &TaskResourceView,
+    pending_delete: bool,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -479,6 +597,34 @@ fn draw_resource(
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+            // Furthest right, so the two that keep the run are never the one you mean to
+            // press and miss. Removing a run is not undoable either, so it asks first.
+            if pending_delete {
+                match widgets::confirm(
+                    ui,
+                    palette,
+                    "[really remove]",
+                    "this ends the run and takes it off the task for good",
+                ) {
+                    widgets::Confirmed::Yes => actions.push(BoardAction::DeleteResource(
+                        task.id.clone(),
+                        resource.id.clone(),
+                    )),
+                    widgets::Confirmed::No => actions.push(BoardAction::CancelResourceDelete),
+                    widgets::Confirmed::Waiting => {}
+                }
+                return;
+            }
+            if close_button(ui, palette)
+                .on_hover_text(if resource.running {
+                    "End this run and take it off the task"
+                } else {
+                    "Take this run off the task"
+                })
+                .clicked()
+            {
+                actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
+            }
             if resource.running {
                 if widgets::quiet_button_colored(ui, "stop", palette.muted)
                     .on_hover_text("End this shell, keeping the run to come back to")
@@ -598,7 +744,7 @@ fn apply(app: &mut App, action: BoardAction) {
         BoardAction::Create => {
             let request = CreateTaskRequest {
                 title: app.model.board.new_title.trim().to_string(),
-                agent: app.model.board.new_agent,
+                agent: app.selected_agent(),
             };
             if request.title.is_empty() {
                 return;
@@ -609,6 +755,13 @@ fn apply(app: &mut App, action: BoardAction) {
             act(app, "could not create the task", move |backend| {
                 backend.create_task(&session_id, &request).map(|_| ())
             });
+        }
+        BoardAction::SelectAgent(agent) => {
+            let root = session_id.clone();
+            app.tasks
+                .act(&session_id, "could not switch agent", move |backend| {
+                    backend.set_agent(&root, agent)
+                });
         }
         BoardAction::SetStatus(task_id, status) => {
             act(app, "could not move the task", move |backend| {
@@ -678,6 +831,23 @@ fn apply(app: &mut App, action: BoardAction) {
                 backend.stop_task_resource(&session_id, &task_id, &resource_id)
             });
         }
+        BoardAction::ArmResourceDelete(resource_id) => {
+            app.model.board.pending_resource_delete = Some(resource_id);
+        }
+        BoardAction::CancelResourceDelete => app.model.board.pending_resource_delete = None,
+        BoardAction::DeleteResource(task_id, resource_id) => {
+            app.model.board.pending_resource_delete = None;
+            act(app, "could not remove it", move |backend| {
+                backend.delete_task_resource(&session_id, &task_id, &resource_id)
+            });
+        }
+        BoardAction::Rename(task_id, title) => {
+            app.model.board.renaming = None;
+            act(app, "could not rename the task", move |backend| {
+                backend.rename_task(&session_id, &task_id, &title)
+            });
+        }
+        BoardAction::CancelRename => app.model.board.renaming = None,
         BoardAction::OpenShell {
             terminal_id,
             command,

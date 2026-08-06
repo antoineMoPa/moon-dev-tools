@@ -81,6 +81,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
     ) -> Result<String>;
     fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str)
     -> Result<()>;
+    /// Take a run off the task for good, rather than leaving it to be resumed.
+    fn delete_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<()>;
+    fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;

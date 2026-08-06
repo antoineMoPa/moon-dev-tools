@@ -406,6 +406,24 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn delete_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        resource_id: &str,
+    ) -> Result<()> {
+        self.delete(&format!(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}"
+        ))
+    }
+
+    fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/title"),
+            &json!({ "title": title }),
+        )
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         #[derive(serde::Deserialize)]
         struct Created {
