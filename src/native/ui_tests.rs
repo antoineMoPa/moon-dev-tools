@@ -64,8 +64,8 @@ impl Fixture {
     fn new(name: &str) -> Self {
         // The repo's directory name is what the header shows, so it is fixed; only the
         // enclosing directory carries what makes this run unique.
-        let enclosing = std::env::temp_dir()
-            .join(format!("moonreview-ui-{}-{name}", std::process::id()));
+        let enclosing =
+            std::env::temp_dir().join(format!("moonreview-ui-{}-{name}", std::process::id()));
         let root = enclosing.join("repo");
         let _ = fs::remove_dir_all(&enclosing);
         fs::create_dir_all(&root).expect("failed to create the fixture directory");
@@ -102,7 +102,9 @@ impl Fixture {
             fs::create_dir_all(parent).expect("failed to create the fixture subdirectory");
         }
         let picture = image::RgbaImage::from_pixel(24, 16, image::Rgba(color));
-        picture.save(&path).expect("failed to write the fixture image");
+        picture
+            .save(&path)
+            .expect("failed to write the fixture image");
     }
 
     fn commit(&self, message: &str) {
@@ -206,7 +208,10 @@ fn seeded_fixture(name: &str) -> Fixture {
         "src/lib.rs",
         "pub fn greet(name: &str) -> String {\n    format!(\"hello {name}\")\n}\n\npub fn total(values: &[u32]) -> u32 {\n    values.iter().sum()\n}\n",
     );
-    fixture.write("README.md", "# fixture\n\nA repo that exists to be reviewed.\n");
+    fixture.write(
+        "README.md",
+        "# fixture\n\nA repo that exists to be reviewed.\n",
+    );
     fixture.commit("Add the library");
 
     // Uncommitted work: an edited line, a new line, and a whole new file.
@@ -249,13 +254,17 @@ fn a_shell_that_exits_closes_its_tab() {
     let terminal_id =
         crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
             .expect("expected a shell to start");
-    let attachment =
-        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
-            .expect("expected to attach to the shell");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
     let pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start")
         .with_label(terminal_id.clone());
-    pane.send(b"exit\n").expect("expected to write to the shell");
+    pane.send(b"exit\n")
+        .expect("expected to write to the shell");
 
     // The window is built around that shell: one review tab and one shell tab.
     let launch = Launch {
@@ -559,7 +568,10 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(loaded.load(Ordering::Relaxed), "the file never loaded");
-    assert!(!dirty.load(Ordering::Relaxed), "a freshly opened file is clean");
+    assert!(
+        !dirty.load(Ordering::Relaxed),
+        "a freshly opened file is clean"
+    );
 
     *edit.lock().expect("poisoned") = Some("pub fn two() {}\n".to_string());
     harness.run_steps(2);
@@ -584,7 +596,10 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    assert!(!dirty.load(Ordering::Relaxed), "saving should clear the mark");
+    assert!(
+        !dirty.load(Ordering::Relaxed),
+        "saving should clear the mark"
+    );
     assert_eq!(
         fs::read_to_string(fixture.root.join("src/lib.rs")).expect("failed to read"),
         "pub fn two() {}\n",
@@ -762,9 +777,12 @@ fn dropping_a_tab_at_the_window_edge_makes_a_column_beside_every_frame() {
             {
                 let frame = app.model.layout.active_frame();
                 let moved = app.model.layout.add_pane(frame, Pane::Agents, None);
-                app.model
-                    .layout
-                    .move_pane_to_frame(moved, frame, egui_frames::DropSide::Bottom, None);
+                app.model.layout.move_pane_to_frame(
+                    moved,
+                    frame,
+                    egui_frames::DropSide::Bottom,
+                    None,
+                );
                 stacked_in_ui.store(true, Ordering::Relaxed);
             }
 
@@ -1127,8 +1145,16 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // uuid, and the point here is a picture that is the same on every run.
     for (task_id, title, status) in [
         ("write-the-parser-1111", "Write the parser", "todo"),
-        ("fix-the-login-page-2222", "Fix the login page", "in_progress"),
-        ("drop-the-old-api-3333", "Drop the old API", "in_local_review"),
+        (
+            "fix-the-login-page-2222",
+            "Fix the login page",
+            "in_progress",
+        ),
+        (
+            "drop-the-old-api-3333",
+            "Drop the old API",
+            "in_local_review",
+        ),
     ] {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
@@ -1163,7 +1189,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             if compose_in_ui.load(Ordering::Relaxed) {
-                app.model.board.composer_open = true;
+                app.model.board.composer_in = Some(crate::moontasks::ColumnId::new("todo"));
             }
             app.draw(ui);
             ready_in_ui.store(
@@ -1291,7 +1317,10 @@ fn a_card_dropped_above_another_takes_its_place() {
     ]);
     harness.step();
     for at in [start + egui::vec2(0.0, -20.0), end] {
-        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(at));
         harness.step();
     }
     // A few frames with the pointer where it is: the slot a card is being held over is worked
@@ -1393,7 +1422,11 @@ fn a_long_task_title_is_cut_into_its_column() {
              chance to rename everything around it while we are here",
             "todo",
         ),
-        ("fix-the-login-page-2222", "Fix the login page", "in_progress"),
+        (
+            "fix-the-login-page-2222",
+            "Fix the login page",
+            "in_progress",
+        ),
     ] {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
@@ -1469,11 +1502,8 @@ fn each_executable_opens_on_its_own_frame() {
                 let mut app = app;
                 move |ui| {
                     app.draw(ui);
-                    *opened_in_ui.lock().expect("poisoned") = app
-                        .model
-                        .layout
-                        .active_pane()
-                        .map(|(_, pane)| pane.kind());
+                    *opened_in_ui.lock().expect("poisoned") =
+                        app.model.layout.active_pane().map(|(_, pane)| pane.kind());
                 }
             });
 
@@ -1530,12 +1560,13 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
 
             if let Some(task) = app.model.board.tasks.first() {
                 ready_in_ui.store(true, Ordering::Relaxed);
-                let title = ui.ctx().read_response(egui::Id::new((
-                    "moontask-card",
-                    &task.id,
-                )));
+                let title = ui
+                    .ctx()
+                    .read_response(egui::Id::new(("moontask-card", &task.id)));
                 *seen_in_ui.lock().expect("poisoned") = (
-                    title.map(|response| response.rect).unwrap_or(egui::Rect::NOTHING),
+                    title
+                        .map(|response| response.rect)
+                        .unwrap_or(egui::Rect::NOTHING),
                     task.status.to_string(),
                 );
             }
@@ -1553,7 +1584,10 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
 
     let (handle, status) = seen.lock().expect("poisoned").clone();
     assert_eq!(status, "todo", "the card starts in TODO");
-    assert!(handle.is_positive(), "the card's drag handle was never drawn");
+    assert!(
+        handle.is_positive(),
+        "the card's drag handle was never drawn"
+    );
 
     // One column to the right, which is IN PROGRESS.
     let onto = handle.center() + egui::vec2(COLUMN_STRIDE, 40.0);
@@ -1682,7 +1716,13 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         harness.step();
-        if seen.lock().expect("poisoned").order.first().map(String::as_str) == Some("in_progress")
+        if seen
+            .lock()
+            .expect("poisoned")
+            .order
+            .first()
+            .map(String::as_str)
+            == Some("in_progress")
         {
             break;
         }
@@ -1759,9 +1799,9 @@ fn the_command_palette_lists_what_can_be_opened() {
 /// egui's bundled fonts cover a small icon set and nothing more: sun, moon, arrow and tick
 /// characters are all absent. Anything not in here has to be drawn or spelled out.
 const CHROME_GLYPHS: &str = concat!(
-    "\u{23F5}\u{23F7}", // collapse arrows
-    "+",                  // open a pane
-    "\u{00B7}\u{2212}", // separator, minus sign
+    "\u{23F5}\u{23F7}",         // collapse arrows
+    "+",                        // open a pane
+    "\u{00B7}\u{2212}",         // separator, minus sign
     "\u{2039}\u{203A}\u{00D7}", // the find bar's previous, next and close
     "\u{23F4}\u{23F5}",         // the board's move-a-card-along arrows
     // The command key is the one modifier the bundled fonts have a glyph for; the rest of a
@@ -1821,8 +1861,8 @@ fn a_terminal_pane_runs_a_shell_and_shows_its_output() {
         crate::backend::Backend::attach_terminal(&backend, &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
 
-    let mut pane = egui_tty::Terminal::new(attachment)
-        .expect("expected the terminal emulator to start");
+    let mut pane =
+        egui_tty::Terminal::new(attachment).expect("expected the terminal emulator to start");
 
     // A login shell prints a prompt first; the marker is what this waits for.
     pane.send(b"printf 'moonreview-ok\\n'\n")
@@ -2007,20 +2047,23 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
     click_at(&mut harness, rect.center());
 
     {
-    let state = seen.lock().expect("expected state");
-    assert_eq!(
-        state.selected_lines, 1,
-        "clicking a diff line selects exactly that line"
-    );
-    let selection = state
-        .draft_selection
-        .clone()
-        .expect("clicking a line must open the composer");
-    assert_eq!(
-        selection, expected,
-        "the comment must be anchored to the exact line that was clicked"
-    );
-    assert!(state.draft_is_focused, "the composer should be ready to type in");
+        let state = seen.lock().expect("expected state");
+        assert_eq!(
+            state.selected_lines, 1,
+            "clicking a diff line selects exactly that line"
+        );
+        let selection = state
+            .draft_selection
+            .clone()
+            .expect("clicking a line must open the composer");
+        assert_eq!(
+            selection, expected,
+            "the comment must be anchored to the exact line that was clicked"
+        );
+        assert!(
+            state.draft_is_focused,
+            "the composer should be ready to type in"
+        );
     }
 
     // And the composer is on screen, not merely in the model.
@@ -2145,8 +2188,12 @@ fn command_w_closes_the_tab_in_front() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
-            *panes_in_ui.lock().expect("the pane list is poisoned") =
-                app.model.layout.panes().map(|(pane_id, _)| pane_id).collect();
+            *panes_in_ui.lock().expect("the pane list is poisoned") = app
+                .model
+                .layout
+                .panes()
+                .map(|(pane_id, _)| pane_id)
+                .collect();
             ready_in_ui.store(
                 app.model
                     .review_ref(&app.model.root_session_id)
@@ -2178,7 +2225,10 @@ fn command_w_closes_the_tab_in_front() {
     harness.run_steps(2);
 
     assert!(
-        panes_left.lock().expect("the pane list is poisoned").is_empty(),
+        panes_left
+            .lock()
+            .expect("the pane list is poisoned")
+            .is_empty(),
         "⌘W should have closed the review pane"
     );
 
@@ -2192,16 +2242,12 @@ fn command_w_closes_the_tab_in_front() {
 
 /// Whether the window asked to be closed, which is what quitting looks like from in here.
 fn asked_to_close(harness: &Harness<'_>) -> bool {
-    harness
-        .output()
-        .viewport_output
-        .values()
-        .any(|viewport| {
-            viewport
-                .commands
-                .iter()
-                .any(|command| matches!(command, egui::ViewportCommand::Close))
-        })
+    harness.output().viewport_output.values().any(|viewport| {
+        viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close))
+    })
 }
 
 /// Press and release the primary button at a position, then let the UI settle.
@@ -2320,7 +2366,10 @@ fn dragging_across_diff_lines_selects_the_run() {
     ]);
     harness.step();
     for at in [start + egui::vec2(0.0, 6.0), end] {
-        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(at));
         harness.step();
     }
     harness.input_mut().events.push(egui::Event::PointerButton {
@@ -2348,7 +2397,9 @@ fn dragging_across_diff_lines_selects_the_run() {
         "the comment is anchored to every swept line, got {selection:?}"
     );
     // The anchor text is raw patch lines, which is what a partial stage matches against.
-    let expected: Vec<&str> = (from..=to).map(|index| lines[index].text.as_str()).collect();
+    let expected: Vec<&str> = (from..=to)
+        .map(|index| lines[index].text.as_str())
+        .collect();
     assert_eq!(selection, expected.join("\n"));
     drop(state);
 
@@ -2394,13 +2445,12 @@ fn a_held_comment_is_what_the_batch_send_moves() {
         .expect("expected a line to anchor to")
         .text;
 
-    let comment = crate::comments::build_anchored_comment_value(&[
-        crate::comments::AnchoredComment {
+    let comment =
+        crate::comments::build_anchored_comment_value(&[crate::comments::AnchoredComment {
             selection: anchor,
             comment: "this needs a second look".to_string(),
             resolved: false,
-        },
-    ]);
+        }]);
 
     // Held back, with no agent picked: nothing may be dispatched yet.
     crate::backend::Backend::set_comment(
@@ -2416,7 +2466,11 @@ fn a_held_comment_is_what_the_batch_send_moves() {
 
     let held = crate::backend::Backend::session_state(&backend, &session_id)
         .expect("expected the review state");
-    assert_eq!(held.review_comments.len(), 1, "the comment should be stored");
+    assert_eq!(
+        held.review_comments.len(),
+        1,
+        "the comment should be stored"
+    );
     assert_eq!(
         held.review_comments[0].dispatch.status,
         CommentDispatchStatus::Batched,
@@ -2440,7 +2494,6 @@ fn a_held_comment_is_what_the_batch_send_moves() {
         "a refused send leaves the comment held"
     );
 }
-
 
 /// A diff of many hunks only lays out the cards on screen, but a jump to a hunk still has to
 /// reach one that is nowhere near the viewport.
@@ -2516,7 +2569,6 @@ fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
         "jumping should have drawn the hunk and made it the active one"
     );
 }
-
 
 /// The sidebar's staging dot is also the control for it, the way the web sidebar's status
 /// badge is: one click stages the whole file, the next one takes it back out of the index.
@@ -2640,9 +2692,12 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
     let terminal_id =
         crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
             .expect("expected a shell to start");
-    let attachment =
-        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
-            .expect("expected to attach to the shell");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
     let pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start")
         .with_label(terminal_id.clone());
@@ -2761,7 +2816,11 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
     harness.run_steps(3);
 
     let (frame_ids, active) = frames.lock().expect("poisoned").clone();
-    assert_eq!(frame_ids.len(), 2, "the test needs two frames to walk between");
+    assert_eq!(
+        frame_ids.len(),
+        2,
+        "the test needs two frames to walk between"
+    );
     let active = active.expect("expected a frame to have the keyboard");
     let started_at = frame_ids
         .iter()
@@ -2784,7 +2843,11 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
     press_key(&mut harness, egui::Key::X, egui::Modifiers::CTRL);
     press_key(&mut harness, egui::Key::O, egui::Modifiers::NONE);
     let (_, wrapped) = frames.lock().expect("poisoned").clone();
-    assert_eq!(wrapped, Some(active), "the walk wraps round at the last frame");
+    assert_eq!(
+        wrapped,
+        Some(active),
+        "the walk wraps round at the last frame"
+    );
 }
 
 /// Press and release a key, then let the UI settle.
@@ -2821,9 +2884,12 @@ fn dragging_over_a_shell_selects_its_text() {
     let terminal_id =
         crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
             .expect("expected a shell to start");
-    let attachment =
-        crate::backend::Backend::attach_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
-            .expect("expected to attach to the shell");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
     let pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start")
         .with_label(terminal_id.clone());
@@ -3002,7 +3068,10 @@ fn drag_from_to(harness: &mut Harness<'_>, from: egui::Pos2, to: egui::Pos2) {
     // A few steps along the way, so the drag is a sweep rather than a jump.
     for step in 1..=4 {
         let towards = from + (to - from) * (step as f32 / 4.0);
-        harness.input_mut().events.push(egui::Event::PointerMoved(towards));
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(towards));
         harness.step();
     }
 
@@ -3023,7 +3092,7 @@ const SHELL_GLYPHS: &str = concat!(
     "\u{280B}\u{2819}\u{2839}\u{2838}\u{283C}\u{2834}\u{2826}\u{2827}\u{2807}\u{280F}", // the braille spinner
     "\u{28FE}\u{28FD}\u{28FB}\u{28BF}\u{287F}\u{28DF}\u{28EF}\u{28F7}", // and the fuller one
     "\u{2714}\u{2716}\u{26A1}\u{23F3}\u{231B}\u{1F504}", // tick, cross, bolt, hourglasses, refresh
-    "\u{1F311}\u{1F312}\u{1F313}\u{1F314}\u{1F315}", // the moon phases some tools spin
+    "\u{1F311}\u{1F312}\u{1F313}\u{1F314}\u{1F315}",     // the moon phases some tools spin
 );
 
 #[test]
@@ -3180,8 +3249,8 @@ fn a_shell_stays_readable_across_a_theme_round_trip() {
     let attachment =
         crate::backend::Backend::attach_terminal(&backend, &opened.session_id, &terminal_id)
             .expect("expected to attach to the shell");
-    let mut pane = egui_tty::Terminal::new(attachment)
-        .expect("expected the terminal emulator to start");
+    let mut pane =
+        egui_tty::Terminal::new(attachment).expect("expected the terminal emulator to start");
 
     pane.set_color_scheme(egui_tty::ColorScheme::Dark);
     let dark = pane.drawn_colors().expect("expected the shell's colors");

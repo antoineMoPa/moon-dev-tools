@@ -147,10 +147,10 @@ pub(crate) struct BoardState {
     pub(crate) columns: Vec<crate::moontasks::BoardColumn>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
-    /// Whether the new-task box is open in the leftmost column, and the title being typed into
-    /// it. The agent it will start is not here: that is the one the review's selector holds,
-    /// so picking one on the board and picking one in the review are the same choice.
-    pub(crate) composer_open: bool,
+    /// The column the new-task box is open in, and the title being typed into it. The agent
+    /// it will start is not here: that is the one the review's selector holds, so picking one
+    /// on the board and picking one in the review are the same choice.
+    pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) composer_focus: bool,
     pub(crate) new_title: String,

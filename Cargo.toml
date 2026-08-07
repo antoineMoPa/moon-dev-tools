@@ -46,8 +46,8 @@ egui = { version = "0.36", optional = true }
 egui_extras = { version = "0.36", features = ["image"], optional = true }
 # The tab, split and terminal widgets, kept as crates of their own: submodules under crates/,
 # published separately, and used here like any other dependency.
-egui_frames = { version = "0.1", path = "crates/egui_frames", features = ["serde"], optional = true }
-egui_tty = { version = "0.1", path = "crates/egui_tty", optional = true }
+egui_frames = { version = "0.2", path = "crates/egui_frames", features = ["serde"], optional = true }
+egui_tty = { version = "0.2", path = "crates/egui_tty", optional = true }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"], optional = true }
 libc = "0.2"

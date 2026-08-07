@@ -15,9 +15,7 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, ve
 
 use crate::{
     api::AgentKind,
-    moontasks::{
-        BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
-    },
+    moontasks::{BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
         model::{OpenedShell, PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
@@ -38,9 +36,11 @@ pub(super) const CLOSE_MARK_SIZE: f32 = 12.0;
 /// What a click on the board asked for. Collected while drawing and acted on afterwards, so
 /// nothing changes the pane tree or the task list while either is being read.
 pub(super) enum BoardAction {
-    OpenComposer,
+    /// Open the new-task box in this column.
+    OpenComposer(ColumnId),
     CloseComposer,
-    Create,
+    /// Create the typed task in this column — the one the composer is open in.
+    Create(ColumnId),
     /// Point the review — and so the next task — at another agent.
     SelectAgent(AgentKind),
     /// A card let go of in a column, at the place among its cards it was dropped.
@@ -139,10 +139,9 @@ fn draw_column_row(
     // Where each column ended up, for working out what a dragged one is being held over. The
     // dragged one is left out: it is on the cursor rather than where it was laid out.
     let mut headings: Vec<(ColumnId, f32)> = Vec::new();
-    for (index, column) in order.iter().enumerate() {
-        let is_first = index == 0;
+    for column in &order {
         let rect = columns::with_column_drag(app, ui, column, origin, |app, ui| {
-            draw_column(app, ui, column, is_first, height, palette, actions)
+            draw_column(app, ui, column, height, palette, actions)
         });
         if Some(&column.id) != dragged.as_ref() {
             headings.push((column.id.clone(), rect.center().x));
@@ -186,13 +185,14 @@ fn draw_column_row(
     }
 }
 
-/// The new-task box, which the `+` on the TODO column opens.
+/// The new-task box, which the `+` on a column's heading opens.
 ///
 /// It is a card in the column it will add to, in the place the new card will appear, rather
 /// than a row over the whole board: what is being written is a card.
 fn draw_composer(
     app: &mut App,
     ui: &mut Ui,
+    column: &ColumnId,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -253,13 +253,13 @@ fn draw_composer(
                         .on_hover_text("Create the task and start the agent on it")
                         .clicked()
                     {
-                        actions.push(BoardAction::Create);
+                        actions.push(BoardAction::Create(column.clone()));
                     }
                 });
             });
 
             if submitted && ready {
-                actions.push(BoardAction::Create);
+                actions.push(BoardAction::Create(column.clone()));
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 actions.push(BoardAction::CloseComposer);
@@ -367,8 +367,7 @@ pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
 pub(super) fn plus_button(ui: &mut Ui, palette: &Palette) -> egui::Response {
     const DIAMETER: f32 = 15.0;
 
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(DIAMETER, DIAMETER), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(DIAMETER, DIAMETER), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let (fill, ink) = if response.hovered() {
             (palette.control_active_bg, palette.ink)
@@ -392,7 +391,6 @@ fn draw_column(
     app: &mut App,
     ui: &mut Ui,
     column: &BoardColumn,
-    is_first: bool,
     height: f32,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
@@ -407,107 +405,107 @@ fn draw_column(
         vec2(COLUMN_WIDTH, height),
         UiLayout::top_down(Align::Min),
         |ui| {
-        ui.set_width(COLUMN_WIDTH);
-        columns::draw_heading(app, ui, column, tasks.len(), is_first, palette, actions);
-        ui.add_space(3.0);
+            ui.set_width(COLUMN_WIDTH);
+            columns::draw_heading(app, ui, column, tasks.len(), palette, actions);
+            ui.add_space(3.0);
 
-        let composing = is_first && app.model.board.composer_open;
+            let composing = app.model.board.composer_in.as_ref() == Some(&column.id);
 
-        // Where a drop would land, counted against the cards it would be put among — so the
-        // slot the dragged card is standing in is taken back out of the reckoning, and moving
-        // the pointer over a card cannot bounce between two answers.
-        let mut cards: Vec<egui::Rect> = Vec::new();
-        let mut slot = 0.0;
-        let mut zone = egui::Frame::new()
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(4))
-            .begin(ui);
-        {
-            let ui = &mut zone.content_ui;
-            ScrollArea::vertical()
-                .id_salt(format!("moontasks-column-{status}"))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    // What a card's place is measured against, so scrolling the column is not
-                    // read as every card in it having moved.
-                    let origin = ui.min_rect().top();
-                    if composing {
-                        draw_composer(app, ui, palette, actions);
-                    }
-                    for task in &tasks {
-                        let card = draw_card(app, ui, task, origin, palette, actions);
-                        if Some(task.id.as_str()) == dragged_id.as_deref() {
-                            draw_empty_slot(ui, card, palette);
-                            slot = card.height() + CARD_SPACING;
-                        } else {
-                            cards.push(card.translate(vec2(0.0, -slot)));
-                        }
-                        ui.add_space(CARD_SPACING);
-                    }
-                    if tasks.is_empty() && !composing {
-                        ui.label(
-                            RichText::new("nothing here")
-                                .size(SMALL_SIZE)
-                                .color(palette.muted),
-                        );
-                    }
-                });
-        }
-        let response = zone.allocate_space(ui);
-
-        // Which column the pointer is in, worked out from the pointer rather than taken from
-        // the response: egui hit-tests a frame behind, on the widgets the last frame drew, and
-        // a column that has just taken the dragged card in is not the column it hit-tested.
-        let ghost = dragged_id
-            .as_deref()
-            .map(|task_id| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(task_id)));
-        let over = ghost.is_some() && pointer_over(ui, &response, ghost);
-        let landing = over
-            .then(|| ui.ctx().pointer_interact_pos())
-            .flatten()
-            .map(|pointer| {
-                cards
-                    .iter()
-                    .filter(|card| card.center().y < pointer.y)
-                    .count()
-            });
-        if over {
-            zone.frame.fill = palette.control_active_bg;
-            zone.frame.stroke = egui::Stroke::new(1.0, palette.accent);
-        }
-        zone.paint(ui);
-
-        if let Some(at) = landing {
-            // Read by the next frame, which draws the card in this slot rather than in the
-            // one it was picked up from.
-            app.model.board.landing = Some(TaskLanding {
-                status: status.clone(),
-                index: at,
-            });
-
-            if ui.input(|input| input.pointer.any_released())
-                && let Some(dragged) = egui::DragAndDrop::take_payload::<DraggedTask>(ui.ctx())
+            // Where a drop would land, counted against the cards it would be put among — so the
+            // slot the dragged card is standing in is taken back out of the reckoning, and moving
+            // the pointer over a card cannot bounce between two answers.
+            let mut cards: Vec<egui::Rect> = Vec::new();
+            let mut slot = 0.0;
+            let mut zone = egui::Frame::new()
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(egui::Margin::same(4))
+                .begin(ui);
             {
-                // The card is already drawn where it landed; this marks it there for a
-                // moment, because one let go of between two others is hard to pick back out.
-                app.model.board.dropped = Some(TaskDropped {
-                    task_id: dragged.0.clone(),
-                    at: ui.input(|input| input.time),
+                let ui = &mut zone.content_ui;
+                ScrollArea::vertical()
+                    .id_salt(format!("moontasks-column-{status}"))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // What a card's place is measured against, so scrolling the column is not
+                        // read as every card in it having moved.
+                        let origin = ui.min_rect().top();
+                        if composing {
+                            draw_composer(app, ui, &status, palette, actions);
+                        }
+                        for task in &tasks {
+                            let card = draw_card(app, ui, task, origin, palette, actions);
+                            if Some(task.id.as_str()) == dragged_id.as_deref() {
+                                draw_empty_slot(ui, card, palette);
+                                slot = card.height() + CARD_SPACING;
+                            } else {
+                                cards.push(card.translate(vec2(0.0, -slot)));
+                            }
+                            ui.add_space(CARD_SPACING);
+                        }
+                        if tasks.is_empty() && !composing {
+                            ui.label(
+                                RichText::new("nothing here")
+                                    .size(SMALL_SIZE)
+                                    .color(palette.muted),
+                            );
+                        }
+                    });
+            }
+            let response = zone.allocate_space(ui);
+
+            // Which column the pointer is in, worked out from the pointer rather than taken from
+            // the response: egui hit-tests a frame behind, on the widgets the last frame drew, and
+            // a column that has just taken the dragged card in is not the column it hit-tested.
+            let ghost = dragged_id
+                .as_deref()
+                .map(|task_id| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(task_id)));
+            let over = ghost.is_some() && pointer_over(ui, &response, ghost);
+            let landing = over
+                .then(|| ui.ctx().pointer_interact_pos())
+                .flatten()
+                .map(|pointer| {
+                    cards
+                        .iter()
+                        .filter(|card| card.center().y < pointer.y)
+                        .count()
                 });
-                app.model.board.landing = None;
-                // The board is redrawn from the server's answer, which is a worker thread and
-                // a poll away: the move is made here as well, and held over every answer
-                // until one of them agrees, so the card stays where it was put rather than
-                // springing back and landing a second time.
-                app.model.board.pending_place = Some(PendingPlace {
-                    task_id: dragged.0.clone(),
+            if over {
+                zone.frame.fill = palette.control_active_bg;
+                zone.frame.stroke = egui::Stroke::new(1.0, palette.accent);
+            }
+            zone.paint(ui);
+
+            if let Some(at) = landing {
+                // Read by the next frame, which draws the card in this slot rather than in the
+                // one it was picked up from.
+                app.model.board.landing = Some(TaskLanding {
                     status: status.clone(),
                     index: at,
                 });
-                place_in(&mut app.model.board.tasks, &dragged.0, &status, at);
-                actions.push(BoardAction::Place(dragged.0.clone(), status.clone(), at));
+
+                if ui.input(|input| input.pointer.any_released())
+                    && let Some(dragged) = egui::DragAndDrop::take_payload::<DraggedTask>(ui.ctx())
+                {
+                    // The card is already drawn where it landed; this marks it there for a
+                    // moment, because one let go of between two others is hard to pick back out.
+                    app.model.board.dropped = Some(TaskDropped {
+                        task_id: dragged.0.clone(),
+                        at: ui.input(|input| input.time),
+                    });
+                    app.model.board.landing = None;
+                    // The board is redrawn from the server's answer, which is a worker thread and
+                    // a poll away: the move is made here as well, and held over every answer
+                    // until one of them agrees, so the card stays where it was put rather than
+                    // springing back and landing a second time.
+                    app.model.board.pending_place = Some(PendingPlace {
+                        task_id: dragged.0.clone(),
+                        status: status.clone(),
+                        index: at,
+                    });
+                    place_in(&mut app.model.board.tasks, &dragged.0, &status, at);
+                    actions.push(BoardAction::Place(dragged.0.clone(), status.clone(), at));
+                }
             }
-        }
         },
     )
     .response
@@ -611,25 +609,26 @@ fn apply(app: &mut App, action: BoardAction) {
     let session_id = app.model.root_session_id.clone();
 
     match action {
-        BoardAction::OpenComposer => {
-            app.model.board.composer_open = true;
+        BoardAction::OpenComposer(column_id) => {
+            app.model.board.composer_in = Some(column_id);
             app.model.board.composer_focus = true;
         }
         BoardAction::CloseComposer => {
-            app.model.board.composer_open = false;
+            app.model.board.composer_in = None;
             app.model.board.new_title.clear();
         }
-        BoardAction::Create => {
+        BoardAction::Create(column_id) => {
             let request = CreateTaskRequest {
                 title: app.model.board.new_title.trim().to_string(),
                 agent: app.selected_agent(),
+                status: column_id,
             };
             if request.title.is_empty() {
                 return;
             }
             // The box closes on the way out: the card it was standing in for is on its way.
             app.model.board.new_title.clear();
-            app.model.board.composer_open = false;
+            app.model.board.composer_in = None;
             act(app, "could not create the task", move |backend| {
                 backend.create_task(&session_id, &request).map(|_| ())
             });

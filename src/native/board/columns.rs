@@ -12,8 +12,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark,
-            plus_button, slide_into_place, stamp_place,
+            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark, plus_button,
+            slide_into_place, stamp_place,
         },
         model::ColumnRename,
         theme::{Palette, SMALL_SIZE},
@@ -97,7 +97,6 @@ pub(super) fn draw_heading(
     ui: &mut Ui,
     column: &BoardColumn,
     cards: usize,
-    is_first: bool,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -107,8 +106,7 @@ pub(super) fn draw_heading(
         .renaming_column
         .as_ref()
         .is_some_and(|rename| rename.column_id == column.id);
-    let pending_delete =
-        app.model.board.pending_column_delete.as_ref() == Some(&column.id);
+    let pending_delete = app.model.board.pending_column_delete.as_ref() == Some(&column.id);
 
     ui.horizontal(|ui| {
         if editing {
@@ -141,21 +139,16 @@ pub(super) fn draw_heading(
                 let mark = if cards == 0 {
                     mark.on_hover_text("Remove this column from the board")
                 } else {
-                    mark.on_hover_text(
-                        "Move this column's cards elsewhere before removing it",
-                    )
+                    mark.on_hover_text("Move this column's cards elsewhere before removing it")
                 };
                 if mark.clicked() && cards == 0 {
                     app.model.board.pending_column_delete = Some(column.id.clone());
                 }
 
-                // New tasks join the leftmost column, so that is the one that offers one.
-                if is_first
-                    && plus_button(ui, palette)
-                        .on_hover_text("New task")
-                        .clicked()
-                {
-                    actions.push(BoardAction::OpenComposer);
+                // Every column offers a new task, and the card joins the column whose `+`
+                // asked for it.
+                if plus_button(ui, palette).on_hover_text("New task").clicked() {
+                    actions.push(BoardAction::OpenComposer(column.id.clone()));
                 }
                 ui.label(
                     RichText::new(cards.to_string())
@@ -183,7 +176,11 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
         .rect;
 
     let handle = ui
-        .interact(laid_out, column_drag_id(&column.id), egui::Sense::click_and_drag())
+        .interact(
+            laid_out,
+            column_drag_id(&column.id),
+            egui::Sense::click_and_drag(),
+        )
         .on_hover_cursor(egui::CursorIcon::Grab)
         .on_hover_text("Drag to move this column, double click to rename it");
 
@@ -266,10 +263,7 @@ pub(super) fn with_column_drag(
     if let Some(pointer) = ui.ctx().pointer_interact_pos() {
         ui.ctx().transform_layer_shapes(
             layer_id,
-            egui::emath::TSTransform::from_translation(vec2(
-                pointer.x - laid_out.center().x,
-                0.0,
-            )),
+            egui::emath::TSTransform::from_translation(vec2(pointer.x - laid_out.center().x, 0.0)),
         );
     }
     laid_out

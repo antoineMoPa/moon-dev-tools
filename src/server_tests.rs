@@ -114,8 +114,14 @@ fn the_review_page_and_its_assets_are_served() {
         .expect("failed to fetch the review page");
     assert!(page.status().is_success());
     let html = page.text().expect("failed to read the review page");
-    assert!(html.contains("/assets/app.js"), "the page must load the bundle");
-    assert!(html.contains("/assets/app.css"), "the page must load the styles");
+    assert!(
+        html.contains("/assets/app.js"),
+        "the page must load the bundle"
+    );
+    assert!(
+        html.contains("/assets/app.css"),
+        "the page must load the styles"
+    );
 
     for (path, content_type, needle) in [
         ("/assets/app.js", "application/javascript", "moonreview"),
@@ -137,7 +143,10 @@ fn the_review_page_and_its_assets_are_served() {
         );
         let body = asset.text().expect("failed to read an asset");
         assert!(!body.is_empty(), "{path} should not be empty");
-        assert!(body.contains(needle), "{path} does not look like the bundle");
+        assert!(
+            body.contains(needle),
+            "{path} does not look like the bundle"
+        );
     }
 }
 
@@ -148,7 +157,10 @@ fn the_api_the_web_frontend_calls_still_answers() {
 
     let state: serde_json::Value = served
         .client
-        .get(format!("{}/api/session/{session_id}/state", served.base_url))
+        .get(format!(
+            "{}/api/session/{session_id}/state",
+            served.base_url
+        ))
         .send()
         .expect("failed to fetch the session state")
         .error_for_status()
@@ -192,14 +204,17 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none" }))
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
         .send()
         .expect("failed to create a task")
         .error_for_status()
         .expect("the server refused to create a task")
         .json()
         .expect("failed to decode the task");
-    let task_id = created["id"].as_str().expect("expected a task id").to_string();
+    let task_id = created["id"]
+        .as_str()
+        .expect("expected a task id")
+        .to_string();
 
     assert!(task_id.starts_with("fix-the-login-page-"));
     assert_eq!(created["status"], "todo");
@@ -266,7 +281,9 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     // card rather than sitting there as a run that can never be reopened.
     served
         .client
-        .post(format!("{tasks_url}/{task_id}/resources/{resource_id}/stop"))
+        .post(format!(
+            "{tasks_url}/{task_id}/resources/{resource_id}/stop"
+        ))
         .json(&serde_json::json!({}))
         .send()
         .expect("failed to close the shell")
@@ -310,7 +327,12 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     // The review a card opens is the repo's, not anything inside the task folder.
     assert_eq!(
         renamed[0]["repo_path"],
-        served.root.canonicalize().expect("expected a path").display().to_string()
+        served
+            .root
+            .canonicalize()
+            .expect("expected a path")
+            .display()
+            .to_string()
     );
 
     served
@@ -330,7 +352,12 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
         .expect("failed to delete the task")
         .error_for_status()
         .expect("the server refused to delete the task");
-    assert!(board(&served).as_array().expect("expected an array").is_empty());
+    assert!(
+        board(&served)
+            .as_array()
+            .expect("expected an array")
+            .is_empty()
+    );
 }
 
 /// Cards keep the order they were put in, which is the order the board reads them back in.
@@ -344,14 +371,17 @@ fn cards_are_dropped_where_they_are_let_go_of() {
         let created: serde_json::Value = served
             .client
             .post(&tasks_url)
-            .json(&serde_json::json!({ "title": title, "agent": "none" }))
+            .json(&serde_json::json!({ "title": title, "agent": "none", "status": "todo" }))
             .send()
             .expect("failed to create a task")
             .error_for_status()
             .expect("the server refused to create a task")
             .json()
             .expect("failed to decode the task");
-        created["id"].as_str().expect("expected a task id").to_string()
+        created["id"]
+            .as_str()
+            .expect("expected a task id")
+            .to_string()
     };
     // A column, read out of the board in the order the board hands it over.
     let column = |status: &str| -> Vec<String> {
@@ -367,7 +397,12 @@ fn cards_are_dropped_where_they_are_let_go_of() {
             .expect("expected an array")
             .iter()
             .filter(|task| task["status"] == status)
-            .map(|task| task["title"].as_str().expect("expected a title").to_string())
+            .map(|task| {
+                task["title"]
+                    .as_str()
+                    .expect("expected a title")
+                    .to_string()
+            })
             .collect()
     };
     let place = |task_id: &str, status: &str, position: usize| {
@@ -442,7 +477,10 @@ fn the_columns_are_the_boards_to_change() {
             .map(|column| {
                 (
                     column["id"].as_str().expect("expected an id").to_string(),
-                    column["label"].as_str().expect("expected a label").to_string(),
+                    column["label"]
+                        .as_str()
+                        .expect("expected a label")
+                        .to_string(),
                 )
             })
             .collect()
@@ -497,11 +535,11 @@ fn the_columns_are_the_boards_to_change() {
     let renamed = read("after renaming");
     assert_eq!(renamed[0], ("todo".to_string(), "BACKLOG".to_string()));
 
-    // A card made now still lands in the leftmost column, whatever it is called.
+    // A card is made in the column the request names, whatever that column is called now.
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none" }))
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -544,7 +582,13 @@ fn the_columns_are_the_boards_to_change() {
         .expect("the server refused to move the column");
     assert_eq!(
         ids(&read("after moving")),
-        ["in_progress", "in_local_review", "todo", "in_remote_review", "done"]
+        [
+            "in_progress",
+            "in_local_review",
+            "todo",
+            "in_remote_review",
+            "done"
+        ]
     );
 
     let board: serde_json::Value = served

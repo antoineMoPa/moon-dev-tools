@@ -114,11 +114,6 @@ impl BoardConfig {
         let id = ColumnId::new(role);
         self.has(&id).then_some(id)
     }
-
-    /// The column a new card is added to, which is the leftmost one there is.
-    pub(crate) fn first(&self) -> Option<ColumnId> {
-        self.columns.first().map(|column| column.id.clone())
-    }
 }
 
 /// Whether a resource is a plain shell or an agent working on the task.
@@ -261,7 +256,8 @@ pub(crate) fn list_task_ids(repo_path: &Path) -> Result<Vec<String>> {
     }
 
     let mut ids = Vec::new();
-    for entry in fs::read_dir(&root).with_context(|| format!("failed to read {}", root.display()))?
+    for entry in
+        fs::read_dir(&root).with_context(|| format!("failed to read {}", root.display()))?
     {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
@@ -297,23 +293,23 @@ pub(crate) fn write_task(repo_path: &Path, task_id: &str, metadata: &TaskMetadat
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
-/// Create a task folder and return the id it was given.
-pub(crate) fn create_task(repo_path: &Path, title: &str) -> Result<String> {
+/// Create a task folder in the given column and return the id it was given.
+pub(crate) fn create_task(repo_path: &Path, title: &str, status: &ColumnId) -> Result<String> {
     let title = title.trim();
     if title.is_empty() {
         bail!("a task needs a title");
     }
+    // A card in a column the board does not have has nowhere to be drawn, so the mistake is
+    // refused here rather than written down.
+    if !read_board(repo_path).has(status) {
+        bail!("the board has no {status} column");
+    }
     let task_id = format!("{}-{}", slug_of(title), new_uuid());
-    // A new card joins the bottom of the leftmost column, which is where TODO is on a board
-    // nobody has rearranged.
-    let status = read_board(repo_path)
-        .first()
-        .context("the board has no columns to put a task in")?;
     let metadata = TaskMetadata {
         title: title.to_string(),
         created_at_unix: now_unix(),
-        position: next_position(repo_path, &status),
-        status,
+        position: next_position(repo_path, status),
+        status: status.clone(),
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
@@ -443,7 +439,8 @@ mod tests {
     fn a_created_task_reads_back_and_lists() {
         let repo = temp_repo("roundtrip");
 
-        let task_id = create_task(&repo, "Fix the login page").expect("expected a task");
+        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
+            .expect("expected a task");
         assert!(task_id.starts_with("fix-the-login-page-"));
 
         let metadata = read_task(&repo, &task_id).expect("expected metadata");
@@ -470,7 +467,7 @@ mod tests {
     fn a_new_board_ignores_itself() {
         let repo = temp_repo("gitignore");
 
-        create_task(&repo, "Fix the login page").expect("expected a task");
+        create_task(&repo, "Fix the login page", &ColumnId::new("todo")).expect("expected a task");
 
         let ignore = tasks_root(&repo).join(".gitignore");
         let text = fs::read_to_string(&ignore).expect("expected a .gitignore");
@@ -491,11 +488,11 @@ mod tests {
     #[test]
     fn a_board_that_has_been_shared_is_left_shared() {
         let repo = temp_repo("gitignore-removed");
-        create_task(&repo, "First").expect("expected a task");
+        create_task(&repo, "First", &ColumnId::new("todo")).expect("expected a task");
         let ignore = tasks_root(&repo).join(".gitignore");
         fs::remove_file(&ignore).expect("failed to remove the .gitignore");
 
-        create_task(&repo, "Second").expect("expected another task");
+        create_task(&repo, "Second", &ColumnId::new("todo")).expect("expected another task");
 
         assert!(!ignore.exists(), "the .gitignore should not have come back");
 
@@ -506,7 +503,8 @@ mod tests {
     #[test]
     fn the_boards_own_files_are_not_listed_as_tasks() {
         let repo = temp_repo("gitignore-listing");
-        let task_id = create_task(&repo, "Fix the login page").expect("expected a task");
+        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
+            .expect("expected a task");
 
         assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
 
@@ -566,7 +564,9 @@ mod tests {
     #[test]
     fn a_rule_whose_column_is_gone_points_nowhere() {
         let mut config = BoardConfig::default();
-        config.columns.retain(|column| column.id.as_str() != STARTS_IN);
+        config
+            .columns
+            .retain(|column| column.id.as_str() != STARTS_IN);
 
         assert_eq!(config.role(STARTS_IN), None);
         assert_eq!(config.role(REVIEWS_IN), Some(ColumnId::new(REVIEWS_IN)));
@@ -625,8 +625,13 @@ mod tests {
     #[test]
     fn a_board_with_no_columns_falls_back_on_the_defaults() {
         let repo = temp_repo("board-empty");
-        write_board(&repo, &BoardConfig { columns: Vec::new() })
-            .expect("expected the board to be written");
+        write_board(
+            &repo,
+            &BoardConfig {
+                columns: Vec::new(),
+            },
+        )
+        .expect("expected the board to be written");
 
         assert_eq!(read_board(&repo), BoardConfig::default());
 

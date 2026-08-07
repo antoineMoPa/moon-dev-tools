@@ -12,7 +12,9 @@ use crate::{
     git::agent_is_available,
     moontasks::{
         CreateTaskRequest, StartResourceRequest, TaskResourceView, TaskView, agent_launch,
-        store::{self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind},
+        store::{
+            self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
+        },
     },
     terminal::TerminalSpec,
 };
@@ -275,16 +277,13 @@ pub(crate) fn place_column(
     };
 
     let column = board.columns.remove(at);
-    board.columns.insert(position.min(board.columns.len()), column);
+    board
+        .columns
+        .insert(position.min(board.columns.len()), column);
     store::write_board(&repo_path, &board)
 }
 
-fn view_of(
-    state: &AppState,
-    repo_path: &Path,
-    task_id: &str,
-    metadata: &TaskMetadata,
-) -> TaskView {
+fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
     // Agent runs are the task's record and outlive the process; its shells are only ever the
     // ones open right now, so the two are listed from different places and merged by age.
     let mut resources: Vec<TaskResourceView> = metadata
@@ -304,19 +303,23 @@ fn view_of(
             started_at_unix: resource.started_at_unix,
         })
         .collect();
-    resources.extend(state.terminals.owned_shells(task_id).into_iter().map(
-        |shell| TaskResourceView {
-            // A shell is its terminal, so that is the name the board takes it off the task by.
-            id: shell.terminal_id.clone(),
-            kind: TaskResourceKind::Shell,
-            agent: AgentKind::None,
-            label: "shell".to_string(),
-            running: true,
-            terminal_id: Some(shell.terminal_id),
-            resumable: false,
-            started_at_unix: shell.started_at_unix,
-        },
-    ));
+    resources.extend(
+        state
+            .terminals
+            .owned_shells(task_id)
+            .into_iter()
+            .map(|shell| TaskResourceView {
+                // A shell is its terminal, so that is the name the board takes it off the task by.
+                id: shell.terminal_id.clone(),
+                kind: TaskResourceKind::Shell,
+                agent: AgentKind::None,
+                label: "shell".to_string(),
+                running: true,
+                terminal_id: Some(shell.terminal_id),
+                resumable: false,
+                started_at_unix: shell.started_at_unix,
+            }),
+    );
     resources.sort_by_key(|resource| resource.started_at_unix);
 
     TaskView {
@@ -339,7 +342,7 @@ pub(crate) fn create_task(
     request: &CreateTaskRequest,
 ) -> Result<TaskView> {
     let repo_path = repo_of(state, session_id)?;
-    let task_id = store::create_task(&repo_path, &request.title)?;
+    let task_id = store::create_task(&repo_path, &request.title, &request.status)?;
 
     // A task created with an agent starts working straight away, which is the whole point of
     // creating it here rather than making the folder by hand.

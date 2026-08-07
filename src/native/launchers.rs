@@ -14,7 +14,10 @@ use anyhow::{Context, Result, bail};
 
 use crate::{
     cli::{FRAMES, Frame},
-    native::programs::{executable_for, install_dir},
+    native::{
+        logos::logo_png,
+        programs::{executable_for, install_dir},
+    },
 };
 
 /// A launcher that was written, and where it landed.
@@ -59,23 +62,6 @@ pub(crate) fn destination_hint() -> String {
     platform::destination_hint()
 }
 
-/// The moon of the window icon, as a PNG of the given side length. Both platforms want the
-/// icon as a file, and the icon is generated rather than shipped, so it is encoded here.
-fn moon_png(size: usize) -> Result<Vec<u8>> {
-    use image::{ImageEncoder, codecs::png::PngEncoder};
-
-    let mut png = Vec::new();
-    PngEncoder::new(&mut png)
-        .write_image(
-            &super::moon_rgba(size),
-            size as u32,
-            size as u32,
-            image::ExtendedColorType::Rgba8,
-        )
-        .context("failed to encode the launcher icon")?;
-    Ok(png)
-}
-
 #[cfg(target_os = "macos")]
 mod platform {
     use std::{
@@ -86,7 +72,7 @@ mod platform {
 
     use anyhow::{Context, Result, bail};
 
-    use super::moon_png;
+    use super::logo_png;
     use crate::cli::Frame;
 
     /// Where the bundles go, in the order they are wanted: the shared folder every Finder
@@ -178,7 +164,7 @@ mod platform {
         .context("failed to write Info.plist")?;
         fs::write(
             resources_dir.join(format!("{}.icns", frame.program())),
-            icns()?,
+            icns(frame),
         )
         .context("failed to write the bundle icon")?;
 
@@ -195,6 +181,11 @@ mod platform {
                 .with_context(|| format!("failed to replace {}", link.display()))?;
         }
         symlink(executable, &link).with_context(|| format!("failed to link {}", link.display()))?;
+
+        // Finder and the Dock cache a bundle's icon against the bundle's own mtime, and
+        // rewriting the files inside it leaves that untouched — so a launcher whose icon
+        // changed kept showing the old one until the cache was flushed by hand.
+        let _ = std::process::Command::new("touch").arg(&bundle).status();
 
         // Launch Services reads a bundle when it is first opened, but a bundle rewritten in
         // place can leave it holding the old plist, and Spotlight showing nothing.
@@ -287,22 +278,22 @@ mod platform {
         )
     }
 
-    /// An `.icns`: the four-byte magic, the length of the whole file, then one length-prefixed
-    /// entry per size.
-    fn icns() -> Result<Vec<u8>> {
+    /// An `.icns` of the frame's logo: the four-byte magic, the length of the whole file,
+    /// then one length-prefixed entry per size.
+    fn icns(frame: Frame) -> Vec<u8> {
         let mut entries = Vec::new();
         for (icon_type, size) in ICNS_ENTRIES {
-            let png = moon_png(*size)?;
+            let png = logo_png(frame, *size);
             entries.extend_from_slice(*icon_type);
             entries.extend_from_slice(&((png.len() + 8) as u32).to_be_bytes());
-            entries.extend_from_slice(&png);
+            entries.extend_from_slice(png);
         }
 
         let mut icns = Vec::with_capacity(entries.len() + 8);
         icns.extend_from_slice(b"icns");
         icns.extend_from_slice(&((entries.len() + 8) as u32).to_be_bytes());
         icns.extend_from_slice(&entries);
-        Ok(icns)
+        icns
     }
 }
 
@@ -315,7 +306,7 @@ mod platform {
 
     use anyhow::{Context, Result};
 
-    use super::moon_png;
+    use super::logo_png;
     use crate::cli::Frame;
 
     pub(super) fn destination_hint() -> String {
@@ -344,7 +335,7 @@ mod platform {
 
         fs::write(
             icon_dir.join(format!("{}.png", frame.program())),
-            moon_png(ICON_SIZE)?,
+            logo_png(frame, ICON_SIZE),
         )
         .context("failed to write the launcher icon")?;
 

@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "egui_frames"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "serde",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "egui_tty"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "libghostty-vt",

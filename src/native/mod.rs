@@ -8,6 +8,7 @@ pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
 pub(crate) mod launchers;
+pub(crate) mod logos;
 pub(crate) mod menu;
 pub(crate) mod model;
 pub(crate) mod palette;
@@ -124,71 +125,18 @@ pub(crate) fn launch_prompt(frame: crate::cli::Frame) -> Result<Launch> {
     })
 }
 
-/// The window icon: a crescent moon, generated rather than shipped as a file.
-///
-/// The dock, the task switcher and the title bar all want an icon, and a generated one keeps
-/// the executable self-contained — the whole point of this frontend.
-fn icon() -> egui::IconData {
-    const SIZE: usize = 64;
-
-    egui::IconData {
-        rgba: moon_rgba(SIZE),
-        width: SIZE as u32,
-        height: SIZE as u32,
-    }
-}
-
-/// The same moon as RGBA pixels, at whatever side length the caller draws it at: the window
-/// icon is small, and the launcher icons written for the OS are larger.
-pub(crate) fn moon_rgba(size: usize) -> Vec<u8> {
-    // The dark disc and the lighter crescent, taken from the app's own dark palette.
-    let backdrop = [0x10u8, 0x14, 0x1c];
-    let moon = [0xee_u8, 0x8d, 0x68];
-
-    let mut rgba = vec![0u8; size * size * 4];
-    let center = (size as f32 - 1.0) / 2.0;
-    let disc = center * 0.94;
-    // The bite taken out of the disc, offset up and to the right.
-    let bite_center = (center + disc * 0.45, center - disc * 0.25);
-    let bite = disc * 0.80;
-
-    // Feathering is one pixel of the 64-wide window icon, and scales with the larger sizes so
-    // the edge stays as soft at every one of them.
-    let feather = size as f32 / 64.0;
-
-    for y in 0..size {
-        for x in 0..size {
-            let (fx, fy) = (x as f32, y as f32);
-            let from_center = ((fx - center).powi(2) + (fy - center).powi(2)).sqrt();
-            let from_bite = ((fx - bite_center.0).powi(2) + (fy - bite_center.1).powi(2)).sqrt();
-
-            // Feathering keeps the edges from looking sawn off.
-            let inside = ((disc - from_center) / feather).clamp(0.0, 1.0);
-            let outside_bite = ((from_bite - bite) / feather).clamp(0.0, 1.0);
-            let coverage = inside * outside_bite;
-
-            let at = (y * size + x) * 4;
-            rgba[at..at + 3].copy_from_slice(if coverage > 0.5 { &moon } else { &backdrop });
-            // The backdrop is only drawn where the disc is, so the icon is a round moon.
-            rgba[at + 3] = (inside * 255.0) as u8;
-        }
-    }
-
-    rgba
-}
-
 pub(crate) fn run(launch: Launch) -> Result<()> {
     // Which project it is on is only known once the session opens, and the window says so
     // then; until then it is named after the executable alone.
     let title = app::window_title(launch.frame, None);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            // The crescent stands in for the app's mark, which the tab strip no longer carries.
             .with_title(title)
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([720.0, 420.0])
             .with_app_id("moonreview")
-            .with_icon(icon()),
+            // Each executable wears its own logo, which is also what its launcher carries.
+            .with_icon(logos::window_icon(launch.frame)),
         persist_window: true,
         ..Default::default()
     };

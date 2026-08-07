@@ -46,7 +46,11 @@ const TITLE_ROWS: usize = 3;
 /// A card being dragged is one of them from the moment it is over the column, and no longer
 /// one of the column it came from: the board makes the move as it is being made rather than
 /// once it is over, so nothing jumps when the card is let go of.
-pub(super) fn column_cards(app: &App, status: &ColumnId, dragged_id: Option<&str>) -> Vec<TaskView> {
+pub(super) fn column_cards(
+    app: &App,
+    status: &ColumnId,
+    dragged_id: Option<&str>,
+) -> Vec<TaskView> {
     let landing = app.model.board.landing.clone();
     // Until the pointer has been over a column there is nowhere for the card to be but where
     // it came from, and taking it out of the board for that first frame reads as a flicker.
@@ -57,9 +61,7 @@ pub(super) fn column_cards(app: &App, status: &ColumnId, dragged_id: Option<&str
         .board
         .tasks
         .iter()
-        .filter(|task| {
-            task.status == *status && !(taken && Some(task.id.as_str()) == dragged_id)
-        })
+        .filter(|task| task.status == *status && !(taken && Some(task.id.as_str()) == dragged_id))
         .cloned()
         .collect();
 
@@ -101,8 +103,11 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
         if landed {
             model.board.pending_place = None;
         } else {
-            let (task_id, status, index) =
-                (pending.task_id.clone(), pending.status.clone(), pending.index);
+            let (task_id, status, index) = (
+                pending.task_id.clone(),
+                pending.status.clone(),
+                pending.index,
+            );
             place_in(&mut tasks, &task_id, &status, index);
         }
     }
@@ -221,10 +226,7 @@ fn dropped_stroke(app: &App, ui: &Ui, task: &TaskView, palette: &Palette) -> egu
     }
     // The fade is drawn frame by frame, so it needs frames to be drawn in.
     ui.ctx().request_repaint();
-    egui::Stroke::new(
-        1.0 + left,
-        palette.line.lerp_to_gamma(palette.warn, left),
-    )
+    egui::Stroke::new(1.0 + left, palette.line.lerp_to_gamma(palette.warn, left))
 }
 
 fn draw_card_body(
@@ -271,7 +273,12 @@ fn draw_card_title(
     actions: &mut Vec<BoardAction>,
 ) {
     let pending_delete = app.model.board.pending_delete.as_deref() == Some(task.id.as_str());
-    let editing = app.model.board.renaming.as_ref().is_some_and(|rename| rename.task_id == task.id);
+    let editing = app
+        .model
+        .board
+        .renaming
+        .as_ref()
+        .is_some_and(|rename| rename.task_id == task.id);
     let handle_width = ui.available_width() - CLOSE_MARK_SIZE - ui.spacing().item_spacing.x;
 
     ui.horizontal(|ui| {
@@ -475,12 +482,7 @@ fn draw_resource(
     });
 }
 
-fn draw_card_actions(
-    app: &mut App,
-    ui: &mut Ui,
-    task: &TaskView,
-    actions: &mut Vec<BoardAction>,
-) {
+fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
     let agents: Vec<AgentKind> = available_agents(app)
         .into_iter()
         .filter(|agent| *agent != AgentKind::None)
@@ -513,7 +515,7 @@ fn draw_card_actions(
         // The same bracketed action as the other two, opening onto which agent to run: the
         // menu is built from the button rather than the other way round, so it can be one.
         if !agents.is_empty() {
-            egui::containers::menu::MenuButton::from_button(
+            let (button, _) = egui::containers::menu::MenuButton::from_button(
                 egui::Button::new("[new agent]").frame(false),
             )
             .ui(ui, |ui| {
@@ -530,6 +532,7 @@ fn draw_card_actions(
                     }
                 }
             });
+            widgets::clickable(button);
         }
     });
 }

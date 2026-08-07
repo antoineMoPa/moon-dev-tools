@@ -42,6 +42,11 @@ const QUIT_CONFIRM_WINDOW: Duration =
 /// is a directory walk, and a card moves at the pace an agent works rather than a keystroke.
 const BOARD_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
+/// How many frames from startup the window-theme command is repeated over — see
+/// [`theme::apply_window_theme`]. Enough frames for the window to be fully up, and few enough
+/// to be over in the blink the window takes to appear.
+const WINDOW_THEME_FRAMES: u8 = 5;
+
 /// What the window was asked to do with its tabs this frame. Both the menu bar and the
 /// keyboard can ask, and on macOS one ⌘W can arrive as both, so the request is a single slot
 /// that is acted on once a frame rather than a call made from wherever it came in.
@@ -98,6 +103,9 @@ pub(crate) struct App {
     /// Set whenever the palette has to be pushed into the context it is drawing into, which
     /// is the first frame and every theme switch.
     needs_style: bool,
+    /// Frames still to repeat the window-theme command over — see
+    /// [`theme::apply_window_theme`] for why once is not enough.
+    window_theme_frames: u8,
     /// Whether the context being drawn into has egui's image loaders. Installing them twice
     /// would stack a second copy of each, so this is set once and never cleared.
     loaders_installed: bool,
@@ -191,6 +199,7 @@ impl App {
             decoded_images: HashMap::new(),
             keymap: Keymap::default(),
             needs_style: true,
+            window_theme_frames: WINDOW_THEME_FRAMES,
             loaders_installed: false,
             fonts_installed: false,
             had_panes: false,
@@ -1094,6 +1103,10 @@ impl App {
         if self.needs_style {
             theme::apply(ctx, self.model.theme);
             self.needs_style = false;
+        }
+        if self.window_theme_frames > 0 {
+            self.window_theme_frames -= 1;
+            theme::apply_window_theme(ctx, self.model.theme);
         }
         if !self.loaders_installed {
             egui_extras::install_image_loaders(ctx);

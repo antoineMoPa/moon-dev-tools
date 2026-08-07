@@ -52,9 +52,11 @@ pub(crate) struct StartResourceRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CreateTaskRequest {
     pub(crate) title: String,
-    /// The agent to start on the task straight away. `None` leaves the task in TODO with
-    /// nothing running.
+    /// The agent to start on the task straight away. `None` leaves the task sitting in its
+    /// column with nothing running.
     pub(crate) agent: AgentKind,
+    /// The column the new card joins — the one whose `+` opened the composer.
+    pub(crate) status: ColumnId,
 }
 
 #[derive(Serialize, Deserialize)]
