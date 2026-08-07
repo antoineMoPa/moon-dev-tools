@@ -3,10 +3,7 @@
 //! Like [`crate::service`], this is synchronous and takes `&AppState`, so the native window
 //! calls it directly and the axum routes are a thin skin over the same functions.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
@@ -14,11 +11,8 @@ use crate::{
     api::{AgentKind, AppState},
     git::agent_is_available,
     moontasks::{
-        CreateTaskRequest, OPENCODE_CONFIG_FILE_NAME, StartResourceRequest, TaskResourceView,
-        TaskView, agent_launch,
-        store::{
-            self, MCP_CONFIG_FILE_NAME, TaskMetadata, TaskResource, TaskResourceKind, TaskStatus,
-        },
+        CreateTaskRequest, StartResourceRequest, TaskResourceView, TaskView, agent_launch,
+        store::{self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind},
     },
     terminal::TerminalSpec,
 };
@@ -36,6 +30,7 @@ fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
 /// is being opened again after a restart.
 pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskView>> {
     let repo_path = repo_of(state, session_id)?;
+    let board = store::read_board(&repo_path);
     let mut tasks = Vec::new();
 
     for task_id in store::list_task_ids(&repo_path)? {
@@ -44,7 +39,7 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
             // rest of the board is still worth showing.
             continue;
         };
-        if reconcile(state, &mut metadata) {
+        if reconcile(state, &board, &mut metadata) {
             store::write_task(&repo_path, &task_id, &metadata)?;
         }
         tasks.push((
@@ -72,13 +67,18 @@ pub(crate) fn place_task(
     state: &AppState,
     session_id: &str,
     task_id: &str,
-    status: TaskStatus,
+    status: ColumnId,
     position: usize,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
+    let board = store::read_board(&repo_path);
+    if !board.has(&status) {
+        bail!("{status} is not a column of this board");
+    }
+
     let mut moved = store::read_task(&repo_path, task_id)?;
-    release_a_finished_task(state, task_id, &mut moved, status);
-    moved.status = status;
+    release_a_finished_task(state, &board, task_id, &mut moved, &status);
+    moved.status = status.clone();
 
     // The cards already in that column, in the order the board draws them.
     let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(&repo_path)?
@@ -107,7 +107,7 @@ pub(crate) fn place_task(
 
 /// Bring a task's record in line with the shells the server actually has, and return whether
 /// anything changed.
-fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
+fn reconcile(state: &AppState, board: &BoardConfig, metadata: &mut TaskMetadata) -> bool {
     let mut changed = false;
     let mut an_agent_finished = false;
 
@@ -124,12 +124,159 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
     }
 
     // An agent that has stopped working has, as far as the board is concerned, produced
-    // something to look at.
-    if an_agent_finished && metadata.status == TaskStatus::InProgress {
-        metadata.status = TaskStatus::InLocalReview;
+    // something to look at. Only from the column work is started into, and only if the board
+    // still has somewhere to send it — a board whose review column has been deleted moves
+    // nothing on its own rather than guessing.
+    if an_agent_finished
+        && let Some(starts_in) = board.role(store::STARTS_IN)
+        && let Some(reviews_in) = board.role(store::REVIEWS_IN)
+        && metadata.status == starts_in
+    {
+        metadata.status = reviews_in;
         changed = true;
     }
     changed
+}
+
+/// Move a task into the column work is started into, if it was still waiting to the left of it.
+///
+/// Starting an agent on a card that is already at or past that column leaves it where it is:
+/// picking work back up in review has not sent it back to being merely in progress. On a board
+/// whose started column has been deleted, nothing moves.
+fn mark_as_started(board: &BoardConfig, metadata: &mut TaskMetadata) {
+    let Some(starts_in) = board.role(store::STARTS_IN) else {
+        return;
+    };
+    let (Some(now_at), Some(starts_at)) = (
+        board.position_of(&metadata.status),
+        board.position_of(&starts_in),
+    ) else {
+        return;
+    };
+    if now_at < starts_at {
+        metadata.status = starts_in;
+    }
+}
+
+/// The board's columns, left to right.
+pub(crate) fn list_columns(state: &AppState, session_id: &str) -> Result<Vec<BoardColumn>> {
+    let repo_path = repo_of(state, session_id)?;
+    Ok(store::read_board(&repo_path).columns)
+}
+
+/// Add a column at the right-hand end of the board.
+///
+/// Its id is made from its name the same way a task folder's is, so the board file stays
+/// readable — and made unique, because two columns sharing an id would be one column with two
+/// headings and every card in either would be in both.
+pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Result<BoardColumn> {
+    let label = label.trim();
+    if label.is_empty() {
+        bail!("a column needs a name");
+    }
+
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+
+    let base = store::slug_of(label);
+    let mut id = ColumnId::new(base.clone());
+    for suffix in 2.. {
+        if !board.has(&id) {
+            break;
+        }
+        id = ColumnId::new(format!("{base}-{suffix}"));
+    }
+
+    let column = BoardColumn {
+        id,
+        label: label.to_string(),
+    };
+    board.columns.push(column.clone());
+    store::write_board(&repo_path, &board)?;
+    Ok(column)
+}
+
+/// Rename a column. The id is left alone, so every card in it stays in it.
+pub(crate) fn rename_column(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    label: &str,
+) -> Result<()> {
+    let label = label.trim();
+    if label.is_empty() {
+        bail!("a column needs a name");
+    }
+
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+    let Some(column) = board
+        .columns
+        .iter_mut()
+        .find(|column| column.id == *column_id)
+    else {
+        bail!("{column_id} is not a column of this board");
+    };
+    column.label = label.to_string();
+    store::write_board(&repo_path, &board)
+}
+
+/// Take a column off the board.
+///
+/// Only an empty one: a column holding cards is the only record of where those cards are, and
+/// deleting it would either lose them or move them somewhere nobody asked for. The board says
+/// as much rather than choosing on the user's behalf.
+pub(crate) fn delete_column(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+    if !board.has(column_id) {
+        bail!("{column_id} is not a column of this board");
+    }
+    if board.columns.len() == 1 {
+        bail!("a board needs a column to put its cards in");
+    }
+
+    let holding = store::list_task_ids(&repo_path)?
+        .iter()
+        .filter_map(|task_id| store::read_task(&repo_path, task_id).ok())
+        .filter(|metadata| metadata.status == *column_id)
+        .count();
+    if holding > 0 {
+        bail!(
+            "there {} still {holding} card{} in this column — move {} out first",
+            if holding == 1 { "is" } else { "are" },
+            if holding == 1 { "" } else { "s" },
+            if holding == 1 { "it" } else { "them" }
+        );
+    }
+
+    board.columns.retain(|column| column.id != *column_id);
+    store::write_board(&repo_path, &board)
+}
+
+/// Put a column at a place among the others, which is what dragging its heading does.
+///
+/// The cards go with it: a card names its column, so where the column is drawn is where its
+/// cards are drawn, and nothing about any of them has to be rewritten.
+pub(crate) fn place_column(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    position: usize,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+    let Some(at) = board.position_of(column_id) else {
+        bail!("{column_id} is not a column of this board");
+    };
+
+    let column = board.columns.remove(at);
+    board.columns.insert(position.min(board.columns.len()), column);
+    store::write_board(&repo_path, &board)
 }
 
 fn view_of(
@@ -175,7 +322,7 @@ fn view_of(
     TaskView {
         id: task_id.to_string(),
         title: metadata.title.clone(),
-        status: metadata.status,
+        status: metadata.status.clone(),
         created_at_unix: metadata.created_at_unix,
         dir_path: store::tasks_root(repo_path)
             .join(task_id)
@@ -212,35 +359,16 @@ pub(crate) fn create_task(
     Ok(view_of(state, &repo_path, &task_id, &metadata))
 }
 
-/// Move a task to another column, to the bottom of it.
-///
-/// This is the move that is not a drag — an agent reporting itself finished — and it has no
-/// place in the new column in mind, so the card joins the end of it.
-pub(crate) fn set_task_status(
-    state: &AppState,
-    session_id: &str,
-    task_id: &str,
-    status: TaskStatus,
-) -> Result<()> {
-    let repo_path = repo_of(state, session_id)?;
-    let mut metadata = store::read_task(&repo_path, task_id)?;
-    if metadata.status == status {
-        // Already in that column: nothing to move, and no column to renumber.
-        release_a_finished_task(state, task_id, &mut metadata, status);
-        return store::write_task(&repo_path, task_id, &metadata);
-    }
-    place_task(state, session_id, task_id, status, usize::MAX)
-}
-
 /// A finished task lets go of its shells. Until then they keep running with no tab open,
 /// which is what makes closing an agent's tab safe.
 fn release_a_finished_task(
     state: &AppState,
+    board: &BoardConfig,
     task_id: &str,
     metadata: &mut TaskMetadata,
-    status: TaskStatus,
+    status: &ColumnId,
 ) {
-    if status != TaskStatus::Done {
+    if board.role(store::RELEASES_SHELLS_IN).as_ref() != Some(status) {
         return;
     }
     state.terminals.remove_owned_by(task_id);
@@ -263,6 +391,7 @@ pub(crate) fn start_resource(
     request: StartResourceRequest,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
+    let board = store::read_board(&repo_path);
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let agent = match request.kind {
@@ -280,16 +409,13 @@ pub(crate) fn start_resource(
         .filter(|launch| launch.start.iter().any(|arg| arg.contains("{session}")))
         .map(|_| store::new_uuid());
 
-    let fillings = write_task_files(session_id, task_id, &repo_path, &metadata)?
-        .with_session(agent_session_id.as_deref());
-    let (args, mut env) = match launch {
-        Some(launch) => (
-            fillings.fill_all(launch.mcp.iter().chain(launch.start.iter())),
-            fillings.fill_env(launch.env),
-        ),
-        None => (Vec::new(), Vec::new()),
+    let fillings =
+        write_task_files(task_id, &repo_path, &metadata)?.with_session(agent_session_id.as_deref());
+    let args = match launch {
+        Some(launch) => fillings.fill_all(launch.start.iter()),
+        None => Vec::new(),
     };
-    env.extend(task_env(session_id, task_id, &repo_path));
+    let env = task_env(session_id, task_id, &repo_path);
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
@@ -317,9 +443,7 @@ pub(crate) fn start_resource(
             started_at_unix: store::now_unix(),
         });
         // Work has started, so the task is no longer waiting to be picked up.
-        if metadata.status == TaskStatus::Todo {
-            metadata.status = TaskStatus::InProgress;
-        }
+        mark_as_started(&board, &mut metadata);
         store::write_task(&repo_path, task_id, &metadata)?;
     }
 
@@ -334,6 +458,7 @@ pub(crate) fn resume_resource(
     resource_id: &str,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
+    let board = store::read_board(&repo_path);
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let Some(at) = metadata
@@ -356,16 +481,13 @@ pub(crate) fn resume_resource(
         bail!("{} is not installed here", resource.agent.label());
     }
 
-    let fillings = write_task_files(session_id, task_id, &repo_path, &metadata)?
+    let fillings = write_task_files(task_id, &repo_path, &metadata)?
         .with_session(resource.agent_session_id.as_deref());
-    let mut env = fillings.fill_env(launch.env);
-    env.extend(task_env(session_id, task_id, &repo_path));
-
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
         program: Some(resource.agent),
-        args: fillings.fill_all(launch.mcp.iter().chain(launch.resume.iter())),
-        env,
+        args: fillings.fill_all(launch.resume.iter()),
+        env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
@@ -373,9 +495,7 @@ pub(crate) fn resume_resource(
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
-    if metadata.status == TaskStatus::Todo {
-        metadata.status = TaskStatus::InProgress;
-    }
+    mark_as_started(&board, &mut metadata);
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -520,13 +640,6 @@ impl Fillings {
         }
         args
     }
-
-    fn fill_env(&self, template: &[(&'static str, &'static str)]) -> Vec<(String, String)> {
-        template
-            .iter()
-            .filter_map(|(name, value)| Some((name.to_string(), self.fill(value)?)))
-            .collect()
-    }
 }
 
 /// What every process started for a task is told about itself.
@@ -554,129 +667,45 @@ fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, S
 /// Write what an agent working in this task needs to read, and answer with everything its
 /// command line can be filled in from.
 ///
-/// The files are rewritten on every start rather than once at creation: they carry the review
-/// session and the address this run of moonreview is answering on, and neither survives a
-/// restart.
-fn write_task_files(
-    session_id: &str,
-    task_id: &str,
-    repo_path: &Path,
-    metadata: &TaskMetadata,
-) -> Result<Fillings> {
-    let executable = std::env::current_exe().context("failed to locate moonreview itself")?;
-    let executable = executable.display().to_string();
+/// The brief is rewritten on every start rather than once at creation, so a card that has been
+/// renamed starts its next agent on the name it has now.
+fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) -> Result<Fillings> {
     let dir = store::task_dir(repo_path, task_id)?;
-    let env = task_env(session_id, task_id, repo_path);
-
-    // Claude's shape, which is also the one a person would recognise.
-    let mcp_json = write_file(
-        &dir,
-        MCP_CONFIG_FILE_NAME,
-        &format!(
-            "{}\n",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "mcpServers": {
-                    "moontasks": {
-                        "command": executable,
-                        "args": ["mcp"],
-                        "env": env.iter().cloned().collect::<BTreeMap<_, _>>(),
-                    }
-                }
-            }))?
-        ),
-    )?;
-
-    // OpenCode's, which it reads whole rather than merging, so this is a config in its own
-    // right rather than an MCP fragment.
-    let mcp_opencode = write_file(
-        &dir,
-        OPENCODE_CONFIG_FILE_NAME,
-        &format!(
-            "{}\n",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "$schema": "https://opencode.ai/config.json",
-                "mcp": {
-                    "moontasks": {
-                        "type": "local",
-                        "command": [executable, "mcp"],
-                        "enabled": true,
-                        "environment": env.iter().cloned().collect::<BTreeMap<_, _>>(),
-                    }
-                }
-            }))?
-        ),
-    )?;
 
     let brief = super::brief_for(&metadata.title, &dir.display().to_string());
-    write_file(&dir, super::BRIEF_FILE_NAME, &format!("{brief}\n"))?;
+    let path = dir.join(super::BRIEF_FILE_NAME);
+    std::fs::write(&path, format!("{brief}\n"))
+        .with_context(|| format!("failed to write {}", path.display()))?;
 
     Ok(Fillings {
-        values: vec![
-            ("{exe}", toml_string(&executable)),
-            ("{mcp_json}", mcp_json.display().to_string()),
-            ("{mcp_opencode}", mcp_opencode.display().to_string()),
-            ("{mcp_env_toml}", toml_inline_table(&env)),
-            ("{brief}", brief),
-        ],
+        values: vec![("{brief}", brief)],
     })
-}
-
-fn write_file(dir: &Path, name: &str, contents: &str) -> Result<PathBuf> {
-    let path = dir.join(name);
-    std::fs::write(&path, contents)
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(path)
-}
-
-/// A TOML string, for a config value passed on a command line.
-fn toml_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// A TOML inline table of the same, which is how one `-c` override carries a whole map.
-fn toml_inline_table(entries: &[(String, String)]) -> String {
-    let pairs: Vec<String> = entries
-        .iter()
-        .map(|(name, value)| format!("{name} = {}", toml_string(value)))
-        .collect();
-    format!("{{ {} }}", pairs.join(", "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A run's fillings, without the files a real one writes.
+    /// A run's fillings, without the brief file a real one writes.
     fn fillings() -> Fillings {
         Fillings {
-            values: vec![
-                ("{exe}", "\"/bin/moonreview\"".to_string()),
-                ("{mcp_json}", "/repo/.moontasks/task/mcp.json".to_string()),
-                (
-                    "{mcp_opencode}",
-                    "/repo/.moontasks/task/opencode.json".to_string(),
-                ),
-                ("{mcp_env_toml}", "{ MOONREVIEW_TASK_ID = \"task\" }".to_string()),
-                ("{brief}", "the brief".to_string()),
-            ],
+            values: vec![("{brief}", "the brief".to_string())],
         }
     }
 
-    /// Claude is given the session id, its MCP server and the brief — and no prompt, so it
-    /// comes up knowing the task and waits to be told what to do about it.
+    /// Claude is given the session id and the brief — and no prompt, so it comes up knowing
+    /// the task and waits to be told what to do about it.
     #[test]
     fn an_agent_is_told_the_task_but_not_set_to_work() {
         let launch = agent_launch(AgentKind::Claude).expect("expected claude to be launchable");
 
         let args = fillings()
             .with_session(Some("11111111-2222-4333-8444-555555555555"))
-            .fill_all(launch.mcp.iter().chain(launch.start.iter()));
+            .fill_all(launch.start.iter());
 
         assert_eq!(
             args,
             [
-                "--mcp-config",
-                "/repo/.moontasks/task/mcp.json",
                 "--session-id",
                 "11111111-2222-4333-8444-555555555555",
                 "--append-system-prompt",
@@ -703,45 +732,18 @@ mod tests {
         assert_eq!(args, ["resume", "--last"]);
     }
 
-    /// Codex has no per-run config file, so its MCP server arrives as three `-c` overrides,
-    /// each one argument of `key=value`.
+    /// OpenCode and Codex are handed nothing at all on a fresh run: they come up in the repo
+    /// waiting, with the brief in the task folder for whoever needs it.
     #[test]
-    fn codex_is_given_its_mcp_server_as_config_overrides() {
-        let launch = agent_launch(AgentKind::Codex).expect("expected codex to be launchable");
+    fn an_agent_with_no_start_args_comes_up_waiting_rather_than_working() {
+        for kind in [AgentKind::Codex, AgentKind::OpenCode] {
+            let launch = agent_launch(kind).expect("expected the agent to be launchable");
 
-        let args = fillings().fill_all(launch.mcp.iter().chain(launch.start.iter()));
-
-        assert_eq!(
-            args,
-            [
-                "-c",
-                "mcp_servers.moontasks.command=\"/bin/moonreview\"",
-                "-c",
-                "mcp_servers.moontasks.args=[\"mcp\"]",
-                "-c",
-                "mcp_servers.moontasks.env={ MOONREVIEW_TASK_ID = \"task\" }",
-            ]
-        );
-    }
-
-    /// OpenCode reads its whole config from the file its environment names, so that is where
-    /// its MCP server comes from rather than from an argument.
-    #[test]
-    fn opencode_is_pointed_at_the_config_in_its_task_folder() {
-        let launch = agent_launch(AgentKind::OpenCode).expect("expected opencode to launch");
-        let fillings = fillings();
-
-        assert_eq!(
-            fillings.fill_env(launch.env),
-            [(
-                "OPENCODE_CONFIG".to_string(),
-                "/repo/.moontasks/task/opencode.json".to_string()
-            )]
-        );
-        assert!(
-            fillings.fill_all(launch.start.iter()).is_empty(),
-            "opencode should come up waiting rather than working"
-        );
+            assert!(
+                fillings().fill_all(launch.start.iter()).is_empty(),
+                "{kind:?} should come up waiting rather than working"
+            );
+        }
     }
 
     /// Starting an agent opens a conversation rather than firing a job off, so none of the
@@ -751,7 +753,7 @@ mod tests {
         for launch in crate::moontasks::AGENT_LAUNCHES {
             let args = fillings()
                 .with_session(Some("11111111-2222-4333-8444-555555555555"))
-                .fill_all(launch.mcp.iter().chain(launch.start.iter()));
+                .fill_all(launch.start.iter());
 
             assert!(
                 !args.iter().any(|arg| arg.contains("Fix the login page")),
@@ -761,28 +763,21 @@ mod tests {
         }
     }
 
-    /// The brief is the whole of why an agent reaches for the MCP server at all.
+    /// The brief names the task and says where its notes go, which is all an agent needs to
+    /// know beyond the work itself.
     #[test]
-    fn the_brief_names_the_task_and_the_tool_that_reports_it_finished() {
+    fn the_brief_names_the_task_and_its_folder() {
         let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
 
         assert!(brief.contains("Fix the login page"));
         assert!(brief.contains("/repo/.moontasks/task"));
-        assert!(brief.contains("moontasks_set_status"));
-        assert!(brief.contains("in_local_review"));
-    }
-
-    #[test]
-    fn a_path_with_a_quote_in_it_stays_one_toml_string() {
-        assert_eq!(toml_string(r#"/a "b"/c"#), r#""/a \"b\"/c""#);
-        assert_eq!(toml_string(r"C:\tools"), r#""C:\\tools""#);
     }
 
     #[test]
     fn a_finished_agent_moves_its_task_to_local_review() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: TaskStatus::InProgress,
+            status: ColumnId::new(store::STARTS_IN),
             created_at_unix: 0,
             position: 0,
             resources: vec![TaskResource {
@@ -799,12 +794,12 @@ mod tests {
             std::time::Instant::now(),
         )));
 
-        assert!(reconcile(&state, &mut metadata));
+        assert!(reconcile(&state, &BoardConfig::default(), &mut metadata));
 
-        assert_eq!(metadata.status, TaskStatus::InLocalReview);
+        assert_eq!(metadata.status, ColumnId::new(store::REVIEWS_IN));
         assert_eq!(metadata.resources[0].terminal_id, None);
         assert!(
-            !reconcile(&state, &mut metadata),
+            !reconcile(&state, &BoardConfig::default(), &mut metadata),
             "a settled task changes nothing on the next read"
         );
     }
@@ -813,7 +808,7 @@ mod tests {
     fn a_task_already_in_review_is_left_where_the_user_put_it() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: TaskStatus::InRemoteReview,
+            status: ColumnId::new("in_remote_review"),
             created_at_unix: 0,
             position: 0,
             resources: vec![TaskResource {
@@ -829,8 +824,82 @@ mod tests {
             std::time::Instant::now(),
         )));
 
-        assert!(reconcile(&state, &mut metadata), "the shell is still recorded");
+        assert!(
+            reconcile(&state, &BoardConfig::default(), &mut metadata),
+            "the shell is still recorded"
+        );
 
-        assert_eq!(metadata.status, TaskStatus::InRemoteReview);
+        assert_eq!(metadata.status, ColumnId::new("in_remote_review"));
+    }
+
+    /// A card the agent finished on a board whose review column has been deleted stays where
+    /// it is: the board would otherwise be choosing a column nobody asked for.
+    #[test]
+    fn a_finished_agent_moves_nothing_when_the_review_column_is_gone() {
+        let mut board = BoardConfig::default();
+        board
+            .columns
+            .retain(|column| column.id.as_str() != store::REVIEWS_IN);
+        let mut metadata = TaskMetadata {
+            title: "Fix the login page".to_string(),
+            status: ColumnId::new(store::STARTS_IN),
+            created_at_unix: 0,
+            position: 0,
+            resources: vec![TaskResource {
+                id: "resource".to_string(),
+                kind: TaskResourceKind::Agent,
+                agent: AgentKind::Claude,
+                terminal_id: Some("terminal-gone".to_string()),
+                agent_session_id: None,
+                started_at_unix: 0,
+            }],
+        };
+        let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
+            std::time::Instant::now(),
+        )));
+
+        // The shell is still let go of — that is about the shell, not about the column.
+        assert!(reconcile(&state, &board, &mut metadata));
+
+        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
+    }
+
+    /// Renaming a column leaves its id alone, so the rules that point at it still do.
+    #[test]
+    fn a_renamed_column_keeps_its_part_in_the_board_s_rules() {
+        let mut board = BoardConfig::default();
+        for column in &mut board.columns {
+            column.label = format!("{} (mine)", column.label);
+        }
+
+        let mut metadata = TaskMetadata {
+            title: "Fix the login page".to_string(),
+            status: ColumnId::new("todo"),
+            created_at_unix: 0,
+            position: 0,
+            resources: Vec::new(),
+        };
+
+        mark_as_started(&board, &mut metadata);
+
+        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
+    }
+
+    /// Starting an agent on a card that is already past the started column leaves it where it
+    /// is: picking work back up in review has not sent it back to being merely in progress.
+    #[test]
+    fn starting_an_agent_does_not_drag_a_card_backwards() {
+        let board = BoardConfig::default();
+        let mut metadata = TaskMetadata {
+            title: "Fix the login page".to_string(),
+            status: ColumnId::new(store::REVIEWS_IN),
+            created_at_unix: 0,
+            position: 0,
+            resources: Vec::new(),
+        };
+
+        mark_as_started(&board, &mut metadata);
+
+        assert_eq!(metadata.status, ColumnId::new(store::REVIEWS_IN));
     }
 }

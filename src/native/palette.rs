@@ -34,6 +34,8 @@ pub(crate) enum CommandAction {
     InstallLaunchers,
     /// Another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
+    /// Ask the OS which file of the repo to open for editing, and open it in a tab.
+    OpenFile,
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -90,6 +92,16 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::OpenPane(OpenPaneRequest::Terminal { command: None }),
         shortcut: bindings::chord_of(Action::NewShellTab),
     });
+    // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
+    // repo that lives on the far side of a `--remote` connection.
+    if app.backend().reads_this_machine() {
+        commands.push(Command {
+            title: "open file".to_string(),
+            description: "Open a file of the repo in a tab, to read and edit".to_string(),
+            action: CommandAction::OpenFile,
+            shortcut: None,
+        });
+    }
 
     // Another window of each program that is installed beside this one, opening on its
     // launch screen. The board, the review and a shell are three windows rather than three

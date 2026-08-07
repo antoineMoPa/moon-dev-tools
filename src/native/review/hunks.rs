@@ -62,6 +62,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         return;
     }
 
+    copy_selected_lines(app, ui, session_id);
+
     let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
     let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
 
@@ -495,6 +497,53 @@ fn draw_hunk_actions(
         }
     }
 
+}
+
+/// ⌘C over a diff: put the selected lines on the clipboard.
+///
+/// The lines a diff is read by are painted rather than laid out as text — a lock file is tens
+/// of thousands of rows, and egui text that could be swept through character by character
+/// would have to be laid out whether or not it is on screen. So the selection a diff already
+/// has, the run of lines picked for a comment, is what copies.
+///
+/// What lands on the clipboard is the code without its `+`/`-`/space marker: someone copying
+/// out of a diff is nearly always taking the code somewhere it has to compile.
+fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
+    // Looked for before the selection is gathered, which reads the patch: almost every frame
+    // has no copy in it, and the answer must not cost anything on those.
+    let asked = ui.input(|input| input.events.iter().any(|event| *event == egui::Event::Copy));
+    if !asked {
+        return;
+    }
+
+    let Some(hunk_id) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.active_hunk_id.clone())
+    else {
+        return;
+    };
+    let Some(selected) = current_selection(app, session_id, &hunk_id) else {
+        return;
+    };
+
+    // Taken only now that there is something to copy, so a review with nothing selected
+    // leaves the chord to whatever else on screen wants it — the composer's text box, or a
+    // second review open beside this one.
+    ui.ctx()
+        .input_mut(|input| input.events.retain(|event| *event != egui::Event::Copy));
+
+    let text: String = selected
+        .lines()
+        .map(|line| line.get(1..).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines = text.lines().count();
+    ui.ctx().copy_text(text);
+    app.model.info(format!(
+        "copied {lines} line{}",
+        if lines == 1 { "" } else { "s" }
+    ));
 }
 
 /// The raw patch lines the user has selected in this hunk, if any.

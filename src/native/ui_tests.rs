@@ -1536,7 +1536,7 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
                 )));
                 *seen_in_ui.lock().expect("poisoned") = (
                     title.map(|response| response.rect).unwrap_or(egui::Rect::NOTHING),
-                    task.status.wire_name().to_string(),
+                    task.status.to_string(),
                 );
             }
         });
@@ -1579,6 +1579,133 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
 /// How far apart two columns of the board are drawn, which is what a drag has to cover to
 /// reach the next one.
 const COLUMN_STRIDE: f32 = 298.0;
+
+/// A column is moved by dragging its heading, and its cards go with it — a card names the
+/// column it is in rather than a place on the board, so nothing about the card changes.
+#[test]
+fn dragging_a_heading_moves_the_column_and_its_cards() {
+    let fixture = seeded_fixture("column-drag");
+    let task_id = "write-the-parser-1111";
+    fixture.write(
+        &format!(".moontasks/{task_id}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+
+    /// The order of the columns, where TODO's heading is, and which column the card is in.
+    #[derive(Clone)]
+    struct Seen {
+        order: Vec<String>,
+        handle: egui::Rect,
+        card_status: String,
+    }
+    let seen = Arc::new(Mutex::new(Seen {
+        order: Vec::new(),
+        handle: egui::Rect::NOTHING,
+        card_status: String::new(),
+    }));
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+
+            let heading = ui
+                .ctx()
+                .read_response(egui::Id::new(("moontask-column", "todo")));
+            if let Ok(mut seen) = seen_in_ui.lock() {
+                seen.order = app
+                    .model
+                    .board
+                    .columns
+                    .iter()
+                    .map(|column| column.id.to_string())
+                    .collect();
+                seen.handle = heading
+                    .map(|response| response.rect)
+                    .unwrap_or(egui::Rect::NOTHING);
+                seen.card_status = app
+                    .model
+                    .board
+                    .tasks
+                    .first()
+                    .map(|task| task.status.to_string())
+                    .unwrap_or_default();
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if seen.lock().expect("poisoned").handle.is_positive() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(3);
+
+    let before = seen.lock().expect("poisoned").clone();
+    assert_eq!(
+        before.order.first().map(String::as_str),
+        Some("todo"),
+        "TODO starts on the left, got {:?}",
+        before.order
+    );
+    assert_eq!(before.card_status, "todo");
+    assert!(
+        before.handle.is_positive(),
+        "the column's drag handle was never drawn"
+    );
+
+    // Carried past the middle of IN PROGRESS, which is what puts TODO on the far side of it.
+    // The column travels on the cursor, so what has to clear that middle is the cursor.
+    let onto = egui::pos2(
+        before.handle.center().x + COLUMN_STRIDE * 1.5,
+        before.handle.center().y,
+    );
+    drag_from_to(&mut harness, before.handle.center(), onto);
+
+    // The move is written to `.moontasks` and read back, so the board has to poll to see it.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        harness.step();
+        if seen.lock().expect("poisoned").order.first().map(String::as_str) == Some("in_progress")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let after = seen.lock().expect("poisoned").clone();
+    assert_eq!(
+        after.order,
+        [
+            "in_progress",
+            "todo",
+            "in_local_review",
+            "in_remote_review",
+            "done"
+        ],
+        "dropping the heading one place right should have moved the column there"
+    );
+    assert_eq!(
+        after.card_status, "todo",
+        "the card should have travelled with its column, unchanged"
+    );
+}
 
 #[test]
 fn the_command_palette_lists_what_can_be_opened() {
@@ -1902,6 +2029,104 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
     harness.snapshot("comment-composer");
+}
+
+/// The diff is painted rather than laid out as text, so there is nothing to sweep through
+/// character by character. ⌘C copies the lines that are selected instead — and copies the
+/// code, without the `+` that says it was added.
+#[test]
+fn copy_takes_the_selected_diff_lines_without_their_diff_markers() {
+    let fixture = seeded_fixture("copy-diff");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+
+    #[derive(Default)]
+    struct Seen {
+        hunk_id: Option<String>,
+        patch: String,
+        copied: Option<String>,
+    }
+
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let Some(review) = app.model.review_ref(&app.model.root_session_id) else {
+                return;
+            };
+            if let Ok(mut seen) = seen_in_ui.lock() {
+                seen.hunk_id = review.hunks().first().map(|hunk| hunk.id.clone());
+                if let Some(hunk) = review.hunks().first() {
+                    seen.patch = hunk.patch_preview.clone();
+                }
+                if let Some(text) = ui.ctx().output(|output| {
+                    output.commands.iter().find_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                }) {
+                    seen.copied = Some(text);
+                }
+            }
+            ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the review never loaded");
+    harness.run_steps(2);
+
+    let (hunk_id, patch) = {
+        let state = seen.lock().expect("expected the hunk");
+        (
+            state.hunk_id.clone().expect("expected a hunk to copy from"),
+            state.patch.clone(),
+        )
+    };
+    let lines = crate::native::review::diff::build_diff_lines(&patch);
+    let (line_index, raw) = lines
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.kind == crate::native::review::diff::LineKind::Added)
+        .map(|(index, line)| (index, line.text.clone()))
+        .expect("expected an added line to copy");
+
+    let target = crate::native::review::hunks::diff_line_id(&hunk_id, line_index);
+    let rect = harness
+        .ctx
+        .read_response(target)
+        .expect("expected the diff line to have been drawn")
+        .rect;
+    click_at(&mut harness, rect.center());
+    harness.run_steps(2);
+
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.step();
+    harness.run_steps(2);
+
+    let copied = seen
+        .lock()
+        .expect("poisoned")
+        .copied
+        .clone()
+        .expect("⌘C over a selected diff line should have copied it");
+    assert_eq!(
+        copied,
+        raw[1..],
+        "the code should arrive without the `+` in front of it"
+    );
 }
 
 /// ⌘W is the window's own chord: it takes the tab in front, not the window around it.

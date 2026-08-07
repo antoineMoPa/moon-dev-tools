@@ -16,7 +16,7 @@ use crate::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
     },
-    moontasks::{CreateTaskRequest, StartResourceRequest, TaskStatus, TaskView},
+    moontasks::{BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest, TaskView},
 };
 
 /// Every review operation the native frontend performs. Calls block, so the UI runs them
@@ -76,13 +76,12 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>>;
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
     /// Put a task in a column, at a place among the cards already there, which is what a
-    /// drag on the board does. An agent moving its own card goes through the MCP server
-    /// instead, and lands at the end of the column it arrives in.
+    /// drag on the board does, and the only way a card moves.
     fn place_task(
         &self,
         session_id: &str,
         task_id: &str,
-        status: TaskStatus,
+        status: ColumnId,
         position: usize,
     ) -> Result<()>;
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()>;
@@ -109,6 +108,18 @@ pub(crate) trait Backend: Send + Sync + 'static {
         resource_id: &str,
     ) -> Result<()>;
     fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()>;
+
+    /// The board's columns, left to right. A board that has never had them changed answers
+    /// with the five it started with.
+    fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>>;
+    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn>;
+    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()>;
+    /// Take an empty column off the board. One still holding cards is refused rather than
+    /// taking them with it.
+    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()>;
+    /// Put a column at a place among the others, which is what dragging its heading does. Its
+    /// cards go with it, because a card names its column rather than its place on screen.
+    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;

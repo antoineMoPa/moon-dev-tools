@@ -23,9 +23,9 @@ use crate::{
     },
     git::detect_agent_availability,
     moontasks::{
-        self, CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskStatusRequest,
-        TaskTitleRequest,
-        TaskView, TerminalOpened,
+        self, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest, StartResourceRequest,
+        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
+        store::{BoardColumn, ColumnId},
     },
     service,
 };
@@ -112,12 +112,24 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
         .route(
-            "/api/session/{session_id}/tasks/{task_id}/status",
-            post(set_task_status),
-        )
-        .route(
             "/api/session/{session_id}/tasks/{task_id}/placement",
             post(place_task),
+        )
+        .route(
+            "/api/session/{session_id}/columns",
+            get(list_columns).post(add_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}",
+            delete(delete_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/title",
+            post(rename_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/placement",
+            post(place_column),
         )
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources",
@@ -529,13 +541,63 @@ async fn delete_task(
     Ok("ok")
 }
 
-async fn set_task_status(
-    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+async fn list_columns(
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<TaskStatusRequest>,
+) -> Result<Json<Vec<BoardColumn>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::list_columns(&state, &session_id)?))
+}
+
+async fn add_column(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnLabelRequest>,
+) -> Result<Json<BoardColumn>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::add_column(
+        &state,
+        &session_id,
+        &request.label,
+    )?))
+}
+
+async fn rename_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnLabelRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    moontasks::service::set_task_status(&state, &session_id, &task_id, request.status)?;
+    moontasks::service::rename_column(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        &request.label,
+    )?;
+    Ok("ok")
+}
+
+async fn delete_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_column(&state, &session_id, &ColumnId::new(column_id))?;
+    Ok("ok")
+}
+
+async fn place_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnPlacementRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::place_column(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        request.position,
+    )?;
     Ok("ok")
 }
 

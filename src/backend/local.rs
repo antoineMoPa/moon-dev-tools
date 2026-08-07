@@ -12,7 +12,7 @@ use crate::{
         SubmoduleView, server_url,
     },
     backend::Backend,
-    moontasks::{self, CreateTaskRequest, StartResourceRequest, TaskStatus, TaskView},
+    moontasks::{self, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest, TaskView},
     service,
     terminal::TerminalSession,
 };
@@ -176,7 +176,7 @@ impl Backend for LocalBackend {
         &self,
         session_id: &str,
         task_id: &str,
-        status: TaskStatus,
+        status: ColumnId,
         position: usize,
     ) -> Result<()> {
         moontasks::service::place_task(&self.state, session_id, task_id, status, position)
@@ -184,6 +184,26 @@ impl Backend for LocalBackend {
 
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {
         moontasks::service::delete_task(&self.state, session_id, task_id)
+    }
+
+    fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>> {
+        moontasks::service::list_columns(&self.state, session_id)
+    }
+
+    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
+        moontasks::service::add_column(&self.state, session_id, label)
+    }
+
+    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()> {
+        moontasks::service::rename_column(&self.state, session_id, column_id, label)
+    }
+
+    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
+        moontasks::service::delete_column(&self.state, session_id, column_id)
+    }
+
+    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()> {
+        moontasks::service::place_column(&self.state, session_id, column_id, position)
     }
 
     fn start_task_resource(

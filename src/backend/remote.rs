@@ -22,7 +22,8 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskStatus, TaskView,
+        BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
+        StartResourceRequest, TaskPlacementRequest, TaskView,
         TerminalOpened,
     },
 };
@@ -375,7 +376,7 @@ impl Backend for RemoteBackend {
         &self,
         session_id: &str,
         task_id: &str,
-        status: TaskStatus,
+        status: ColumnId,
         position: usize,
     ) -> Result<()> {
         self.post(
@@ -386,6 +387,39 @@ impl Backend for RemoteBackend {
 
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {
         self.delete(&format!("/api/session/{session_id}/tasks/{task_id}"))
+    }
+
+    fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>> {
+        self.get(&format!("/api/session/{session_id}/columns"))
+    }
+
+    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
+        self.post_json(
+            &format!("/api/session/{session_id}/columns"),
+            &ColumnLabelRequest {
+                label: label.to_string(),
+            },
+        )
+    }
+
+    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/{column_id}/title"),
+            &ColumnLabelRequest {
+                label: label.to_string(),
+            },
+        )
+    }
+
+    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
+        self.delete(&format!("/api/session/{session_id}/columns/{column_id}"))
+    }
+
+    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/{column_id}/placement"),
+            &ColumnPlacementRequest { position },
+        )
     }
 
     fn start_task_resource(

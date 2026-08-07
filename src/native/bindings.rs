@@ -101,8 +101,9 @@ pub(crate) const BINDINGS: &[Binding] = &[
         chord: &[press(Modifiers::COMMAND, Key::F)],
         reach: Reach::Anywhere,
     },
-    // Ctrl+X is a prefix here, so a program running in a shell no longer gets it. That is the
-    // trade this shortcut makes: leaving a shell has to be possible from inside one.
+    // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
+    // A program in that shell still gets it: `C-x` is only held while it is going somewhere,
+    // and `C-x C-s` — which nothing here claims — arrives whole.
     Binding {
         action: Action::FocusNextFrame,
         chord: &[press(Modifiers::CTRL, Key::X), press(Modifiers::NONE, Key::O)],
@@ -121,14 +122,18 @@ pub(crate) const BINDINGS: &[Binding] = &[
 ];
 
 /// What a press did to the map.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Step {
     /// It finished a chord.
     Fired(Action),
     /// It began one. The press belongs to the map and must not reach the pane below.
     Armed,
-    /// Nothing here wants it.
-    Passed,
+    /// Nothing here wants it, and here are the presses an armed prefix had been holding on to.
+    ///
+    /// They are handed back rather than dropped: `C-x C-s` is emacs saving a file, and a
+    /// window that keeps the `C-x` for itself sends emacs a bare `C-s` — which searches
+    /// instead. A prefix is only the window's while it is still going somewhere.
+    Passed(Vec<Press>),
 }
 
 /// The keyboard's running state: which prefix, if any, is waiting for its next press.
@@ -169,8 +174,11 @@ impl Keymap {
                         drop_next_text = true;
                     }
                     Step::Armed => drop_next_text = true,
-                    Step::Passed => {
+                    Step::Passed(released) => {
                         drop_next_text = false;
+                        // Ahead of the press that broke the chord, so the program reads them
+                        // in the order they were typed.
+                        kept.extend(released.into_iter().map(key_press_event));
                         kept.push(event);
                     }
                 }
@@ -187,7 +195,8 @@ impl Keymap {
     }
 
     fn step(&mut self, press: Press, typing: bool) -> Step {
-        let mut chord = std::mem::take(&mut self.armed);
+        let held = std::mem::take(&mut self.armed);
+        let mut chord = held.clone();
         chord.push(press);
 
         for binding in BINDINGS {
@@ -204,7 +213,18 @@ impl Keymap {
             }
         }
 
-        Step::Passed
+        Step::Passed(held)
+    }
+}
+
+/// A press, back in the shape the input arrived as, for one the map turned out not to want.
+fn key_press_event(press: Press) -> egui::Event {
+    egui::Event::Key {
+        key: press.key,
+        physical_key: Some(press.key),
+        pressed: true,
+        repeat: false,
+        modifiers: press.mods,
     }
 }
 
@@ -342,14 +362,37 @@ mod tests {
         assert!(keymap.armed_prefix().is_none(), "the prefix is spent");
     }
 
+    /// A prefix that leads nowhere is the program's, not the window's: `C-x C-s` is how
+    /// emacs saves, and keeping the `C-x` would send it a bare `C-s` and search instead.
     #[test]
-    fn a_prefix_that_leads_nowhere_is_dropped_rather_than_kept() {
+    fn a_prefix_that_leads_nowhere_is_handed_back_whole() {
+        let mut keymap = Keymap::default();
+        run(&mut keymap, false, vec![key_event(Modifiers::CTRL, Key::X)]);
+
+        let (fired, left) = run(&mut keymap, true, vec![key_event(Modifiers::CTRL, Key::S)]);
+
+        assert!(fired.is_empty());
+        assert_eq!(
+            left.iter().filter_map(press_of).collect::<Vec<_>>(),
+            vec![
+                press(Modifiers::CTRL, Key::X),
+                press(Modifiers::CTRL, Key::S)
+            ],
+            "the shell should be sent the whole chord, in the order it was typed"
+        );
+        assert!(keymap.armed_prefix().is_none(), "and the map is disarmed");
+    }
+
+    /// The same for a bare letter that no chord continues into.
+    #[test]
+    fn a_stray_press_after_a_prefix_carries_the_prefix_with_it() {
         let mut keymap = Keymap::default();
         run(&mut keymap, false, vec![key_event(Modifiers::CTRL, Key::X)]);
 
         let (fired, left) = run(&mut keymap, false, vec![key_event(Modifiers::NONE, Key::Z)]);
+
         assert!(fired.is_empty());
-        assert_eq!(left.len(), 1, "the stray press is the pane's to deal with");
+        assert_eq!(left.len(), 2, "the prefix comes back with the press");
         assert!(keymap.armed_prefix().is_none(), "and the map is disarmed");
     }
 

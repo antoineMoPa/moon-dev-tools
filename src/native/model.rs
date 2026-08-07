@@ -142,9 +142,12 @@ impl ReviewState {
 #[derive(Default)]
 pub(crate) struct BoardState {
     pub(crate) tasks: Vec<crate::moontasks::TaskView>,
+    /// The board's columns, left to right, as the last read had them. Empty until the first
+    /// answer arrives, which is what `loaded` says.
+    pub(crate) columns: Vec<crate::moontasks::BoardColumn>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
-    /// Whether the new-task box is open in the TODO column, and the title being typed into
+    /// Whether the new-task box is open in the leftmost column, and the title being typed into
     /// it. The agent it will start is not here: that is the one the review's selector holds,
     /// so picking one on the board and picking one in the review are the same choice.
     pub(crate) composer_open: bool,
@@ -175,21 +178,50 @@ pub(crate) struct BoardState {
     /// answered with the card where it was put. Without it a read that was already on its way
     /// when the card was dropped puts it back where it came from for a moment.
     pub(crate) pending_place: Option<PendingPlace>,
+    /// The column whose heading is being edited, if one is.
+    pub(crate) renaming_column: Option<ColumnRename>,
+    /// The column whose delete mark has been pressed once, so a stray click cannot take a
+    /// column off the board.
+    pub(crate) pending_column_delete: Option<crate::moontasks::ColumnId>,
+    /// The new-column box at the right-hand end of the board, and what is being typed into it.
+    pub(crate) column_composer_open: bool,
+    pub(crate) column_composer_focus: bool,
+    pub(crate) new_column_label: String,
+    /// Where the column being dragged would land, counted in columns from the left. Worked out
+    /// at the end of a frame and read by the next one, the same way a card's landing is.
+    pub(crate) column_landing: Option<usize>,
+    /// A column move the server has not confirmed yet, so every read until then can be
+    /// answered with the column where it was put rather than where it came from.
+    pub(crate) pending_column_place: Option<PendingColumnPlace>,
 }
 
 /// A drop that has been made on the board being drawn and not yet seen in one being read.
 pub(crate) struct PendingPlace {
     pub(crate) task_id: String,
-    pub(crate) status: crate::moontasks::TaskStatus,
+    pub(crate) status: crate::moontasks::ColumnId,
+    pub(crate) index: usize,
+}
+
+/// The same, for a column dragged to another place on the board.
+pub(crate) struct PendingColumnPlace {
+    pub(crate) column_id: crate::moontasks::ColumnId,
     pub(crate) index: usize,
 }
 
 /// The place a dragged card would take: a column, and how many of that column's other cards
 /// are above it.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct TaskLanding {
-    pub(crate) status: crate::moontasks::TaskStatus,
+    pub(crate) status: crate::moontasks::ColumnId,
     pub(crate) index: usize,
+}
+
+/// A column's heading, open for editing after a double click.
+pub(crate) struct ColumnRename {
+    pub(crate) column_id: crate::moontasks::ColumnId,
+    pub(crate) label: String,
+    /// Set when the box has just opened, so it takes the keyboard once.
+    pub(crate) focus: bool,
 }
 
 /// A card that has just been dropped, marked until [`Self::at`] is that long ago.

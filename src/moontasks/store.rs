@@ -18,69 +18,107 @@ use crate::api::AgentKind;
 /// The directory, in the repo being reviewed, that holds every task.
 pub(crate) const TASKS_DIR_NAME: &str = ".moontasks";
 const METADATA_FILE_NAME: &str = "metadata.json";
-/// The MCP server definition written into a task folder, so an agent working in the task can
-/// move it between columns itself.
-pub(crate) const MCP_CONFIG_FILE_NAME: &str = "mcp.json";
+/// The board's own file, beside the task folders: what its columns are and what they are
+/// called. A board without one has the columns in [`DEFAULT_COLUMNS`], and only grows the file
+/// once someone changes them.
+const BOARD_FILE_NAME: &str = "board.json";
 
-/// Where a task sits on the board.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TaskStatus {
-    Todo,
-    InProgress,
-    InLocalReview,
-    InRemoteReview,
-    Done,
+/// Which column a task sits in, by the name that column goes by in the board's file.
+///
+/// A name rather than one of a fixed set: the columns belong to the board, and a card says
+/// which of them it is in. This is what `metadata.json` has always held in its `status`, so a
+/// board written before columns could be changed reads back unchanged.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct ColumnId(String);
+
+impl ColumnId {
+    pub(crate) fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-/// The columns of the board, left to right. This is the whole order: a status that is not
-/// here has no column to be drawn in.
-pub(crate) const BOARD_COLUMNS: &[TaskStatus] = &[
-    TaskStatus::Todo,
-    TaskStatus::InProgress,
-    TaskStatus::InLocalReview,
-    TaskStatus::InRemoteReview,
-    TaskStatus::Done,
+impl std::fmt::Display for ColumnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One column of the board: the name cards are in it under, and what it is called on screen.
+///
+/// Renaming changes the label and leaves the id alone, so every card already in the column
+/// stays in it and a board someone renamed a column on is still readable by hand.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct BoardColumn {
+    pub(crate) id: ColumnId,
+    pub(crate) label: String,
+}
+
+/// The columns a board starts with, left to right.
+pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
+    ("todo", "TODO"),
+    ("in_progress", "IN PROGRESS"),
+    ("in_local_review", "IN LOCAL REVIEW"),
+    ("in_remote_review", "IN REMOTE REVIEW"),
+    ("done", "DONE"),
 ];
 
-/// What each status is called on the board and in the MCP tool an agent calls.
-const STATUS_NAMES: &[(TaskStatus, &str, &str)] = &[
-    (TaskStatus::Todo, "TODO", "todo"),
-    (TaskStatus::InProgress, "IN PROGRESS", "in_progress"),
-    (TaskStatus::InLocalReview, "IN LOCAL REVIEW", "in_local_review"),
-    (
-        TaskStatus::InRemoteReview,
-        "IN REMOTE REVIEW",
-        "in_remote_review",
-    ),
-    (TaskStatus::Done, "DONE", "done"),
-];
+/// The three columns the board itself acts on, by the id they have on a board that started
+/// from the defaults.
+///
+/// These are the only card movements moonreview makes on its own, so they need a column to
+/// point at. They are pinned by id: renaming a column or dragging it somewhere else keeps its
+/// part in these rules, and deleting it turns that rule off rather than sending cards to a
+/// column nobody chose. A board built from scratch out of columns of its own has no automatic
+/// movement at all, which is the honest answer to not having said where it should go.
+pub(crate) const STARTS_IN: &str = "in_progress";
+pub(crate) const REVIEWS_IN: &str = "in_local_review";
+pub(crate) const RELEASES_SHELLS_IN: &str = "done";
 
-impl TaskStatus {
-    pub(crate) fn label(self) -> &'static str {
-        STATUS_NAMES
-            .iter()
-            .find(|(status, _, _)| *status == self)
-            .map(|(_, label, _)| *label)
-            .expect("every status is named")
+/// The board's columns, left to right. This is the whole order: a card naming a column that is
+/// not here has nowhere to be drawn.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct BoardConfig {
+    pub(crate) columns: Vec<BoardColumn>,
+}
+
+impl Default for BoardConfig {
+    fn default() -> Self {
+        Self {
+            columns: DEFAULT_COLUMNS
+                .iter()
+                .map(|(id, label)| BoardColumn {
+                    id: ColumnId::new(*id),
+                    label: (*label).to_string(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl BoardConfig {
+    pub(crate) fn position_of(&self, id: &ColumnId) -> Option<usize> {
+        self.columns.iter().position(|column| column.id == *id)
     }
 
-    /// The name this status goes by on the wire and in `metadata.json`.
-    pub(crate) fn wire_name(self) -> &'static str {
-        STATUS_NAMES
-            .iter()
-            .find(|(status, _, _)| *status == self)
-            .map(|(_, _, wire)| *wire)
-            .expect("every status is named")
+    pub(crate) fn has(&self, id: &ColumnId) -> bool {
+        self.position_of(id).is_some()
     }
 
-    pub(crate) fn from_wire_name(name: &str) -> Option<Self> {
-        STATUS_NAMES
-            .iter()
-            .find(|(_, _, wire)| *wire == name)
-            .map(|(status, _, _)| *status)
+    /// The column one of the board's own rules points at, if it is still on the board.
+    pub(crate) fn role(&self, role: &str) -> Option<ColumnId> {
+        let id = ColumnId::new(role);
+        self.has(&id).then_some(id)
     }
 
+    /// The column a new card is added to, which is the leftmost one there is.
+    pub(crate) fn first(&self) -> Option<ColumnId> {
+        self.columns.first().map(|column| column.id.clone())
+    }
 }
 
 /// Whether a resource is a plain shell or an agent working on the task.
@@ -117,7 +155,8 @@ pub(crate) struct TaskResource {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskMetadata {
     pub(crate) title: String,
-    pub(crate) status: TaskStatus,
+    /// The column the card is in, by the id the board's file gives it.
+    pub(crate) status: ColumnId,
     pub(crate) created_at_unix: u64,
     /// Where the card sits in its column, lowest at the top. Renumbered from zero across the
     /// whole column whenever one is dragged into it, so the numbers stay small and readable
@@ -138,8 +177,8 @@ pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
 
 /// What the board's own `.gitignore` says.
 ///
-/// A board is working state — running agents, scratch files, an MCP config carrying this
-/// run's port — and none of that belongs in someone's `git status` by default. The file
+/// A board is working state — running agents, scratch files, whatever an agent leaves in a
+/// task folder — and none of that belongs in someone's `git status` by default. The file
 /// ignores the whole folder including itself, so a repo where moonreview has been opened
 /// looks exactly like one where it has not.
 ///
@@ -170,6 +209,36 @@ fn ensure_tasks_root(repo_path: &Path) -> Result<PathBuf> {
     fs::write(&ignore, TASKS_GITIGNORE)
         .with_context(|| format!("failed to write {}", ignore.display()))?;
     Ok(root)
+}
+
+/// The board's columns, as its file has them — or the defaults, for a board that has never
+/// had them changed.
+///
+/// A file that cannot be read or makes no sense is the defaults too, with the same reasoning
+/// the task list uses for a broken `metadata.json`: a board that draws is worth more than an
+/// error, and nothing here is the only writer.
+pub(crate) fn read_board(repo_path: &Path) -> BoardConfig {
+    let path = tasks_root(repo_path).join(BOARD_FILE_NAME);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return BoardConfig::default();
+    };
+    let Ok(config) = serde_json::from_str::<BoardConfig>(&text) else {
+        return BoardConfig::default();
+    };
+    // A board with no columns has nowhere to put a card, which is worse than not having been
+    // customised at all.
+    if config.columns.is_empty() {
+        return BoardConfig::default();
+    }
+    config
+}
+
+pub(crate) fn write_board(repo_path: &Path, config: &BoardConfig) -> Result<()> {
+    let root = ensure_tasks_root(repo_path)?;
+    let path = root.join(BOARD_FILE_NAME);
+    let text = serde_json::to_string_pretty(config).context("failed to encode the board")?;
+    fs::write(&path, format!("{text}\n"))
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 pub(crate) fn task_dir(repo_path: &Path, task_id: &str) -> Result<PathBuf> {
@@ -235,12 +304,16 @@ pub(crate) fn create_task(repo_path: &Path, title: &str) -> Result<String> {
         bail!("a task needs a title");
     }
     let task_id = format!("{}-{}", slug_of(title), new_uuid());
+    // A new card joins the bottom of the leftmost column, which is where TODO is on a board
+    // nobody has rearranged.
+    let status = read_board(repo_path)
+        .first()
+        .context("the board has no columns to put a task in")?;
     let metadata = TaskMetadata {
         title: title.to_string(),
-        status: TaskStatus::Todo,
         created_at_unix: now_unix(),
-        // A new card joins the bottom of TODO, where the newest card has always been drawn.
-        position: next_position(repo_path, TaskStatus::Todo),
+        position: next_position(repo_path, &status),
+        status,
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
@@ -251,12 +324,12 @@ pub(crate) fn create_task(repo_path: &Path, title: &str) -> Result<String> {
 ///
 /// A board that cannot be read is a board with nothing in that column as far as this is
 /// concerned: the new card goes to the top of it, which is no worse than anywhere else.
-fn next_position(repo_path: &Path, status: TaskStatus) -> u32 {
+fn next_position(repo_path: &Path, status: &ColumnId) -> u32 {
     list_task_ids(repo_path)
         .unwrap_or_default()
         .iter()
         .filter_map(|task_id| read_task(repo_path, task_id).ok())
-        .filter(|metadata| metadata.status == status)
+        .filter(|metadata| metadata.status == *status)
         .map(|metadata| metadata.position + 1)
         .max()
         .unwrap_or_default()
@@ -375,7 +448,7 @@ mod tests {
 
         let metadata = read_task(&repo, &task_id).expect("expected metadata");
         assert_eq!(metadata.title, "Fix the login page");
-        assert_eq!(metadata.status, TaskStatus::Todo);
+        assert_eq!(metadata.status, ColumnId::new("todo"));
         assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
@@ -447,12 +520,16 @@ mod tests {
         assert!(task_dir(Path::new("/repo"), "").is_err());
     }
 
-    /// The order the board draws its columns in, which is also the order work moves through.
+    /// The columns a board starts with, which is also the order work moves through.
     #[test]
-    fn the_columns_run_left_to_right() {
-        let order: Vec<&str> = BOARD_COLUMNS
+    fn a_board_with_no_file_has_the_default_columns_left_to_right() {
+        let repo = temp_repo("default-columns");
+
+        let board = read_board(&repo);
+        let order: Vec<&str> = board
+            .columns
             .iter()
-            .map(|status| status.wire_name())
+            .map(|column| column.id.as_str())
             .collect();
 
         assert_eq!(
@@ -465,16 +542,94 @@ mod tests {
                 "done"
             ]
         );
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
+    /// Every rule the board applies on its own points at one of the default columns, so a
+    /// board that has not been changed behaves exactly as it always did.
+    #[test]
+    fn the_board_s_own_rules_point_at_columns_it_starts_with() {
+        let config = BoardConfig::default();
+
+        for role in [STARTS_IN, REVIEWS_IN, RELEASES_SHELLS_IN] {
+            assert_eq!(
+                config.role(role),
+                Some(ColumnId::new(role)),
+                "{role} should be a column of a new board"
+            );
+        }
+    }
+
+    /// A rule whose column has been deleted is off rather than pointing somewhere else: a card
+    /// must not be sent to a column nobody chose for it.
+    #[test]
+    fn a_rule_whose_column_is_gone_points_nowhere() {
+        let mut config = BoardConfig::default();
+        config.columns.retain(|column| column.id.as_str() != STARTS_IN);
+
+        assert_eq!(config.role(STARTS_IN), None);
+        assert_eq!(config.role(REVIEWS_IN), Some(ColumnId::new(REVIEWS_IN)));
     }
 
     #[test]
-    fn statuses_survive_a_round_trip_through_their_wire_name() {
-        for status in BOARD_COLUMNS {
-            assert_eq!(TaskStatus::from_wire_name(status.wire_name()), Some(*status));
-            // The wire name is what `metadata.json` holds, so serde has to agree with it.
-            let encoded = serde_json::to_string(status).expect("expected json");
-            assert_eq!(encoded, format!("\"{}\"", status.wire_name()));
-        }
-        assert_eq!(TaskStatus::from_wire_name("blocked"), None);
+    fn a_column_id_is_written_down_as_the_plain_string_it_has_always_been() {
+        let encoded = serde_json::to_string(&ColumnId::new("in_local_review")).expect("json");
+
+        assert_eq!(encoded, "\"in_local_review\"");
+        assert_eq!(
+            serde_json::from_str::<ColumnId>(&encoded).expect("expected a column"),
+            ColumnId::new("in_local_review")
+        );
+    }
+
+    #[test]
+    fn the_columns_survive_a_round_trip_through_the_board_file() {
+        let repo = temp_repo("board-roundtrip");
+        let config = BoardConfig {
+            columns: vec![
+                BoardColumn {
+                    id: ColumnId::new("todo"),
+                    label: "BACKLOG".to_string(),
+                },
+                BoardColumn {
+                    id: ColumnId::new("shipped"),
+                    label: "SHIPPED".to_string(),
+                },
+            ],
+        };
+
+        write_board(&repo, &config).expect("expected the board to be written");
+
+        assert_eq!(read_board(&repo), config);
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
+    /// A board file that makes no sense is the defaults, the same way a broken `metadata.json`
+    /// is a card left out rather than a board that will not draw.
+    #[test]
+    fn a_board_file_that_cannot_be_read_falls_back_on_the_defaults() {
+        let repo = temp_repo("board-broken");
+        write_board(&repo, &BoardConfig::default()).expect("expected the board to be written");
+        fs::write(tasks_root(&repo).join("board.json"), "{ not json")
+            .expect("failed to write the board file");
+
+        assert_eq!(read_board(&repo), BoardConfig::default());
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
+    /// A board with no columns has nowhere to put a card, which is worse than one that was
+    /// never customised.
+    #[test]
+    fn a_board_with_no_columns_falls_back_on_the_defaults() {
+        let repo = temp_repo("board-empty");
+        write_board(&repo, &BoardConfig { columns: Vec::new() })
+            .expect("expected the board to be written");
+
+        assert_eq!(read_board(&repo), BoardConfig::default());
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
     }
 }

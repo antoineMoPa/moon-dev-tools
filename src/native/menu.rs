@@ -11,6 +11,8 @@ pub(crate) enum MenuAction {
     OpenInBrowser,
     ToggleTheme,
     OpenCommandPalette,
+    /// Ask the OS which file of the repo to open for editing.
+    OpenFile,
     NewTab,
     CloseTab,
     /// Open another window of one of the three programs, on its launch screen.
@@ -37,6 +39,7 @@ mod platform {
         open_in_browser: MenuId,
         toggle_theme: MenuId,
         command_palette: MenuId,
+        open_file: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
@@ -46,9 +49,11 @@ mod platform {
 
     impl NativeMenu {
         /// Install the menu bar. `serves_web` decides whether the browser item is offered at
-        /// all, since a window with no server behind it has nothing to open, and `frame` is
-        /// which of the three programs this window is — the one whose new window takes ⌘N.
-        pub(crate) fn install(serves_web: bool, frame: Frame) -> Option<Self> {
+        /// all, since a window with no server behind it has nothing to open; `picks_files`
+        /// the same for Open File, which needs the repo to be on this machine for the OS
+        /// picker to reach it. `frame` is which of the three programs this window is — the
+        /// one whose new window takes ⌘N.
+        pub(crate) fn install(serves_web: bool, picks_files: bool, frame: Frame) -> Option<Self> {
             let menu = Menu::new();
 
             // Written on demand rather than by the installer, which drops executables on PATH
@@ -70,6 +75,17 @@ mod platform {
                     &PredefinedMenuItem::quit(None),
                 ])
                 .ok()?;
+
+            // A File menu with the one thing this window opens files for: reading and editing
+            // one in a tab. ⌘O is what the chord means everywhere else, and the review's own
+            // way to a file — clicking it in the sidebar — opens the same tab.
+            let open_file = MenuItem::new(
+                "Open File…",
+                picks_files,
+                Some(Accelerator::new(Some(Modifiers::META), Code::KeyO)),
+            );
+            let file_menu = Submenu::new("File", true);
+            file_menu.append(&open_file).ok()?;
 
             let open_in_browser = MenuItem::new(
                 "Open in Browser",
@@ -161,7 +177,7 @@ mod platform {
                 ])
                 .ok()?;
 
-            menu.append_items(&[&app_menu, &view_menu, &window_menu])
+            menu.append_items(&[&app_menu, &file_menu, &view_menu, &window_menu])
                 .ok()?;
             menu.init_for_nsapp();
 
@@ -170,6 +186,7 @@ mod platform {
                 open_in_browser: open_in_browser.id().clone(),
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
+                open_file: open_file.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
                 new_windows: new_windows
@@ -190,6 +207,8 @@ mod platform {
                     MenuAction::ToggleTheme
                 } else if event.id == self.command_palette {
                     MenuAction::OpenCommandPalette
+                } else if event.id == self.open_file {
+                    MenuAction::OpenFile
                 } else if event.id == self.new_tab {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
@@ -220,7 +239,11 @@ mod platform {
     pub(crate) struct NativeMenu;
 
     impl NativeMenu {
-        pub(crate) fn install(_serves_web: bool, _frame: crate::cli::Frame) -> Option<Self> {
+        pub(crate) fn install(
+            _serves_web: bool,
+            _picks_files: bool,
+            _frame: crate::cli::Frame,
+        ) -> Option<Self> {
             None
         }
 

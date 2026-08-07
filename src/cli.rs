@@ -134,8 +134,6 @@ enum CliCommand {
     Serve {
         logs: bool,
     },
-    /// The moontasks MCP server, on stdio. Agents start this, not people.
-    Mcp,
     /// Write the desktop launcher of each installed executable, so the OS offers them too.
     InstallLaunchers,
     /// The window with no repo: it asks which one to open, the same as a launcher started
@@ -198,7 +196,6 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())
         }
-        CliCommand::Mcp => crate::moontasks::mcp::run(),
         CliCommand::InstallLaunchers => install_launchers(),
         CliCommand::PickProject => pick_project(frame),
         CliCommand::Review {
@@ -604,7 +601,6 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     match positional.as_slice() {
         [] => Ok(review(ReviewTarget::WorkingTree)),
         [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
-        [command] if command == "mcp" => Ok(CliCommand::Mcp),
         [command] if command == "install-launchers" => Ok(CliCommand::InstallLaunchers),
         [command] if command == "diff" => Ok(review(ReviewTarget::WorkingTree)),
         [command, target] if command == "diff" => Ok(review(ReviewTarget::Diff(target.clone()))),
@@ -615,10 +611,7 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
             ReviewTarget::Path(target.clone())
         })),
         [command, ..]
-            if command == "diff"
-                || command == "serve"
-                || command == "mcp"
-                || command == "install-launchers" =>
+            if command == "diff" || command == "serve" || command == "install-launchers" =>
         {
             bail!("{}", help_text_for(frame))
         }
@@ -667,7 +660,6 @@ Usage:
   {program} --pick
   {program} --remote <host> [--repo <path>]
   {program} serve --logs
-  {program} mcp
   {program} install-launchers
   {program} --version
   {program} --help
@@ -714,8 +706,9 @@ Moontasks:
   The moontasks board is a sprint board over the `.moontasks` folder of the repo, with an
   agent running behind each card. `moontasks` opens on it; the other two reach it from the
   command palette.
-  `mcp` is the MCP server those agents use to move their own card; moonreview starts it for
-  them, so there is no reason to run it by hand.
+  The columns are the board's own — rename them, reorder them, add and remove them — and a
+  card moves to the review column when the agent behind it exits, which the board notices the
+  next time it reads the folder.
 
 Use `--logs` with `--web` or `serve` to run the server in the foreground and print
 agent/failure logs until you stop it with Ctrl+C.

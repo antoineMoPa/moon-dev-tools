@@ -315,8 +315,8 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
 
     served
         .client
-        .post(format!("{tasks_url}/{task_id}/status"))
-        .json(&serde_json::json!({ "status": "in_local_review" }))
+        .post(format!("{tasks_url}/{task_id}/placement"))
+        .json(&serde_json::json!({ "status": "in_local_review", "position": 0 }))
         .send()
         .expect("failed to move the task")
         .error_for_status()
@@ -413,16 +413,151 @@ fn cards_are_dropped_where_they_are_let_go_of() {
     assert_eq!(column("todo"), ["first", "third"]);
     assert_eq!(column("in_progress"), ["second"]);
 
-    // An agent moving its own card has no place in mind, so it joins the end of the column.
+    // A card dropped past the end of another column joins the end of it.
+    place(&third, "in_progress", 9);
+    assert_eq!(column("in_progress"), ["second", "third"]);
+}
+
+/// The columns are the board's own: they can be added, renamed, reordered and removed, and a
+/// board nobody has touched still answers with the five it has always had.
+#[test]
+fn the_columns_are_the_boards_to_change() {
+    let served = serve("columns");
+    let session_id = served.open_session();
+    let columns_url = format!("{}/api/session/{session_id}/columns", served.base_url);
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let read = |what: &str| -> Vec<(String, String)> {
+        let columns: serde_json::Value = served
+            .client
+            .get(&columns_url)
+            .send()
+            .expect("failed to read the columns")
+            .json()
+            .expect("failed to decode the columns");
+        columns
+            .as_array()
+            .unwrap_or_else(|| panic!("expected an array of columns {what}"))
+            .iter()
+            .map(|column| {
+                (
+                    column["id"].as_str().expect("expected an id").to_string(),
+                    column["label"].as_str().expect("expected a label").to_string(),
+                )
+            })
+            .collect()
+    };
+    let ids = |columns: &[(String, String)]| -> Vec<String> {
+        columns.iter().map(|(id, _)| id.clone()).collect()
+    };
+
+    // A board that has never been changed has no file of its own and the columns it started
+    // with — which is what every board written before this existed looks like.
+    assert!(
+        !served.root.join(".moontasks").join("board.json").exists(),
+        "an untouched board should not have written a file yet"
+    );
+    assert_eq!(
+        ids(&read("at the start")),
+        [
+            "todo",
+            "in_progress",
+            "in_local_review",
+            "in_remote_review",
+            "done"
+        ]
+    );
+
+    // Added at the right-hand end, with an id made from its name.
+    let added: serde_json::Value = served
+        .client
+        .post(&columns_url)
+        .json(&serde_json::json!({ "label": "Waiting on review" }))
+        .send()
+        .expect("failed to add a column")
+        .error_for_status()
+        .expect("the server refused to add a column")
+        .json()
+        .expect("failed to decode the column");
+    assert_eq!(added["id"], "waiting-on-review");
+    assert_eq!(
+        ids(&read("after adding")).last().map(String::as_str),
+        Some("waiting-on-review")
+    );
+
+    // Renaming changes what it is called and leaves the id, which is what cards are in.
     served
         .client
-        .post(format!("{tasks_url}/{third}/status"))
-        .json(&serde_json::json!({ "status": "in_progress" }))
+        .post(format!("{columns_url}/todo/title"))
+        .json(&serde_json::json!({ "label": "BACKLOG" }))
         .send()
-        .expect("failed to move the task")
+        .expect("failed to rename the column")
         .error_for_status()
-        .expect("the server refused to move the task");
-    assert_eq!(column("in_progress"), ["second", "third"]);
+        .expect("the server refused to rename the column");
+    let renamed = read("after renaming");
+    assert_eq!(renamed[0], ("todo".to_string(), "BACKLOG".to_string()));
+
+    // A card made now still lands in the leftmost column, whatever it is called.
+    let created: serde_json::Value = served
+        .client
+        .post(&tasks_url)
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none" }))
+        .send()
+        .expect("failed to create a task")
+        .error_for_status()
+        .expect("the server refused to create a task")
+        .json()
+        .expect("failed to decode the task");
+    assert_eq!(created["status"], "todo");
+
+    // A column holding cards will not be removed: it is the only record of where they are.
+    let refused = served
+        .client
+        .delete(format!("{columns_url}/todo"))
+        .send()
+        .expect("failed to ask to remove the column");
+    assert!(
+        refused.status().is_client_error() || refused.status().is_server_error(),
+        "a column with a card in it should not be removed"
+    );
+    assert!(ids(&read("after the refusal")).contains(&"todo".to_string()));
+
+    // An empty one goes.
+    served
+        .client
+        .delete(format!("{columns_url}/waiting-on-review"))
+        .send()
+        .expect("failed to remove the column")
+        .error_for_status()
+        .expect("the server refused to remove an empty column");
+    assert!(!ids(&read("after removing")).contains(&"waiting-on-review".to_string()));
+
+    // Dragging a heading moves the column and takes its cards with it, because a card names
+    // its column rather than its place on the board.
+    served
+        .client
+        .post(format!("{columns_url}/todo/placement"))
+        .json(&serde_json::json!({ "position": 2 }))
+        .send()
+        .expect("failed to move the column")
+        .error_for_status()
+        .expect("the server refused to move the column");
+    assert_eq!(
+        ids(&read("after moving")),
+        ["in_progress", "in_local_review", "todo", "in_remote_review", "done"]
+    );
+
+    let board: serde_json::Value = served
+        .client
+        .get(&tasks_url)
+        .send()
+        .expect("failed to read the board")
+        .json()
+        .expect("failed to decode the board");
+    assert_eq!(
+        board[0]["status"], "todo",
+        "the card should still be in the column that moved"
+    );
 }
 
 #[test]
