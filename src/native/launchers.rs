@@ -46,6 +46,14 @@ pub(crate) fn install() -> Result<Vec<InstalledLauncher>> {
     Ok(installed)
 }
 
+/// The launcher this frame was given, if one was ever written and is still there.
+///
+/// A window opened through its launcher is opened by the OS, which is what puts it in front
+/// with its own icon; opening the plain executable leaves it to arrive wherever it lands.
+pub(crate) fn installed_launcher(frame: Frame) -> Option<PathBuf> {
+    platform::installed_launcher(frame)
+}
+
 /// Where the launchers go, said in one line — the tail of what the CLI and the window report.
 pub(crate) fn destination_hint() -> String {
     platform::destination_hint()
@@ -125,6 +133,28 @@ mod platform {
             .expect("a path holds no interior nul byte");
         // SAFETY: the pointer is a nul-terminated string that outlives the call.
         unsafe { libc::access(path.as_ptr(), libc::W_OK) == 0 }
+    }
+
+    /// The bundle this frame was given, in whichever of [`APPLICATIONS_DIRS`] it landed in.
+    /// Only one carrying our identifier counts: an application of the same name that someone
+    /// else installed is not ours to open.
+    pub(super) fn installed_launcher(frame: Frame) -> Option<PathBuf> {
+        let bundle_name = format!("{}.app", frame.display_name());
+        let identifier = format!("com.moonreview.{}", frame.program());
+        for candidate in APPLICATIONS_DIRS {
+            let dir = match candidate.strip_prefix("~/") {
+                Some(under_home) => match super::home() {
+                    Ok(home) => home.join(under_home),
+                    Err(_) => continue,
+                },
+                None => PathBuf::from(candidate),
+            };
+            let bundle = dir.join(&bundle_name);
+            if bundle.is_dir() && refuse_foreign_bundle(&bundle, &identifier).is_ok() {
+                return Some(bundle);
+            }
+        }
+        None
     }
 
     /// Build `<display name>.app` around the installed executable.
@@ -292,6 +322,12 @@ mod platform {
         "~/.local/share/applications".to_string()
     }
 
+    /// A desktop entry is a file the desktop reads, not a thing to run, so a new window here
+    /// is the executable itself.
+    pub(super) fn installed_launcher(_frame: Frame) -> Option<PathBuf> {
+        None
+    }
+
     /// The icon size the desktop entry points at. One size is enough: the themed icon
     /// directories are picked by size, and 256 is what launchers scale down from.
     const ICON_SIZE: usize = 256;
@@ -355,6 +391,10 @@ mod platform {
 
     pub(super) fn destination_hint() -> String {
         "nowhere on this platform".to_string()
+    }
+
+    pub(super) fn installed_launcher(_frame: Frame) -> Option<PathBuf> {
+        None
     }
 
     pub(super) fn write_launcher(_frame: Frame, _executable: &Path) -> Result<PathBuf> {

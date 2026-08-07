@@ -30,6 +30,11 @@ pub enum Frame {
 /// Every frame, in the order they are named in help and given launchers.
 pub(crate) const FRAMES: &[Frame] = &[Frame::Review, Frame::Tasks, Frame::Shell];
 
+/// The same three in the order a window offers to open another one, which is not the order
+/// they are written about in: the board comes first, because a new window is usually a new
+/// piece of work rather than a second look at this one.
+pub(crate) const NEW_WINDOW_FRAMES: &[Frame] = &[Frame::Tasks, Frame::Review, Frame::Shell];
+
 /// Everything that differs between the three executables in name and wording, kept in one
 /// place so a new frame is a row here rather than a branch wherever text is written.
 struct FrameProgram {
@@ -133,6 +138,9 @@ enum CliCommand {
     Mcp,
     /// Write the desktop launcher of each installed executable, so the OS offers them too.
     InstallLaunchers,
+    /// The window with no repo: it asks which one to open, the same as a launcher started
+    /// from the OS. This is what "New Window" in the menu bar opens.
+    PickProject,
     Review {
         target: ReviewTarget,
         logs: bool,
@@ -192,6 +200,7 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
         }
         CliCommand::Mcp => crate::moontasks::mcp::run(),
         CliCommand::InstallLaunchers => install_launchers(),
+        CliCommand::PickProject => pick_project(frame),
         CliCommand::Review {
             target,
             logs,
@@ -223,6 +232,17 @@ fn install_launchers() -> Result<()> {
 #[cfg(not(feature = "native"))]
 fn install_launchers() -> Result<()> {
     bail!("this build has no desktop frontend, so a launcher would have no window to open")
+}
+
+/// The window opened on nothing, asking which repo to open.
+#[cfg(feature = "native")]
+fn pick_project(frame: Frame) -> Result<()> {
+    crate::native::run(crate::native::launch_prompt(frame)?)
+}
+
+#[cfg(not(feature = "native"))]
+fn pick_project(_frame: Frame) -> Result<()> {
+    bail!("this build has no desktop frontend, so there is no window to pick a repo in")
 }
 
 fn launch_review(
@@ -516,6 +536,7 @@ fn open_review_url_for_session(
 fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     let mut logs = false;
     let mut web = false;
+    let mut pick = false;
     let mut remote: Option<String> = None;
     let mut remote_repo: Option<String> = None;
     let mut positional = Vec::new();
@@ -524,6 +545,7 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--logs" => logs = true,
+            "--pick" => pick = true,
             "--web" => web = true,
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
@@ -552,6 +574,14 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
 
     if web && remote.is_some() {
         bail!("--web and --remote are different frontends; pick one");
+    }
+    // A remote window with no --repo already opens on the repo prompt, and a browser tab has
+    // no launch screen to show, so --pick is the window's own and asks for nothing else.
+    if pick && (web || remote.is_some() || logs || !positional.is_empty()) {
+        bail!("--pick opens the window on its launch screen, so it takes nothing else");
+    }
+    if pick {
+        return Ok(CliCommand::PickProject);
     }
     if remote_repo.is_some() && remote.is_none() {
         bail!("--repo names a path on a remote machine, so it needs --remote too");
@@ -634,6 +664,7 @@ Usage:
   {program} <commit>
   {program} diff <target>
   {program} --web
+  {program} --pick
   {program} --remote <host> [--repo <path>]
   {program} serve --logs
   {program} mcp
@@ -652,6 +683,8 @@ Examples:
   {program} --remote dev-box --repo /home/you/project
 
 Run `{program}` inside any git repository you want to work in.
+`--pick` opens the window on its launch screen instead, which is where recent projects and
+the folder picker are; it is what the Window menu's New Window items open.
 Run `{program} .` to limit the review to the current directory.
 Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.

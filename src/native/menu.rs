@@ -13,7 +13,7 @@ pub(crate) enum MenuAction {
     OpenCommandPalette,
     NewTab,
     CloseTab,
-    /// Open another window of one of the three programs, on the repo this one is on.
+    /// Open another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
     InstallLaunchers,
 }
@@ -27,7 +27,7 @@ mod platform {
 
     use super::MenuAction;
     use crate::{
-        cli::{FRAMES, Frame},
+        cli::{Frame, NEW_WINDOW_FRAMES},
         native::programs,
     };
 
@@ -39,7 +39,7 @@ mod platform {
         command_palette: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
-        /// One per program that is installed, in [`FRAMES`] order.
+        /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
         install_launchers: MenuId,
     }
@@ -125,12 +125,13 @@ mod platform {
             );
 
             // A window of each program, so moonshell is a menu item away from the board rather
-            // than a trip to the terminal. Only the ones installed beside this executable are
-            // offered: an item that could not open anything would be a broken promise.
+            // than a trip to the terminal. Each opens on its launch screen, asking which repo
+            // to work in. Only the ones installed beside this executable are offered: an item
+            // that could not open anything would be a broken promise.
             //
             // ⌘N opens another window of this same program, which is what the chord means in
             // every other application; the other two are named and unbound.
-            let new_windows: Vec<(MenuItem, Frame)> = FRAMES
+            let new_windows: Vec<(MenuItem, Frame)> = NEW_WINDOW_FRAMES
                 .iter()
                 .filter(|offered| programs::executable_for(**offered).is_some())
                 .map(|offered| {

@@ -32,7 +32,7 @@ pub(crate) enum CommandAction {
     OpenInBrowser,
     ToggleTheme,
     InstallLaunchers,
-    /// Another window of one of the three programs, on the repo this one is on.
+    /// Another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
 }
 
@@ -91,16 +91,16 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         shortcut: bindings::chord_of(Action::NewShellTab),
     });
 
-    // Another window of each program that is installed beside this one, on the same repo.
-    // The board, the review and a shell are three windows rather than three panes when that
-    // is how you want them; on macOS these are in the Window menu as well.
-    for frame in crate::cli::FRAMES {
+    // Another window of each program that is installed beside this one, opening on its
+    // launch screen. The board, the review and a shell are three windows rather than three
+    // panes when that is how you want them; on macOS these are in the Window menu as well.
+    for frame in crate::cli::NEW_WINDOW_FRAMES {
         if crate::native::programs::executable_for(*frame).is_none() {
             continue;
         }
         commands.push(Command {
             title: format!("new {} window", frame.program()),
-            description: format!("Open another window on {}", frame.opens()),
+            description: format!("Open another window on {}, asking which repo", frame.opens()),
             action: CommandAction::NewWindow(*frame),
             // Only this window's own program has a chord; the other two are named only.
             shortcut: (*frame == app.frame()).then(|| bindings::chord_of(Action::NewWindow)).flatten(),

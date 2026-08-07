@@ -129,7 +129,7 @@ Inside the window:
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
 | `⌘⇧P` | command palette — open a review, a shell, the task board, or the agent monitor |
-| `⌘N` | another window of this same program, on the same repo |
+| `⌘N` | another window of this same program, on its launch screen |
 | `⌘J` | switch light and dark |
 | `?` | the shortcut list |
 
@@ -138,8 +138,10 @@ comment is anchored to exactly those lines, and `stage lines` stages exactly tho
 
 On macOS the **View** menu carries "Open in Browser" and the theme switch, and the **Window**
 menu opens another window of any of the three programs — `New Moontasks Window` from the
-review, `New Moonreview Window` from the board — each on the repo this window is on. Everywhere
-else those live in the command palette, which also has them on macOS.
+review, `New Moonreview Window` from the board. A new window opens on its launch screen, so it
+is a new place to work rather than a second view of this one; `moontasks --pick` is the same
+thing from a shell. Everywhere else those live in the command palette, which also has them on
+macOS.
 
 ### The web frontend
 

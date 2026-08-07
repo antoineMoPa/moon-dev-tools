@@ -437,7 +437,8 @@ impl App {
         }
     }
 
-    /// Open another window — of this program or of one of its siblings — on the same repo.
+    /// Open another window — of this program or of one of its siblings — on its launch
+    /// screen, where it asks which repo to open.
     ///
     /// A window is a process here: each one carries its own review server and its own shells,
     /// so there is nothing to open a second window out of but a second run of the executable.
@@ -450,16 +451,12 @@ impl App {
             ));
             return;
         };
-        let Some(repo_path) = self.model.project_path.clone() else {
-            self.model
-                .error("this window is not on a project yet, so there is none to open");
-            return;
-        };
 
         let target = self.backend().connect_target();
+        let launcher = crate::native::launchers::installed_launcher(frame);
         let spawned = crate::native::programs::new_window_command(
             &executable,
-            &repo_path,
+            launcher.as_deref(),
             target.as_deref(),
         )
         .spawn();
