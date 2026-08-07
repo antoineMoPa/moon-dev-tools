@@ -69,9 +69,7 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
         }
         resource.terminal_id = None;
         changed = true;
-        if resource.kind == TaskResourceKind::Agent {
-            an_agent_finished = true;
-        }
+        an_agent_finished = true;
     }
 
     // An agent that has stopped working has, as far as the board is concerned, produced
@@ -89,24 +87,39 @@ fn view_of(
     task_id: &str,
     metadata: &TaskMetadata,
 ) -> TaskView {
-    let resources = metadata
+    // Agent runs are the task's record and outlive the process; its shells are only ever the
+    // ones open right now, so the two are listed from different places and merged by age.
+    let mut resources: Vec<TaskResourceView> = metadata
         .resources
         .iter()
         .map(|resource| TaskResourceView {
             id: resource.id.clone(),
             kind: resource.kind,
             agent: resource.agent,
-            label: label_of(resource),
+            label: resource.agent.label().to_lowercase(),
             running: resource
                 .terminal_id
                 .as_ref()
                 .is_some_and(|terminal_id| state.terminals.is_live(terminal_id)),
             terminal_id: resource.terminal_id.clone(),
-            resumable: resource.kind == TaskResourceKind::Agent
-                && agent_launch(resource.agent).is_some(),
+            resumable: agent_launch(resource.agent).is_some(),
             started_at_unix: resource.started_at_unix,
         })
         .collect();
+    resources.extend(state.terminals.owned_shells(task_id).into_iter().map(
+        |shell| TaskResourceView {
+            // A shell is its terminal, so that is the name the board takes it off the task by.
+            id: shell.terminal_id.clone(),
+            kind: TaskResourceKind::Shell,
+            agent: AgentKind::None,
+            label: "shell".to_string(),
+            running: true,
+            terminal_id: Some(shell.terminal_id),
+            resumable: false,
+            started_at_unix: shell.started_at_unix,
+        },
+    ));
+    resources.sort_by_key(|resource| resource.started_at_unix);
 
     TaskView {
         id: task_id.to_string(),
@@ -119,13 +132,6 @@ fn view_of(
             .to_string(),
         repo_path: repo_path.display().to_string(),
         resources,
-    }
-}
-
-fn label_of(resource: &TaskResource) -> String {
-    match resource.kind {
-        TaskResourceKind::Shell => "shell".to_string(),
-        TaskResourceKind::Agent => resource.agent.label().to_lowercase(),
     }
 }
 
@@ -225,21 +231,31 @@ pub(crate) fn start_resource(
         args,
         env,
         owner: Some(task_id.to_string()),
+        // An agent comes up with the card's title already written in its box, waiting on the
+        // Enter that sends it. It is still the person who starts the work — the title is a
+        // card's name and rarely the whole of what is wanted — but the common case, where it
+        // is, is one keystroke away. A task's plain shell gets nothing typed at it.
+        type_ahead: (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone()),
     })?;
 
-    metadata.resources.push(TaskResource {
-        id: store::new_uuid(),
-        kind: request.kind,
-        agent,
-        terminal_id: Some(terminal_id.clone()),
-        agent_session_id,
-        started_at_unix: store::now_unix(),
-    });
-    // Work has started, so the task is no longer waiting to be picked up.
-    if request.kind == TaskResourceKind::Agent && metadata.status == TaskStatus::Todo {
-        metadata.status = TaskStatus::InProgress;
+    // A shell is not written down: nothing survives its pty, so a record of one from a run of
+    // moonreview that has ended is a card entry with nowhere to go. The registry lists the
+    // ones that are open, and that is the whole life of a shell.
+    if request.kind == TaskResourceKind::Agent {
+        metadata.resources.push(TaskResource {
+            id: store::new_uuid(),
+            kind: request.kind,
+            agent,
+            terminal_id: Some(terminal_id.clone()),
+            agent_session_id,
+            started_at_unix: store::now_unix(),
+        });
+        // Work has started, so the task is no longer waiting to be picked up.
+        if metadata.status == TaskStatus::Todo {
+            metadata.status = TaskStatus::InProgress;
+        }
+        store::write_task(&repo_path, task_id, &metadata)?;
     }
-    store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
 }
@@ -285,6 +301,9 @@ pub(crate) fn resume_resource(
         args: fillings.fill_all(launch.mcp.iter().chain(launch.resume.iter())),
         env,
         owner: Some(task_id.to_string()),
+        // A resumed run is being picked up where it left off, and it was told the title when
+        // it started; typing it again would be typing over whatever it is in the middle of.
+        type_ahead: None,
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
@@ -296,6 +315,22 @@ pub(crate) fn resume_resource(
     Ok(terminal_id)
 }
 
+/// Close one of a task's shells, if that is what the id names.
+///
+/// A shell goes by its terminal id, because the registry is the only place it is listed.
+/// Ending it is all there is to do with it, so `stop` and `delete` both come through here.
+fn close_shell(state: &AppState, task_id: &str, resource_id: &str) -> bool {
+    let owned = state
+        .terminals
+        .owned_shells(task_id)
+        .into_iter()
+        .any(|shell| shell.terminal_id == resource_id);
+    if owned {
+        state.terminals.remove(resource_id);
+    }
+    owned
+}
+
 /// Take a run off a task for good, ending its shell if it is still running.
 ///
 /// `stop` keeps the run so it can be resumed; this is for the ones that are finished with.
@@ -305,6 +340,9 @@ pub(crate) fn delete_resource(
     task_id: &str,
     resource_id: &str,
 ) -> Result<()> {
+    if close_shell(state, task_id, resource_id) {
+        return Ok(());
+    }
     let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
@@ -346,6 +384,9 @@ pub(crate) fn stop_resource(
     task_id: &str,
     resource_id: &str,
 ) -> Result<()> {
+    if close_shell(state, task_id, resource_id) {
+        return Ok(());
+    }
     let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 

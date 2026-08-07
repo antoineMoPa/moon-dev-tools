@@ -13,6 +13,7 @@ pub(crate) enum MenuAction {
     OpenCommandPalette,
     NewTab,
     CloseTab,
+    NewTask,
     InstallLaunchers,
 }
 
@@ -33,6 +34,7 @@ mod platform {
         command_palette: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
+        new_task: MenuId,
         install_launchers: MenuId,
     }
 
@@ -115,9 +117,19 @@ mod platform {
                 Some(Accelerator::new(Some(Modifiers::META), Code::KeyW)),
             );
 
+            // The board's own item. It sits with the other "new" ones rather than in View,
+            // because it makes something rather than showing something: it opens the board if
+            // it is not open and starts a card there with the cursor in it.
+            let new_task = MenuItem::new(
+                "New Moontask",
+                true,
+                Some(Accelerator::new(Some(Modifiers::META), Code::KeyN)),
+            );
+
             let window_menu = Submenu::new("Window", true);
             window_menu
                 .append_items(&[
+                    &new_task,
                     &new_tab,
                     &close_tab,
                     &PredefinedMenuItem::separator(),
@@ -137,6 +149,7 @@ mod platform {
                 command_palette: command_palette.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
+                new_task: new_task.id().clone(),
                 install_launchers: install_launchers.id().clone(),
             })
         }
@@ -155,6 +168,8 @@ mod platform {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
+                } else if event.id == self.new_task {
+                    MenuAction::NewTask
                 } else if event.id == self.install_launchers {
                     MenuAction::InstallLaunchers
                 } else {

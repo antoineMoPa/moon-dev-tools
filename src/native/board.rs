@@ -611,12 +611,20 @@ fn draw_resource(
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
             // Furthest right, so the two that keep the run are never the one you mean to
             // press and miss. Removing a run is not undoable either, so it asks first.
+            // A shell has nothing to keep — closing it is the end of it — so it is offered the
+            // close mark alone, while an agent run can be stopped and come back to.
+            let is_shell = resource.kind == TaskResourceKind::Shell;
+
             if pending_delete {
                 match widgets::confirm(
                     ui,
                     palette,
-                    "[really remove]",
-                    "this ends the run and takes it off the task for good",
+                    "[really close]",
+                    if is_shell {
+                        "this ends the shell, and its scrollback goes with it"
+                    } else {
+                        "this ends the run and takes it off the task for good"
+                    },
                 ) {
                     widgets::Confirmed::Yes => actions.push(BoardAction::DeleteResource(
                         task.id.clone(),
@@ -628,16 +636,16 @@ fn draw_resource(
                 return;
             }
             if close_button(ui, palette)
-                .on_hover_text(if resource.running {
-                    "End this run and take it off the task"
-                } else {
-                    "Take this run off the task"
+                .on_hover_text(match (is_shell, resource.running) {
+                    (true, _) => "Close this shell",
+                    (false, true) => "End this run and take it off the task",
+                    (false, false) => "Take this run off the task",
                 })
                 .clicked()
             {
                 actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
             }
-            if resource.running {
+            if resource.running && !is_shell {
                 if widgets::quiet_button_colored(ui, "stop", palette.muted)
                     .on_hover_text("End this shell, keeping the run to come back to")
                     .clicked()

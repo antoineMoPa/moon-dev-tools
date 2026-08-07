@@ -425,6 +425,13 @@ impl App {
     pub(crate) fn run_action(&mut self, action: CommandAction) {
         match action {
             CommandAction::OpenPane(request) => self.open_pane(request),
+            CommandAction::NewTask => {
+                // The board has to be on screen for the box to be typed in, so this opens it
+                // — or brings it forward — and then opens the composer on it.
+                self.open_pane(OpenPaneRequest::Tasks);
+                self.model.board.composer_open = true;
+                self.model.board.composer_focus = true;
+            }
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
             CommandAction::OpenInBrowser => self.open_in_browser(),
             CommandAction::InstallLaunchers => self.install_launchers(),
@@ -520,6 +527,9 @@ impl App {
             }
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
+            // Deferred like the palette's own actions: it adds a pane, which must not happen
+            // while the tree holding them is being drawn.
+            Action::NewTask => self.pending_action = Some(CommandAction::NewTask),
             Action::SaveFile => {
                 if let Some((pane_id, Pane::File { session_id, .. })) = self.active_pane() {
                     let session_id = session_id.clone();
@@ -1039,6 +1049,7 @@ impl App {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
+                MenuAction::NewTask => CommandAction::NewTask,
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
                     continue;
@@ -1177,16 +1188,27 @@ fn draw_recent_projects(
         let row = ui.horizontal(|ui| {
             // The rows share a left edge, in a column centred under the picker button.
             ui.add_space((ui.available_width() - RECENT_COLUMN_WIDTH).max(0.0) / 2.0);
-            ui.label(RichText::new(&name).strong());
-            ui.label(
-                RichText::new(widgets::elide_path(&parent, 52))
-                    .size(SMALL_SIZE)
-                    .color(palette.muted),
+            let text_starts_at = ui.cursor().left();
+            // Selectable labels take the click for themselves, which would leave the row
+            // live only in the slivers above and below the text.
+            ui.add(egui::Label::new(RichText::new(&name).strong()).selectable(false));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(widgets::elide_path(&parent, 52))
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
+                )
+                .selectable(false),
             );
+            text_starts_at
         });
+
+        // The whole row reads as the link, but only from where its text begins: the empty
+        // strip that centres the column under the picker is not part of it.
+        let mut clickable_area = row.response.rect;
+        clickable_area.min.x = row.inner;
         if widgets::clickable(
-            row.response
-                .interact(egui::Sense::click())
+            ui.interact(clickable_area, row.response.id, egui::Sense::click())
                 .on_hover_text(path.as_str()),
         )
         .clicked()

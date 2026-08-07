@@ -29,6 +29,8 @@ pub(crate) struct Command {
 #[derive(Clone)]
 pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
+    /// Open the board and start writing a card on it.
+    NewTask,
     OpenInBrowser,
     ToggleTheme,
     InstallLaunchers,
@@ -82,6 +84,13 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: None,
         });
     }
+    // Offered whether or not the board is open: it opens it on the way.
+    commands.push(Command {
+        title: "new moontask".to_string(),
+        description: "Write a new task on the board and start an agent on it".to_string(),
+        action: CommandAction::NewTask,
+        shortcut: bindings::chord_of(Action::NewTask),
+    });
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),

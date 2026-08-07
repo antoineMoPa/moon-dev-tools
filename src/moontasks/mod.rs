@@ -93,6 +93,11 @@ pub(crate) struct TerminalOpened {
 /// about it. `brief.md` in the task folder is the same text, for an agent with no system
 /// prompt to be given it in.
 ///
+/// The card's title is typed into its box a moment after it starts — see
+/// [`crate::terminal::TerminalSpec::type_ahead`] — so the conversation opens with something
+/// written and nothing sent. That is a keystroke short of firing the job off, and the
+/// keystroke is the person's.
+///
 /// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
 /// so an agent that cannot be told its session id is simply run without one.
 pub(crate) struct AgentLaunch {

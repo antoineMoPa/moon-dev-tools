@@ -403,7 +403,10 @@ export function HunkCard({
     >
       <div className="hunk-actions">
         {isCommitReview ? (
-          <button onClick={() => void actions.setReviewed(hunk.id, !hunk.reviewed)}>
+          <button
+            className="hunk-reviewed-toggle"
+            onClick={() => void actions.setReviewed(hunk.id, !hunk.reviewed)}
+          >
             [{hunk.reviewed ? "mark unreviewed" : "mark reviewed"}]
           </button>
         ) : null}

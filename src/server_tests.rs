@@ -258,32 +258,39 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     let resource = &tasks[0]["resources"][0];
     assert_eq!(resource["kind"], "shell");
     assert_eq!(resource["running"], true);
-    let resource_id = resource["id"].as_str().expect("expected a resource id").to_string();
+    // A shell goes by its terminal, because the running shells are the only record of it.
+    assert_eq!(resource["id"], serde_json::json!(terminal_id));
+    let resource_id = terminal_id.clone();
 
+    // Closing a shell is the end of it: there is no pty left to come back to, so it leaves the
+    // card rather than sitting there as a run that can never be reopened.
     served
         .client
         .post(format!("{tasks_url}/{task_id}/resources/{resource_id}/stop"))
         .json(&serde_json::json!({}))
         .send()
-        .expect("failed to stop the shell")
+        .expect("failed to close the shell")
         .error_for_status()
-        .expect("the server refused to stop the shell");
-    assert_eq!(board(&served)[0]["resources"][0]["running"], false);
-
-    // A run that is finished with comes off the task entirely, which `stop` does not do.
-    served
-        .client
-        .delete(format!("{tasks_url}/{task_id}/resources/{resource_id}"))
-        .send()
-        .expect("failed to remove the run")
-        .error_for_status()
-        .expect("the server refused to remove the run");
+        .expect("the server refused to close the shell");
     assert!(
         board(&served)[0]["resources"]
             .as_array()
             .expect("expected an array")
             .is_empty(),
-        "the run should be off the task"
+        "a closed shell should be off the task"
+    );
+    // And it is not written down, so nothing brings it back on the next read of the board.
+    let metadata = std::fs::read_to_string(
+        served
+            .root
+            .join(".moontasks")
+            .join(&task_id)
+            .join("metadata.json"),
+    )
+    .expect("failed to read the task");
+    assert!(
+        !metadata.contains("shell"),
+        "a shell should not be recorded on the task, got: {metadata}"
     );
 
     served

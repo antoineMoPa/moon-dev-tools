@@ -7,6 +7,7 @@ in the repo straight away.
 
 | | |
 | --- | --- |
+| `⌘N`, or `New Moontask` in the menu | open the board and start a card on it, wherever the window was |
 | drag a card by its title | move it between TODO, IN PROGRESS, IN LOCAL REVIEW, IN REMOTE REVIEW and DONE |
 | `[start review]` | open the review of the repo in a tab |
 | `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |
@@ -43,9 +44,15 @@ delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 
 ## What the agents are told
 
-An agent started on a task does not have to be asked twice. It opens on the task's title as
-its prompt, and it is given a brief — the same text `brief.md` holds — naming the task, its
-folder, and the tool to call when the work is ready to be looked at.
+An agent started on a task does not have to be asked twice. It is given a brief — the same
+text `brief.md` holds — naming the task, its folder, and the tool to call when the work is
+ready to be looked at.
+
+The card's title is then typed into its box, as if you had typed it: three seconds after the
+agent starts, which is long enough for all three to have drawn an input to type into. Nothing
+sends it. A title that is the whole of what you wanted is one Enter away, and one that is not
+is there to be written over. The Enter is never moonreview's, so an agent that was still
+asking whether it trusts the folder loses the text rather than acting on it.
 
 The brief is worth its own file because it is the difference between an agent that has the
 tools and one that uses them.

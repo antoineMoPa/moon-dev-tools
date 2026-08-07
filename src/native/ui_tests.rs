@@ -2864,3 +2864,150 @@ fn a_diff_line_longer_than_the_pane_stops_at_the_card() {
 
     harness.snapshot("long-diff-line");
 }
+
+/// A recent project is a link across its whole row, not only the sliver under its text.
+/// Selectable labels take the click for themselves, which used to leave the row live only
+/// at its top and bottom edges.
+#[test]
+fn a_recent_project_opens_from_the_middle_of_its_row() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = Fixture::new("recent-row-click");
+    fixture.write("src/lib.rs", "fn one() {}\n");
+    fixture.commit("first");
+
+    let mut saved = crate::settings::Settings::default();
+    saved.remember_project(&fixture.root.display().to_string());
+    crate::settings::store(&saved).expect("expected the settings to be written");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            serves_web: false,
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let left_the_launch_screen = Arc::new(AtomicBool::new(false));
+    let seen_in_ui = Arc::clone(&left_the_launch_screen);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            if !matches!(app.model.stage, crate::native::model::Stage::Prompt { .. }) {
+                seen_in_ui.store(true, Ordering::SeqCst);
+            }
+        });
+    harness.run_steps(3);
+
+    // The fixture's own directory name, which the row shows in bold. The picker button
+    // beside it says "Choose a repo…", so the label is the one to take the rect from.
+    let row = harness
+        .query_by_role_and_label(egui::accesskit::Role::Label, "repo")
+        .expect("expected the launch screen to list the fixture project")
+        .rect();
+    let middle = row.center();
+
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(middle),
+        egui::Event::PointerButton {
+            pos: middle,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: middle,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.run_steps(3);
+
+    if let Some(path) = crate::settings::path() {
+        let _ = fs::remove_file(path);
+    }
+    assert!(
+        left_the_launch_screen.load(Ordering::SeqCst),
+        "expected clicking the middle of a recent project's row to open it"
+    );
+}
+
+/// ⌘N — the same thing the menu bar's New Moontask does — opens the board and puts the
+/// keyboard in a new card, wherever the window happened to be. It has to work with no board
+/// open, which is the state the window starts in.
+#[test]
+fn a_new_moontask_opens_the_board_and_takes_the_keyboard() {
+    let fixture = seeded_fixture("new-moontask");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let asked = Arc::new(AtomicBool::new(false));
+    let asked_in_ui = Arc::clone(&asked);
+    let composing = Arc::new(AtomicBool::new(false));
+    let composing_in_ui = Arc::clone(&composing);
+    let typed = Arc::new(Mutex::new(String::new()));
+    let typed_in_ui = Arc::clone(&typed);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Only once the review has opened: opening it replaces the whole arrangement,
+            // and with it any pane the board had been given.
+            if !asked_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                ui.ctx().input_mut(|input| {
+                    input.events.push(egui::Event::Key {
+                        key: egui::Key::N,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    })
+                });
+                asked_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            // The box is only drawn once the board has read `.moontasks`, and until it is
+            // drawn there is nothing for the keyboard to be in.
+            composing_in_ui.store(
+                app.model.board.composer_open
+                    && app.model.board.loaded
+                    && app
+                        .model
+                        .layout
+                        .find_pane(|pane| pane.kind() == PaneKind::Tasks)
+                        .is_some(),
+                Ordering::Relaxed,
+            );
+            *typed_in_ui.lock().unwrap() = app.model.board.new_title.clone();
+        });
+
+    assert!(
+        settle(&mut harness, || composing.load(Ordering::Relaxed)),
+        "⌘N should have opened the board with a new card on it"
+    );
+    harness.run_steps(3);
+
+    // The card's box has the keyboard, so what is typed next is the task's title rather than
+    // a shortcut aimed at whatever was on screen before.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("Ship the board".to_string()));
+    harness.run_steps(3);
+
+    assert_eq!(
+        typed.lock().unwrap().as_str(),
+        "Ship the board",
+        "what was typed after ⌘N should have gone into the new card"
+    );
+}
