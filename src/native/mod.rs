@@ -12,6 +12,7 @@ pub(crate) mod menu;
 pub(crate) mod model;
 pub(crate) mod palette;
 pub(crate) mod panes;
+mod programs;
 pub(crate) mod review;
 pub(crate) mod tasks;
 pub(crate) mod theme;

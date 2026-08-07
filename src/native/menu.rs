@@ -13,7 +13,8 @@ pub(crate) enum MenuAction {
     OpenCommandPalette,
     NewTab,
     CloseTab,
-    NewTask,
+    /// Open another window of one of the three programs, on the repo this one is on.
+    NewWindow(crate::cli::Frame),
     InstallLaunchers,
 }
 
@@ -25,6 +26,10 @@ mod platform {
     };
 
     use super::MenuAction;
+    use crate::{
+        cli::{FRAMES, Frame},
+        native::programs,
+    };
 
     /// The menu, kept alive for as long as the window: dropping it would take the bar with it.
     pub(crate) struct NativeMenu {
@@ -34,14 +39,16 @@ mod platform {
         command_palette: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
-        new_task: MenuId,
+        /// One per program that is installed, in [`FRAMES`] order.
+        new_windows: Vec<(MenuId, Frame)>,
         install_launchers: MenuId,
     }
 
     impl NativeMenu {
         /// Install the menu bar. `serves_web` decides whether the browser item is offered at
-        /// all, since a window with no server behind it has nothing to open.
-        pub(crate) fn install(serves_web: bool) -> Option<Self> {
+        /// all, since a window with no server behind it has nothing to open, and `frame` is
+        /// which of the three programs this window is — the one whose new window takes ⌘N.
+        pub(crate) fn install(serves_web: bool, frame: Frame) -> Option<Self> {
             let menu = Menu::new();
 
             // Written on demand rather than by the installer, which drops executables on PATH
@@ -117,19 +124,34 @@ mod platform {
                 Some(Accelerator::new(Some(Modifiers::META), Code::KeyW)),
             );
 
-            // The board's own item. It sits with the other "new" ones rather than in View,
-            // because it makes something rather than showing something: it opens the board if
-            // it is not open and starts a card there with the cursor in it.
-            let new_task = MenuItem::new(
-                "New Moontask",
-                true,
-                Some(Accelerator::new(Some(Modifiers::META), Code::KeyN)),
-            );
+            // A window of each program, so moonshell is a menu item away from the board rather
+            // than a trip to the terminal. Only the ones installed beside this executable are
+            // offered: an item that could not open anything would be a broken promise.
+            //
+            // ⌘N opens another window of this same program, which is what the chord means in
+            // every other application; the other two are named and unbound.
+            let new_windows: Vec<(MenuItem, Frame)> = FRAMES
+                .iter()
+                .filter(|offered| programs::executable_for(**offered).is_some())
+                .map(|offered| {
+                    let accelerator = (*offered == frame)
+                        .then(|| Accelerator::new(Some(Modifiers::META), Code::KeyN));
+                    let item = MenuItem::new(
+                        format!("New {} Window", offered.display_name()),
+                        true,
+                        accelerator,
+                    );
+                    (item, *offered)
+                })
+                .collect();
 
             let window_menu = Submenu::new("Window", true);
+            for (item, _) in &new_windows {
+                window_menu.append(item).ok()?;
+            }
             window_menu
                 .append_items(&[
-                    &new_task,
+                    &PredefinedMenuItem::separator(),
                     &new_tab,
                     &close_tab,
                     &PredefinedMenuItem::separator(),
@@ -149,7 +171,10 @@ mod platform {
                 command_palette: command_palette.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
-                new_task: new_task.id().clone(),
+                new_windows: new_windows
+                    .iter()
+                    .map(|(item, frame)| (item.id().clone(), *frame))
+                    .collect(),
                 install_launchers: install_launchers.id().clone(),
             })
         }
@@ -168,10 +193,14 @@ mod platform {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
-                } else if event.id == self.new_task {
-                    MenuAction::NewTask
                 } else if event.id == self.install_launchers {
                     MenuAction::InstallLaunchers
+                } else if let Some((_, frame)) = self
+                    .new_windows
+                    .iter()
+                    .find(|(id, _)| *id == event.id)
+                {
+                    MenuAction::NewWindow(*frame)
                 } else {
                     continue;
                 };
@@ -190,7 +219,7 @@ mod platform {
     pub(crate) struct NativeMenu;
 
     impl NativeMenu {
-        pub(crate) fn install(_serves_web: bool) -> Option<Self> {
+        pub(crate) fn install(_serves_web: bool, _frame: crate::cli::Frame) -> Option<Self> {
             None
         }
 

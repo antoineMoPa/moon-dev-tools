@@ -61,6 +61,10 @@ impl Backend for LocalBackend {
         format!("{}/review/{session_id}", server_url())
     }
 
+    fn connect_target(&self) -> Option<String> {
+        None
+    }
+
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened> {
         service::open_session(&self.state, request)
     }

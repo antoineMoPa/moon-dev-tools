@@ -205,6 +205,10 @@ impl Backend for RemoteBackend {
         format!("{}/review/{session_id}", self.base_url)
     }
 
+    fn connect_target(&self) -> Option<String> {
+        Some(self.base_url.clone())
+    }
+
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened> {
         self.post_json("/api/session/open", &request)
     }

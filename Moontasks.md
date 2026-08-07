@@ -7,7 +7,6 @@ in the repo straight away.
 
 | | |
 | --- | --- |
-| `⌘N`, or `New Moontask` in the menu | open the board and start a card on it, wherever the window was |
 | drag a card by its title | move it between TODO, IN PROGRESS, IN LOCAL REVIEW, IN REMOTE REVIEW and DONE |
 | `[start review]` | open the review of the repo in a tab |
 | `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |

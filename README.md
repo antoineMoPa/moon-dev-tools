@@ -129,14 +129,17 @@ Inside the window:
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
 | `⌘⇧P` | command palette — open a review, a shell, the task board, or the agent monitor |
+| `⌘N` | another window of this same program, on the same repo |
 | `⌘J` | switch light and dark |
 | `?` | the shortcut list |
 
 Clicking a diff line selects it and opens a comment on it; shift-click extends the run. The
 comment is anchored to exactly those lines, and `stage lines` stages exactly those lines.
 
-On macOS the **View** menu carries "Open in Browser" and the theme switch. Everywhere else
-those live in the command palette, which also has them on macOS.
+On macOS the **View** menu carries "Open in Browser" and the theme switch, and the **Window**
+menu opens another window of any of the three programs — `New Moontasks Window` from the
+review, `New Moonreview Window` from the board — each on the repo this window is on. Everywhere
+else those live in the command palette, which also has them on macOS.
 
 ### The web frontend
 
@@ -239,11 +242,10 @@ pkill moon;  cargo install --path .
 To install launchers:
 
 ```bash
-moonreview install-launchers # Creates launchers in /Applications
+cargo install --path .; moonreview install-launchers
 ```
 
-`cargo install --path .` builds the library once and links the three executables from it.
-
+On mac you will need to drag applications from the Applications folder to your menu bar.
 
 ## Origin of name
 

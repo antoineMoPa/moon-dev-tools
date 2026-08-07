@@ -211,11 +211,16 @@ impl App {
     /// menu bar may only be built on the main thread, which is where the window lives but is
     /// not where a test runs.
     pub(crate) fn install_menu(&mut self) {
-        self.menu = NativeMenu::install(self.serves_web);
+        self.menu = NativeMenu::install(self.serves_web, self.frame);
     }
 
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {
         self.tasks.backend()
+    }
+
+    /// Which of the three programs this window is.
+    pub(crate) fn frame(&self) -> crate::cli::Frame {
+        self.frame
     }
 
     pub(crate) fn palette_of(&self) -> Palette {
@@ -425,16 +430,44 @@ impl App {
     pub(crate) fn run_action(&mut self, action: CommandAction) {
         match action {
             CommandAction::OpenPane(request) => self.open_pane(request),
-            CommandAction::NewTask => {
-                // The board has to be on screen for the box to be typed in, so this opens it
-                // — or brings it forward — and then opens the composer on it.
-                self.open_pane(OpenPaneRequest::Tasks);
-                self.model.board.composer_open = true;
-                self.model.board.composer_focus = true;
-            }
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
             CommandAction::OpenInBrowser => self.open_in_browser(),
             CommandAction::InstallLaunchers => self.install_launchers(),
+            CommandAction::NewWindow(frame) => self.open_new_window(frame),
+        }
+    }
+
+    /// Open another window — of this program or of one of its siblings — on the same repo.
+    ///
+    /// A window is a process here: each one carries its own review server and its own shells,
+    /// so there is nothing to open a second window out of but a second run of the executable.
+    /// It is left to run on its own; closing this one does not take it with it.
+    fn open_new_window(&mut self, frame: crate::cli::Frame) {
+        let Some(executable) = crate::native::programs::executable_for(frame) else {
+            self.model.error(format!(
+                "{} is not installed beside this one",
+                frame.program()
+            ));
+            return;
+        };
+        let Some(repo_path) = self.model.project_path.clone() else {
+            self.model
+                .error("this window is not on a project yet, so there is none to open");
+            return;
+        };
+
+        let target = self.backend().connect_target();
+        let spawned = crate::native::programs::new_window_command(
+            &executable,
+            &repo_path,
+            target.as_deref(),
+        )
+        .spawn();
+        if let Err(error) = spawned {
+            self.model.error(format!(
+                "could not open a {} window: {error}",
+                frame.display_name()
+            ));
         }
     }
 
@@ -527,9 +560,9 @@ impl App {
             }
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
-            // Deferred like the palette's own actions: it adds a pane, which must not happen
-            // while the tree holding them is being drawn.
-            Action::NewTask => self.pending_action = Some(CommandAction::NewTask),
+            // Deferred into the same slot the menu bar's item uses: on macOS the chord can
+            // arrive as both, and two windows is not what one ⌘N asked for.
+            Action::NewWindow => self.pending_action = Some(CommandAction::NewWindow(self.frame)),
             Action::SaveFile => {
                 if let Some((pane_id, Pane::File { session_id, .. })) = self.active_pane() {
                     let session_id = session_id.clone();
@@ -1049,7 +1082,7 @@ impl App {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
-                MenuAction::NewTask => CommandAction::NewTask,
+                MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
                     continue;

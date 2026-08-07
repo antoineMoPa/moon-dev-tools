@@ -32,6 +32,13 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Where a browser can open the same review, for the "open in browser" action.
     fn web_url(&self, session_id: &str) -> String;
 
+    /// What another window would have to be given as `--remote` to reach the same repos.
+    /// `None` for a backend that reads this machine, which needs no address at all.
+    ///
+    /// The full address rather than [`Backend::describe`]'s label: that one has its scheme
+    /// trimmed off for reading, and a window opened on it would fall back to plain HTTP.
+    fn connect_target(&self) -> Option<String>;
+
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened>;
     fn session_state(&self, session_id: &str) -> Result<SessionPayload>;
     fn session_submodules(&self, session_id: &str) -> Result<Vec<SubmoduleView>>;

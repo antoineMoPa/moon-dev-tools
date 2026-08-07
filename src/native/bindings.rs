@@ -18,8 +18,8 @@ pub(crate) enum Action {
     OpenPalette,
     NewShellTab,
     CloseTab,
-    /// Open the moontasks board and start writing a card on it.
-    NewTask,
+    /// Another window of this same program, on the same repo.
+    NewWindow,
     SaveFile,
     ToggleTheme,
     /// Stage the hunk under the caret, or mark it reviewed in a review that cannot be staged.
@@ -77,7 +77,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         reach: Reach::Anywhere,
     },
     Binding {
-        action: Action::NewTask,
+        action: Action::NewWindow,
         chord: &[press(Modifiers::COMMAND, Key::N)],
         reach: Reach::Anywhere,
     },

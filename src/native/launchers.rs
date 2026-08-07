@@ -12,7 +12,10 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::cli::{FRAMES, Frame};
+use crate::{
+    cli::{FRAMES, Frame},
+    native::programs::{executable_for, install_dir},
+};
 
 /// A launcher that was written, and where it landed.
 pub(crate) struct InstalledLauncher {
@@ -21,22 +24,12 @@ pub(crate) struct InstalledLauncher {
 }
 
 /// Write a launcher for every executable installed beside this one.
-///
-/// The executables ship together, but only some of them may be installed — an archive from
-/// before the split holds one — so a missing sibling is skipped rather than fatal.
 pub(crate) fn install() -> Result<Vec<InstalledLauncher>> {
-    let install_dir = env::current_exe()
-        .context("failed to locate the running executable")?
-        .parent()
-        .context("the running executable has no directory")?
-        .to_path_buf();
-
     let mut installed = Vec::new();
     for frame in FRAMES {
-        let executable = install_dir.join(frame.program());
-        if !executable.is_file() {
+        let Some(executable) = executable_for(*frame) else {
             continue;
-        }
+        };
         installed.push(InstalledLauncher {
             frame: *frame,
             path: platform::write_launcher(*frame, &executable)?,
@@ -46,7 +39,7 @@ pub(crate) fn install() -> Result<Vec<InstalledLauncher>> {
     if installed.is_empty() {
         bail!(
             "no moonreview executables in {} to make launchers for",
-            install_dir.display()
+            install_dir()?.display()
         );
     }
 
@@ -356,7 +349,7 @@ StartupWMClass=moonreview
 mod platform {
     use std::path::{Path, PathBuf};
 
-    use anyhow::{Result, bail};
+    use anyhow::{Context, Result, bail};
 
     use crate::cli::Frame;
 

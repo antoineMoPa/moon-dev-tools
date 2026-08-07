@@ -29,11 +29,11 @@ pub(crate) struct Command {
 #[derive(Clone)]
 pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
-    /// Open the board and start writing a card on it.
-    NewTask,
     OpenInBrowser,
     ToggleTheme,
     InstallLaunchers,
+    /// Another window of one of the three programs, on the repo this one is on.
+    NewWindow(crate::cli::Frame),
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -84,19 +84,28 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: None,
         });
     }
-    // Offered whether or not the board is open: it opens it on the way.
-    commands.push(Command {
-        title: "new moontask".to_string(),
-        description: "Write a new task on the board and start an agent on it".to_string(),
-        action: CommandAction::NewTask,
-        shortcut: bindings::chord_of(Action::NewTask),
-    });
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),
         action: CommandAction::OpenPane(OpenPaneRequest::Terminal { command: None }),
         shortcut: bindings::chord_of(Action::NewShellTab),
     });
+
+    // Another window of each program that is installed beside this one, on the same repo.
+    // The board, the review and a shell are three windows rather than three panes when that
+    // is how you want them; on macOS these are in the Window menu as well.
+    for frame in crate::cli::FRAMES {
+        if crate::native::programs::executable_for(*frame).is_none() {
+            continue;
+        }
+        commands.push(Command {
+            title: format!("new {} window", frame.program()),
+            description: format!("Open another window on {}", frame.opens()),
+            action: CommandAction::NewWindow(*frame),
+            // Only this window's own program has a chord; the other two are named only.
+            shortcut: (*frame == app.frame()).then(|| bindings::chord_of(Action::NewWindow)).flatten(),
+        });
+    }
 
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
