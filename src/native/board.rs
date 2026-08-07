@@ -14,7 +14,7 @@ use crate::{
     },
     native::{
         app::App,
-        model::OpenedShell,
+        model::{Model, OpenedShell, PendingPlace, TaskDropped, TaskLanding},
         palette::CommandAction,
         panes::{OpenPaneRequest, PaneKind},
         theme::{Palette, SMALL_SIZE},
@@ -31,6 +31,20 @@ const COLUMN_WIDTH: f32 = 286.0;
 #[derive(Clone)]
 struct DraggedTask(String);
 
+/// How solid the card under the cursor is while it is being dragged. Enough of it to read,
+/// little enough that the slot it is being held over shows through it.
+const DRAGGED_CARD_OPACITY: f32 = 0.5;
+
+/// The gap between two cards in a column.
+const CARD_SPACING: f32 = 5.0;
+
+/// How long a card takes to walk to a new place in its column. Long enough to be followed by
+/// eye, short enough that the board is never waiting on it.
+const CARD_SLIDE: f32 = 0.12;
+
+/// How long a card that has just been dropped stays marked, in seconds.
+const DROP_FLASH: f32 = 1.2;
+
 /// The close mark's box, matching the one on a tab.
 const CLOSE_MARK_SIZE: f32 = 12.0;
 
@@ -46,7 +60,8 @@ enum BoardAction {
     Create,
     /// Point the review — and so the next task — at another agent.
     SelectAgent(AgentKind),
-    SetStatus(String, TaskStatus),
+    /// A card let go of in a column, at the place among its cards it was dropped.
+    Place(String, TaskStatus, usize),
     Delete(String),
     Rename(String, String),
     CancelRename,
@@ -286,14 +301,9 @@ fn draw_column(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    let tasks: Vec<TaskView> = app
-        .model
-        .board
-        .tasks
-        .iter()
-        .filter(|task| task.status == status)
-        .cloned()
-        .collect();
+    let carried = egui::DragAndDrop::payload::<DraggedTask>(ui.ctx());
+    let dragged_id = carried.as_deref().map(|carried| carried.0.clone());
+    let tasks = column_cards(app, status, dragged_id.as_deref());
 
     // A column stacks its cards, whatever layout the row of columns is in.
     ui.allocate_ui_with_layout(
@@ -328,9 +338,11 @@ fn draw_column(
 
         let composing = status == TaskStatus::Todo && app.model.board.composer_open;
 
-        // The whole column below its heading is where a card can be dropped, so the target is
-        // the column the eye reads rather than the gap between two cards.
-        let carrying = egui::DragAndDrop::has_payload_of_type::<DraggedTask>(ui.ctx());
+        // Where a drop would land, counted against the cards it would be put among — so the
+        // slot the dragged card is standing in is taken back out of the reckoning, and moving
+        // the pointer over a card cannot bounce between two answers.
+        let mut cards: Vec<egui::Rect> = Vec::new();
+        let mut slot = 0.0;
         let mut zone = egui::Frame::new()
             .corner_radius(CornerRadius::same(8))
             .inner_margin(egui::Margin::same(4))
@@ -341,12 +353,21 @@ fn draw_column(
                 .id_salt(format!("moontasks-column-{}", status.wire_name()))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    // What a card's place is measured against, so scrolling the column is not
+                    // read as every card in it having moved.
+                    let origin = ui.min_rect().top();
                     if composing {
                         draw_composer(app, ui, palette, actions);
                     }
                     for task in &tasks {
-                        draw_card(app, ui, task, palette, actions);
-                        ui.add_space(5.0);
+                        let card = draw_card(app, ui, task, origin, palette, actions);
+                        if Some(task.id.as_str()) == dragged_id.as_deref() {
+                            draw_empty_slot(ui, card, palette);
+                            slot = card.height() + CARD_SPACING;
+                        } else {
+                            cards.push(card.translate(vec2(0.0, -slot)));
+                        }
+                        ui.add_space(CARD_SPACING);
                     }
                     if tasks.is_empty() && !composing {
                         ui.label(
@@ -359,23 +380,179 @@ fn draw_column(
         }
         let response = zone.allocate_space(ui);
 
-        // `contains_pointer` rather than `hovered`, which is false while something else is
-        // being dragged — and something else being dragged is the whole situation here.
-        let over = carrying && response.contains_pointer();
+        // Which column the pointer is in, worked out from the pointer rather than taken from
+        // the response: egui hit-tests a frame behind, on the widgets the last frame drew, and
+        // a column that has just taken the dragged card in is not the column it hit-tested.
+        let ghost = dragged_id
+            .as_deref()
+            .map(|task_id| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(task_id)));
+        let over = ghost.is_some() && pointer_over(ui, &response, ghost);
+        let landing = over
+            .then(|| ui.ctx().pointer_interact_pos())
+            .flatten()
+            .map(|pointer| {
+                cards
+                    .iter()
+                    .filter(|card| card.center().y < pointer.y)
+                    .count()
+            });
         if over {
             zone.frame.fill = palette.control_active_bg;
             zone.frame.stroke = egui::Stroke::new(1.0, palette.accent);
         }
         zone.paint(ui);
 
-        if over && ui.input(|input| input.pointer.any_released())
-            && let Some(dragged) = egui::DragAndDrop::take_payload::<DraggedTask>(ui.ctx())
-        {
-            actions.push(BoardAction::SetStatus(dragged.0.clone(), status));
+        if let Some(at) = landing {
+            // Read by the next frame, which draws the card in this slot rather than in the
+            // one it was picked up from.
+            app.model.board.landing = Some(TaskLanding { status, index: at });
+
+            if ui.input(|input| input.pointer.any_released())
+                && let Some(dragged) = egui::DragAndDrop::take_payload::<DraggedTask>(ui.ctx())
+            {
+                // The card is already drawn where it landed; this marks it there for a
+                // moment, because one let go of between two others is hard to pick back out.
+                app.model.board.dropped = Some(TaskDropped {
+                    task_id: dragged.0.clone(),
+                    at: ui.input(|input| input.time),
+                });
+                app.model.board.landing = None;
+                // The board is redrawn from the server's answer, which is a worker thread and
+                // a poll away: the move is made here as well, and held over every answer
+                // until one of them agrees, so the card stays where it was put rather than
+                // springing back and landing a second time.
+                app.model.board.pending_place = Some(PendingPlace {
+                    task_id: dragged.0.clone(),
+                    status,
+                    index: at,
+                });
+                place_in(&mut app.model.board.tasks, &dragged.0, status, at);
+                actions.push(BoardAction::Place(dragged.0.clone(), status, at));
+            }
         }
         },
     );
     ui.add_space(6.0);
+}
+
+/// The cards of one column, in the order they are drawn.
+///
+/// A card being dragged is one of them from the moment it is over the column, and no longer
+/// one of the column it came from: the board makes the move as it is being made rather than
+/// once it is over, so nothing jumps when the card is let go of.
+fn column_cards(app: &App, status: TaskStatus, dragged_id: Option<&str>) -> Vec<TaskView> {
+    let landing = app.model.board.landing;
+    // Until the pointer has been over a column there is nowhere for the card to be but where
+    // it came from, and taking it out of the board for that first frame reads as a flicker.
+    let taken = landing.is_some();
+
+    let mut tasks: Vec<TaskView> = app
+        .model
+        .board
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.status == status && !(taken && Some(task.id.as_str()) == dragged_id)
+        })
+        .cloned()
+        .collect();
+
+    if let Some(landing) = landing.filter(|landing| landing.status == status)
+        && let Some(dragged) = dragged_id.and_then(|id| {
+            app.model
+                .board
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
+                .cloned()
+        })
+    {
+        tasks.insert(landing.index.min(tasks.len()), dragged);
+    }
+    tasks
+}
+
+/// The id a card is dragged by, which is also the layer its ghost is drawn into.
+fn card_drag_id(task_id: &str) -> egui::Id {
+    egui::Id::new(("moontask-card", task_id))
+}
+
+/// Whether the pointer is inside a column with nothing but the dragged card's own ghost over
+/// it — that one follows the cursor, so it is over every column the cursor could be over and
+/// would otherwise be the answer to every question about what is under the pointer.
+fn pointer_over(ui: &Ui, zone: &egui::Response, ghost: Option<egui::LayerId>) -> bool {
+    let Some(pointer) = ui.ctx().input(|input| input.pointer.interact_pos()) else {
+        return false;
+    };
+    if !zone.rect.contains(pointer) {
+        return false;
+    }
+    let over = ui.ctx().layer_id_at(pointer);
+    over == Some(zone.layer_id) || (over.is_some() && over == ghost)
+}
+
+/// Take a board the server has answered with, with a drop that it may not have seen yet.
+///
+/// A read that was already on its way when a card was dropped answers with the card where it
+/// was, so the drop is made again on top of it — until an answer comes back with the card
+/// where it was put, which is the server having caught up.
+pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
+    if let Some(pending) = &model.board.pending_place {
+        let column: Vec<&TaskView> = tasks
+            .iter()
+            .filter(|task| task.status == pending.status)
+            .collect();
+        let landed = column
+            .iter()
+            .position(|task| task.id == pending.task_id)
+            .is_some_and(|at| at == pending.index.min(column.len().saturating_sub(1)));
+        if landed {
+            model.board.pending_place = None;
+        } else {
+            let (task_id, status, index) =
+                (pending.task_id.clone(), pending.status, pending.index);
+            place_in(&mut tasks, &task_id, status, index);
+        }
+    }
+    model.board.tasks = tasks;
+}
+
+/// Make the move on the board being drawn, ahead of the server being told about it.
+///
+/// What the board draws is the last answer the server gave, and the next one is a worker
+/// thread and a poll away. Without this the dropped card springs back to where it came from
+/// for those few frames and then moves again — which reads as the drop having failed.
+fn place_in(tasks: &mut Vec<TaskView>, task_id: &str, status: TaskStatus, index: usize) {
+    let Some(at) = tasks.iter().position(|task| task.id == task_id) else {
+        return;
+    };
+    let mut moved = tasks.remove(at);
+    moved.status = status;
+
+    // Where that place is in the one list the board keeps every column's cards in.
+    let column: Vec<usize> = tasks
+        .iter()
+        .enumerate()
+        .filter(|(_, task)| task.status == status)
+        .map(|(at, _)| at)
+        .collect();
+    let into = match column.get(index) {
+        Some(&at) => at,
+        None => column.last().map_or(tasks.len(), |&at| at + 1),
+    };
+    tasks.insert(into, moved);
+}
+
+/// The hole a dragged card leaves where it is going to land: the card itself is drawn at the
+/// cursor, and this is the shape of the space being held for it.
+fn draw_empty_slot(ui: &Ui, slot: egui::Rect, palette: &Palette) {
+    ui.painter().rect(
+        slot,
+        CornerRadius::same(6),
+        palette.control_bg,
+        egui::Stroke::new(1.0, palette.accent),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// One card, and the drag that carries it between columns.
@@ -385,24 +562,39 @@ fn draw_column(
 /// which is how `egui`'s own drag sources work. Sensing the drag on the title alone is what
 /// leaves the buttons underneath clickable — anything sensing a drag claims everything under
 /// it.
+///
+/// Answers with the place the card was laid out in, which is what a drop is measured against:
+/// a dragged card is drawn at the cursor but keeps its place in the column.
 fn draw_card(
     app: &mut App,
     ui: &mut Ui,
     task: &TaskView,
+    origin: f32,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
-) {
-    let drag_id = egui::Id::new(("moontask-card", &task.id));
+) -> egui::Rect {
+    let drag_id = card_drag_id(&task.id);
     if !ui.ctx().is_being_dragged(drag_id) {
-        draw_card_body(app, ui, task, drag_id, palette, actions);
-        return;
+        return slide_into_place(ui, drag_id, origin, |ui| {
+            draw_card_body(app, ui, task, drag_id, palette, actions)
+        });
     }
 
     egui::DragAndDrop::set_payload(ui.ctx(), DraggedTask(task.id.clone()));
 
+    // A card being carried is at the slot it is being held over, as far as anything that
+    // remembers where cards are is concerned — the drawing is at the cursor, but the place is
+    // the slot. Kept up to date rather than left at the slot the card was picked up from,
+    // which is where the card would otherwise be seen to slide back from when it is let go of.
+    stamp_place(ui, drag_id, origin);
+
     let layer_id = egui::LayerId::new(egui::Order::Tooltip, drag_id);
     let card = ui
         .scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+            // A ghost of the card rather than the card: it is drawn at the cursor, which is
+            // exactly where the line saying where it will land is, and one of the two has to
+            // be seen through.
+            ui.set_opacity(DRAGGED_CARD_OPACITY);
             draw_card_body(app, ui, task, drag_id, palette, actions);
         })
         .response;
@@ -415,6 +607,83 @@ fn draw_card(
             egui::emath::TSTransform::from_translation(pointer - card.rect.center()),
         );
     }
+    card.rect
+}
+
+/// A card's border, which is the ordinary one except for a moment after the card was dropped.
+///
+/// A card let go of among a column of others is easy to lose track of, so the one that just
+/// landed is marked and fades back over [`DROP_FLASH`]. It is a fade rather than a mark that
+/// is cleared: nothing has to remember to put it back.
+fn dropped_stroke(app: &App, ui: &Ui, task: &TaskView, palette: &Palette) -> egui::Stroke {
+    let plain = egui::Stroke::new(1.0, palette.line);
+    let Some(dropped) = &app.model.board.dropped else {
+        return plain;
+    };
+    if dropped.task_id != task.id {
+        return plain;
+    }
+    let left = (DROP_FLASH - (ui.input(|input| input.time) - dropped.at) as f32) / DROP_FLASH;
+    if left <= 0.0 {
+        return plain;
+    }
+    // The fade is drawn frame by frame, so it needs frames to be drawn in.
+    ui.ctx().request_repaint();
+    egui::Stroke::new(
+        1.0 + left,
+        palette.line.lerp_to_gamma(palette.warn, left),
+    )
+}
+
+/// Draw something at the place the layout gives it, moving there from wherever it was drawn
+/// last rather than appearing there.
+///
+/// This is what makes the cards a dragged one is being put between move out of its way
+/// instead of jumping: the layout answers where each card belongs, and this walks it there
+/// over [`CARD_SLIDE`]. A card that has not moved is drawn where it is with no work done, and
+/// one drawn for the first time starts where it belongs rather than sliding in from the top.
+///
+/// `origin` is what the place is measured from — the top of the column's contents, so that
+/// scrolling, which moves every card at once, is not read as every card having moved.
+fn slide_into_place(
+    ui: &mut Ui,
+    id: egui::Id,
+    origin: f32,
+    draw: impl FnOnce(&mut Ui) -> egui::Rect,
+) -> egui::Rect {
+    let belongs_at = ui.cursor().top() - origin;
+    let drawn_at = ui
+        .ctx()
+        .animate_value_with_time(id.with("slide"), belongs_at, CARD_SLIDE);
+    let offset = vec2(0.0, drawn_at - belongs_at);
+    if offset.y.abs() < 0.5 {
+        return draw(ui);
+    }
+
+    // Drawn into a layer of its own so the shapes can be moved once they are made — the same
+    // way the dragged card is. Its clip is moved the other way first, so a card on its way
+    // between two places is still cut off at the column it is in rather than drawn over the
+    // heading above it.
+    let layer_id = egui::LayerId::new(egui::Order::Middle, id.with("sliding"));
+    let clip = ui.clip_rect();
+    let rect = ui
+        .scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+            ui.set_clip_rect(clip.translate(-offset));
+            draw(ui)
+        })
+        .inner;
+    ui.ctx()
+        .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(offset));
+    rect
+}
+
+/// Say that something is at the place the layout gives it right now, without walking there.
+///
+/// A card that is somewhere for a reason of its own — carried by the cursor — is still at a
+/// place, and the next thing to draw it has to know that place is where it already is.
+fn stamp_place(ui: &Ui, id: egui::Id, origin: f32) {
+    ui.ctx()
+        .animate_value_with_time(id.with("slide"), ui.cursor().top() - origin, 0.0);
 }
 
 fn draw_card_body(
@@ -424,10 +693,10 @@ fn draw_card_body(
     drag_id: egui::Id,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
-) {
+) -> egui::Rect {
     egui::Frame::new()
         .fill(palette.panel)
-        .stroke(egui::Stroke::new(1.0, palette.line))
+        .stroke(dropped_stroke(app, ui, task, palette))
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(8, 7))
         .show(ui, |ui| {
@@ -445,7 +714,9 @@ fn draw_card_body(
             }
 
             draw_card_actions(app, ui, task, actions);
-        });
+        })
+        .response
+        .rect
 }
 
 /// The card's title — the handle it is dragged by, the box it is renamed in, and the mark
@@ -783,10 +1054,18 @@ fn apply(app: &mut App, action: BoardAction) {
                     backend.set_agent(&root, agent)
                 });
         }
-        BoardAction::SetStatus(task_id, status) => {
-            act(app, "could not move the task", move |backend| {
-                backend.set_task_status(&session_id, &task_id, status)
-            });
+        BoardAction::Place(task_id, status, position) => {
+            app.tasks.spawn(
+                move |backend| backend.place_task(&session_id, &task_id, status, position),
+                |model, result| {
+                    // A move the server would not make is not one to keep drawing.
+                    if result.is_err() {
+                        model.board.pending_place = None;
+                    }
+                    model.report(result, "could not move the task");
+                    model.board.refresh_requested = true;
+                },
+            );
         }
         BoardAction::Delete(task_id) => {
             app.model.board.pending_delete = None;

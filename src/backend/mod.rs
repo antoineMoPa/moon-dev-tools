@@ -75,7 +75,16 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The moontasks board of the repo this session reviews, and what running it.
     fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>>;
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
-    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()>;
+    /// Put a task in a column, at a place among the cards already there, which is what a
+    /// drag on the board does. An agent moving its own card goes through the MCP server
+    /// instead, and lands at the end of the column it arrives in.
+    fn place_task(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+        position: usize,
+    ) -> Result<()>;
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()>;
     /// Start a shell or an agent in a task, and answer with the shell it runs in.
     fn start_task_resource(

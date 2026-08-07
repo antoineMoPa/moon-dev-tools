@@ -22,7 +22,7 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        CreateTaskRequest, StartResourceRequest, TaskStatus, TaskStatusRequest, TaskView,
+        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskStatus, TaskView,
         TerminalOpened,
     },
 };
@@ -170,6 +170,14 @@ impl egui_tty::Tty for RemoteShell {
     fn write(&self, data: &[u8]) -> egui_tty::Result<()> {
         let text = String::from_utf8_lossy(data).to_string();
         self.send(&json!({ "type": "input", "data": text }))
+            .map_err(egui_tty::Error::msg)
+    }
+
+    /// Sent as its own kind of message, so the far end knows this is the terminal answering
+    /// the program rather than a person at the keyboard.
+    fn reply(&self, data: &[u8]) -> egui_tty::Result<()> {
+        let text = String::from_utf8_lossy(data).to_string();
+        self.send(&json!({ "type": "reply", "data": text }))
             .map_err(egui_tty::Error::msg)
     }
 
@@ -363,10 +371,16 @@ impl Backend for RemoteBackend {
         self.post_json(&format!("/api/session/{session_id}/tasks"), request)
     }
 
-    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()> {
+    fn place_task(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+        position: usize,
+    ) -> Result<()> {
         self.post(
-            &format!("/api/session/{session_id}/tasks/{task_id}/status"),
-            &TaskStatusRequest { status },
+            &format!("/api/session/{session_id}/tasks/{task_id}/placement"),
+            &TaskPlacementRequest { status, position },
         )
     }
 

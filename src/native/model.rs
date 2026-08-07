@@ -164,6 +164,39 @@ pub(crate) struct BoardState {
     pub(crate) opened_shell: Option<OpenedShell>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
+    /// Where the card being dragged would land. Worked out at the end of a frame and read by
+    /// the next one, which is what lets the board draw the card where it is going instead of
+    /// where it came from.
+    pub(crate) landing: Option<TaskLanding>,
+    /// The card that was just dropped, and the moment it was, so it can be marked for long
+    /// enough to find it again among the ones it landed between.
+    pub(crate) dropped: Option<TaskDropped>,
+    /// A drop the server has not confirmed yet, kept so every board read until then can be
+    /// answered with the card where it was put. Without it a read that was already on its way
+    /// when the card was dropped puts it back where it came from for a moment.
+    pub(crate) pending_place: Option<PendingPlace>,
+}
+
+/// A drop that has been made on the board being drawn and not yet seen in one being read.
+pub(crate) struct PendingPlace {
+    pub(crate) task_id: String,
+    pub(crate) status: crate::moontasks::TaskStatus,
+    pub(crate) index: usize,
+}
+
+/// The place a dragged card would take: a column, and how many of that column's other cards
+/// are above it.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct TaskLanding {
+    pub(crate) status: crate::moontasks::TaskStatus,
+    pub(crate) index: usize,
+}
+
+/// A card that has just been dropped, marked until [`Self::at`] is that long ago.
+pub(crate) struct TaskDropped {
+    pub(crate) task_id: String,
+    /// egui's clock rather than a wall clock: it is what the fade is drawn against.
+    pub(crate) at: f64,
 }
 
 /// A card's title, open for editing after a double click.

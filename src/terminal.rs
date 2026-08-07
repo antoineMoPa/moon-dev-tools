@@ -24,13 +24,22 @@ use tokio::sync::{broadcast, watch};
 use crate::api::{AgentKind, AppError, AppState};
 
 const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
-/// How long [`TerminalSpec::type_ahead`] waits before typing.
+/// How long the shell has to have printed nothing before [`TerminalSpec::type_ahead`] is
+/// typed.
 ///
 /// An agent's input box only takes keys once its interface has been drawn, and nothing it
-/// prints says when that is. Measured on this machine: Claude Code's box takes them by 2s,
-/// and OpenCode does not paint at all until 2.3s. Three seconds clears both, and being late
-/// costs nothing — the text lands in a box that has been waiting.
-const TYPE_AHEAD_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+/// prints says when that is — but it stops printing once it has drawn one and is waiting.
+/// Coming up takes each of the three under a second of drawing, and a quarter of a second of
+/// silence after it is the box being ready, rather than a flat wait long enough for the
+/// slowest machine.
+const TYPE_AHEAD_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long it waits for that silence before typing anyway.
+///
+/// An agent that is still drawing at this point — an animated banner, a slow machine — has a
+/// box that has been taking keys for a while, so the wait is over.
+const TYPE_AHEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
+/// How often the wait looks at whether the shell has gone quiet.
+const TYPE_AHEAD_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 /// How much shell output we keep so a reopened tab can replay what it missed.
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 const BROADCAST_CAPACITY: usize = 256;
@@ -39,6 +48,8 @@ const BROADCAST_CAPACITY: usize = 256;
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
     Input { data: String },
+    /// The terminal answering a query the program made of it, which is not somebody typing.
+    Reply { data: String },
     Resize { cols: u16, rows: u16 },
 }
 
@@ -111,6 +122,12 @@ pub(crate) struct TerminalSession {
     /// though they hold this session alive.
     exited: watch::Sender<bool>,
     scrollback: Mutex<Scrollback>,
+    /// When the shell last printed anything, which is how the type-ahead tells a program that
+    /// is still drawing its interface from one that has drawn it and is waiting.
+    last_output: Mutex<Option<Instant>>,
+    /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
+    /// text arriving after someone has started writing lands in the middle of their sentence.
+    typed_into: std::sync::atomic::AtomicBool,
     /// Typing in a shell, and a shell printing output, both keep the server from idling out.
     last_activity: Arc<Mutex<Instant>>,
 }
@@ -125,6 +142,16 @@ impl TerminalSession {
     // The native window drives a pty directly; a web tab goes through the websocket.
     #[cfg(feature = "native")]
     pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
+        crate::api::mark_activity(&self.last_activity);
+        self.typed_into.store(true, Ordering::Relaxed);
+        self.writer.lock().unwrap().write_all(data)?;
+        Ok(())
+    }
+
+    /// The terminal answering the program's own query. It goes to the same place a keystroke
+    /// does, but it is not one: nobody typed it, so it does not call off the type-ahead.
+    #[cfg(feature = "native")]
+    pub(crate) fn write_reply(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
         self.writer.lock().unwrap().write_all(data)?;
         Ok(())
@@ -353,6 +380,8 @@ impl TerminalRegistry {
             output: output.clone(),
             exited: exited.clone(),
             scrollback: Mutex::new(Scrollback::default()),
+            last_output: Mutex::new(None),
+            typed_into: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
         });
         self.sessions
@@ -361,17 +390,10 @@ impl TerminalRegistry {
             .insert(terminal_id.clone(), Arc::clone(&session));
 
         // Typed from a thread of its own, so starting a shell answers straight away rather
-        // than after the wait. It goes through the same writer a keystroke does, so a person
-        // typing at the same time interleaves with it instead of racing it.
+        // than after the wait.
         if let Some(text) = spec.type_ahead {
             let typing_into = Arc::clone(&session);
-            std::thread::spawn(move || {
-                std::thread::sleep(TYPE_AHEAD_DELAY);
-                // The shell may have ended in the meantime, and a dead pty refuses writes.
-                if !*typing_into.exited.borrow() {
-                    let _ = typing_into.writer.lock().unwrap().write_all(text.as_bytes());
-                }
-            });
+            std::thread::spawn(move || type_ahead(&typing_into, &text));
         }
 
         let registry = Arc::clone(self);
@@ -384,6 +406,7 @@ impl TerminalRegistry {
                     Ok(count) => {
                         let chunk = &buffer[..count];
                         crate::api::mark_activity(&session.last_activity);
+                        *session.last_output.lock().unwrap() = Some(Instant::now());
                         session.scrollback.lock().unwrap().push(chunk);
                         // No attached tab is normal: the shell keeps running regardless.
                         let _ = output.send(chunk.to_vec());
@@ -398,6 +421,43 @@ impl TerminalRegistry {
 
         Ok(terminal_id)
     }
+}
+
+/// Type text into a shell once the program in it has a box to take it, as if a person had.
+///
+/// The wait is what makes this work at all: keys written at an agent that has not drawn its
+/// input box yet are dropped by it, so the text has to arrive after that and — this is the
+/// point — before the person starts writing over it. So it waits for the program to stop
+/// drawing rather than for a fixed span, and if the person got there first it types nothing:
+/// a title landing in the middle of a sentence someone is writing is worse than no title.
+fn type_ahead(session: &TerminalSession, text: &str) {
+    let deadline = Instant::now() + TYPE_AHEAD_DEADLINE;
+    while Instant::now() < deadline {
+        if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+            return;
+        }
+        // Silence before the program has printed anything at all is it still starting up, not
+        // a box waiting to be typed into.
+        let quiet = session
+            .last_output
+            .lock()
+            .unwrap()
+            .is_some_and(|last| last.elapsed() >= TYPE_AHEAD_QUIET);
+        if quiet {
+            break;
+        }
+        std::thread::sleep(TYPE_AHEAD_POLL);
+    }
+
+    // Checked again holding the writer, which is the lock a keystroke takes: a person who has
+    // typed by now is seen, and one who types from here on waits and lands after the whole of
+    // the text rather than inside it. The shell may also have ended, and a dead pty refuses
+    // writes.
+    let mut writer = session.writer.lock().unwrap();
+    if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+        return;
+    }
+    let _ = writer.write_all(text.as_bytes());
 }
 
 pub(crate) async fn create_terminal(
@@ -494,6 +554,10 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
                 crate::api::mark_activity(&session.last_activity);
                 match serde_json::from_str::<ClientMessage>(&text)? {
                     ClientMessage::Input { data } => {
+                        session.typed_into.store(true, Ordering::Relaxed);
+                        session.writer.lock().unwrap().write_all(data.as_bytes())?;
+                    }
+                    ClientMessage::Reply { data } => {
                         session.writer.lock().unwrap().write_all(data.as_bytes())?;
                     }
                     ClientMessage::Resize { cols, rows } => {
@@ -540,7 +604,8 @@ mod tests {
         let session = registry.get(&terminal_id).expect("expected the shell");
 
         // The wait before it is typed is the point of it, so this waits out that wait.
-        let deadline = Instant::now() + TYPE_AHEAD_DELAY + Duration::from_secs(7);
+        let started = Instant::now();
+        let deadline = started + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
         let mut printed = String::new();
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
@@ -555,17 +620,101 @@ mod tests {
                 break;
             }
         }
+        let took = started.elapsed();
         registry.remove(&terminal_id);
 
         assert!(
             printed.contains("moonreview-typed-this"),
             "the shell never echoed what was typed at it, printed: {printed:?}"
         );
+        // A prompt is drawn and then nothing more, so the text goes in on that silence rather
+        // than on the deadline — which is the difference between it being there when you look
+        // at the tab and it landing over what you had started typing.
+        assert!(
+            took < TYPE_AHEAD_DEADLINE,
+            "type-ahead waited out its deadline rather than the shell going quiet: {took:?}"
+        );
         // Left at the prompt, not run: a shell that had been sent the line would have gone
         // looking for a command by that name.
         assert!(
             !printed.contains("notfound"),
             "type-ahead must not be sent, printed: {printed:?}"
+        );
+    }
+
+    /// A terminal answers the program's own questions the moment it attaches, and those
+    /// answers travel the same way keystrokes do — but they are not somebody typing, and a
+    /// tab being open must not be what stops the title going in.
+    #[cfg(feature = "native")]
+    #[test]
+    fn a_reply_to_the_program_is_not_somebody_typing() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: Some("moonreview-typed-this".to_string()),
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        // A device status report, which is what a terminal sends back unasked.
+        session
+            .write_reply(b"\x1b[0n")
+            .expect("failed to answer the program");
+
+        let deadline = Instant::now() + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
+        let mut printed = String::new();
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            if printed.contains("moonreview-typed-this") {
+                break;
+            }
+        }
+        registry.remove(&terminal_id);
+
+        assert!(
+            printed.contains("moonreview-typed-this"),
+            "the title should still have been typed, printed: {printed:?}"
+        );
+    }
+
+    /// The one thing type-ahead must never do is write into a sentence someone else started.
+    #[test]
+    fn a_shell_someone_has_typed_into_is_left_alone() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: Some("moonreview-typed-this".to_string()),
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        // Someone gets there first, before the shell has even finished coming up.
+        session.typed_into.store(true, Ordering::Relaxed);
+
+        std::thread::sleep(TYPE_AHEAD_DEADLINE + Duration::from_secs(1));
+        let printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        registry.remove(&terminal_id);
+
+        assert!(
+            !printed.contains("moonreview-typed-this"),
+            "the title was typed over what was being written, printed: {printed:?}"
         );
     }
 }

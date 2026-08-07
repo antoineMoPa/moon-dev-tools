@@ -69,6 +69,14 @@ pub(crate) struct TaskStatusRequest {
     pub(crate) status: TaskStatus,
 }
 
+/// Where a dragged card was let go of: the column, and how many of that column's other cards
+/// are above it.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskPlacementRequest {
+    pub(crate) status: TaskStatus,
+    pub(crate) position: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TerminalOpened {
     pub(crate) terminal_id: String,

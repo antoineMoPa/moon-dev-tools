@@ -47,11 +47,62 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
         if reconcile(state, &mut metadata) {
             store::write_task(&repo_path, &task_id, &metadata)?;
         }
-        tasks.push(view_of(state, &repo_path, &task_id, &metadata));
+        tasks.push((
+            place_of(&metadata),
+            view_of(state, &repo_path, &task_id, &metadata),
+        ));
     }
 
-    tasks.sort_by_key(|task| task.created_at_unix);
-    Ok(tasks)
+    // One order for the whole board, which each column reads its own cards out of.
+    tasks.sort_by_key(|(place, _)| *place);
+    Ok(tasks.into_iter().map(|(_, task)| task).collect())
+}
+
+/// What a card is sorted by inside its column: where it was put, and — for cards that have
+/// never been moved, and so share a position — the order they were created in.
+fn place_of(metadata: &TaskMetadata) -> (u32, u64) {
+    (metadata.position, metadata.created_at_unix)
+}
+
+/// Move a task to a column and to a place in it, renumbering that column from the top.
+///
+/// `position` is counted among the column's other cards, so it is where the card lands rather
+/// than where it was aimed: a number past the end puts it at the bottom.
+pub(crate) fn place_task(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    status: TaskStatus,
+    position: usize,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut moved = store::read_task(&repo_path, task_id)?;
+    release_a_finished_task(state, task_id, &mut moved, status);
+    moved.status = status;
+
+    // The cards already in that column, in the order the board draws them.
+    let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(&repo_path)?
+        .into_iter()
+        .filter(|other| other != task_id)
+        .filter_map(|other| {
+            let metadata = store::read_task(&repo_path, &other).ok()?;
+            (metadata.status == status).then_some((other, metadata))
+        })
+        .collect();
+    column.sort_by_key(|(_, metadata)| place_of(metadata));
+    column.insert(position.min(column.len()), (task_id.to_string(), moved));
+
+    for (index, (id, mut metadata)) in column.into_iter().enumerate() {
+        let position = index as u32;
+        // The card that moved is written whatever its number came out as — it is the one
+        // whose column may have changed.
+        if metadata.position == position && id != task_id {
+            continue;
+        }
+        metadata.position = position;
+        store::write_task(&repo_path, &id, &metadata)?;
+    }
+    Ok(())
 }
 
 /// Bring a task's record in line with the shells the server actually has, and return whether
@@ -161,6 +212,10 @@ pub(crate) fn create_task(
     Ok(view_of(state, &repo_path, &task_id, &metadata))
 }
 
+/// Move a task to another column, to the bottom of it.
+///
+/// This is the move that is not a drag — an agent reporting itself finished — and it has no
+/// place in the new column in mind, so the card joins the end of it.
 pub(crate) fn set_task_status(
     state: &AppState,
     session_id: &str,
@@ -169,18 +224,29 @@ pub(crate) fn set_task_status(
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
-    metadata.status = status;
-
-    // A finished task lets go of its shells. Until then they keep running with no tab open,
-    // which is what makes closing an agent's tab safe.
-    if status == TaskStatus::Done {
-        state.terminals.remove_owned_by(task_id);
-        for resource in &mut metadata.resources {
-            resource.terminal_id = None;
-        }
+    if metadata.status == status {
+        // Already in that column: nothing to move, and no column to renumber.
+        release_a_finished_task(state, task_id, &mut metadata, status);
+        return store::write_task(&repo_path, task_id, &metadata);
     }
+    place_task(state, session_id, task_id, status, usize::MAX)
+}
 
-    store::write_task(&repo_path, task_id, &metadata)
+/// A finished task lets go of its shells. Until then they keep running with no tab open,
+/// which is what makes closing an agent's tab safe.
+fn release_a_finished_task(
+    state: &AppState,
+    task_id: &str,
+    metadata: &mut TaskMetadata,
+    status: TaskStatus,
+) {
+    if status != TaskStatus::Done {
+        return;
+    }
+    state.terminals.remove_owned_by(task_id);
+    for resource in &mut metadata.resources {
+        resource.terminal_id = None;
+    }
 }
 
 pub(crate) fn delete_task(state: &AppState, session_id: &str, task_id: &str) -> Result<()> {
@@ -718,6 +784,7 @@ mod tests {
             title: "Fix the login page".to_string(),
             status: TaskStatus::InProgress,
             created_at_unix: 0,
+            position: 0,
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
@@ -748,6 +815,7 @@ mod tests {
             title: "Fix the login page".to_string(),
             status: TaskStatus::InRemoteReview,
             created_at_unix: 0,
+            position: 0,
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,

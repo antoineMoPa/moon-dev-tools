@@ -390,7 +390,7 @@ impl App {
                 match result {
                     Ok(tasks) => {
                         model.board.error = None;
-                        model.board.tasks = tasks;
+                        board::accept_board(model, tasks);
                     }
                     Err(error) => model.board.error = Some(format!("{error}")),
                 }

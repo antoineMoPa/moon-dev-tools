@@ -119,6 +119,15 @@ pub(crate) struct TaskMetadata {
     pub(crate) title: String,
     pub(crate) status: TaskStatus,
     pub(crate) created_at_unix: u64,
+    /// Where the card sits in its column, lowest at the top. Renumbered from zero across the
+    /// whole column whenever one is dragged into it, so the numbers stay small and readable
+    /// in a file somebody may well edit by hand.
+    ///
+    /// A board written before cards could be reordered has none of these, which reads as a
+    /// column of zeroes — and cards that tie fall back on the order they were created in,
+    /// which is the order that board was already drawn in.
+    #[serde(default)]
+    pub(crate) position: u32,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
 }
@@ -230,10 +239,27 @@ pub(crate) fn create_task(repo_path: &Path, title: &str) -> Result<String> {
         title: title.to_string(),
         status: TaskStatus::Todo,
         created_at_unix: now_unix(),
+        // A new card joins the bottom of TODO, where the newest card has always been drawn.
+        position: next_position(repo_path, TaskStatus::Todo),
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
     Ok(task_id)
+}
+
+/// The position a card takes to sit under everything already in a column.
+///
+/// A board that cannot be read is a board with nothing in that column as far as this is
+/// concerned: the new card goes to the top of it, which is no worse than anywhere else.
+fn next_position(repo_path: &Path, status: TaskStatus) -> u32 {
+    list_task_ids(repo_path)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|task_id| read_task(repo_path, task_id).ok())
+        .filter(|metadata| metadata.status == status)
+        .map(|metadata| metadata.position + 1)
+        .max()
+        .unwrap_or_default()
 }
 
 /// Drop the whole task folder, including anything an agent left in it.

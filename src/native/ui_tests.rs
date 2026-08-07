@@ -1198,6 +1198,137 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     harness.snapshot("moontasks-new-task");
 }
 
+/// Dragging a card is how a column is put in order, so where it is let go of has to be where
+/// it lands — not merely which column it landed in.
+#[test]
+fn a_card_dropped_above_another_takes_its_place() {
+    let fixture = seeded_fixture("board-order");
+    // Cards that have never been moved read in the order they were created, so the fixture
+    // says when each one was.
+    for (task_id, title, created) in [
+        ("write-the-parser-1111", "Write the parser", 1700000000),
+        ("fix-the-login-page-2222", "Fix the login page", 1700000001),
+        ("drop-the-old-api-3333", "Drop the old API", 1700000002),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                 \"created_at_unix\": {created},\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    // What the board is showing, read out on every frame: the drop is answered on a worker
+    // thread, so the order has to be watched for rather than counted in frames.
+    let order = Arc::new(Mutex::new(Vec::<String>::new()));
+    let order_in_ui = Arc::clone(&order);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            if let Ok(mut order) = order_in_ui.lock() {
+                *order = app
+                    .model
+                    .board
+                    .tasks
+                    .iter()
+                    .map(|task| task.title.clone())
+                    .collect();
+            }
+        });
+
+    let read = || order.lock().expect("expected the board").clone();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && read().len() != 3 {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        read(),
+        ["Write the parser", "Fix the login page", "Drop the old API"],
+        "the board never read the three tasks in the order they were written"
+    );
+    harness.run_steps(3);
+
+    // The title, which is the handle a card is dragged by and so the thing the pointer has
+    // to press on.
+    let handle_of = |harness: &Harness<'_>, task_id: &str| {
+        harness
+            .ctx
+            .read_response(egui::Id::new(("moontask-card", &task_id.to_string())))
+            .expect("expected the card to have been drawn")
+            .rect
+    };
+    let first = handle_of(&harness, "write-the-parser-1111");
+    let last = handle_of(&harness, "drop-the-old-api-3333");
+    // Picked up by its title and let go of below the middle of the first card, which is the
+    // gap under it.
+    let start = last.center();
+    let end = first.center_bottom() + egui::vec2(0.0, 12.0);
+
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    for at in [start + egui::vec2(0.0, -20.0), end] {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness.step();
+    }
+    // A few frames with the pointer where it is: the slot a card is being held over is worked
+    // out at the end of a frame and taken up by the next one, and the cards making room for
+    // it walk there rather than jumping.
+    harness.run_steps(12);
+
+    // Mid-drag: the card is under the cursor, and the space being held for it is where it
+    // would land — between the two cards it is being dropped between.
+    harness.snapshot("moontasks-drag");
+
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.step();
+
+    // Just dropped: the card is in the slot it was held over, marked so it can be picked back
+    // out of the column it landed in.
+    harness.snapshot("moontasks-dropped");
+
+    let expected = ["Write the parser", "Drop the old API", "Fix the login page"];
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && read() != expected {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        read(),
+        expected,
+        "the card should have landed in the gap it was dropped in"
+    );
+}
+
 /// Several windows on several projects is the ordinary way to work, so the title bar has to
 /// say which project each one is on.
 #[test]

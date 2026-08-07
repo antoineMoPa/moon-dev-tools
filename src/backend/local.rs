@@ -37,6 +37,12 @@ impl egui_tty::Tty for LocalShell {
         self.session.write_input(data).map_err(egui_tty::Error::msg)
     }
 
+    /// The terminal answering the program's own questions, which is not somebody typing —
+    /// and a shell waiting to type a task's title into must not mistake it for one.
+    fn reply(&self, data: &[u8]) -> egui_tty::Result<()> {
+        self.session.write_reply(data).map_err(egui_tty::Error::msg)
+    }
+
     fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
         self.session.resize(cols, rows).map_err(egui_tty::Error::msg)
     }
@@ -166,8 +172,14 @@ impl Backend for LocalBackend {
         moontasks::service::create_task(&self.state, session_id, request)
     }
 
-    fn set_task_status(&self, session_id: &str, task_id: &str, status: TaskStatus) -> Result<()> {
-        moontasks::service::set_task_status(&self.state, session_id, task_id, status)
+    fn place_task(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+        position: usize,
+    ) -> Result<()> {
+        moontasks::service::place_task(&self.state, session_id, task_id, status, position)
     }
 
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {

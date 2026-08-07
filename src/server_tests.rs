@@ -333,6 +333,98 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     assert!(board(&served).as_array().expect("expected an array").is_empty());
 }
 
+/// Cards keep the order they were put in, which is the order the board reads them back in.
+#[test]
+fn cards_are_dropped_where_they_are_let_go_of() {
+    let served = serve("task-order");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let create = |title: &str| -> String {
+        let created: serde_json::Value = served
+            .client
+            .post(&tasks_url)
+            .json(&serde_json::json!({ "title": title, "agent": "none" }))
+            .send()
+            .expect("failed to create a task")
+            .error_for_status()
+            .expect("the server refused to create a task")
+            .json()
+            .expect("failed to decode the task");
+        created["id"].as_str().expect("expected a task id").to_string()
+    };
+    // A column, read out of the board in the order the board hands it over.
+    let column = |status: &str| -> Vec<String> {
+        let board: serde_json::Value = served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board");
+        board
+            .as_array()
+            .expect("expected an array")
+            .iter()
+            .filter(|task| task["status"] == status)
+            .map(|task| task["title"].as_str().expect("expected a title").to_string())
+            .collect()
+    };
+    let place = |task_id: &str, status: &str, position: usize| {
+        served
+            .client
+            .post(format!("{tasks_url}/{task_id}/placement"))
+            .json(&serde_json::json!({ "status": status, "position": position }))
+            .send()
+            .expect("failed to move the task")
+            .error_for_status()
+            .expect("the server refused to move the task");
+    };
+
+    create("first");
+    let second = create("second");
+    let third = create("third");
+    // Until one is moved they read in the order they were made, newest at the bottom.
+    assert_eq!(column("todo"), ["first", "second", "third"]);
+
+    place(&third, "todo", 0);
+    assert_eq!(column("todo"), ["third", "first", "second"]);
+    place(&third, "todo", 1);
+    assert_eq!(column("todo"), ["first", "third", "second"]);
+    // Past the end is the end, which is what dropping below the last card means.
+    place(&third, "todo", 9);
+    assert_eq!(column("todo"), ["first", "second", "third"]);
+
+    // The order survives being read back off disk rather than only holding in this process.
+    let metadata = std::fs::read_to_string(
+        served
+            .root
+            .join(".moontasks")
+            .join(&second)
+            .join("metadata.json"),
+    )
+    .expect("failed to read the task");
+    assert!(
+        metadata.contains("\"position\": 1"),
+        "the card's place should be written down, got: {metadata}"
+    );
+
+    place(&second, "in_progress", 0);
+    assert_eq!(column("todo"), ["first", "third"]);
+    assert_eq!(column("in_progress"), ["second"]);
+
+    // An agent moving its own card has no place in mind, so it joins the end of the column.
+    served
+        .client
+        .post(format!("{tasks_url}/{third}/status"))
+        .json(&serde_json::json!({ "status": "in_progress" }))
+        .send()
+        .expect("failed to move the task")
+        .error_for_status()
+        .expect("the server refused to move the task");
+    assert_eq!(column("in_progress"), ["second", "third"]);
+}
+
 #[test]
 fn an_unknown_session_is_refused_rather_than_panicking() {
     let served = serve("unknown");

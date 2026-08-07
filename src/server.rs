@@ -23,7 +23,8 @@ use crate::{
     },
     git::detect_agent_availability,
     moontasks::{
-        self, CreateTaskRequest, StartResourceRequest, TaskStatusRequest, TaskTitleRequest,
+        self, CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskStatusRequest,
+        TaskTitleRequest,
         TaskView, TerminalOpened,
     },
     service,
@@ -113,6 +114,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/status",
             post(set_task_status),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/placement",
+            post(place_task),
         )
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources",
@@ -531,6 +536,22 @@ async fn set_task_status(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     moontasks::service::set_task_status(&state, &session_id, &task_id, request.status)?;
+    Ok("ok")
+}
+
+async fn place_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskPlacementRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::place_task(
+        &state,
+        &session_id,
+        &task_id,
+        request.status,
+        request.position,
+    )?;
     Ok("ok")
 }
 

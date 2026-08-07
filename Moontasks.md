@@ -7,10 +7,15 @@ in the repo straight away.
 
 | | |
 | --- | --- |
-| drag a card by its title | move it between TODO, IN PROGRESS, IN LOCAL REVIEW, IN REMOTE REVIEW and DONE |
+| drag a card by its title | move it between TODO, IN PROGRESS, IN LOCAL REVIEW, IN REMOTE REVIEW and DONE, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | `[start review]` | open the review of the repo in a tab |
 | `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |
 | a running resource | click its name to bring its terminal back on screen |
+
+A card being dragged leaves the place it came from and takes up the one it is being held over,
+which the cards around it move aside for, so the drop changes nothing that was not already on
+screen. It stays marked for a moment after it lands, which is how you find it again among the
+ones it landed between.
 
 An agent that finishes moves its own card to IN LOCAL REVIEW — either by calling the MCP tool
 below, which is what it is told to do, or simply by exiting, which the board notices the next
@@ -26,7 +31,7 @@ The board is a folder in the repo, which is the whole of its state:
 .moontasks/
   .gitignore          # ignores the whole board, written when the board is created
   fix-the-login-page-6f9c1e2a-…/
-    metadata.json     # title, column, and the shells and agent runs of the task
+    metadata.json     # title, column, place in the column, and the shells and agent runs
     brief.md          # what the agents working here have been told
     mcp.json          # the MCP server they are given
     opencode.json     # the same, in the shape OpenCode reads
@@ -47,11 +52,17 @@ An agent started on a task does not have to be asked twice. It is given a brief 
 text `brief.md` holds — naming the task, its folder, and the tool to call when the work is
 ready to be looked at.
 
-The card's title is then typed into its box, as if you had typed it: three seconds after the
-agent starts, which is long enough for all three to have drawn an input to type into. Nothing
-sends it. A title that is the whole of what you wanted is one Enter away, and one that is not
-is there to be written over. The Enter is never moonreview's, so an agent that was still
-asking whether it trusts the folder loses the text rather than acting on it.
+The card's title is then typed into its box, as if you had typed it: once the agent has
+stopped printing, which is it having drawn an input to type into and being sat waiting — a
+quarter of a second of silence, rather than a flat wait long enough for the slowest of the
+three. Three seconds is the point where it types anyway. Nothing sends it. A title that is the
+whole of what you wanted is one Enter away, and one that is not is there to be written over.
+The Enter is never moonreview's, so an agent that was still asking whether it trusts the
+folder loses the text rather than acting on it.
+
+If you get there first it types nothing at all. A title arriving in the middle of a sentence
+someone is writing is worse than no title, so the first keystroke of yours in that shell is
+the end of it.
 
 The brief is worth its own file because it is the difference between an agent that has the
 tools and one that uses them.
