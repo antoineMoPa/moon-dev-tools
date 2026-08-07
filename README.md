@@ -36,12 +36,14 @@ Requirements:
 
 ```bash
 git submodule update --init --recursive   # egui_frames and egui_tty, see Crates below
-cargo install --path .                   # installs moonreview, moontasks and moonshell
+cargo install --locked --path .          # installs moonreview, moontasks and moonshell
 moonreview install-launchers             # optional: launchers the OS itself offers
 moonreview
 ```
 
 Source builds require Rust plus the existing Node/npm frontend toolchain used by `build.rs`.
+`--locked` builds the dependency versions in `Cargo.lock`; without it `cargo install` re-resolves
+to the newest compatible versions, which is how you end up compiling a release nobody tested.
 
 The native window embeds Ghostty's terminal emulator
 ([libghostty-vt](https://libghostty.tip.ghostty.org/)), which is built from Ghostty's Zig
@@ -59,7 +61,7 @@ compiles once and links three times.
 To build without the native window (web frontend only, no Zig needed):
 
 ```bash
-cargo install --path . --no-default-features
+cargo install --locked --path . --no-default-features
 ```
 
 ## Easy installation
@@ -238,13 +240,13 @@ git submodule update --init --recursive
 I usually use this as part of my debug loop:
 
 ```bash
-pkill moon;  cargo install --path .
+pkill moon;  cargo install --locked --path .
 ```
 
 To install launchers:
 
 ```bash
-cargo install --path .; moonreview install-launchers
+cargo install --locked --path .; moonreview install-launchers
 ```
 
 On mac you will need to drag applications from the Applications folder to your menu bar.
