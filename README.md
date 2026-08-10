@@ -35,9 +35,10 @@ Requirements:
 - [Zig](https://ziglang.org/) 0.15.x, for the native window's terminal
 
 ```bash
-git submodule update --init --recursive   # egui_frames and egui_tty, see Crates below
-cargo install --locked --path .          # installs moonreview, moontasks and moonshell
-moonreview install-launchers             # optional: launchers the OS itself offers
+./scripts/setup-dev.sh           # Rust update, npm packages, Zig and submodules
+export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
+cargo install --locked --path .   # installs moonreview, moontasks and moonshell
+moonreview install-launchers      # optional: launchers the OS itself offers
 moonreview
 ```
 

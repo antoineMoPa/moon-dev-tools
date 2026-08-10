@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 PACKAGE_VERSION="$(node -p "require('./package.json').version")"
@@ -73,7 +73,7 @@ ZIG_MAJOR_MINOR="0.15"
 # The native window's terminal comes from Ghostty's Zig source, so a matching Zig has to be
 # on PATH before anything is built. Homebrew keeps 0.15 keg-only, so look there too.
 require_zig() {
-    if ! command -v zig >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
         zig_prefix="$(brew --prefix "zig@$ZIG_MAJOR_MINOR" 2>/dev/null || true)"
         if [ -n "$zig_prefix" ] && [ -x "$zig_prefix/bin/zig" ]; then
             PATH="$zig_prefix/bin:$PATH"
@@ -131,7 +131,7 @@ build_linux() {
         --build-arg LINUX_TARGET_TRIPLE="$target_triple" \
         --build-arg RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
         -t "$builder_image" \
-        -f scripts/linux-build.Dockerfile \
+        -f scripts/_internal/linux-build.Dockerfile \
         scripts
 
     echo "Building moonreview $TAG for $target_triple with Docker..."
@@ -171,5 +171,5 @@ done
 
 cat <<EOF
 Next step:
-  scripts/upload-release.sh
+  scripts/_internal/upload-release.sh
 EOF
