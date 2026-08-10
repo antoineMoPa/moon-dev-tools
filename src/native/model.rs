@@ -347,6 +347,9 @@ pub(crate) struct Model {
     pub(crate) layout: Layout<Pane>,
     /// The review the window was launched on. Submodule reviews are opened beside it.
     pub(crate) root_session_id: String,
+    /// The review the last shell was started in. A new shell asked for from a frame that
+    /// names no review — a frame of shells, say — opens where the previous one did.
+    pub(crate) last_shell_session_id: Option<String>,
     pub(crate) reviews: HashMap<String, ReviewState>,
     pub(crate) submodules: Vec<SubmoduleView>,
     pub(crate) toasts: Vec<Toast>,

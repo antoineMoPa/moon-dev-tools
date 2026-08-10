@@ -437,6 +437,36 @@ fn quitting_with_a_shell_still_running_asks_first() {
         .expect("expected the shell to close");
 }
 
+/// The + button on a frame showing a review starts the shell in that review's repo; a frame
+/// showing no review falls back to wherever the last shell started, then to the review the
+/// window was launched on.
+#[test]
+fn a_new_shell_starts_in_the_review_shown_by_its_frame() {
+    let fixture = seeded_fixture("shell-session");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.model.root_session_id = "root".to_string();
+
+    let frame = app.model.layout.primary_frame();
+    app.model.layout.add_pane(
+        frame,
+        Pane::Review {
+            session_id: "submodule".to_string(),
+            title: "submodule".to_string(),
+        },
+        None,
+    );
+    assert_eq!(app.shell_session_for(frame), "submodule");
+
+    // The board has no review of its own, so the frame it fronts uses the last shell's.
+    app.model.layout.add_pane(frame, Pane::Tasks, None);
+    app.model.last_shell_session_id = Some("submodule".to_string());
+    assert_eq!(app.shell_session_for(frame), "submodule");
+
+    // And before any shell has started, the review the window was launched on.
+    app.model.last_shell_session_id = None;
+    assert_eq!(app.shell_session_for(frame), "root");
+}
+
 /// The file tab: a fringe of line numbers beside the text, and the text editable.
 #[test]
 fn a_file_opens_in_a_tab_of_its_own() {

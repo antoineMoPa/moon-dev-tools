@@ -190,7 +190,8 @@ impl App {
                 );
             }
             OpenPaneRequest::Terminal { command } => {
-                self.spawn_terminal(command, TerminalPlacement::WithOtherShells);
+                let session_id = self.shell_session_for(active_frame);
+                self.spawn_terminal(session_id, command, TerminalPlacement::WithOtherShells);
             }
             OpenPaneRequest::AttachTerminal {
                 terminal_id,
@@ -240,17 +241,18 @@ impl App {
             .unwrap_or_else(|| self.model.layout.primary_frame())
     }
 
-    /// Start a shell on the reviewed repo and open a pane attached to it.
+    /// Start a shell on the given review's repo and open a pane attached to it.
     pub(crate) fn spawn_terminal(
         &mut self,
+        session_id: String,
         command: Option<AgentKind>,
         placement: TerminalPlacement,
     ) {
-        let session_id = self.model.root_session_id.clone();
         if session_id.is_empty() {
             self.model.error("no review is open yet");
             return;
         }
+        self.model.last_shell_session_id = Some(session_id.clone());
         let inbox = Arc::clone(&self.attaching);
 
         self.tasks.spawn(
@@ -459,7 +461,27 @@ impl App {
     /// The same, for a shell asked for from a particular frame's tab strip.
     pub(crate) fn open_shell_beside(&mut self, frame: FrameId) {
         let placement = self.room_for_a_column(frame);
-        self.spawn_terminal(None, placement);
+        let session_id = self.shell_session_for(frame);
+        self.spawn_terminal(session_id, None, placement);
+    }
+
+    /// The review a shell asked for from this frame starts in: the review (or reviewed file)
+    /// in front of the frame, else wherever the last shell was started, else the review the
+    /// window was launched on.
+    pub(crate) fn shell_session_for(&self, frame: FrameId) -> String {
+        let showing = self
+            .model
+            .layout
+            .frame(frame)
+            .and_then(egui_frames::Frame::active_pane)
+            .and_then(|pane| self.model.layout.pane(pane));
+        if let Some(Pane::Review { session_id, .. } | Pane::File { session_id, .. }) = showing {
+            return session_id.clone();
+        }
+        self.model
+            .last_shell_session_id
+            .clone()
+            .unwrap_or_else(|| self.model.root_session_id.clone())
     }
 
     /// A new shell goes in its own column down the right of the workspace, unless that would

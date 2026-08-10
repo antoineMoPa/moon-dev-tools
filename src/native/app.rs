@@ -159,6 +159,7 @@ impl App {
                 theme,
                 layout: Layout::new(),
                 root_session_id: String::new(),
+                last_shell_session_id: None,
                 reviews: HashMap::new(),
                 submodules: Vec::new(),
                 toasts: Vec::new(),
@@ -1220,7 +1221,12 @@ impl App {
         }
         if std::mem::take(&mut self.model.open_shell_pending) {
             let primary = self.model.layout.primary_frame();
-            self.spawn_terminal(None, crate::native::workspace::TerminalPlacement::Tab(primary));
+            let session_id = self.model.root_session_id.clone();
+            self.spawn_terminal(
+                session_id,
+                None,
+                crate::native::workspace::TerminalPlacement::Tab(primary),
+            );
         }
         self.apply_restored_agent();
         self.remember_selected_agent();
