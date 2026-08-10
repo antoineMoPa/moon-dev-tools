@@ -1,8 +1,6 @@
 use std::{
     collections::HashMap,
-    env,
     io::{Read, Write},
-    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -26,6 +24,22 @@ use tokio::sync::{broadcast, watch};
 use crate::api::{AgentKind, AppError, AppState};
 
 const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
+/// How long the shell has to have printed nothing before [`TerminalSpec::type_ahead`] is
+/// typed.
+///
+/// An agent's input box only takes keys once its interface has been drawn, and nothing it
+/// prints says when that is — but it stops printing once it has drawn one and is waiting.
+/// Coming up takes each of the three under a second of drawing, and a quarter of a second of
+/// silence after it is the box being ready, rather than a flat wait long enough for the
+/// slowest machine.
+const TYPE_AHEAD_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long it waits for that silence before typing anyway.
+///
+/// An agent that is still drawing at this point — an animated banner, a slow machine — has a
+/// box that has been taking keys for a while, so the wait is over.
+const TYPE_AHEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
+/// How often the wait looks at whether the shell has gone quiet.
+const TYPE_AHEAD_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 /// How much shell output we keep so a reopened tab can replay what it missed.
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 const BROADCAST_CAPACITY: usize = 256;
@@ -34,6 +48,8 @@ const BROADCAST_CAPACITY: usize = 256;
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
     Input { data: String },
+    /// The terminal answering a query the program made of it, which is not somebody typing.
+    Reply { data: String },
     Resize { cols: u16, rows: u16 },
 }
 
@@ -52,13 +68,52 @@ pub(crate) struct TerminalList {
     terminal_ids: Vec<String>,
 }
 
-fn login_shell() -> String {
-    env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+/// What to start a shell as. The plain case is a login shell in the reviewed repo; a task's
+/// agent adds the program, its arguments, and the environment that tells it which task it is
+/// working in.
+pub(crate) struct TerminalSpec {
+    pub(crate) cwd: std::path::PathBuf,
+    /// The program to run. `None` is the login shell.
+    pub(crate) program: Option<AgentKind>,
+    pub(crate) args: Vec<String>,
+    pub(crate) env: Vec<(String, String)>,
+    /// The task this shell belongs to, if any. An owned shell is the task's to list and to
+    /// close, so it stays out of the workspace's own shells.
+    pub(crate) owner: Option<String>,
+    /// Text typed into the shell once the program has come up, as if the user had typed it.
+    ///
+    /// Never ends in a newline, and nothing here sends one: what this does is leave something
+    /// written in an agent's box for the person to send. A write that lands too early — while
+    /// the agent is still asking whether it trusts the folder — is lost rather than acted on,
+    /// which is what makes typing at a program that has not said it is ready acceptable.
+    pub(crate) type_ahead: Option<String>,
+}
+
+impl TerminalSpec {
+    /// A shell of the workspace's own: no program, no task.
+    pub(crate) fn shell(cwd: std::path::PathBuf, program: Option<AgentKind>) -> Self {
+        Self {
+            cwd,
+            program,
+            args: Vec::new(),
+            env: Vec::new(),
+            owner: None,
+            type_ahead: None,
+        }
+    }
 }
 
 /// A shell that lives in the server, not in the browser tab: closing the tab detaches
 /// the websocket while the pty keeps running, so reopening it resumes the same shell.
-struct TerminalSession {
+pub(crate) struct TerminalSession {
+    owner: Option<String>,
+    /// What it was started as: `None` for the login shell, an agent otherwise. A task's plain
+    /// shells are listed from here, because they are not written down anywhere else.
+    program: Option<AgentKind>,
+    /// When it was started, and the order it was started in. A second is coarse enough that
+    /// two shells opened together tie, so the order is what actually sorts them.
+    started_at_unix: u64,
+    order: u64,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
@@ -67,8 +122,51 @@ struct TerminalSession {
     /// though they hold this session alive.
     exited: watch::Sender<bool>,
     scrollback: Mutex<Scrollback>,
+    /// When the shell last printed anything, which is how the type-ahead tells a program that
+    /// is still drawing its interface from one that has drawn it and is waiting.
+    last_output: Mutex<Option<Instant>>,
+    /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
+    /// text arriving after someone has started writing lands in the middle of their sentence.
+    typed_into: std::sync::atomic::AtomicBool,
     /// Typing in a shell, and a shell printing output, both keep the server from idling out.
     last_activity: Arc<Mutex<Instant>>,
+}
+
+impl TerminalSession {
+    /// Whether the shell has ended. Set by the reader thread when the pty reaches EOF.
+    #[cfg(feature = "native")]
+    pub(crate) fn has_exited(&self) -> bool {
+        *self.exited.borrow()
+    }
+
+    // The native window drives a pty directly; a web tab goes through the websocket.
+    #[cfg(feature = "native")]
+    pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
+        crate::api::mark_activity(&self.last_activity);
+        self.typed_into.store(true, Ordering::Relaxed);
+        self.writer.lock().unwrap().write_all(data)?;
+        Ok(())
+    }
+
+    /// The terminal answering the program's own query. It goes to the same place a keystroke
+    /// does, but it is not one: nobody typed it, so it does not call off the type-ahead.
+    #[cfg(feature = "native")]
+    pub(crate) fn write_reply(&self, data: &[u8]) -> anyhow::Result<()> {
+        crate::api::mark_activity(&self.last_activity);
+        self.writer.lock().unwrap().write_all(data)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        self.master.lock().unwrap().resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+        Ok(())
+    }
 }
 
 /// Output chunks kept for replay, oldest dropped once the byte budget is spent.
@@ -92,8 +190,20 @@ impl Scrollback {
     }
 }
 
+/// One of a task's live shells, as the board needs it listed.
+pub(crate) struct OwnedShell {
+    pub(crate) terminal_id: String,
+    pub(crate) started_at_unix: u64,
+    /// Where it falls among the task's shells. Only meaningful against its siblings.
+    pub(crate) order: u64,
+}
+
 pub(crate) struct TerminalRegistry {
     sessions: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    /// Tells this run of the server's shells from a previous one's. A task writes down the
+    /// shell its agent is in, and that record outlives the process, so a counter starting
+    /// over at zero would let a new shell answer to an old task's name.
+    run: String,
     next_id: AtomicU64,
     last_activity: Arc<Mutex<Instant>>,
 }
@@ -102,6 +212,7 @@ impl TerminalRegistry {
     pub(crate) fn new(last_activity: Arc<Mutex<Instant>>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            run: crate::moontasks::store::new_uuid()[..8].to_string(),
             next_id: AtomicU64::new(0),
             last_activity,
         }
@@ -111,13 +222,104 @@ impl TerminalRegistry {
         self.sessions.lock().unwrap().get(terminal_id).cloned()
     }
 
+    /// Attach the native window to a shell: everything it has printed so far, then
+    /// everything it prints from here on, delivered to whichever thread owns the
+    /// terminal emulator. Web tabs attach to the same shell over a websocket.
+    #[cfg(feature = "native")]
+    pub(crate) fn attach(
+        &self,
+        terminal_id: &str,
+    ) -> anyhow::Result<(std::sync::mpsc::Receiver<Vec<u8>>, Arc<TerminalSession>)> {
+        let session = self
+            .get(terminal_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
+        // Subscribe before replaying so nothing written in between is lost.
+        let mut output = session.output.subscribe();
+        let replay = session.scrollback.lock().unwrap().replay();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        if !replay.is_empty() {
+            let _ = sender.send(replay);
+        }
+
+        std::thread::spawn(move || {
+            loop {
+                match output.blocking_recv() {
+                    Ok(chunk) => {
+                        if sender.send(chunk).is_err() {
+                            return;
+                        }
+                    }
+                    // Lagged: the window fell behind, keep going with what follows.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+
+        Ok((receiver, session))
+    }
+
+    /// The shells the workspace has of its own — a task's shells are the task's to show.
     pub(crate) fn terminal_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
+        let mut ids: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.owner.is_none())
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
         ids.sort();
         ids
     }
 
-    fn remove(&self, terminal_id: &str) {
+    /// Whether this shell is still one the server has, which is what tells a task's recorded
+    /// agent run from one that ended — or that died with a previous run of the server.
+    pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(terminal_id)
+    }
+
+    /// The plain shells one task has open right now, oldest first.
+    ///
+    /// This is the whole record of them: a shell has nothing to come back to once it ends, so
+    /// the board lists the ones the server has rather than remembering the ones it had.
+    pub(crate) fn owned_shells(&self, owner: &str) -> Vec<OwnedShell> {
+        let mut shells: Vec<OwnedShell> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| {
+                session.owner.as_deref() == Some(owner)
+                    && matches!(session.program, None | Some(AgentKind::None))
+            })
+            .map(|(terminal_id, session)| OwnedShell {
+                terminal_id: terminal_id.clone(),
+                started_at_unix: session.started_at_unix,
+                order: session.order,
+            })
+            .collect();
+        shells.sort_by_key(|shell| shell.order);
+        shells
+    }
+
+    /// End every shell belonging to one task, which is what finishing the task does.
+    pub(crate) fn remove_owned_by(&self, owner: &str) {
+        let owned: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.owner.as_deref() == Some(owner))
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
+        for terminal_id in owned {
+            self.remove(&terminal_id);
+        }
+    }
+
+    pub(crate) fn remove(&self, terminal_id: &str) {
         let removed = self.sessions.lock().unwrap().remove(terminal_id);
         let Some(session) = removed else {
             return;
@@ -127,11 +329,7 @@ impl TerminalRegistry {
         let _ = child.wait();
     }
 
-    fn spawn(
-        self: &Arc<Self>,
-        repo_path: &Path,
-        program: Option<AgentKind>,
-    ) -> anyhow::Result<String> {
+    pub(crate) fn spawn(self: &Arc<Self>, spec: TerminalSpec) -> anyhow::Result<String> {
         let pty = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -139,9 +337,9 @@ impl TerminalRegistry {
             pixel_height: 0,
         })?;
 
-        let mut command = match program {
+        let mut command = match spec.program {
             None | Some(AgentKind::None) => {
-                let mut command = CommandBuilder::new(login_shell());
+                let mut command = CommandBuilder::new(crate::shell_path::login_shell());
                 command.arg("-l");
                 command
             }
@@ -149,8 +347,17 @@ impl TerminalRegistry {
             Some(AgentKind::Codex) => CommandBuilder::new("codex"),
             Some(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
         };
-        command.cwd(repo_path);
+        for argument in &spec.args {
+            command.arg(argument);
+        }
+        command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
+        // The agent is started by name, so it has to be looked up on the PATH the user's shell
+        // has rather than the one a desktop launcher hands this process.
+        command.env("PATH", crate::shell_path::agent_path());
+        for (name, value) in &spec.env {
+            command.env(name, value);
+        }
         let child = pty.slave.spawn_command(command)?;
         // The slave handle must be dropped so the reader sees EOF once the shell exits.
         drop(pty.slave);
@@ -160,20 +367,34 @@ impl TerminalRegistry {
         let (output, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (exited, _) = watch::channel(false);
 
-        let terminal_id = format!("terminal-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let order = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let terminal_id = format!("terminal-{}-{order}", self.run);
         let session = Arc::new(TerminalSession {
+            owner: spec.owner,
+            program: spec.program,
+            started_at_unix: crate::moontasks::store::now_unix(),
+            order,
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
             child: Mutex::new(child),
             output: output.clone(),
             exited: exited.clone(),
             scrollback: Mutex::new(Scrollback::default()),
+            last_output: Mutex::new(None),
+            typed_into: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
         });
         self.sessions
             .lock()
             .unwrap()
             .insert(terminal_id.clone(), Arc::clone(&session));
+
+        // Typed from a thread of its own, so starting a shell answers straight away rather
+        // than after the wait.
+        if let Some(text) = spec.type_ahead {
+            let typing_into = Arc::clone(&session);
+            std::thread::spawn(move || type_ahead(&typing_into, &text));
+        }
 
         let registry = Arc::clone(self);
         let reaped_id = terminal_id.clone();
@@ -185,18 +406,58 @@ impl TerminalRegistry {
                     Ok(count) => {
                         let chunk = &buffer[..count];
                         crate::api::mark_activity(&session.last_activity);
+                        *session.last_output.lock().unwrap() = Some(Instant::now());
                         session.scrollback.lock().unwrap().push(chunk);
                         // No attached tab is normal: the shell keeps running regardless.
                         let _ = output.send(chunk.to_vec());
                     }
                 }
             }
-            let _ = exited.send(true);
+            // `send` is refused when nothing is subscribed, and would leave the flag false for
+            // whoever asks later; the value has to be set whether or not anyone is listening.
+            exited.send_replace(true);
             registry.remove(&reaped_id);
         });
 
         Ok(terminal_id)
     }
+}
+
+/// Type text into a shell once the program in it has a box to take it, as if a person had.
+///
+/// The wait is what makes this work at all: keys written at an agent that has not drawn its
+/// input box yet are dropped by it, so the text has to arrive after that and — this is the
+/// point — before the person starts writing over it. So it waits for the program to stop
+/// drawing rather than for a fixed span, and if the person got there first it types nothing:
+/// a title landing in the middle of a sentence someone is writing is worse than no title.
+fn type_ahead(session: &TerminalSession, text: &str) {
+    let deadline = Instant::now() + TYPE_AHEAD_DEADLINE;
+    while Instant::now() < deadline {
+        if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+            return;
+        }
+        // Silence before the program has printed anything at all is it still starting up, not
+        // a box waiting to be typed into.
+        let quiet = session
+            .last_output
+            .lock()
+            .unwrap()
+            .is_some_and(|last| last.elapsed() >= TYPE_AHEAD_QUIET);
+        if quiet {
+            break;
+        }
+        std::thread::sleep(TYPE_AHEAD_POLL);
+    }
+
+    // Checked again holding the writer, which is the lock a keystroke takes: a person who has
+    // typed by now is seen, and one who types from here on waits and lands after the whole of
+    // the text rather than inside it. The shell may also have ended, and a dead pty refuses
+    // writes.
+    let mut writer = session.writer.lock().unwrap();
+    if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+        return;
+    }
+    let _ = writer.write_all(text.as_bytes());
 }
 
 pub(crate) async fn create_terminal(
@@ -206,7 +467,9 @@ pub(crate) async fn create_terminal(
 ) -> Result<impl IntoResponse, AppError> {
     let repo_path =
         crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    let terminal_id = state.terminals.spawn(&repo_path, request.command)?;
+    let terminal_id = state
+        .terminals
+        .spawn(TerminalSpec::shell(repo_path, request.command))?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 
@@ -291,6 +554,10 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
                 crate::api::mark_activity(&session.last_activity);
                 match serde_json::from_str::<ClientMessage>(&text)? {
                     ClientMessage::Input { data } => {
+                        session.typed_into.store(true, Ordering::Relaxed);
+                        session.writer.lock().unwrap().write_all(data.as_bytes())?;
+                    }
+                    ClientMessage::Reply { data } => {
                         session.writer.lock().unwrap().write_all(data.as_bytes())?;
                     }
                     ClientMessage::Resize { cols, rows } => {
@@ -308,4 +575,146 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
 
     pump_output.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Type-ahead reaches the program as keystrokes, and reaches it whole.
+    ///
+    /// A login shell stands in for an agent here: it echoes what is typed at it, which is the
+    /// same evidence an agent's input box gives — and unlike an agent it is on every machine
+    /// this runs on. What it must not do is run anything, so nothing here sends a newline.
+    #[test]
+    fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: Some("moonreview-typed-this".to_string()),
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        // The wait before it is typed is the point of it, so this waits out that wait.
+        let started = Instant::now();
+        let deadline = started + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
+        let mut printed = String::new();
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            // The pty is 80 columns wide and a prompt takes some of them, so what was typed
+            // comes back wrapped: the line break the shell inserted is dropped rather than
+            // matched against.
+            printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            if printed.contains("moonreview-typed-this") {
+                break;
+            }
+        }
+        let took = started.elapsed();
+        registry.remove(&terminal_id);
+
+        assert!(
+            printed.contains("moonreview-typed-this"),
+            "the shell never echoed what was typed at it, printed: {printed:?}"
+        );
+        // A prompt is drawn and then nothing more, so the text goes in on that silence rather
+        // than on the deadline — which is the difference between it being there when you look
+        // at the tab and it landing over what you had started typing.
+        assert!(
+            took < TYPE_AHEAD_DEADLINE,
+            "type-ahead waited out its deadline rather than the shell going quiet: {took:?}"
+        );
+        // Left at the prompt, not run: a shell that had been sent the line would have gone
+        // looking for a command by that name.
+        assert!(
+            !printed.contains("notfound"),
+            "type-ahead must not be sent, printed: {printed:?}"
+        );
+    }
+
+    /// A terminal answers the program's own questions the moment it attaches, and those
+    /// answers travel the same way keystrokes do — but they are not somebody typing, and a
+    /// tab being open must not be what stops the title going in.
+    #[cfg(feature = "native")]
+    #[test]
+    fn a_reply_to_the_program_is_not_somebody_typing() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: Some("moonreview-typed-this".to_string()),
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        // A device status report, which is what a terminal sends back unasked.
+        session
+            .write_reply(b"\x1b[0n")
+            .expect("failed to answer the program");
+
+        let deadline = Instant::now() + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
+        let mut printed = String::new();
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            if printed.contains("moonreview-typed-this") {
+                break;
+            }
+        }
+        registry.remove(&terminal_id);
+
+        assert!(
+            printed.contains("moonreview-typed-this"),
+            "the title should still have been typed, printed: {printed:?}"
+        );
+    }
+
+    /// The one thing type-ahead must never do is write into a sentence someone else started.
+    #[test]
+    fn a_shell_someone_has_typed_into_is_left_alone() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: Some("moonreview-typed-this".to_string()),
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        // Someone gets there first, before the shell has even finished coming up.
+        session.typed_into.store(true, Ordering::Relaxed);
+
+        std::thread::sleep(TYPE_AHEAD_DEADLINE + Duration::from_secs(1));
+        let printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        registry.remove(&terminal_id);
+
+        assert!(
+            !printed.contains("moonreview-typed-this"),
+            "the title was typed over what was being written, printed: {printed:?}"
+        );
+    }
 }

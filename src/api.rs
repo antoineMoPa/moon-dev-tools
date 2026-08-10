@@ -88,7 +88,7 @@ pub(crate) struct SessionOpened {
     pub(crate) session_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct SessionPayload {
     pub(crate) repo_name: String,
     pub(crate) branch_name: Option<String>,
@@ -111,26 +111,26 @@ pub(crate) struct SessionPayload {
 
 /// A submodule of the reviewed repo that has changes of its own, offered as another
 /// review the user can open beside this one.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct SubmoduleView {
     pub(crate) repo_path: String,
     pub(crate) name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct CommitHistoryPayload {
     pub(crate) commits: Vec<CommitView>,
     pub(crate) has_more: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub(crate) struct LocalChangeSummary {
     pub(crate) modified: usize,
     pub(crate) added: usize,
     pub(crate) deleted: usize,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct CommitView {
     pub(crate) sha: String,
     pub(crate) short_sha: String,
@@ -139,7 +139,7 @@ pub(crate) struct CommitView {
     pub(crate) review_status: CommitReviewStatus,
 }
 
-#[derive(Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CommitReviewStatus {
     Reviewed,
@@ -148,7 +148,7 @@ pub(crate) enum CommitReviewStatus {
     Unreviewed,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct HunkView {
     pub(crate) id: String,
     pub(crate) file_path: String,
@@ -167,13 +167,13 @@ pub(crate) struct HunkView {
     pub(crate) image_diff: Option<ImageDiffView>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ImageDiffView {
     pub(crate) before_src: Option<String>,
     pub(crate) after_src: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct HunkMoveHint {
     pub(crate) target_hunk_id: String,
     pub(crate) target_file_path: String,
@@ -187,7 +187,7 @@ pub(crate) struct HunkCommentContext {
     pub(crate) header: String,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum FileChangeKind {
     Added,
@@ -196,7 +196,7 @@ pub(crate) enum FileChangeKind {
     Modified,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ReviewCommentView {
     pub(crate) hunk_id: String,
     pub(crate) comment_index: usize,
@@ -209,14 +209,14 @@ pub(crate) struct ReviewCommentView {
     pub(crate) jumpable: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub(crate) struct AgentAvailability {
     pub(crate) claude: bool,
     pub(crate) codex: bool,
     pub(crate) opencode: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum AgentKind {
     #[default]
@@ -237,14 +237,14 @@ impl AgentKind {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct AgentOption {
     pub(crate) kind: AgentKind,
-    pub(crate) label: &'static str,
+    pub(crate) label: String,
     pub(crate) available: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CommentDispatchStatus {
     #[default]
@@ -257,7 +257,7 @@ pub(crate) enum CommentDispatchStatus {
     Failed,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct CommentDispatchView {
     pub(crate) key: String,
     pub(crate) status: CommentDispatchStatus,
@@ -267,12 +267,12 @@ pub(crate) struct CommentDispatchView {
     pub(crate) has_log: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct PatchPayload {
     pub(crate) patch: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct FileContentPayload {
     pub(crate) file_path: String,
     pub(crate) content: String,
@@ -298,6 +298,12 @@ pub(crate) struct HunkBatchRequest {
 #[derive(Deserialize)]
 pub(crate) struct FileRequest {
     pub(crate) file_path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WriteFileRequest {
+    pub(crate) file_path: String,
+    pub(crate) content: String,
 }
 
 #[derive(Deserialize)]
@@ -330,7 +336,7 @@ pub(crate) struct AgentLogQuery {
     pub(crate) dispatch_key: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct AgentLogPayload {
     pub(crate) dispatch_key: String,
     pub(crate) text: String,
@@ -432,11 +438,7 @@ pub(crate) fn mark_activity(last_activity: &Mutex<Instant>) {
     }
 }
 
-pub(crate) fn with_session<T, F>(
-    state: &AppState,
-    session_id: &str,
-    mut f: F,
-) -> Result<T, AppError>
+pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, mut f: F) -> Result<T>
 where
     F: FnMut(&mut RepoSession) -> Result<T>,
 {
@@ -448,13 +450,10 @@ where
         .sessions
         .get_mut(session_id)
         .ok_or_else(|| anyhow!("unknown session"))?;
-    f(session).map_err(AppError)
+    f(session)
 }
 
-pub(crate) fn ensure_session_is_writable(
-    state: &AppState,
-    session_id: &str,
-) -> Result<(), AppError> {
+pub(crate) fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<()> {
     with_session(state, session_id, |session| {
         if session.diff_target.base.is_some() || session.diff_target.comparison.is_some() {
             bail!("this review is read-only");
@@ -467,7 +466,7 @@ pub(crate) fn lookup_hunk(
     state: &AppState,
     session_id: &str,
     hunk_id: &str,
-) -> Result<(PathBuf, String, bool), AppError> {
+) -> Result<(PathBuf, String, bool)> {
     with_session(state, session_id, |session| {
         let hunk = crate::git::collect_session_hunks(session)?
             .into_iter()
@@ -481,7 +480,7 @@ pub(crate) fn lookup_hunks(
     state: &AppState,
     session_id: &str,
     hunk_ids: &[String],
-) -> Result<(PathBuf, Vec<(String, bool)>), AppError> {
+) -> Result<(PathBuf, Vec<(String, bool)>)> {
     with_session(state, session_id, |session| {
         let hunks = crate::git::collect_session_hunks(session)?;
         let mut patches = Vec::with_capacity(hunk_ids.len());

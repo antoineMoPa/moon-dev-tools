@@ -23,6 +23,11 @@ html:not([data-theme="dark"]) .hunk-active .hunk-actions button:hover:not(:disab
   text-decoration: underline;
 }
 
+/* The label changes between two lengths, and the longer one would otherwise wrap. */
+.hunk-reviewed-toggle {
+  white-space: nowrap;
+}
+
 .hunk-sections {
   display: grid;
   gap: 1rem;

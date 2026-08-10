@@ -151,6 +151,9 @@ fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
 
 fn configure_agent_command(command: &mut Command) {
     command
+        // Same PATH the availability check found the agent on, so a window opened from a
+        // desktop launcher starts it rather than failing to find it.
+        .env("PATH", crate::shell_path::agent_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

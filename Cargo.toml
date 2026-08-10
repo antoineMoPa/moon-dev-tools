@@ -3,24 +3,85 @@ name = "moon-review"
 version = "0.1.0"
 edition = "2024"
 
+# One library, three executables. They differ only in what the window opens on, so the whole
+# of each is a call into the library with a different frame — see `src/bin`.
+[lib]
+name = "moonreview"
+path = "src/lib.rs"
+
 [[bin]]
 name = "moonreview"
-path = "src/main.rs"
+path = "src/bin/moonreview.rs"
+
+[[bin]]
+name = "moontasks"
+path = "src/bin/moontasks.rs"
+
+[[bin]]
+name = "moonshell"
+path = "src/bin/moonshell.rs"
+
+[features]
+default = ["native"]
+# The desktop frontend. Building it compiles libghostty-vt from Ghostty source, which
+# needs a Zig 0.15.x toolchain on PATH. Turn it off for a web-only build with no Zig.
+native = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:egui_extras",
+    "dep:egui_frames",
+    "dep:egui_tty",
+    "dep:image",
+    "dep:muda",
+    "dep:rfd",
+    "dep:tungstenite",
+]
 
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["json", "ws"] }
 base64 = "0.22"
+eframe = { version = "0.36", features = ["persistence"], optional = true }
+egui = { version = "0.36", optional = true }
+egui_extras = { version = "0.36", features = ["image"], optional = true }
+# The tab, split and terminal widgets, kept as crates of their own: submodules under crates/,
+# published separately, and used here like any other dependency.
+egui_frames = { version = "0.2", path = "crates/egui_frames", features = ["serde"], optional = true }
+egui_tty = { version = "0.2", path = "crates/egui_tty", optional = true }
 futures = "0.3.33"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"], optional = true }
 libc = "0.2"
 portable-pty = "0.9.0"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# The folder picker the window opens on startup when it has no repo to review yet. On Linux it
+# asks the desktop portal, so there is no GTK to link against.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
 textdistance = "1.1.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
 webbrowser = "1"
+
+# The menu bar on macOS is a system-wide bar, not part of the window, so it needs the
+# platform API. Elsewhere the same actions live in the command palette.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false, optional = true }
+
+[dev-dependencies]
+# Renders the real window contents offscreen, so the UI can be checked without a display.
+egui_kittest = { version = "0.36", features = ["wgpu", "snapshot"] }
 
 [build-dependencies]
 serde_json = "1"
+
+# A terminal redraw parses and lays out a whole screen per frame, which an unoptimized build
+# does 5x slower — enough to make scrolling claude feel a beat behind the trackpad. The
+# dependencies carry most of that cost and rarely change, so they are compiled optimized even
+# for `cargo run`; the workspace's own code stays at 1 to keep rebuilds quick.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

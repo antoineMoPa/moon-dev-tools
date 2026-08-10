@@ -20,6 +20,15 @@ const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     let original_path = path.as_ref().to_path_buf();
+    match find_repo_root(&original_path)? {
+        Some(repo_path) => Ok(repo_path),
+        None => bail!("{} is not inside a git repository", original_path.display()),
+    }
+}
+
+/// The repo a path sits in, or `None` when it sits in no repo at all — which is an answer
+/// rather than a failure for a window that can ask which repo to open.
+pub(crate) fn find_repo_root(path: impl AsRef<Path>) -> Result<Option<PathBuf>> {
     let mut path = path
         .as_ref()
         .canonicalize()
@@ -27,14 +36,12 @@ pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
 
     loop {
         if path.join(".git").exists() {
-            return Ok(path);
+            return Ok(Some(path));
         }
         if !path.pop() {
-            break;
+            return Ok(None);
         }
     }
-
-    bail!("{} is not inside a git repository", original_path.display())
 }
 
 pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathBuf>> {
@@ -392,6 +399,34 @@ pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String
     Ok(content)
 }
 
+/// Write a file in the working tree. Only a file that is already there can be written: this
+/// is an editor for what is being reviewed, not a way to create files anywhere on disk.
+pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {
+    if file_path.trim().is_empty() {
+        bail!("file path cannot be empty");
+    }
+
+    // Both sides are resolved before they are compared: on macOS the repo may be reached
+    // through a symlink (`/var` for `/private/var`), and comparing a resolved path against an
+    // unresolved root would refuse a file that is plainly inside it.
+    let repo_root = repo_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", repo_path.display()))?;
+    let resolved = repo_root
+        .join(file_path)
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {file_path}"))?;
+    if !resolved.starts_with(&repo_root) {
+        bail!("file path is outside the repository");
+    }
+    if !resolved.is_file() {
+        bail!("{file_path} is not a file in the working tree");
+    }
+
+    fs::write(&resolved, content)
+        .with_context(|| format!("failed to write {}", resolved.display()))
+}
+
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
     let mut args = vec![
         "diff",
@@ -446,6 +481,31 @@ fn parse_diff(repo_path: &Path, diff: &str, staged: bool) -> Result<Vec<DiffHunk
                 staged,
                 image_diff: image_diff.clone(),
             });
+        }
+
+        // An image git can still text-diff — an SVG — is one change to look at, not a card
+        // per run of markup: the card shows the before/after pictures, so a hunk per `@@`
+        // would repeat the same pair. The whole file section becomes the one hunk, which is
+        // itself a complete patch, so staging it stages the file's change whole.
+        if image_diff.is_some() && idx < section.len() {
+            let header = match change_kind {
+                FileChangeKind::Added => "Image added",
+                FileChangeKind::Deleted => "Image deleted",
+                FileChangeKind::Modified => "Image changed",
+            }
+            .to_string();
+            let patch = format!("{}\n", section.join("\n"));
+            let id = stable_id(&(file_path.clone(), header.clone(), patch.clone()));
+            hunks.push(DiffHunk {
+                id,
+                file_path: file_path.clone(),
+                change_kind,
+                header,
+                patch,
+                staged,
+                image_diff: image_diff.clone(),
+            });
+            continue;
         }
 
         while idx < section.len() {
@@ -978,6 +1038,56 @@ mod tests {
         }
     }
 
+    /// An SVG is reviewed as its picture, so however many `@@` runs git finds in the markup,
+    /// the file is one change — and that one hunk's patch is the whole file section, which
+    /// `git apply` takes as-is, so staging it stages the change whole.
+    #[test]
+    fn an_svg_is_one_hunk_however_many_places_it_changed_in() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        // Two edits far enough apart that git would otherwise split them into two hunks.
+        let spacer = "  <rect width=\"1\" height=\"1\"/>\n".repeat(12);
+        let svg = |first: &str, last: &str| {
+            format!("<svg xmlns=\"http://www.w3.org/2000/svg\">\n  {first}\n{spacer}  {last}\n</svg>\n")
+        };
+        fs::write(repo_root.join("logo.svg"), svg("<g id=\"a\"/>", "<g id=\"z\"/>"))
+            .expect("failed to write the svg");
+        run_git_no_output(&repo_root, &["add", "logo.svg"]).expect("failed to add the svg");
+        run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"])
+            .expect("failed to commit");
+        fs::write(repo_root.join("logo.svg"), svg("<g id=\"b\"/>", "<g id=\"y\"/>"))
+            .expect("failed to change the svg");
+
+        let hunks = collect_hunks(&repo_root, &DiffTarget::default())
+            .expect("failed to collect the hunks");
+
+        let svg_hunks: Vec<_> = hunks
+            .iter()
+            .filter(|hunk| hunk.file_path == "logo.svg")
+            .collect();
+        assert_eq!(
+            svg_hunks.len(),
+            1,
+            "an image file is one change, not a card per run of markup"
+        );
+        let hunk = svg_hunks[0];
+        assert_eq!(hunk.header, "Image changed");
+        assert!(hunk.image_diff.is_some(), "the card shows the pictures");
+        assert!(
+            hunk.patch.matches("@@").count() >= 2,
+            "both edits are in the one patch: {}",
+            hunk.patch
+        );
+
+        super::apply_patch(&repo_root, &hunk.patch, true, false)
+            .expect("the whole-file patch should stage cleanly");
+        let staged = run_git(&repo_root, &["diff", "--cached", "--name-only"])
+            .expect("failed to list staged files");
+        assert!(staged.contains("logo.svg"), "staging the hunk stages the file");
+    }
+
     #[test]
     fn collect_commit_hunks_returns_hunks_for_single_commit() {
         // Arrange
@@ -1061,6 +1171,73 @@ mod tests {
         assert!(branch_commits.is_empty());
         assert!(history_commits.is_empty());
         assert!(!history_has_more);
+    }
+
+    /// `moonreview main..feature` reviews everything on one branch that is not on the other.
+    /// The range goes to git as it was typed; nothing here has to understand it.
+    #[test]
+    fn a_file_in_the_working_tree_can_be_written_back() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\n").expect("failed to write");
+
+        super::write_repo_file(&repo_root, "lib.rs", "fn two() {}\n").expect("expected the write");
+
+        assert_eq!(
+            fs::read_to_string(repo_root.join("lib.rs")).expect("failed to read back"),
+            "fn two() {}\n"
+        );
+    }
+
+    #[test]
+    fn writing_outside_the_repository_is_refused() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(temp.path.join("outside.txt"), "secrets\n").expect("failed to write");
+
+        let refused = super::write_repo_file(&repo_root, "../outside.txt", "changed\n");
+
+        assert!(refused.is_err(), "a path out of the repo must be refused");
+        assert_eq!(
+            fs::read_to_string(temp.path.join("outside.txt")).expect("failed to read back"),
+            "secrets\n",
+            "and must not have written anything"
+        );
+    }
+
+    #[test]
+    fn a_revision_range_collects_the_hunks_between_two_branches() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\n").expect("failed to write");
+        run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
+        run_git_no_output(&repo_root, &["commit", "-m", "first"]).expect("failed to commit");
+        run_git_no_output(&repo_root, &["branch", "-M", "main"]).expect("failed to name main");
+        run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
+            .expect("failed to branch");
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n")
+            .expect("failed to write");
+        run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
+        run_git_no_output(&repo_root, &["commit", "-m", "second"]).expect("failed to commit");
+
+        let mut session = test_session(repo_root, None);
+        session.diff_target = DiffTarget {
+            base: Some("main..feature".to_string()),
+            pathspec: None,
+            comparison: None,
+        };
+
+        let hunks = collect_session_hunks(&session).expect("expected the range to diff");
+
+        assert_eq!(hunks.len(), 1, "the branch adds one hunk");
+        assert!(
+            hunks[0].patch.contains("fn two()"),
+            "the hunk should be the line the branch added, got:\n{}",
+            hunks[0].patch
+        );
     }
 
     #[test]
@@ -1463,11 +1640,7 @@ mod tests {
 }
 
 fn command_exists(command: &str) -> bool {
-    let Some(path_var) = env::var_os("PATH") else {
-        return false;
-    };
-
-    env::split_paths(&path_var).any(|dir| {
+    env::split_paths(crate::shell_path::agent_path()).any(|dir| {
         let candidate = dir.join(command);
         std::fs::metadata(candidate)
             .map(|meta| meta.is_file())
@@ -1507,7 +1680,7 @@ pub(crate) fn agent_options(
     .into_iter()
     .map(|(kind, label)| crate::api::AgentOption {
         kind,
-        label,
+        label: label.to_string(),
         available: agent_is_available(availability, kind),
     })
     .collect()

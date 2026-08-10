@@ -1,0 +1,213 @@
+//! Moontasks: the sprint board moonreview runs agents from.
+//!
+//! [`store`] is the `.moontasks` folder on disk and [`service`] is everything both frontends
+//! do to it.
+
+pub(crate) mod service;
+pub(crate) mod store;
+
+use serde::{Deserialize, Serialize};
+
+use crate::api::AgentKind;
+pub(crate) use store::{BoardColumn, ColumnId, TaskResourceKind};
+
+/// One task, as the board draws it.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TaskView {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) status: ColumnId,
+    pub(crate) created_at_unix: u64,
+    /// The task folder itself, so the board can offer it to a shell or a file browser.
+    pub(crate) dir_path: String,
+    /// The repo the task's agents work in, which is the repo the board belongs to.
+    pub(crate) repo_path: String,
+    pub(crate) resources: Vec<TaskResourceView>,
+}
+
+/// A shell or an agent run belonging to a task.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TaskResourceView {
+    pub(crate) id: String,
+    pub(crate) kind: TaskResourceKind,
+    pub(crate) agent: AgentKind,
+    pub(crate) label: String,
+    /// The shell it is attached to, while it is still running.
+    pub(crate) terminal_id: Option<String>,
+    pub(crate) running: bool,
+    /// Whether the run can be started again where it left off, which needs the agent to have
+    /// been told its session id when it started.
+    pub(crate) resumable: bool,
+    pub(crate) started_at_unix: u64,
+}
+
+/// What starting a task's resource asked for.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct StartResourceRequest {
+    pub(crate) kind: TaskResourceKind,
+    /// Which agent to run, for an agent resource.
+    pub(crate) agent: AgentKind,
+}
+
+/// A session an agent already has, being put on a task as a new resource.
+///
+/// This is the way back when a task's recorded session id stopped pointing anywhere — the
+/// user switched sessions inside the agent, or the agent never persisted the one it was
+/// started on. The id here is one read off the agent's own records, so it is known to exist.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct AttachResourceRequest {
+    pub(crate) agent: AgentKind,
+    pub(crate) agent_session_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CreateTaskRequest {
+    pub(crate) title: String,
+    /// The agent to start on the task straight away. `None` leaves the task sitting in its
+    /// column with nothing running.
+    pub(crate) agent: AgentKind,
+    /// The column the new card joins — the one whose `+` opened the composer.
+    pub(crate) status: ColumnId,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskTitleRequest {
+    pub(crate) title: String,
+}
+
+/// Where a dragged card was let go of: the column, and how many of that column's other cards
+/// are above it.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskPlacementRequest {
+    pub(crate) status: ColumnId,
+    pub(crate) position: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TerminalOpened {
+    pub(crate) terminal_id: String,
+}
+
+/// A column being added, or one being renamed: in both cases what it is to be called.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ColumnLabelRequest {
+    pub(crate) label: String,
+}
+
+/// Where a dragged column was let go of: how many of the other columns are to its left.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ColumnPlacementRequest {
+    pub(crate) position: usize,
+}
+
+/// How each agent is run for a task: told which task it is on, and given the work.
+///
+/// Every string here is filled in before it is passed on. The placeholders are:
+///
+/// | | |
+/// | --- | --- |
+/// | `{session}` | the session id moontasks generated for this run |
+/// | `{brief}` | the standing instructions: which task, and where its notes go |
+///
+/// No agent is handed the work as a prompt. Starting one is opening a conversation, not
+/// firing a job off: it comes up knowing which task it is on, and waits to be told what to do
+/// about it. `brief.md` in the task folder is the same text, for an agent with no system
+/// prompt to be given it in.
+///
+/// The card's title is typed into its box a moment after it starts — see
+/// [`crate::terminal::TerminalSpec::type_ahead`] — so the conversation opens with something
+/// written and nothing sent. That is a keystroke short of firing the job off, and the
+/// keystroke is the person's.
+///
+/// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
+/// so an agent that cannot be told its session id is simply run without one.
+pub(crate) struct AgentLaunch {
+    pub(crate) kind: AgentKind,
+    /// Args for a fresh run.
+    pub(crate) start: &'static [&'static str],
+    /// Args that resume a run whose session id was never recorded, by whatever the agent
+    /// itself reckons the run was. No brief and no prompt: the session being resumed
+    /// already has both.
+    pub(crate) resume: &'static [&'static str],
+    /// Args that open the exact session `{session}` names. Used whenever the id is known —
+    /// resuming a run that recorded one, and attaching a session picked off the agent's own
+    /// records.
+    pub(crate) attach: &'static [&'static str],
+}
+
+pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
+    AgentLaunch {
+        kind: AgentKind::Claude,
+        // The brief and no prompt: it knows the task from the moment it starts, and waits at
+        // its prompt for the person who created the task to explain the work.
+        start: &[
+            "--session-id",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+        ],
+        resume: &[],
+        attach: &["--resume", "{session}"],
+    },
+    AgentLaunch {
+        kind: AgentKind::Codex,
+        start: &[],
+        resume: &["resume", "--last"],
+        attach: &["resume", "{session}"],
+    },
+    AgentLaunch {
+        kind: AgentKind::OpenCode,
+        start: &[],
+        resume: &["--continue"],
+        attach: &["--session", "{session}"],
+    },
+];
+
+/// Every placeholder [`AGENT_LAUNCHES`] may use.
+///
+/// A run fills in the ones it has a value for; an argument naming one it does not is dropped.
+/// Which placeholders exist has to be written down, because a filled-in value can contain
+/// braces of its own — the brief is free text — and so cannot be told apart from an unfilled
+/// placeholder by looking at the result.
+pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}"];
+
+/// What an agent working in a task is told, beyond the work itself.
+///
+/// It names the task, says where to put anything that belongs to it, and says how the work
+/// being finished is reported — which is by saying so, since the person reading this shell is
+/// the one who moves the card.
+pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
+    format!(
+        "You are working on a task from moonreview's moontasks board.\n\
+         \n\
+         Task: {title}\n\
+         Task folder: {task_dir}\n\
+         \n\
+         Say plainly when the work is finished and ready to be looked at, and say just as \
+         plainly if you have to stop before it is — you are blocked, or you need a decision. \
+         The person who created this task is the one who moves its card, and what you say is \
+         how they know to.\n\
+         \n\
+         Notes, plans and scratch files that belong to this task go in the task folder rather \
+         than in the repo.\n\
+         \n\
+         The title above is the name on a card, not the brief. Wait for the person who opened \
+         this session to explain what they actually want before starting on anything."
+    )
+}
+
+/// The file the brief is also written to, so it can be read by a person or by an agent that
+/// had no way to be handed it.
+pub(crate) const BRIEF_FILE_NAME: &str = "brief.md";
+
+pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {
+    AGENT_LAUNCHES.iter().find(|launch| launch.kind == agent)
+}
+
+/// The environment every process moontasks starts for a task is given, so anything running
+/// there — an agent, a shell the user opens, anything either of them starts — knows which
+/// task it is in and which server owns it.
+pub(crate) const TASK_ID_ENV_VAR: &str = "MOONREVIEW_TASK_ID";
+pub(crate) const TASK_DIR_ENV_VAR: &str = "MOONREVIEW_TASK_DIR";
+pub(crate) const SESSION_ID_ENV_VAR: &str = "MOONREVIEW_SESSION_ID";
+pub(crate) const SERVER_URL_ENV_VAR: &str = "MOONREVIEW_SERVER_URL";

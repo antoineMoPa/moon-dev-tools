@@ -1,11 +1,12 @@
+//! The HTTP surface for the web frontend. Every route is a thin wrapper over
+//! [`crate::service`], which the native frontend calls directly.
+
 use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
@@ -15,60 +16,39 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
-        CommitHistoryQuery, CommitReviewStatus, CommitSelectionRequest, DiffHunk, DiffTarget,
-        FileContentPayload, FileQuery,
-        FileReviewedRequest, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
-        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
-        SubmoduleView, bind_host, port, server_url,
+        AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
+        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, FileQuery,
+        FileReviewedRequest, OpenSessionRequest, PatchPayload, ReviewedRequest, SelectionRequest,
+        ServerState, SessionOpened, SessionPayload, SubmoduleView, bind_host, port, server_url,
     },
-    comments::{
-        agent_dispatch_log, anchored_comment_key, anchored_comments_only,
-        build_anchored_comment_value, build_export_text, build_review_comments,
-        cancel_comment_dispatch, comment_dispatch_view, parse_anchored_comments,
-        plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
+    git::detect_agent_availability,
+    moontasks::{
+        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
+        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskTitleRequest, TaskView,
+        TerminalOpened,
+        store::{BoardColumn, ColumnId},
     },
-    git::{
-        agent_is_available, agent_options, apply_patch, branch_commits_since_default,
-        build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
-        commit_history_page, commit_view, current_branch_name, detect_agent_availability,
-        list_changed_submodule_repos, local_change_summary_from_status, preview_patch,
-        read_repo_file, run_git, run_git_no_output,
-    },
-    reviewed_cache::{
-        hunk_patch_hash, mark_hunk_patch_reviewed, read_reviewed_hunk_hashes,
-        unmark_hunk_patch_reviewed,
-    },
+    service,
 };
 
-const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
-const HISTORY_COMMIT_PAGE_SIZE: usize = 30;
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
 
-fn diff_line_stats(patch: &str) -> (usize, usize) {
-    let mut added = 0usize;
-    let mut removed = 0usize;
-
-    for line in patch.lines() {
-        if line.starts_with("+++") || line.starts_with("---") {
-            continue;
-        }
-        if line.starts_with('+') {
-            added += 1;
-        } else if line.starts_with('-') {
-            removed += 1;
-        }
+/// The state both frontends share. The native app builds this once and hands a clone to
+/// the background server, so a review is the same review in the window and in the browser.
+pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
+    AppState {
+        inner: Arc::new(Mutex::new(ServerState::default())),
+        agent_availability: detect_agent_availability(),
+        last_activity: Arc::clone(&last_activity),
+        terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
     }
-
-    (added, removed)
 }
 
-pub(crate) async fn run_server() -> Result<()> {
-    let last_activity = Arc::new(Mutex::new(Instant::now()));
-    let app = Router::new()
+pub(crate) fn router(state: AppState) -> Router {
+    Router::new()
         .route("/", get(root))
         .route("/healthz", get(healthz))
         .route("/review/{session_id}", get(review_page))
@@ -92,7 +72,10 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/agent", post(update_agent))
         .route("/api/session/{session_id}/commit", post(update_commit_view))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
-        .route("/api/session/{session_id}/file", get(session_file))
+        .route(
+            "/api/session/{session_id}/file",
+            get(session_file).post(write_session_file),
+        )
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route(
             "/api/session/{session_id}/reviewed-file",
@@ -125,6 +108,59 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
         .route(
+            "/api/session/{session_id}/tasks",
+            get(list_tasks).post(create_task),
+        )
+        .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/placement",
+            post(place_task),
+        )
+        .route(
+            "/api/session/{session_id}/columns",
+            get(list_columns).post(add_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}",
+            delete(delete_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/title",
+            post(rename_column),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/placement",
+            post(place_column),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources",
+            post(start_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/agent-sessions",
+            get(list_agent_sessions),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/attach",
+            post(attach_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume",
+            post(resume_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop",
+            post(stop_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}",
+            delete(delete_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/title",
+            post(rename_task),
+        )
+        .route(
             "/api/session/{session_id}/terminals",
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
         )
@@ -136,15 +172,21 @@ pub(crate) async fn run_server() -> Result<()> {
             "/api/session/{session_id}/terminals/{terminal_id}/socket",
             get(crate::terminal::terminal_socket),
         )
-        .with_state(AppState {
-            inner: Arc::new(Mutex::new(ServerState::default())),
-            agent_availability: detect_agent_availability(),
-            last_activity: Arc::clone(&last_activity),
-            terminals: Arc::new(crate::terminal::TerminalRegistry::new(Arc::clone(
-                &last_activity,
-            ))),
-        });
+        .with_state(state)
+}
 
+pub(crate) async fn run_server() -> Result<()> {
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let state = build_state(Arc::clone(&last_activity));
+    serve(state, Some(last_activity)).await
+}
+
+/// Serve the web frontend. `idle_shutdown` is the clock the standalone server stops on;
+/// the native app passes `None` because its window decides when the process ends.
+pub(crate) async fn serve(
+    state: AppState,
+    idle_shutdown: Option<Arc<Mutex<Instant>>>,
+) -> Result<()> {
     let port = port()?;
     let host = bind_host();
     let listener = tokio::net::TcpListener::bind((host.as_str(), port))
@@ -152,80 +194,24 @@ pub(crate) async fn run_server() -> Result<()> {
         .with_context(|| format!("failed to bind {host}:{port}"))?;
 
     println!("Moon Review listening on {}", server_url());
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(last_activity))
-        .await
-        .context("server failed")
+    serve_on(state, listener, idle_shutdown).await
 }
 
-fn branch_commit_shas(commits: &[crate::api::CommitView]) -> HashSet<String> {
-    commits.iter().map(|commit| commit.sha.clone()).collect()
-}
-
-fn review_status_for_hunks(
-    session: &RepoSession,
-    cached_reviewed: &HashSet<String>,
-    hunks: &[DiffHunk],
-) -> CommitReviewStatus {
-    if hunks.is_empty() {
-        return CommitReviewStatus::Unreviewed;
-    }
-
-    let reviewed_count = hunks
-        .iter()
-        .filter(|hunk| {
-            session.reviewed.contains(&hunk.id)
-                || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch))
-        })
-        .count();
-
-    if reviewed_count == hunks.len() {
-        CommitReviewStatus::Reviewed
-    } else if reviewed_count > 0 {
-        CommitReviewStatus::Partial
-    } else {
-        CommitReviewStatus::Unreviewed
-    }
-}
-
-fn apply_commit_status(
-    commits: &mut [crate::api::CommitView],
-    commit_sha: &str,
-    status: CommitReviewStatus,
-) {
-    if let Some(commit) = commits.iter_mut().find(|commit| commit.sha == commit_sha) {
-        commit.review_status = status;
-    }
-}
-
-fn apply_cached_commit_statuses(session: &RepoSession, commits: &mut [crate::api::CommitView]) {
-    for commit in commits {
-        if let Some(status) = session.commit_statuses.get(&commit.sha) {
-            commit.review_status = *status;
-        }
-    }
-}
-
-fn ensure_active_commit_visible(
-    repo_path: &std::path::Path,
-    commits: &[crate::api::CommitView],
-    history_commits: &mut Vec<crate::api::CommitView>,
-    active_commit: Option<&str>,
+/// Serve on a listener the caller already bound, which is how a test gets a free port.
+pub(crate) async fn serve_on(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+    idle_shutdown: Option<Arc<Mutex<Instant>>>,
 ) -> Result<()> {
-    let Some(active_commit) = active_commit else {
-        return Ok(());
-    };
-    if commits.iter().any(|commit| commit.sha == active_commit)
-        || history_commits
-            .iter()
-            .any(|commit| commit.sha == active_commit)
-    {
-        return Ok(());
+    match idle_shutdown {
+        Some(last_activity) => axum::serve(listener, router(state))
+            .with_graceful_shutdown(shutdown_signal(last_activity))
+            .await
+            .context("server failed"),
+        None => axum::serve(listener, router(state))
+            .await
+            .context("server failed"),
     }
-    if let Some(commit) = commit_view(repo_path, active_commit)? {
-        history_commits.insert(0, commit);
-    }
-    Ok(())
 }
 
 async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
@@ -300,29 +286,12 @@ async fn app_css(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-/// The submodules of this repo that have changes worth reviewing. The browser opens a
-/// session for one of these on demand, as another review window.
 async fn session_submodules(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SubmoduleView>>, AppError> {
     mark_activity(&state);
-    let repo_path = crate::api::with_session(&state, &session_id, |session| {
-        Ok(session.repo_path.clone())
-    })?;
-
-    let submodules = list_changed_submodule_repos(&repo_path)?
-        .into_iter()
-        .map(|path| SubmoduleView {
-            name: path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string()),
-            repo_path: path.display().to_string(),
-        })
-        .collect();
-
-    Ok(Json(submodules))
+    Ok(Json(service::session_submodules(&state, &session_id)?))
 }
 
 async fn open_session(
@@ -330,49 +299,7 @@ async fn open_session(
     Json(request): Json<OpenSessionRequest>,
 ) -> Result<Json<SessionOpened>, AppError> {
     mark_activity(&state);
-    let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
-    let diff_target = request.diff_target.unwrap_or_default();
-    let active_commit = request
-        .active_commit
-        .clone()
-        .filter(|commit| !commit.trim().is_empty());
-    if let Some(commit) = &active_commit {
-        let commit_ref = format!("{commit}^{{commit}}");
-        let _ = run_git(&repo_path, &["rev-parse", "--verify", &commit_ref])
-            .with_context(|| format!("failed to load commit {commit}"))?;
-    }
-    let session_id =
-        crate::api::session_id_for_view(&repo_path, &diff_target, active_commit.as_deref());
-
-    let mut guard = state
-        .inner
-        .lock()
-        .map_err(|_| anyhow!("state lock poisoned"))?;
-    match guard.sessions.get_mut(&session_id) {
-        Some(session) => {
-            session.repo_path = repo_path;
-            session.diff_target = diff_target;
-            session.active_commit = active_commit;
-        }
-        None => {
-            guard.sessions.insert(
-                session_id.clone(),
-                RepoSession {
-                    repo_path,
-                    diff_target,
-                    active_commit,
-                    comments: HashMap::new(),
-                    comment_contexts: HashMap::new(),
-                    reviewed: HashSet::new(),
-                    commit_statuses: HashMap::new(),
-                    selected_agent: AgentKind::None,
-                    comment_dispatches: HashMap::new(),
-                },
-            );
-        }
-    }
-
-    Ok(Json(SessionOpened { session_id }))
+    Ok(Json(service::open_session(&state, request)?))
 }
 
 async fn session_state(
@@ -380,137 +307,7 @@ async fn session_state(
     State(state): State<AppState>,
 ) -> Result<Json<SessionPayload>, AppError> {
     mark_activity(&state);
-    let agent_availability = state.agent_availability;
-    let available_agents = agent_options(agent_availability);
-    let session = crate::api::with_session(&state, &session_id, |session| {
-        let hunks = collect_session_hunks(session)?;
-        let full_file_path = unchanged_file_path(
-            &session.repo_path,
-            &session.diff_target,
-            session.active_commit.as_deref(),
-            !hunks.is_empty(),
-        );
-        let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
-        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
-        let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
-        let (mut history_commits, history_has_more) = commit_history_page(
-            &session.repo_path,
-            &branch_commit_shas(&commits),
-            0,
-            HISTORY_COMMIT_PAGE_SIZE,
-        )?;
-        ensure_active_commit_visible(
-            &session.repo_path,
-            &commits,
-            &mut history_commits,
-            session.active_commit.as_deref(),
-        )?;
-        apply_cached_commit_statuses(session, &mut commits);
-        apply_cached_commit_statuses(session, &mut history_commits);
-        if let Some(active_commit) = session.active_commit.as_deref() {
-            let active_commit_status = review_status_for_hunks(session, &cached_reviewed, &hunks);
-            session
-                .commit_statuses
-                .insert(active_commit.to_string(), active_commit_status);
-            apply_commit_status(&mut commits, active_commit, active_commit_status);
-            apply_commit_status(&mut history_commits, active_commit, active_commit_status);
-        }
-        let local_change_summary = if session.diff_target.comparison.is_some() {
-            Default::default()
-        } else {
-            local_change_summary_from_status(
-                &session.repo_path,
-                session.diff_target.pathspec.as_deref(),
-            )?
-        };
-        let read_only = session.diff_target.base.is_some()
-            || session.diff_target.comparison.is_some()
-            || session.active_commit.is_some();
-        let views = hunks
-            .into_iter()
-            .map(|hunk| {
-                let (added_line_count, removed_line_count) = diff_line_stats(&hunk.patch);
-                let comment = session
-                    .comments
-                    .get(&hunk.id)
-                    .map(|comment| anchored_comments_only(comment))
-                    .unwrap_or_default();
-                let comment_dispatches = parse_anchored_comments(&comment)
-                    .into_iter()
-                    .map(|entry| comment_dispatch_view(session, &hunk.id, &entry))
-                    .collect::<Vec<_>>();
-                let moved_from = move_hints.moved_from.get(&hunk.id).cloned();
-                let moved_to = move_hints.moved_to.get(&hunk.id).cloned();
-
-                HunkView {
-                    reviewed: session.reviewed.contains(&hunk.id)
-                        || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch)),
-                    id: hunk.id,
-                    file_path: hunk.file_path,
-                    change_kind: hunk.change_kind,
-                    header: hunk.header,
-                    staged: hunk.staged,
-                    comment,
-                    comment_dispatches,
-                    patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
-                    patch_line_count: hunk.patch.lines().count(),
-                    added_line_count,
-                    removed_line_count,
-                    moved_from,
-                    moved_to,
-                    image_diff: hunk.image_diff,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Ok(SessionPayload {
-            repo_name: session
-                .repo_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("repo")
-                .to_string(),
-            branch_name: current_branch_name(&session.repo_path)?,
-            commit_base,
-            commits,
-            history_commits,
-            history_has_more,
-            local_change_summary,
-            active_commit: session.active_commit.clone(),
-            repo_path: session.repo_path.display().to_string(),
-            read_only,
-            patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
-            available_agents: available_agents.clone(),
-            selected_agent: session.selected_agent,
-            full_file_path,
-            review_comments: build_review_comments(session, &views),
-            export_text: build_export_text(&session_id, &views),
-            hunks: views,
-        })
-    })?;
-
-    Ok(Json(session))
-}
-
-fn unchanged_file_path(
-    repo_path: &Path,
-    diff_target: &DiffTarget,
-    active_commit: Option<&str>,
-    has_hunks: bool,
-) -> Option<String> {
-    if has_hunks
-        || active_commit.is_some()
-        || diff_target.base.is_some()
-        || diff_target.comparison.is_some()
-    {
-        return None;
-    }
-
-    let pathspec = diff_target.pathspec.as_ref()?;
-    repo_path
-        .join(pathspec)
-        .is_file()
-        .then(|| pathspec.clone())
+    Ok(Json(service::session_state(&state, &session_id)?))
 }
 
 async fn commit_history(
@@ -519,21 +316,12 @@ async fn commit_history(
     State(state): State<AppState>,
 ) -> Result<Json<CommitHistoryPayload>, AppError> {
     mark_activity(&state);
-    let payload = crate::api::with_session(&state, &session_id, |session| {
-        let (_, commits) = branch_commits_since_default(&session.repo_path)?;
-        let limit = query.limit.unwrap_or(HISTORY_COMMIT_PAGE_SIZE).min(100);
-        let (mut commits, has_more) = commit_history_page(
-            &session.repo_path,
-            &branch_commit_shas(&commits),
-            query.offset.unwrap_or(0),
-            limit,
-        )?;
-        apply_cached_commit_statuses(session, &mut commits);
-
-        Ok(CommitHistoryPayload { commits, has_more })
-    })?;
-
-    Ok(Json(payload))
+    Ok(Json(service::commit_history(
+        &state,
+        &session_id,
+        query.offset.unwrap_or(0),
+        query.limit.unwrap_or(service::HISTORY_COMMIT_PAGE_SIZE),
+    )?))
 }
 
 async fn update_agent(
@@ -542,14 +330,7 @@ async fn update_agent(
     Json(request): Json<crate::api::AgentSelectionRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        if !agent_is_available(state.agent_availability, request.agent) {
-            bail!("selected agent is not available");
-        }
-        session.selected_agent = request.agent;
-        Ok(())
-    })?;
-
+    service::update_agent(&state, &session_id, request.agent)?;
     Ok("ok")
 }
 
@@ -559,19 +340,7 @@ async fn update_commit_view(
     Json(request): Json<CommitSelectionRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        session.active_commit = request
-            .commit
-            .clone()
-            .filter(|commit| !commit.trim().is_empty());
-        if let Some(commit) = &session.active_commit {
-            let commit_ref = format!("{commit}^{{commit}}");
-            let _ = run_git(&session.repo_path, &["rev-parse", "--verify", &commit_ref])
-                .with_context(|| format!("failed to load commit {commit}"))?;
-        }
-        Ok(())
-    })?;
-
+    service::update_commit_view(&state, &session_id, request.commit)?;
     Ok("ok")
 }
 
@@ -580,8 +349,17 @@ async fn hunk_patch(
     State(state): State<AppState>,
 ) -> Result<Json<PatchPayload>, AppError> {
     mark_activity(&state);
-    let (_, patch, _) = crate::api::lookup_hunk(&state, &session_id, &hunk_id)?;
-    Ok(Json(PatchPayload { patch }))
+    Ok(Json(service::hunk_patch(&state, &session_id, &hunk_id)?))
+}
+
+async fn write_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::WriteFileRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::write_session_file(&state, &session_id, &request.file_path, &request.content)?;
+    Ok("ok")
 }
 
 async fn session_file(
@@ -590,14 +368,11 @@ async fn session_file(
     State(state): State<AppState>,
 ) -> Result<Json<FileContentPayload>, AppError> {
     mark_activity(&state);
-    let payload = crate::api::with_session(&state, &session_id, |session| {
-        Ok(FileContentPayload {
-            file_path: query.file_path.clone(),
-            content: read_repo_file(&session.repo_path, &query.file_path)?,
-        })
-    })?;
-
-    Ok(Json(payload))
+    Ok(Json(service::session_file(
+        &state,
+        &session_id,
+        &query.file_path,
+    )?))
 }
 
 async fn resolve_comment(
@@ -605,26 +380,7 @@ async fn resolve_comment(
     State(state): State<AppState>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        let Some(existing) = session.comments.get(&hunk_id).cloned() else {
-            bail!("comment no longer exists");
-        };
-
-        let mut anchored = parse_anchored_comments(&existing);
-        let Some(entry) = anchored.get_mut(comment_index) else {
-            bail!("comment index is out of bounds");
-        };
-        entry.resolved = true;
-
-        let next = build_anchored_comment_value(&anchored);
-        if next.trim().is_empty() {
-            session.comments.remove(&hunk_id);
-        } else {
-            session.comments.insert(hunk_id.clone(), next);
-        }
-        Ok(())
-    })?;
-
+    service::resolve_comment(&state, &session_id, &hunk_id, comment_index)?;
     Ok("ok")
 }
 
@@ -633,29 +389,7 @@ async fn resolve_comment_by_key(
     State(state): State<AppState>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        let Some(existing) = session.comments.get(&hunk_id).cloned() else {
-            bail!("comment no longer exists");
-        };
-
-        let mut anchored = parse_anchored_comments(&existing);
-        let Some(index) = anchored
-            .iter()
-            .position(|entry| anchored_comment_key(entry) == comment_key)
-        else {
-            bail!("comment no longer exists");
-        };
-        anchored[index].resolved = true;
-
-        let next = build_anchored_comment_value(&anchored);
-        if next.trim().is_empty() {
-            session.comments.remove(&hunk_id);
-        } else {
-            session.comments.insert(hunk_id.clone(), next);
-        }
-        Ok(())
-    })?;
-
+    service::resolve_comment_by_key(&state, &session_id, &hunk_id, &comment_key)?;
     Ok("ok")
 }
 
@@ -665,28 +399,7 @@ async fn toggle_reviewed(
     Json(request): Json<ReviewedRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
-        let Some(hunk) = collect_session_hunks(session)?
-            .into_iter()
-            .find(|hunk| hunk.id == request.hunk_id)
-        else {
-            return Ok(());
-        };
-        let is_reviewed = session.reviewed.contains(&hunk.id)
-            || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch));
-        let next_reviewed = request.reviewed.unwrap_or(!is_reviewed);
-
-        if next_reviewed {
-            mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-            session.reviewed.insert(request.hunk_id.clone());
-        } else {
-            unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-            session.reviewed.remove(&request.hunk_id);
-        }
-
-        Ok(())
-    })?;
+    service::toggle_reviewed(&state, &session_id, &request.hunk_id, request.reviewed)?;
     Ok("ok")
 }
 
@@ -696,22 +409,7 @@ async fn update_file_reviewed(
     Json(request): Json<FileReviewedRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        let hunks = collect_session_hunks(session)?
-            .into_iter()
-            .filter(|hunk| hunk.file_path == request.file_path)
-            .collect::<Vec<_>>();
-        for hunk in hunks {
-            if request.reviewed {
-                mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-                session.reviewed.insert(hunk.id);
-            } else {
-                unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-                session.reviewed.remove(&hunk.id);
-            }
-        }
-        Ok(())
-    })?;
+    service::update_file_reviewed(&state, &session_id, &request.file_path, request.reviewed)?;
     Ok("ok")
 }
 
@@ -721,14 +419,7 @@ async fn update_comment(
     Json(request): Json<crate::api::CommentRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
-        plan_comment_dispatches(session, &session_id, &request)
-    })?;
-
-    for job in dispatch_jobs {
-        spawn_comment_dispatch(state.clone(), job);
-    }
-
+    service::update_comment(&state, &session_id, &request)?;
     Ok("ok")
 }
 
@@ -737,14 +428,7 @@ async fn send_comment_batch(
     State(state): State<AppState>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
-        plan_batched_comment_dispatches(session, &session_id)
-    })?;
-
-    for job in dispatch_jobs {
-        spawn_comment_dispatch(state.clone(), job);
-    }
-
+    service::send_comment_batch(&state, &session_id)?;
     Ok("ok")
 }
 
@@ -754,10 +438,12 @@ async fn cancel_comment_dispatch_request(
     Json(request): Json<crate::api::CancelCommentDispatchRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::with_session(&state, &session_id, |session| {
-        cancel_comment_dispatch(session, &request.hunk_id, request.comment_index)
-    })?;
-
+    service::cancel_dispatch(
+        &state,
+        &session_id,
+        &request.hunk_id,
+        request.comment_index,
+    )?;
     Ok("ok")
 }
 
@@ -767,14 +453,11 @@ async fn agent_dispatch_log_request(
     State(state): State<AppState>,
 ) -> Result<Json<AgentLogPayload>, AppError> {
     mark_activity(&state);
-    let payload = crate::api::with_session(&state, &session_id, |session| {
-        Ok(AgentLogPayload {
-            dispatch_key: query.dispatch_key.clone(),
-            text: agent_dispatch_log(session, &query.dispatch_key)?,
-        })
-    })?;
-
-    Ok(Json(payload))
+    Ok(Json(service::dispatch_log(
+        &state,
+        &session_id,
+        &query.dispatch_key,
+    )?))
 }
 
 async fn stage_hunk(
@@ -783,14 +466,7 @@ async fn stage_hunk(
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) =
-        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
-    if is_staged {
-        return Ok("ok");
-    }
-    apply_patch(&repo_path, &patch, true, false)?;
-    mark_hunk_patch_reviewed(&repo_path, &patch)?;
+    service::stage_hunk(&state, &session_id, &request.hunk_id)?;
     Ok("ok")
 }
 
@@ -800,13 +476,7 @@ async fn unstage_hunk(
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) =
-        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
-    if !is_staged {
-        return Ok("ok");
-    }
-    apply_patch(&repo_path, &patch, true, true)?;
+    service::unstage_hunk(&state, &session_id, &request.hunk_id)?;
     Ok("ok")
 }
 
@@ -816,15 +486,7 @@ async fn stage_selection(
     Json(request): Json<SelectionRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) =
-        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
-    if is_staged {
-        return Ok("ok");
-    }
-    let partial_patch = build_partial_patch_from_selection(&patch, &request.selection)?;
-    apply_patch(&repo_path, &partial_patch, true, false)?;
-    mark_hunk_patch_reviewed(&repo_path, &patch)?;
+    service::stage_selection(&state, &session_id, &request.hunk_id, &request.selection)?;
     Ok("ok")
 }
 
@@ -834,56 +496,7 @@ async fn stage_file(
     Json(request): Json<crate::api::FileRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patches) = crate::api::with_session(&state, &session_id, |session| {
-        let patches = collect_session_hunks(session)?
-            .into_iter()
-            .filter(|hunk| hunk.file_path == request.file_path && !hunk.staged)
-            .map(|hunk| hunk.patch)
-            .collect::<Vec<_>>();
-        Ok((session.repo_path.clone(), patches))
-    })?;
-    run_git_no_output(&repo_path, &["add", "--", &request.file_path]).map_err(AppError)?;
-    for patch in patches {
-        mark_hunk_patch_reviewed(&repo_path, &patch)?;
-    }
-    Ok("ok")
-}
-
-async fn discard_hunk(
-    AxumPath(session_id): AxumPath<String>,
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::HunkRequest>,
-) -> Result<&'static str, AppError> {
-    mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) =
-        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
-
-    apply_patch(&repo_path, &patch, false, true)?;
-    if is_staged {
-        apply_patch(&repo_path, &patch, true, true)?;
-    }
-
-    Ok("ok")
-}
-
-async fn discard_hunks(
-    AxumPath(session_id): AxumPath<String>,
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::HunkBatchRequest>,
-) -> Result<&'static str, AppError> {
-    mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patches) = crate::api::lookup_hunks(&state, &session_id, &request.hunk_ids)?;
-
-    for (patch, is_staged) in patches {
-        apply_patch(&repo_path, &patch, false, true)?;
-        if is_staged {
-            apply_patch(&repo_path, &patch, true, true)?;
-        }
-    }
-
+    service::stage_file(&state, &session_id, &request.file_path)?;
     Ok("ok")
 }
 
@@ -893,73 +506,208 @@ async fn unstage_file(
     Json(request): Json<crate::api::FileRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let repo_path =
-        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    run_git_no_output(
-        &repo_path,
-        &["restore", "--staged", "--", &request.file_path],
-    )
-    .map_err(AppError)?;
+    service::unstage_file(&state, &session_id, &request.file_path)?;
     Ok("ok")
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        fs,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+async fn discard_hunk(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::discard_hunk(&state, &session_id, &request.hunk_id)?;
+    Ok("ok")
+}
 
-    use super::*;
+async fn list_tasks(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<TaskView>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::list_tasks(&state, &session_id)?))
+}
 
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+async fn create_task(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<CreateTaskRequest>,
+) -> Result<Json<TaskView>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::create_task(
+        &state,
+        &session_id,
+        &request,
+    )?))
+}
 
-    #[test]
-    fn unchanged_file_path_only_selects_clean_local_files() {
-        let repo_path = std::env::temp_dir().join(format!(
-            "moonreview-server-test-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(repo_path.join("src")).expect("failed to create test directory");
-        fs::write(repo_path.join("src/example.rs"), "fn main() {}\n")
-            .expect("failed to write test file");
+async fn delete_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_task(&state, &session_id, &task_id)?;
+    Ok("ok")
+}
 
-        let file_target = DiffTarget {
-            base: None,
-            pathspec: Some("src/example.rs".to_string()),
-            comparison: None,
-        };
-        assert_eq!(
-            unchanged_file_path(&repo_path, &file_target, None, false).as_deref(),
-            Some("src/example.rs")
-        );
-        assert_eq!(unchanged_file_path(&repo_path, &file_target, None, true), None);
-        assert_eq!(
-            unchanged_file_path(&repo_path, &file_target, Some("abc123"), false),
-            None
-        );
+async fn list_columns(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<BoardColumn>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::list_columns(&state, &session_id)?))
+}
 
-        let directory_target = DiffTarget {
-            pathspec: Some("src".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(
-            unchanged_file_path(&repo_path, &directory_target, None, false),
-            None
-        );
+async fn add_column(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnLabelRequest>,
+) -> Result<Json<BoardColumn>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::add_column(
+        &state,
+        &session_id,
+        &request.label,
+    )?))
+}
 
-        let diff_target = DiffTarget {
-            base: Some("main".to_string()),
-            pathspec: Some("src/example.rs".to_string()),
-            comparison: None,
-        };
-        assert_eq!(
-            unchanged_file_path(&repo_path, &diff_target, None, false),
-            None
-        );
+async fn rename_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnLabelRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::rename_column(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        &request.label,
+    )?;
+    Ok("ok")
+}
 
-        fs::remove_dir_all(repo_path).expect("failed to remove test directory");
-    }
+async fn delete_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_column(&state, &session_id, &ColumnId::new(column_id))?;
+    Ok("ok")
+}
+
+async fn place_column(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<ColumnPlacementRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::place_column(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        request.position,
+    )?;
+    Ok("ok")
+}
+
+async fn place_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskPlacementRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::place_task(
+        &state,
+        &session_id,
+        &task_id,
+        request.status,
+        request.position,
+    )?;
+    Ok("ok")
+}
+
+async fn start_task_resource(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<StartResourceRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
+    }))
+}
+
+async fn list_agent_sessions(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::agent_sessions::AgentSessionView>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::agent_sessions::list_for_session(
+        &state,
+        &session_id,
+    )?))
+}
+
+async fn attach_task_resource(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<AttachResourceRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::attach_resource(&state, &session_id, &task_id, &request)?,
+    }))
+}
+
+async fn resume_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::resume_resource(
+            &state,
+            &session_id,
+            &task_id,
+            &resource_id,
+        )?,
+    }))
+}
+
+async fn stop_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::stop_resource(&state, &session_id, &task_id, &resource_id)?;
+    Ok("ok")
+}
+
+async fn delete_task_resource(
+    AxumPath((session_id, task_id, resource_id)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::delete_resource(&state, &session_id, &task_id, &resource_id)?;
+    Ok("ok")
+}
+
+async fn rename_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskTitleRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::rename_task(&state, &session_id, &task_id, &request.title)?;
+    Ok("ok")
+}
+
+async fn discard_hunks(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkBatchRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::discard_hunks(&state, &session_id, &request.hunk_ids)?;
+    Ok("ok")
 }

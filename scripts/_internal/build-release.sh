@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 PACKAGE_VERSION="$(node -p "require('./package.json').version")"
@@ -68,6 +68,41 @@ package_binary() {
     echo "  ${archive_path}.sha256"
 }
 
+ZIG_MAJOR_MINOR="0.15"
+
+# The native window's terminal comes from Ghostty's Zig source, so a matching Zig has to be
+# on PATH before anything is built. Homebrew keeps 0.15 keg-only, so look there too.
+require_zig() {
+    if command -v brew >/dev/null 2>&1; then
+        zig_prefix="$(brew --prefix "zig@$ZIG_MAJOR_MINOR" 2>/dev/null || true)"
+        if [ -n "$zig_prefix" ] && [ -x "$zig_prefix/bin/zig" ]; then
+            PATH="$zig_prefix/bin:$PATH"
+            export PATH
+        fi
+    fi
+
+    if ! command -v zig >/dev/null 2>&1; then
+        cat >&2 <<EOF
+zig $ZIG_MAJOR_MINOR.x is required to build the native window's terminal.
+
+  brew install zig@$ZIG_MAJOR_MINOR
+
+Or build the web frontend only, with: cargo build --release --no-default-features
+EOF
+        exit 1
+    fi
+
+    zig_version="$(zig version)"
+    case "$zig_version" in
+        "$ZIG_MAJOR_MINOR".*) ;;
+        *)
+            echo "zig $zig_version found, but Ghostty needs $ZIG_MAJOR_MINOR.x" >&2
+            exit 1
+            ;;
+    esac
+    echo "Using zig $zig_version"
+}
+
 build_macos_arm64() {
     echo "Building moonreview $TAG for $MACOS_TARGET_TRIPLE..."
     cargo build --release --locked
@@ -96,7 +131,7 @@ build_linux() {
         --build-arg LINUX_TARGET_TRIPLE="$target_triple" \
         --build-arg RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
         -t "$builder_image" \
-        -f scripts/linux-build.Dockerfile \
+        -f scripts/_internal/linux-build.Dockerfile \
         scripts
 
     echo "Building moonreview $TAG for $target_triple with Docker..."
@@ -124,6 +159,8 @@ build_linux() {
     package_binary "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release/moonreview"
 }
 
+require_zig
+
 mkdir -p "$OUTPUT_DIR"
 
 echo "Created release artifacts:"
@@ -134,5 +171,5 @@ done
 
 cat <<EOF
 Next step:
-  scripts/upload-release.sh
+  scripts/_internal/upload-release.sh
 EOF

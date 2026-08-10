@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 PACKAGE_VERSION="$(node -p "require('./package.json').version")"
@@ -25,7 +25,7 @@ for target_triple in "${TARGET_TRIPLES[@]}"; do
     checksum_path="${archive_path}.sha256"
 
     if [ ! -f "$archive_path" ] || [ ! -f "$checksum_path" ]; then
-        echo "missing release assets for $TAG and $target_triple; run scripts/build-release.sh first" >&2
+        echo "missing release assets for $TAG and $target_triple; run scripts/_internal/build-release.sh first" >&2
         exit 1
     fi
 
