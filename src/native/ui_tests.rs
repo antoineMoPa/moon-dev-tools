@@ -2372,6 +2372,90 @@ fn command_w_closes_the_tab_in_front() {
     );
 }
 
+/// cmd+1 and cmd+2 raise the first and second tab of the active frame, the way a browser
+/// walks its tabs by number.
+#[test]
+fn command_digits_raise_the_numbered_tabs() {
+    let fixture = Fixture::new("select-tab");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let active = Arc::new(Mutex::new(None::<PaneKind>));
+    let active_in_ui = Arc::clone(&active);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // A second tab beside the review, so there is a strip to walk.
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *active_in_ui.lock().expect("the active pane is poisoned") = app.active_pane_kind();
+            ready_in_ui.store(
+                app.model
+                    .layout
+                    .panes()
+                    .any(|(_, pane)| matches!(pane, Pane::File { .. })),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the file tab never opened");
+    harness.run_steps(2);
+
+    let active_kind = || *active.lock().expect("the active pane is poisoned");
+    assert_eq!(
+        active_kind(),
+        Some(PaneKind::File),
+        "the file tab opens in front"
+    );
+
+    let press = |harness: &mut Harness<'_>, key: egui::Key| {
+        harness.input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.step();
+        harness.run_steps(2);
+    };
+
+    press(&mut harness, egui::Key::Num1);
+    assert_eq!(
+        active_kind(),
+        Some(PaneKind::Review),
+        "cmd+1 should raise the first tab, the review"
+    );
+
+    press(&mut harness, egui::Key::Num2);
+    assert_eq!(
+        active_kind(),
+        Some(PaneKind::File),
+        "cmd+2 should raise the second tab, the file"
+    );
+
+    // A digit past the end of the strip changes nothing.
+    press(&mut harness, egui::Key::Num9);
+    assert_eq!(active_kind(), Some(PaneKind::File));
+}
+
 /// Whether the window asked to be closed, which is what quitting looks like from in here.
 fn asked_to_close(harness: &Harness<'_>) -> bool {
     harness.output().viewport_output.values().any(|viewport| {

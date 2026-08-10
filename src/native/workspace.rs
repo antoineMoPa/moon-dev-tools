@@ -14,6 +14,7 @@ use crate::{
     cli::Frame,
     native::{
         app::{App, AttachedTerminal},
+        bindings,
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
 };
@@ -83,6 +84,7 @@ impl App {
         // can leave one on screen, whatever it forgot. A workspace with nothing open at all
         // keeps its single frame: that is a state rather than a leftover.
         self.model.layout.drop_empty_frames();
+        self.stamp_tab_shortcuts();
         *self.frames.style_mut() = self.palette_of().frames_style();
 
         ui.add_space(WORKSPACE_TOP_INSET);
@@ -535,8 +537,47 @@ impl App {
             return;
         }
         let arrived_at = self.model.layout.focus_next_frame();
+        self.hand_keyboard_to_front(ctx, arrived_at);
+    }
 
-        // egui's keyboard has to move too, or the shell left behind would keep the keys.
+    /// cmd+1 through cmd+9: bring the active frame's nth tab to the front, and hand it the
+    /// keyboard. A digit past the last tab does nothing.
+    pub(crate) fn select_tab(&mut self, index: usize, ctx: &egui::Context) {
+        let frame = self.model.layout.active_frame();
+        let Some(pane) = self
+            .model
+            .layout
+            .frame(frame)
+            .and_then(|open| open.panes().get(index).copied())
+        else {
+            return;
+        };
+        self.model.layout.focus_pane(pane);
+        self.hand_keyboard_to_front(ctx, frame);
+    }
+
+    /// The chords that raise tabs reach the active frame, so its tabs and only its tabs wear
+    /// them at the right of their titles. A frame with a single tab wears none: cmd+1 there
+    /// would change nothing worth signposting.
+    fn stamp_tab_shortcuts(&mut self) {
+        self.tab_shortcuts.clear();
+        let frame = self.model.layout.active_frame();
+        let Some(open) = self.model.layout.frame(frame) else {
+            return;
+        };
+        if open.panes().len() < 2 {
+            return;
+        }
+        for (index, pane) in open.panes().iter().take(9).enumerate() {
+            if let Some(label) = bindings::tab_shortcut_label(index) {
+                self.tab_shortcuts.insert(*pane, label);
+            }
+        }
+    }
+
+    /// After a focus change, egui's keyboard has to move too, or the shell left behind would
+    /// keep the keys.
+    fn hand_keyboard_to_front(&mut self, ctx: &egui::Context, frame: FrameId) {
         if let Some(focused) = ctx.memory(|memory| memory.focused()) {
             ctx.memory_mut(|memory| memory.surrender_focus(focused));
         }
@@ -544,7 +585,7 @@ impl App {
         let showing = self
             .model
             .layout
-            .frame(arrived_at)
+            .frame(frame)
             .and_then(egui_frames::Frame::active_pane)
             .and_then(|pane| self.model.layout.pane(pane));
         if let Some(Pane::Terminal { terminal_id, .. }) = showing

@@ -140,7 +140,13 @@ impl PaneView<Pane> for App {
             _ => title.clone(),
         };
 
-        Tab::new(title).with_marker(unsaved).with_hover(hover)
+        let mut tab = Tab::new(title).with_marker(unsaved).with_hover(hover);
+        // The chord that raises this tab, for tabs cmd+1..cmd+9 can reach — worked out in
+        // `stamp_tab_shortcuts` before the strips are drawn.
+        if let Some(shortcut) = self.tab_shortcuts.get(&pane_id) {
+            tab = tab.with_indicator(shortcut.clone());
+        }
+        tab
     }
 
     fn pane_ui(&mut self, ui: &mut Ui, pane_id: PaneId, pane: &Pane) {

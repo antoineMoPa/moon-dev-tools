@@ -18,6 +18,8 @@ pub(crate) enum Action {
     OpenPalette,
     NewShellTab,
     CloseTab,
+    /// Bring the active frame's nth tab to the front, counted from zero.
+    SelectTab(usize),
     /// Another window of this same program, on the same repo.
     NewWindow,
     SaveFile,
@@ -84,6 +86,53 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::CloseTab,
         chord: &[press(Modifiers::COMMAND, Key::W)],
+        reach: Reach::Anywhere,
+    },
+    // cmd+1 through cmd+9 raise the active frame's tabs, first to ninth. Each tab within
+    // reach wears its chord at the right of its title, so the row needs no memorising.
+    Binding {
+        action: Action::SelectTab(0),
+        chord: &[press(Modifiers::COMMAND, Key::Num1)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(1),
+        chord: &[press(Modifiers::COMMAND, Key::Num2)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(2),
+        chord: &[press(Modifiers::COMMAND, Key::Num3)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(3),
+        chord: &[press(Modifiers::COMMAND, Key::Num4)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(4),
+        chord: &[press(Modifiers::COMMAND, Key::Num5)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(5),
+        chord: &[press(Modifiers::COMMAND, Key::Num6)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(6),
+        chord: &[press(Modifiers::COMMAND, Key::Num7)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(7),
+        chord: &[press(Modifiers::COMMAND, Key::Num8)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SelectTab(8),
+        chord: &[press(Modifiers::COMMAND, Key::Num9)],
         reach: Reach::Anywhere,
     },
     Binding {
@@ -296,6 +345,17 @@ fn describe_press(press: &Press) -> String {
     out
 }
 
+/// The chord that raises the nth tab, written for the tab's indicator: `⌘ 1`, with a space so
+/// the glyph and the digit don't smudge together at a tab's size.
+pub(crate) fn tab_shortcut_label(index: usize) -> Option<String> {
+    let chord = chord_of(Action::SelectTab(index))?;
+    // The table binds SelectTab as a single bare-command press, and the label leans on that.
+    let [press] = chord else {
+        unreachable!("SelectTab is bound as a single press");
+    };
+    Some(format!("⌘ {}", press.key.name()))
+}
+
 /// The chord that fires an action, for anything that shows the keyboard to the user.
 pub(crate) fn chord_of(action: Action) -> Option<&'static [Press]> {
     BINDINGS
@@ -433,6 +493,18 @@ mod tests {
         assert_eq!(fired, vec![Action::CloseTab]);
     }
 
+    /// cmd+1 raises the first tab and cmd+9 the ninth, and both work from inside a shell —
+    /// switching tabs is exactly the moment the keyboard is somewhere else.
+    #[test]
+    fn command_digits_pick_tabs_by_place() {
+        let mut keymap = Keymap::default();
+        let (fired, _) = run(&mut keymap, true, vec![key_event(Modifiers::COMMAND, Key::Num1)]);
+        assert_eq!(fired, vec![Action::SelectTab(0)]);
+
+        let (fired, _) = run(&mut keymap, true, vec![key_event(Modifiers::COMMAND, Key::Num9)]);
+        assert_eq!(fired, vec![Action::SelectTab(8)]);
+    }
+
     /// ⌘⇧P must not also be read as the ⌘P that no binding claims, and ⌘S must not fire
     /// while Shift is held.
     #[test]
@@ -455,5 +527,7 @@ mod tests {
             describe(chord_of(Action::OpenPalette).expect("bound")),
             "shift ⌘P"
         );
+        // The label a tab wears at the right of its title breathes between glyph and digit.
+        assert_eq!(tab_shortcut_label(0).expect("bound"), "⌘ 1");
     }
 }

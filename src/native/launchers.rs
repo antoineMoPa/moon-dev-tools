@@ -82,7 +82,21 @@ mod platform {
 
     /// The icon sizes an `.icns` carries, with the four-byte type that names each one. PNG data
     /// under these types is what macOS reads today; the older raw formats are not needed.
-    const ICNS_ENTRIES: &[(&[u8; 4], usize)] = &[(b"icp5", 32), (b"ic07", 128), (b"ic08", 256)];
+    ///
+    /// Each point size comes in a 1x and a 2x type, and a Retina display only draws the 2x ones
+    /// sharp: `ic11`..`ic14` are 16, 32, 128 and 256 points at 2x, so their PNG data is twice
+    /// that many pixels.
+    const ICNS_ENTRIES: &[(&[u8; 4], usize)] = &[
+        (b"icp5", 32),
+        (b"ic11", 32),
+        (b"icp6", 64),
+        (b"ic12", 64),
+        (b"ic07", 128),
+        (b"ic08", 256),
+        (b"ic13", 256),
+        (b"ic09", 512),
+        (b"ic14", 512),
+    ];
 
     pub(super) fn destination_hint() -> String {
         match applications_dir() {

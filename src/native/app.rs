@@ -86,6 +86,9 @@ pub(crate) struct App {
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
     pending_tab_action: Option<TabAction>,
+    /// The chord that raises each tab within cmd+1..cmd+9's reach — the active frame's tabs —
+    /// worked out before the strips are drawn and worn at the right of their titles.
+    pub(crate) tab_shortcuts: HashMap<PaneId, String>,
     /// The keyboard, read through the binding table. It holds the state of a prefix chord
     /// that has begun — the `C-x` of `C-x o` — between frames.
     keymap: Keymap,
@@ -194,6 +197,7 @@ impl App {
             pending_action: None,
             pending_close: None,
             pending_tab_action: None,
+            tab_shortcuts: HashMap::new(),
             menu: None,
             diffs: HashMap::new(),
             hunk_heights: HashMap::new(),
@@ -651,6 +655,7 @@ impl App {
             }
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
+            Action::SelectTab(index) => self.select_tab(index, ctx),
             // Deferred into the same slot the menu bar's item uses: on macOS the chord can
             // arrive as both, and two windows is not what one ⌘N asked for.
             Action::NewWindow => self.pending_action = Some(CommandAction::NewWindow(self.frame)),
