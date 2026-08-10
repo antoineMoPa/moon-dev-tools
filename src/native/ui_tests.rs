@@ -3354,3 +3354,113 @@ fn a_recent_project_opens_from_the_middle_of_its_row() {
         "expected clicking the middle of a recent project's row to open it"
     );
 }
+
+/// The wheel over a shell pane scrolls it: back into the scrollback for a plain shell, and as
+/// wheel presses for a program that asked for the mouse.
+#[test]
+fn the_wheel_scrolls_a_shell_pane() {
+    let fixture = seeded_fixture("shell-scroll");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+    pane.send(b"seq 1 200\n")
+        .expect("expected to write to the shell");
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+        frame: crate::cli::Frame::Review,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    let visible = Arc::new(Mutex::new(String::new()));
+    let visible_in_ui = Arc::clone(&visible);
+    let for_pane = terminal_id.clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame = app.model.layout.active_frame();
+                let pane = app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
+                        terminal_id: for_pane.clone(),
+                        command: None,
+                        task_id: None,
+                    },
+                    None,
+                );
+                app.model.layout.focus_pane(pane);
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            if let Some(terminal) = app.terminals.get_mut(&for_pane) {
+                *visible_in_ui.lock().expect("poisoned") =
+                    terminal.visible_text().unwrap_or_default();
+            }
+        });
+
+    // Wait for the shell to have printed all two hundred lines.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if visible.lock().expect("poisoned").contains("195") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let before = visible.lock().expect("poisoned").clone();
+    assert!(before.contains("195"), "expected the shell to have printed: {before}");
+
+    // A wheel over the middle of the pane, where the shell is drawn.
+    let middle = egui::pos2(650.0, 500.0);
+    for _ in 0..4 {
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(middle),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 5.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            },
+        ]);
+        harness.step();
+    }
+    harness.step();
+
+    let after = visible.lock().expect("poisoned").clone();
+    assert_ne!(before, after, "expected the wheel to scroll the shell back");
+}
