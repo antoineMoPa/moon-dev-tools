@@ -591,7 +591,7 @@ pub(super) fn available_agents(app: &App) -> Vec<AgentKind> {
             payload
                 .available_agents
                 .iter()
-                .filter(|option| option.available)
+                .filter(|option| option.available && option.kind != AgentKind::None)
                 .map(|option| option.kind),
         );
     }
