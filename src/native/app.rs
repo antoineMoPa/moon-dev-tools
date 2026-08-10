@@ -936,6 +936,14 @@ impl eframe::App for App {
         self.draw(ui);
     }
 
+    /// eframe's default clear color is a dark gray whatever the theme, and the workspace
+    /// leaves a sliver of it showing above the first frame — a dark bar in light mode. The
+    /// app's own palette is used rather than the visuals handed in, which lag behind it on
+    /// the first frames.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::Palette::of(self.model.theme).bg.to_normalized_gamma_f32()
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if let Ok(encoded) = serde_json::to_string(&self.model.layout) {
             storage.set_string(LAYOUT_STORAGE_KEY, encoded);
