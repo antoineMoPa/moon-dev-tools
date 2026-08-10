@@ -62,12 +62,10 @@ pub(crate) struct BoardColumn {
 pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
     ("todo", "TODO"),
     ("in_progress", "IN PROGRESS"),
-    ("in_local_review", "IN LOCAL REVIEW"),
-    ("in_remote_review", "IN REMOTE REVIEW"),
     ("done", "DONE"),
 ];
 
-/// The three columns the board itself acts on, by the id they have on a board that started
+/// The two columns the board itself acts on, by the id they have on a board that started
 /// from the defaults.
 ///
 /// These are the only card movements moonreview makes on its own, so they need a column to
@@ -76,7 +74,6 @@ pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
 /// column nobody chose. A board built from scratch out of columns of its own has no automatic
 /// movement at all, which is the honest answer to not having said where it should go.
 pub(crate) const STARTS_IN: &str = "in_progress";
-pub(crate) const REVIEWS_IN: &str = "in_local_review";
 pub(crate) const RELEASES_SHELLS_IN: &str = "done";
 
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
@@ -532,13 +529,7 @@ mod tests {
 
         assert_eq!(
             order,
-            [
-                "todo",
-                "in_progress",
-                "in_local_review",
-                "in_remote_review",
-                "done"
-            ]
+            ["todo", "in_progress", "done"]
         );
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
@@ -550,7 +541,7 @@ mod tests {
     fn the_board_s_own_rules_point_at_columns_it_starts_with() {
         let config = BoardConfig::default();
 
-        for role in [STARTS_IN, REVIEWS_IN, RELEASES_SHELLS_IN] {
+        for role in [STARTS_IN, RELEASES_SHELLS_IN] {
             assert_eq!(
                 config.role(role),
                 Some(ColumnId::new(role)),
@@ -569,17 +560,20 @@ mod tests {
             .retain(|column| column.id.as_str() != STARTS_IN);
 
         assert_eq!(config.role(STARTS_IN), None);
-        assert_eq!(config.role(REVIEWS_IN), Some(ColumnId::new(REVIEWS_IN)));
+        assert_eq!(
+            config.role(RELEASES_SHELLS_IN),
+            Some(ColumnId::new(RELEASES_SHELLS_IN))
+        );
     }
 
     #[test]
     fn a_column_id_is_written_down_as_the_plain_string_it_has_always_been() {
-        let encoded = serde_json::to_string(&ColumnId::new("in_local_review")).expect("json");
+        let encoded = serde_json::to_string(&ColumnId::new("quality_review")).expect("json");
 
-        assert_eq!(encoded, "\"in_local_review\"");
+        assert_eq!(encoded, "\"quality_review\"");
         assert_eq!(
             serde_json::from_str::<ColumnId>(&encoded).expect("expected a column"),
-            ColumnId::new("in_local_review")
+            ColumnId::new("quality_review")
         );
     }
 

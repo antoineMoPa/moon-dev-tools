@@ -110,7 +110,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()>;
 
     /// The board's columns, left to right. A board that has never had them changed answers
-    /// with the five it started with.
+    /// with the three defaults.
     fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>>;
     fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn>;
     fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()>;

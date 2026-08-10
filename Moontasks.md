@@ -22,9 +22,8 @@ ones it landed between. A column being dragged does the same thing sideways.
 
 ## The columns
 
-A board starts with TODO, IN PROGRESS, IN LOCAL REVIEW, IN REMOTE REVIEW and DONE, and they
-are yours from there: rename them, drag them into another order, add your own, remove the ones
-you do not use.
+A board starts with TODO, IN PROGRESS and DONE, and they are yours from there: rename them,
+drag them into another order, add your own, remove the ones you do not use.
 
 A card names the column it is in rather than a place on the board, so moving a column moves
 its cards with it and changes nothing about any of them. Renaming changes only what the column
@@ -32,13 +31,12 @@ is called — every card in it stays in it. A column still holding cards will no
 it is the only record of where those cards are, so the board says to move them out first
 rather than choosing somewhere for them.
 
-Three things the board does on its own are written in terms of a column, and they are pinned
+Two things the board does on its own are written in terms of a column, and they are pinned
 to the ones a board starts with:
 
 | | |
 | --- | --- |
 | `in_progress` | where a card goes when an agent is started on it, if it was waiting to the left of there |
-| `in_local_review` | where it goes when that agent exits |
 | `done` | where a card lets go of its shells |
 
 They are pinned by id, so renaming a column or dragging it elsewhere keeps its part in these
@@ -47,11 +45,10 @@ nobody chose — a board built out of columns of its own moves nothing by itself
 honest answer to never having said where things should go.
 
 The columns live in `.moontasks/board.json`, written the first time you change one. A board
-without that file has the five it started with, which is every board made before this.
+without that file has the three defaults.
 
-An agent that finishes moves its own card to IN LOCAL REVIEW by exiting, which the board
-notices the next time it reads the folder. Until then the card is yours to drag, which is what
-an agent that has said it is done but is still sat at its prompt is waiting for.
+An agent that exits stops appearing as running the next time the board reads the folder. Its
+card stays where you put it until you move it to DONE.
 
 Closing an agent's tab does not end it. A task's shells belong to the task and keep running
 with nothing attached until the card reaches DONE, so you can close a noisy agent and come
@@ -103,7 +100,7 @@ task it is on and one that has to be told twice.
 The shells are the server's, so they outlive the window: closing it and opening it again
 finds the same agents still working. They do not outlive the server — a `moonreview serve`
 that is restarted, or a native window that is quit, takes its shells with it. What survives is
-the record of every run, so the board comes back with each one marked as ended, its task moved
-on to IN LOCAL REVIEW, and `resume` there to start it again. For Claude that resumes the exact
-session, because moonreview gives it the session id when it starts it; Codex and OpenCode are
-resumed by their own reckoning of the most recent session in the repo.
+the record of every run, so the board comes back with each one marked as ended and `resume`
+available to start it again. For Claude that resumes the exact session, because moonreview
+gives it the session id when it starts it; Codex and OpenCode are resumed by their own
+reckoning of the most recent session in the repo.

@@ -338,12 +338,12 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     served
         .client
         .post(format!("{tasks_url}/{task_id}/placement"))
-        .json(&serde_json::json!({ "status": "in_local_review", "position": 0 }))
+        .json(&serde_json::json!({ "status": "done", "position": 0 }))
         .send()
         .expect("failed to move the task")
         .error_for_status()
         .expect("the server refused to move the task");
-    assert_eq!(board(&served)[0]["status"], "in_local_review");
+    assert_eq!(board(&served)[0]["status"], "done");
 
     served
         .client
@@ -454,7 +454,7 @@ fn cards_are_dropped_where_they_are_let_go_of() {
 }
 
 /// The columns are the board's own: they can be added, renamed, reordered and removed, and a
-/// board nobody has touched still answers with the five it has always had.
+/// board nobody has touched answers with its three defaults.
 #[test]
 fn the_columns_are_the_boards_to_change() {
     let served = serve("columns");
@@ -495,16 +495,7 @@ fn the_columns_are_the_boards_to_change() {
         !served.root.join(".moontasks").join("board.json").exists(),
         "an untouched board should not have written a file yet"
     );
-    assert_eq!(
-        ids(&read("at the start")),
-        [
-            "todo",
-            "in_progress",
-            "in_local_review",
-            "in_remote_review",
-            "done"
-        ]
-    );
+    assert_eq!(ids(&read("at the start")), ["todo", "in_progress", "done"]);
 
     // Added at the right-hand end, with an id made from its name.
     let added: serde_json::Value = served
@@ -580,16 +571,7 @@ fn the_columns_are_the_boards_to_change() {
         .expect("failed to move the column")
         .error_for_status()
         .expect("the server refused to move the column");
-    assert_eq!(
-        ids(&read("after moving")),
-        [
-            "in_progress",
-            "in_local_review",
-            "todo",
-            "in_remote_review",
-            "done"
-        ]
-    );
+    assert_eq!(ids(&read("after moving")), ["in_progress", "done", "todo"]);
 
     let board: serde_json::Value = served
         .client

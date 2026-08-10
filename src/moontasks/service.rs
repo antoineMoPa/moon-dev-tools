@@ -26,13 +26,10 @@ fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
 
 /// Every task on the board, with what each one has running right now.
 ///
-/// Reading the board is also when it catches up with reality: an agent that has finished, or
-/// one whose shell died with a previous run of the server, moves its task on to local review.
-/// That is what makes the board behave the same whether the window was open the whole time or
-/// is being opened again after a restart.
+/// Reading the board is also when it catches up with reality by clearing resources whose
+/// shells have exited, including shells lost with a previous run of the server.
 pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskView>> {
     let repo_path = repo_of(state, session_id)?;
-    let board = store::read_board(&repo_path);
     let mut tasks = Vec::new();
 
     for task_id in store::list_task_ids(&repo_path)? {
@@ -41,7 +38,7 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
             // rest of the board is still worth showing.
             continue;
         };
-        if reconcile(state, &board, &mut metadata) {
+        if reconcile(state, &mut metadata) {
             store::write_task(&repo_path, &task_id, &metadata)?;
         }
         tasks.push((
@@ -109,9 +106,8 @@ pub(crate) fn place_task(
 
 /// Bring a task's record in line with the shells the server actually has, and return whether
 /// anything changed.
-fn reconcile(state: &AppState, board: &BoardConfig, metadata: &mut TaskMetadata) -> bool {
+fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
     let mut changed = false;
-    let mut an_agent_finished = false;
 
     for resource in &mut metadata.resources {
         let Some(terminal_id) = resource.terminal_id.clone() else {
@@ -121,20 +117,6 @@ fn reconcile(state: &AppState, board: &BoardConfig, metadata: &mut TaskMetadata)
             continue;
         }
         resource.terminal_id = None;
-        changed = true;
-        an_agent_finished = true;
-    }
-
-    // An agent that has stopped working has, as far as the board is concerned, produced
-    // something to look at. Only from the column work is started into, and only if the board
-    // still has somewhere to send it — a board whose review column has been deleted moves
-    // nothing on its own rather than guessing.
-    if an_agent_finished
-        && let Some(starts_in) = board.role(store::STARTS_IN)
-        && let Some(reviews_in) = board.role(store::REVIEWS_IN)
-        && metadata.status == starts_in
-    {
-        metadata.status = reviews_in;
         changed = true;
     }
     changed
@@ -777,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_agent_moves_its_task_to_local_review() {
+    fn a_finished_agent_is_cleared_without_moving_its_task() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
             status: ColumnId::new(store::STARTS_IN),
@@ -797,21 +779,21 @@ mod tests {
             std::time::Instant::now(),
         )));
 
-        assert!(reconcile(&state, &BoardConfig::default(), &mut metadata));
+        assert!(reconcile(&state, &mut metadata));
 
-        assert_eq!(metadata.status, ColumnId::new(store::REVIEWS_IN));
+        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
         assert_eq!(metadata.resources[0].terminal_id, None);
         assert!(
-            !reconcile(&state, &BoardConfig::default(), &mut metadata),
+            !reconcile(&state, &mut metadata),
             "a settled task changes nothing on the next read"
         );
     }
 
     #[test]
-    fn a_task_already_in_review_is_left_where_the_user_put_it() {
+    fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: ColumnId::new("in_remote_review"),
+            status: ColumnId::new("done"),
             created_at_unix: 0,
             position: 0,
             resources: vec![TaskResource {
@@ -828,43 +810,11 @@ mod tests {
         )));
 
         assert!(
-            reconcile(&state, &BoardConfig::default(), &mut metadata),
+            reconcile(&state, &mut metadata),
             "the shell is still recorded"
         );
 
-        assert_eq!(metadata.status, ColumnId::new("in_remote_review"));
-    }
-
-    /// A card the agent finished on a board whose review column has been deleted stays where
-    /// it is: the board would otherwise be choosing a column nobody asked for.
-    #[test]
-    fn a_finished_agent_moves_nothing_when_the_review_column_is_gone() {
-        let mut board = BoardConfig::default();
-        board
-            .columns
-            .retain(|column| column.id.as_str() != store::REVIEWS_IN);
-        let mut metadata = TaskMetadata {
-            title: "Fix the login page".to_string(),
-            status: ColumnId::new(store::STARTS_IN),
-            created_at_unix: 0,
-            position: 0,
-            resources: vec![TaskResource {
-                id: "resource".to_string(),
-                kind: TaskResourceKind::Agent,
-                agent: AgentKind::Claude,
-                terminal_id: Some("terminal-gone".to_string()),
-                agent_session_id: None,
-                started_at_unix: 0,
-            }],
-        };
-        let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
-            std::time::Instant::now(),
-        )));
-
-        // The shell is still let go of — that is about the shell, not about the column.
-        assert!(reconcile(&state, &board, &mut metadata));
-
-        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
+        assert_eq!(metadata.status, ColumnId::new("done"));
     }
 
     /// Renaming a column leaves its id alone, so the rules that point at it still do.
@@ -889,13 +839,13 @@ mod tests {
     }
 
     /// Starting an agent on a card that is already past the started column leaves it where it
-    /// is: picking work back up in review has not sent it back to being merely in progress.
+    /// is rather than sending it back to being merely in progress.
     #[test]
     fn starting_an_agent_does_not_drag_a_card_backwards() {
         let board = BoardConfig::default();
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: ColumnId::new(store::REVIEWS_IN),
+            status: ColumnId::new(store::RELEASES_SHELLS_IN),
             created_at_unix: 0,
             position: 0,
             resources: Vec::new(),
@@ -903,6 +853,9 @@ mod tests {
 
         mark_as_started(&board, &mut metadata);
 
-        assert_eq!(metadata.status, ColumnId::new(store::REVIEWS_IN));
+        assert_eq!(
+            metadata.status,
+            ColumnId::new(store::RELEASES_SHELLS_IN)
+        );
     }
 }

@@ -1150,11 +1150,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
             "Fix the login page",
             "in_progress",
         ),
-        (
-            "drop-the-old-api-3333",
-            "Drop the old API",
-            "in_local_review",
-        ),
+        ("drop-the-old-api-3333", "Drop the old API", "done"),
     ] {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
@@ -1732,13 +1728,7 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     let after = seen.lock().expect("poisoned").clone();
     assert_eq!(
         after.order,
-        [
-            "in_progress",
-            "todo",
-            "in_local_review",
-            "in_remote_review",
-            "done"
-        ],
+        ["in_progress", "todo", "done"],
         "dropping the heading one place right should have moved the column there"
     );
     assert_eq!(

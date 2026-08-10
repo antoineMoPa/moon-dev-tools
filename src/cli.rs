@@ -707,8 +707,7 @@ Moontasks:
   agent running behind each card. `moontasks` opens on it; the other two reach it from the
   command palette.
   The columns are the board's own — rename them, reorder them, add and remove them — and a
-  card moves to the review column when the agent behind it exits, which the board notices the
-  next time it reads the folder.
+  finished agent is reflected on its card the next time the board reads the folder.
 
 Use `--logs` with `--web` or `serve` to run the server in the foreground and print
 agent/failure logs until you stop it with Ctrl+C.
