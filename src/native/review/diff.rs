@@ -193,8 +193,9 @@ fn range_start(value: &str) -> Option<usize> {
 }
 
 /// Identifiers, runs of whitespace, and single punctuation characters. Splitting this way
-/// keeps a renamed symbol as one token instead of a smear of characters.
-fn tokenize(line: &str) -> Vec<String> {
+/// keeps a renamed symbol as one token instead of a smear of characters. Double-clicking a
+/// word in a diff selects one of these, so the two agree on what a word is.
+pub(crate) fn tokenize(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut chars = line.chars().peekable();
 

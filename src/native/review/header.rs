@@ -1,5 +1,6 @@
-//! The strip at the top of a review: what is being reviewed, which agent comments go to,
-//! and the review-wide actions.
+//! The strip at the top of a review: what is being reviewed and the review-wide actions.
+//! The agent selector lives in the comment composer, but is defined here with the batch
+//! send that shares its choice.
 
 use egui::{Align, Layout, RichText, Ui};
 
@@ -40,7 +41,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let label = review_label(&payload);
     let read_only = payload.read_only;
     let selected_agent = payload.selected_agent;
-    let agents = &payload.available_agents;
     // Only comments actually held for a batch can be batch-sent. Counting every unresolved
     // comment here would offer to send ones that were already dispatched, and the send would
     // then quietly do nothing.
@@ -65,8 +65,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            draw_agent_select(app, ui, session_id, selected_agent, agents, palette);
-
             if batched > 0 {
                 let has_agent = selected_agent != AgentKind::None;
                 let label = format!("send {batched} to {}", selected_agent.label());
@@ -105,10 +103,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     });
 }
 
-fn draw_agent_select(
+/// The picker for where comments go. It lives in the comment composer, beside the button
+/// that sends the comment — and more than one composer can be open, so each brings a salt
+/// of its own to keep the drop-downs apart.
+pub(crate) fn draw_agent_select(
     app: &mut App,
     ui: &mut Ui,
     session_id: &str,
+    salt: u64,
     selected: AgentKind,
     agents: &[crate::api::AgentOption],
     palette: &Palette,
@@ -119,7 +121,7 @@ fn draw_agent_select(
         .map(|agent| agent.label.clone())
         .unwrap_or_else(|| selected.label().to_string());
 
-    egui::ComboBox::from_id_salt(("agent-select", session_id))
+    egui::ComboBox::from_id_salt(("agent-select", session_id, salt))
         .selected_text(RichText::new(selected_label).size(SMALL_SIZE))
         .width(112.0)
         .show_ui(ui, |ui| {

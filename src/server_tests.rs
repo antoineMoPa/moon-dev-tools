@@ -360,6 +360,68 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     );
 }
 
+/// The column a task is created in remembers the agent it was created with, in the board's
+/// own file — so the next task created there starts from the same choice, on any machine
+/// that opens this repo.
+#[test]
+fn creating_a_task_teaches_its_column_the_agent() {
+    let served = serve("column-agent");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    served
+        .client
+        .post(&tasks_url)
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
+        .send()
+        .expect("failed to create a task")
+        .error_for_status()
+        .expect("the server refused to create a task");
+
+    let board: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(served.root.join(".moontasks").join("board.json"))
+            .expect("creating the task should have written the board file"),
+    )
+    .expect("failed to decode the board file");
+    let column = |id: &str| -> serde_json::Value {
+        board["columns"]
+            .as_array()
+            .expect("expected columns")
+            .iter()
+            .find(|column| column["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("expected the {id} column"))
+    };
+    assert_eq!(
+        column("todo")["default_agent"],
+        "none",
+        "the column should remember what its last task was created with"
+    );
+    assert!(
+        column("done").get("default_agent").is_none(),
+        "a column nothing was created in has no say"
+    );
+
+    // And the columns endpoint carries the memory to the frontends.
+    let columns: serde_json::Value = served
+        .client
+        .get(format!(
+            "{}/api/session/{session_id}/columns",
+            served.base_url
+        ))
+        .send()
+        .expect("failed to list the columns")
+        .json()
+        .expect("failed to decode the columns");
+    let todo = columns
+        .as_array()
+        .expect("expected an array")
+        .iter()
+        .find(|column| column["id"] == "todo")
+        .expect("expected the todo column");
+    assert_eq!(todo["default_agent"], "none");
+}
+
 /// Cards keep the order they were put in, which is the order the board reads them back in.
 #[test]
 fn cards_are_dropped_where_they_are_let_go_of() {

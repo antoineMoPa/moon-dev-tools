@@ -484,7 +484,7 @@ fn select_commit(app: &mut App, session_id: &str, commit: Option<String>) {
         review.history_loaded.clear();
         review.active_hunk_id = None;
         review.selection = None;
-        review.draft = None;
+        review.drafts.clear();
         review.expanded_patches.clear();
     }
     let for_call = session_id.to_string();

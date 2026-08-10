@@ -39,10 +39,9 @@ pub(super) enum BoardAction {
     /// Open the new-task box in this column.
     OpenComposer(ColumnId),
     CloseComposer,
-    /// Create the typed task in this column — the one the composer is open in.
-    Create(ColumnId),
-    /// Point the review — and so the next task — at another agent.
-    SelectAgent(AgentKind),
+    /// Create the typed task in this column — the one the composer is open in — and start
+    /// the picked agent on it.
+    Create(ColumnId, AgentKind),
     /// A card let go of in a column, at the place among its cards it was dropped.
     Place(String, ColumnId, usize),
     /// A column let go of on the board, at the place among the others it was dropped.
@@ -197,9 +196,23 @@ fn draw_composer(
     actions: &mut Vec<BoardAction>,
 ) {
     let available = available_agents(app);
-    // The agent the review's selector is on, which is the one this machine last used. An
-    // agent that has since left it would silently start nothing.
-    let mut agent = app.selected_agent();
+    // What the box offers first: the choice already made in this box, else the agent the
+    // column's last task was created with (the board's own file remembers it), else the
+    // machine-wide one the review's selector holds. An agent that has since left this
+    // machine would silently start nothing.
+    let remembered = app
+        .model
+        .board
+        .columns
+        .iter()
+        .find(|candidate| candidate.id == *column)
+        .and_then(|candidate| candidate.default_agent);
+    let mut agent = app
+        .model
+        .board
+        .composer_agent
+        .or(remembered)
+        .unwrap_or_else(|| app.selected_agent());
     if !available.contains(&agent) {
         agent = AgentKind::None;
     }
@@ -236,10 +249,10 @@ fn draw_composer(
                             ui.selectable_value(&mut picked, *option, agent_label(*option));
                         }
                     });
-                // Picking here is picking for the review too — one choice, remembered in one
-                // place, rather than a second agent living beside it.
+                // The pick belongs to this box: the column it creates into remembers it once
+                // the task is created, and the review's own selector is left alone.
                 if picked != agent {
-                    actions.push(BoardAction::SelectAgent(picked));
+                    app.model.board.composer_agent = Some(picked);
                 }
 
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
@@ -253,13 +266,13 @@ fn draw_composer(
                         .on_hover_text("Create the task and start the agent on it")
                         .clicked()
                     {
-                        actions.push(BoardAction::Create(column.clone()));
+                        actions.push(BoardAction::Create(column.clone(), agent));
                     }
                 });
             });
 
             if submitted && ready {
-                actions.push(BoardAction::Create(column.clone()));
+                actions.push(BoardAction::Create(column.clone(), agent));
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 actions.push(BoardAction::CloseComposer);
@@ -612,15 +625,18 @@ fn apply(app: &mut App, action: BoardAction) {
         BoardAction::OpenComposer(column_id) => {
             app.model.board.composer_in = Some(column_id);
             app.model.board.composer_focus = true;
+            // Each column's box starts from that column's own remembered agent.
+            app.model.board.composer_agent = None;
         }
         BoardAction::CloseComposer => {
             app.model.board.composer_in = None;
             app.model.board.new_title.clear();
+            app.model.board.composer_agent = None;
         }
-        BoardAction::Create(column_id) => {
+        BoardAction::Create(column_id, agent) => {
             let request = CreateTaskRequest {
                 title: app.model.board.new_title.trim().to_string(),
-                agent: app.selected_agent(),
+                agent,
                 status: column_id,
             };
             if request.title.is_empty() {
@@ -629,16 +645,10 @@ fn apply(app: &mut App, action: BoardAction) {
             // The box closes on the way out: the card it was standing in for is on its way.
             app.model.board.new_title.clear();
             app.model.board.composer_in = None;
+            app.model.board.composer_agent = None;
             act(app, "could not create the task", move |backend| {
                 backend.create_task(&session_id, &request).map(|_| ())
             });
-        }
-        BoardAction::SelectAgent(agent) => {
-            let root = session_id.clone();
-            app.tasks
-                .act(&session_id, "could not switch agent", move |backend| {
-                    backend.set_agent(&root, agent)
-                });
         }
         BoardAction::Place(task_id, status, position) => {
             app.tasks.spawn(

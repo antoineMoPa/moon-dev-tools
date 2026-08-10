@@ -483,6 +483,31 @@ fn parse_diff(repo_path: &Path, diff: &str, staged: bool) -> Result<Vec<DiffHunk
             });
         }
 
+        // An image git can still text-diff — an SVG — is one change to look at, not a card
+        // per run of markup: the card shows the before/after pictures, so a hunk per `@@`
+        // would repeat the same pair. The whole file section becomes the one hunk, which is
+        // itself a complete patch, so staging it stages the file's change whole.
+        if image_diff.is_some() && idx < section.len() {
+            let header = match change_kind {
+                FileChangeKind::Added => "Image added",
+                FileChangeKind::Deleted => "Image deleted",
+                FileChangeKind::Modified => "Image changed",
+            }
+            .to_string();
+            let patch = format!("{}\n", section.join("\n"));
+            let id = stable_id(&(file_path.clone(), header.clone(), patch.clone()));
+            hunks.push(DiffHunk {
+                id,
+                file_path: file_path.clone(),
+                change_kind,
+                header,
+                patch,
+                staged,
+                image_diff: image_diff.clone(),
+            });
+            continue;
+        }
+
         while idx < section.len() {
             let header = section[idx].clone();
             let mut patch_lines = prelude.clone();
@@ -1011,6 +1036,56 @@ mod tests {
             selected_agent: AgentKind::None,
             comment_dispatches: HashMap::new(),
         }
+    }
+
+    /// An SVG is reviewed as its picture, so however many `@@` runs git finds in the markup,
+    /// the file is one change — and that one hunk's patch is the whole file section, which
+    /// `git apply` takes as-is, so staging it stages the change whole.
+    #[test]
+    fn an_svg_is_one_hunk_however_many_places_it_changed_in() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        init_test_repo(&repo_root);
+
+        // Two edits far enough apart that git would otherwise split them into two hunks.
+        let spacer = "  <rect width=\"1\" height=\"1\"/>\n".repeat(12);
+        let svg = |first: &str, last: &str| {
+            format!("<svg xmlns=\"http://www.w3.org/2000/svg\">\n  {first}\n{spacer}  {last}\n</svg>\n")
+        };
+        fs::write(repo_root.join("logo.svg"), svg("<g id=\"a\"/>", "<g id=\"z\"/>"))
+            .expect("failed to write the svg");
+        run_git_no_output(&repo_root, &["add", "logo.svg"]).expect("failed to add the svg");
+        run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"])
+            .expect("failed to commit");
+        fs::write(repo_root.join("logo.svg"), svg("<g id=\"b\"/>", "<g id=\"y\"/>"))
+            .expect("failed to change the svg");
+
+        let hunks = collect_hunks(&repo_root, &DiffTarget::default())
+            .expect("failed to collect the hunks");
+
+        let svg_hunks: Vec<_> = hunks
+            .iter()
+            .filter(|hunk| hunk.file_path == "logo.svg")
+            .collect();
+        assert_eq!(
+            svg_hunks.len(),
+            1,
+            "an image file is one change, not a card per run of markup"
+        );
+        let hunk = svg_hunks[0];
+        assert_eq!(hunk.header, "Image changed");
+        assert!(hunk.image_diff.is_some(), "the card shows the pictures");
+        assert!(
+            hunk.patch.matches("@@").count() >= 2,
+            "both edits are in the one patch: {}",
+            hunk.patch
+        );
+
+        super::apply_patch(&repo_root, &hunk.patch, true, false)
+            .expect("the whole-file patch should stage cleanly");
+        let staged = run_git(&repo_root, &["diff", "--cached", "--name-only"])
+            .expect("failed to list staged files");
+        assert!(staged.contains("logo.svg"), "staging the hunk stages the file");
     }
 
     #[test]

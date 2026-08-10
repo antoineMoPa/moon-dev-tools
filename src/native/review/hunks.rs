@@ -2,7 +2,9 @@
 //!
 //! Selecting lines is how everything specific happens here — a comment is anchored to the
 //! lines it was written against, and a partial stage applies exactly those lines. That is
-//! the same contract the web frontend's text selection has, expressed as line ranges.
+//! the same contract the web frontend's text selection has. The selection itself is
+//! character-precise — a drag sweeps characters, a double-click takes a word — but a comment
+//! is still anchored to the whole lines the selection covers.
 
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ use crate::{
     native::{
         app::App,
         panes::OpenPaneRequest,
-        model::{Draft, LineSelection, hash_of},
+        model::{Draft, LINE_END, LineSelection, SelectionPoint, hash_of},
         palette::CommandAction,
         review::diff::{DiffLine, LineKind, insertion_line},
         review::image_diff,
@@ -32,6 +34,40 @@ const LINE_HEIGHT: f32 = 15.0;
 /// tests find a line and click it.
 pub(crate) fn diff_line_id(hunk_id: &str, index: usize) -> egui::Id {
     egui::Id::new(("moonreview-diff-line", hunk_id, index))
+}
+
+/// Where a line's body text starts, matching what `draw_line_text` paints: the gutter, then
+/// the one-character `+`/`-`/space marker column. Only commentable lines are selectable, and
+/// they all carry the marker.
+pub(crate) fn body_text_x(rect: Rect) -> f32 {
+    rect.min.x + GUTTER_WIDTH + 6.0 + 9.0
+}
+
+/// The character column of the body under a pointer x, by laying the body out the same way
+/// it is painted. Past the end of the text this is the body's length.
+fn column_at(ui: &Ui, rect: Rect, line: &DiffLine, x: f32) -> usize {
+    let font = egui::FontId::monospace(CODE_SIZE);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(line.body().to_string(), font, egui::Color32::WHITE);
+    galley
+        .cursor_from_pos(vec2(x - body_text_x(rect), 0.0))
+        .index
+        .into()
+}
+
+/// The token containing a column, so a double-click picks up a whole identifier. Columns
+/// past the end of the text belong to no token.
+fn word_bounds_at(body: &str, column: usize) -> Option<(usize, usize)> {
+    let mut at = 0;
+    for token in super::diff::tokenize(body) {
+        let len = token.chars().count();
+        if column < at + len {
+            return Some((at, at + len));
+        }
+        at += len;
+    }
+    None
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
@@ -150,7 +186,7 @@ fn finish_line_sweep(app: &mut App, ui: &Ui, session_id: &str, hunks: &[HunkView
     let Some(selection) = current_selection(app, session_id, &hunk_id) else {
         return;
     };
-    start_draft(app, session_id, hunk, selection, String::new());
+    open_draft(app, session_id, hunk, selection);
 }
 
 fn draw_empty(ui: &mut Ui, palette: &Palette) {
@@ -499,12 +535,13 @@ fn draw_hunk_actions(
 
 }
 
-/// ⌘C over a diff: put the selected lines on the clipboard.
+/// cmd+c over a diff: put the selected characters on the clipboard.
 ///
-/// The lines a diff is read by are painted rather than laid out as text — a lock file is tens
-/// of thousands of rows, and egui text that could be swept through character by character
-/// would have to be laid out whether or not it is on screen. So the selection a diff already
-/// has, the run of lines picked for a comment, is what copies.
+/// The lines a diff is read by are painted rather than laid out as text — a lock file is
+/// tens of thousands of rows, and egui text that egui itself could sweep through would have
+/// to be laid out whether or not it is on screen. So the diff's own selection is what
+/// copies: exactly the characters it covers, a swept word as that word, a clicked line as
+/// the whole line.
 ///
 /// What lands on the clipboard is the code without its `+`/`-`/space marker: someone copying
 /// out of a diff is nearly always taking the code somewhere it has to compile.
@@ -523,9 +560,40 @@ fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     else {
         return;
     };
-    let Some(selected) = current_selection(app, session_id, &hunk_id) else {
+    let Some(selection) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.selection)
+        .filter(|selection| selection.hunk_id_hash == hash_of(&hunk_id))
+    else {
         return;
     };
+    // A zero-width selection covers no characters; the chord stays with whoever else wants it.
+    if selection.anchor == selection.head {
+        return;
+    }
+    let Some(patch) = selected_patch(app, session_id, &hunk_id) else {
+        return;
+    };
+
+    // Exactly the characters the selection covers: a swept word comes out as that word, a
+    // clicked line as the whole line without its `+`/`-`/space marker — someone copying out
+    // of a diff is nearly always taking the code somewhere it has to compile.
+    let lines = app.diff_lines(&hunk_id, &patch);
+    let covered: Vec<String> = selection
+        .line_range()
+        .filter_map(|index| {
+            let line = lines.get(index)?;
+            let (from, to) = selection.columns_on(index)?;
+            let body: Vec<char> = line.body().chars().collect();
+            let from = from.min(body.len());
+            let to = to.min(body.len());
+            Some(body[from..to].iter().collect())
+        })
+        .collect();
+    if covered.is_empty() {
+        return;
+    }
 
     // Taken only now that there is something to copy, so a review with nothing selected
     // leaves the chord to whatever else on screen wants it — the composer's text box, or a
@@ -533,17 +601,25 @@ fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     ui.ctx()
         .input_mut(|input| input.events.retain(|event| *event != egui::Event::Copy));
 
-    let text: String = selected
-        .lines()
-        .map(|line| line.get(1..).unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let lines = text.lines().count();
-    ui.ctx().copy_text(text);
+    let count = covered.len();
+    ui.ctx().copy_text(covered.join("\n"));
     app.model.info(format!(
-        "copied {lines} line{}",
-        if lines == 1 { "" } else { "s" }
+        "copied {count} line{}",
+        if count == 1 { "" } else { "s" }
     ));
+}
+
+/// The patch the selection's indices point into: the expanded one where the hunk was
+/// expanded, the preview otherwise.
+fn selected_patch(app: &App, session_id: &str, hunk_id: &str) -> Option<String> {
+    let review = app.model.review_ref(session_id)?;
+    review.expanded_patches.get(hunk_id).cloned().or_else(|| {
+        review
+            .hunks()
+            .iter()
+            .find(|hunk| hunk.id == hunk_id)
+            .map(|hunk| hunk.patch_preview.clone())
+    })
 }
 
 /// The raw patch lines the user has selected in this hunk, if any.
@@ -569,7 +645,7 @@ fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<S
 
     let lines = app.diff_lines(hunk_id, &patch);
     let selected: Vec<&str> = selection
-        .range()
+        .line_range()
         .filter_map(|index| lines.get(index))
         .map(|line| line.text.as_str())
         .collect();
@@ -579,23 +655,31 @@ fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<S
     Some(selected.join("\n"))
 }
 
-fn start_draft(
-    app: &mut App,
-    session_id: &str,
-    hunk: &HunkView,
-    selection: String,
-    note: String,
-) {
-    // Focus only when the composer is new: re-focusing on every extend would fight the
-    // keyboard while the user is still choosing lines.
-    let focus = note.is_empty();
-    app.model.review(session_id).draft = Some(Draft {
+/// Open a composer on this anchor.
+///
+/// Composers that have nothing typed in them are put away first — an unwritten box was a
+/// place to type, not a comment. Typed ones stay parked exactly where they are: a comment
+/// being written never moves and is never thrown away by selecting somewhere else.
+fn open_draft(app: &mut App, session_id: &str, hunk: &HunkView, selection: String) {
+    let review = app.model.review(session_id);
+    review.drafts.retain(|draft| !draft.note.trim().is_empty());
+    if let Some(existing) = review
+        .drafts
+        .iter_mut()
+        .find(|draft| draft.hunk_id == hunk.id && draft.selection == selection)
+    {
+        // The composer for this very anchor is already open: give it the keyboard back.
+        existing.focus = true;
+        return;
+    }
+    review.drafts.push(Draft {
         hunk_id: hunk.id.clone(),
         file_path: hunk.file_path.clone(),
         header: hunk.header.clone(),
         selection,
-        note,
-        focus,
+        note: String::new(),
+        focus: true,
+        pending_discard: false,
     });
 }
 
@@ -628,17 +712,39 @@ fn draw_hunk_body(
     }
     comment_at.sort_unstable();
 
-    // The composer goes below the last selected line, so the run it is about stays together
-    // above it. A saved comment is placed by matching its text, because by then the lines it
-    // was written against may have moved; a draft still knows exactly which lines they are.
-    let draft_at = app.model.review_ref(session_id).and_then(|review| {
-        let draft = review.draft.as_ref().filter(|draft| draft.hunk_id == hunk.id)?;
-        review
-            .selection
-            .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id))
-            .map(|selection| *selection.range().end())
-            .or_else(|| insertion_line(&lines, &draft.selection, &used))
-    });
+    // Each composer goes below the last line of the run it is about, so the run stays
+    // together above it. The one for the current selection knows exactly which lines those
+    // are; a parked one is placed by matching its text, like a saved comment, because the
+    // lines it was written against may have moved.
+    let selection_anchor = current_selection(app, session_id, &hunk.id);
+    let selection_end = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.selection)
+        .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id))
+        .map(|selection| *selection.line_range().end());
+    let mut draft_at: Vec<(usize, String)> = Vec::new();
+    let mut unplaced: Vec<String> = Vec::new();
+    if let Some(review) = app.model.review_ref(session_id) {
+        for draft in review.drafts.iter().filter(|draft| draft.hunk_id == hunk.id) {
+            let at = if selection_anchor.as_deref() == Some(draft.selection.as_str()) {
+                selection_end
+            } else {
+                None
+            }
+            .or_else(|| insertion_line(&lines, &draft.selection, &used));
+            match at {
+                Some(at) => {
+                    used.push(at);
+                    draft_at.push((at, draft.selection.clone()));
+                }
+                // A draft anchored to lines the preview does not contain still has to be
+                // reachable; it goes at the end of the hunk.
+                None => unplaced.push(draft.selection.clone()),
+            }
+        }
+    }
+    draft_at.sort_unstable();
 
     for (index, line) in lines.iter().enumerate() {
         // Hidden lines still count: a selection is matched against the raw patch text, so
@@ -653,20 +759,13 @@ fn draw_hunk_body(
                 draw_inline_comment(app, ui, session_id, hunk, *comment_index, entry, palette);
             }
         }
-        if draft_at == Some(index) {
-            draw_composer(app, ui, session_id, hunk, read_only, palette);
+        for (_, anchor) in draft_at.iter().filter(|(at, _)| *at == index) {
+            draw_composer(app, ui, session_id, hunk, anchor, read_only, palette);
         }
     }
 
-    // A draft anchored to lines the preview does not contain still has to be reachable.
-    if draft_at.is_none()
-        && app
-            .model
-            .review_ref(session_id)
-            .and_then(|review| review.draft.as_ref())
-            .is_some_and(|draft| draft.hunk_id == hunk.id)
-    {
-        draw_composer(app, ui, session_id, hunk, read_only, palette);
+    for anchor in &unplaced {
+        draw_composer(app, ui, session_id, hunk, anchor, read_only, palette);
     }
 
     if hunk.patch_line_count > preview_limit && full_patch.is_none() {
@@ -758,13 +857,12 @@ fn draw_diff_line(
         },
     );
 
-    let selected = app
+    let selected_columns = app
         .model
         .review_ref(session_id)
         .and_then(|review| review.selection)
-        .is_some_and(|selection| {
-            selection.hunk_id_hash == hash_of(&hunk.id) && selection.contains(index)
-        });
+        .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id))
+        .and_then(|selection| selection.columns_on(index));
 
     // Added and removed lines keep their own tint, and a selected one is tinted again on top
     // of it — so a selected removal still reads as a removal.
@@ -772,9 +870,30 @@ fn draw_diff_line(
         ui.painter()
             .rect_filled(rect, CornerRadius::ZERO, background);
     }
-    if selected {
+    if let Some((from, to)) = selected_columns {
+        let span = if (from, to) == (0, LINE_END) {
+            rect
+        } else {
+            // A partial line shows exactly the characters the sweep covered, measured the
+            // same way they are painted.
+            let font = egui::FontId::monospace(CODE_SIZE);
+            let body: Vec<char> = line.body().chars().collect();
+            let width_of = |from: usize, to: usize| {
+                let text: String =
+                    body[from.min(body.len())..to.min(body.len())].iter().collect();
+                ui.painter()
+                    .layout_no_wrap(text, font.clone(), palette.ink)
+                    .size()
+                    .x
+            };
+            let left = body_text_x(rect) + width_of(0, from);
+            egui::Rect::from_min_size(
+                egui::pos2(left, rect.min.y),
+                vec2(width_of(from, to), rect.height()),
+            )
+        };
         ui.painter()
-            .rect_filled(rect, CornerRadius::ZERO, palette.line_target_bg);
+            .rect_filled(span, CornerRadius::ZERO, palette.line_target_bg);
         // A solid bar down the left edge: the tint alone is easy to miss against a diff that
         // is already coloured.
         ui.painter().rect_filled(
@@ -783,7 +902,7 @@ fn draw_diff_line(
             palette.accent,
         );
     }
-    if response.hovered() && selectable && !selected {
+    if response.hovered() && selectable && selected_columns.is_none() {
         ui.painter()
             .rect_filled(rect, CornerRadius::ZERO, palette.diff_gutter_bg);
     }
@@ -796,22 +915,32 @@ fn draw_diff_line(
         return;
     }
 
-    // A drag sweeps a run of lines. It starts on the line pressed, and every line the pointer
-    // passes over extends it — the drag belongs to the line it began on, so each other line
-    // has to notice the pointer itself rather than wait for an event it will never get.
+    // A drag sweeps characters. It starts where the button went down, and every line the
+    // pointer passes over extends it — the drag belongs to the line it began on, so each
+    // other line has to notice the pointer itself rather than wait for an event it will
+    // never get.
     let hunk_hash = hash_of(&hunk.id);
     if response.drag_started() {
+        // By the time egui decides a press is a drag the pointer has already travelled, so
+        // the anchor comes from where the press began, not from where the pointer is now.
+        let start_x = ui
+            .input(|input| input.pointer.press_origin())
+            .map(|at| at.x)
+            .unwrap_or(rect.min.x);
+        let at = SelectionPoint {
+            line: index,
+            column: column_at(ui, rect, line, start_x),
+        };
         let review = app.model.review(session_id);
         review.selection = Some(LineSelection {
             hunk_id_hash: hunk_hash,
-            anchor: index,
-            head: index,
+            anchor: at,
+            head: at,
         });
         review.selecting_in = Some(hunk.id.clone());
         review.active_hunk_id = Some(hunk.id.clone());
-        // The composer waits for the button to come up: opening it mid-sweep would take the
-        // keyboard away while lines are still being chosen.
-        review.draft = None;
+        // The draft is left alone: whatever has been typed re-anchors to the new run when
+        // the button comes up.
         return;
     }
 
@@ -820,22 +949,53 @@ fn draw_diff_line(
         .review_ref(session_id)
         .is_some_and(|review| review.selecting_in.as_deref() == Some(hunk.id.as_str()));
     if sweeping_here {
-        let pointer_here = ui
+        let pointer_at = ui
             .input(|input| input.pointer.interact_pos())
-            .is_some_and(|at| rect.y_range().contains(at.y));
-        if pointer_here {
+            .filter(|at| rect.y_range().contains(at.y));
+        if let Some(at) = pointer_at {
+            let head = SelectionPoint {
+                line: index,
+                column: column_at(ui, rect, line, at.x),
+            };
             let review = app.model.review(session_id);
             if let Some(existing) = review.selection
                 && existing.hunk_id_hash == hunk_hash
-                && existing.head != index
+                && existing.head != head
             {
                 review.selection = Some(LineSelection {
-                    hunk_id_hash: hunk_hash,
-                    anchor: existing.anchor,
-                    head: index,
+                    head,
+                    ..existing
                 });
             }
         }
+        return;
+    }
+
+    // A double-click takes the word under the pointer, split the same way the word diff
+    // splits a line; a triple-click takes the whole line back.
+    if response.triple_clicked() {
+        select_and_open(app, session_id, hunk, LineSelection::whole_line(hunk_hash, index));
+        return;
+    }
+    if response.double_clicked() {
+        let selection = response
+            .interact_pointer_pos()
+            .and_then(|at| {
+                word_bounds_at(line.body(), column_at(ui, rect, line, at.x))
+            })
+            .map(|(from, to)| LineSelection {
+                hunk_id_hash: hunk_hash,
+                anchor: SelectionPoint {
+                    line: index,
+                    column: from,
+                },
+                head: SelectionPoint {
+                    line: index,
+                    column: to,
+                },
+            })
+            .unwrap_or_else(|| LineSelection::whole_line(hunk_hash, index));
+        select_and_open(app, session_id, hunk, selection);
         return;
     }
 
@@ -846,49 +1006,83 @@ fn draw_diff_line(
     // Selecting lines and writing a comment are one gesture, the way dragging over text in
     // the web frontend pops its composer: a click selects and opens the composer at once.
     let extend = ui.input(|input| input.modifiers.shift);
-    let hunk_hash = hash_of(&hunk.id);
-    let review = app.model.review(session_id);
-    let next = match review.selection {
-        // Shift-click grows the run, which is how a multi-line comment gets its anchor.
-        Some(existing) if extend && existing.hunk_id_hash == hunk_hash => Some(LineSelection {
-            hunk_id_hash: hunk_hash,
-            anchor: existing.anchor,
-            head: index,
-        }),
-        Some(existing)
-            if existing.hunk_id_hash == hunk_hash
-                && existing.anchor == index
-                && existing.head == index =>
-        {
-            // Clicking the one selected line again puts the composer away.
-            None
-        }
-        _ => Some(LineSelection {
-            hunk_id_hash: hunk_hash,
-            anchor: index,
-            head: index,
-        }),
-    };
-    review.selection = next;
-    review.active_hunk_id = Some(hunk.id.clone());
+    let whole_line = LineSelection::whole_line(hunk_hash, index);
+    let existing = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.selection)
+        .filter(|selection| selection.hunk_id_hash == hunk_hash);
 
-    if next.is_none() {
-        app.model.review(session_id).draft = None;
+    if let Some(existing) = existing
+        && extend
+    {
+        // Shift-click grows the run by whole lines, which is how a multi-line comment gets
+        // its anchor. The anchor line stays put; its covered end faces the new head.
+        let anchor_line = existing.anchor.line;
+        let (anchor, head) = if index >= anchor_line {
+            (
+                SelectionPoint {
+                    line: anchor_line,
+                    column: 0,
+                },
+                SelectionPoint {
+                    line: index,
+                    column: LINE_END,
+                },
+            )
+        } else {
+            (
+                SelectionPoint {
+                    line: anchor_line,
+                    column: LINE_END,
+                },
+                SelectionPoint {
+                    line: index,
+                    column: 0,
+                },
+            )
+        };
+        select_and_open(
+            app,
+            session_id,
+            hunk,
+            LineSelection {
+                hunk_id_hash: hunk_hash,
+                anchor,
+                head,
+            },
+        );
         return;
     }
 
-    let Some(selection) = current_selection(app, session_id, &hunk.id) else {
+    if let Some(existing) = existing
+        && existing.anchor == whole_line.anchor
+        && existing.head == whole_line.head
+    {
+        // Clicking the one selected line again deselects and puts an unwritten composer
+        // away. A typed one stays parked where it is — a stray click must not throw text
+        // away, and the way to be rid of it is its own cancel.
+        let review = app.model.review(session_id);
+        review.selection = None;
+        review.active_hunk_id = Some(hunk.id.clone());
+        review.drafts.retain(|draft| !draft.note.trim().is_empty());
+        return;
+    }
+
+    select_and_open(app, session_id, hunk, whole_line);
+}
+
+/// Make a selection current and open a composer on it. Composers already open stay as they
+/// are — see `open_draft`.
+fn select_and_open(app: &mut App, session_id: &str, hunk: &HunkView, selection: LineSelection) {
+    let review = app.model.review(session_id);
+    review.selection = Some(selection);
+    review.active_hunk_id = Some(hunk.id.clone());
+
+    let Some(anchor) = current_selection(app, session_id, &hunk.id) else {
         return;
     };
-    // Extending a run keeps whatever has already been typed.
-    let existing_note = app
-        .model
-        .review_ref(session_id)
-        .and_then(|review| review.draft.as_ref())
-        .filter(|draft| draft.hunk_id == hunk.id)
-        .map(|draft| draft.note.clone())
-        .unwrap_or_default();
-    start_draft(app, session_id, hunk, selection, existing_note);
+    open_draft(app, session_id, hunk, anchor);
 }
 
 fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
@@ -1207,26 +1401,36 @@ fn open_dispatch_log(app: &mut App, session_id: &str, dispatch_key: &str) {
     );
 }
 
+/// One composer, identified by the hunk and the anchor text of the draft it edits — several
+/// can be on screen at once, so an index would go stale the moment one of them closes.
 fn draw_composer(
     app: &mut App,
     ui: &mut Ui,
     session_id: &str,
     hunk: &HunkView,
+    anchor: &str,
     read_only: bool,
     palette: &Palette,
 ) {
     let Some(mut draft) = app
         .model
         .review_ref(session_id)
-        .and_then(|review| review.draft.clone())
-        .filter(|draft| draft.hunk_id == hunk.id)
+        .and_then(|review| {
+            review
+                .drafts
+                .iter()
+                .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
+                .cloned()
+        })
     else {
         return;
     };
-    let agent = app
+    let payload = app
         .model
         .review_ref(session_id)
-        .and_then(|review| review.payload.as_ref())
+        .and_then(|review| review.payload.clone());
+    let agent = payload
+        .as_ref()
         .map(|payload| payload.selected_agent)
         .unwrap_or_default();
 
@@ -1260,6 +1464,16 @@ fn draw_composer(
 
             let entry = ui.add(
                 egui::TextEdit::multiline(&mut draft.note)
+                    // An id of its own, tied to what the comment is about. The default id is
+                    // positional, and anything shifting the layout above the composer — a
+                    // poll refresh, a hunk staged, a comment card appearing — would hand the
+                    // box a new id and take the keyboard away mid-sentence.
+                    .id(egui::Id::new((
+                        "moonreview-composer",
+                        session_id,
+                        hunk.id.as_str(),
+                        hash_of(anchor),
+                    )))
                     .desired_rows(3)
                     .desired_width(f32::INFINITY)
                     .hint_text("what should change here?"),
@@ -1268,14 +1482,26 @@ fn draw_composer(
                 entry.request_focus();
                 draft.focus = false;
             }
+            // Typing again is its own answer to "discard?".
+            if entry.changed() {
+                draft.pending_discard = false;
+            }
 
-            // ⌘return sends without reaching for the mouse, which is how these get written.
+            // cmd+return sends without reaching for the mouse, which is how these get written.
             if entry.has_focus()
                 && ui.input(|input| input.key_pressed(Key::Enter) && input.modifiers.command)
             {
                 send = true;
             }
-            if ui.input(|input| input.key_pressed(Key::Escape)) {
+            // Escape belongs to the composer only while the keyboard is in it — an Escape
+            // aimed at the palette, the find bar, or a terminal in the next split must not
+            // reach in here. It closes an empty composer; over typed text it only puts the
+            // keyboard down (the box surrenders focus itself), and the cancel button stays
+            // the deliberate way to throw text away.
+            if (entry.has_focus() || entry.lost_focus())
+                && ui.input(|input| input.key_pressed(Key::Escape))
+                && draft.note.trim().is_empty()
+            {
                 cancel = true;
             }
 
@@ -1283,17 +1509,31 @@ fn draw_composer(
                 let ready = !draft.note.trim().is_empty();
                 let has_agent = agent != crate::api::AgentKind::None;
 
+                // The comment goes wherever this says, so the choice sits beside the button
+                // that sends it.
+                if let Some(payload) = payload.as_ref() {
+                    super::header::draw_agent_select(
+                        app,
+                        ui,
+                        session_id,
+                        hash_of(anchor),
+                        agent,
+                        &payload.available_agents,
+                        palette,
+                    );
+                }
+
                 // Saving a comment with an agent selected hands it over there and then; that
                 // is what the server does, so the button has to say so.
                 let (label, hint) = if has_agent {
                     (
                         format!("send to {}", agent.label()),
-                        "write this comment and hand it over now (⌘return)",
+                        "write this comment and hand it over now (cmd+return)",
                     )
                 } else {
                     (
                         "save".to_string(),
-                        "keep the comment in the review (⌘return)",
+                        "keep the comment in the review (cmd+return)",
                     )
                 };
                 if widgets::clickable(ui.add_enabled(ready, egui::Button::new(label)))
@@ -1313,24 +1553,53 @@ fn draw_composer(
                 {
                     batch = true;
                 }
-                if widgets::clickable(ui.button("cancel")).clicked() {
-                    cancel = true;
+                // Throwing typed text away takes two presses: the first one only asks.
+                if draft.pending_discard {
+                    match widgets::confirm(
+                        ui,
+                        palette,
+                        "[discard the comment]",
+                        "throw the typed text away",
+                    ) {
+                        widgets::Confirmed::Yes => cancel = true,
+                        widgets::Confirmed::No => draft.pending_discard = false,
+                        widgets::Confirmed::Waiting => {}
+                    }
+                } else if widgets::clickable(ui.button("cancel")).clicked() {
+                    if draft.note.trim().is_empty() {
+                        cancel = true;
+                    } else {
+                        draft.pending_discard = true;
+                    }
                 }
             });
             let _ = read_only;
         });
 
+    let remove_this_draft = |app: &mut App| {
+        app.model
+            .review(session_id)
+            .drafts
+            .retain(|draft| !(draft.hunk_id == hunk.id && draft.selection == anchor));
+    };
+    let keep_this_draft = |app: &mut App, draft: Draft| {
+        let review = app.model.review(session_id);
+        if let Some(existing) = review
+            .drafts
+            .iter_mut()
+            .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
+        {
+            *existing = draft;
+        }
+    };
+
     if cancel {
-        app.model.review(session_id).draft = None;
+        remove_this_draft(app);
         return;
     }
 
-    if !send && !batch {
-        app.model.review(session_id).draft = Some(draft);
-        return;
-    }
-    if draft.note.trim().is_empty() {
-        app.model.review(session_id).draft = Some(draft);
+    if (!send && !batch) || draft.note.trim().is_empty() {
+        keep_this_draft(app, draft);
         return;
     }
 
@@ -1343,7 +1612,7 @@ fn draw_composer(
     });
     let comment = build_anchored_comment_value(&anchored);
 
-    app.model.review(session_id).draft = None;
+    remove_this_draft(app);
     app.model.review(session_id).selection = None;
 
     let hunk_id = hunk.id.clone();

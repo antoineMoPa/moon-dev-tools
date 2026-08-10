@@ -28,6 +28,9 @@ pub(crate) struct Toast {
 }
 
 /// A comment being written against a run of lines in one hunk.
+///
+/// More than one can be open at a time: selecting elsewhere leaves a typed composer parked
+/// where it is rather than moving it or throwing it away.
 #[derive(Clone)]
 pub(crate) struct Draft {
     pub(crate) hunk_id: String,
@@ -38,23 +41,80 @@ pub(crate) struct Draft {
     pub(crate) note: String,
     /// Set when the composer has just opened, so the text box takes focus once.
     pub(crate) focus: bool,
+    /// Set by the first press of cancel over typed text; the second press is the one that
+    /// actually discards. Typing again puts the question away.
+    pub(crate) pending_discard: bool,
 }
 
-/// A run of selected lines inside one hunk, as indices into its preview lines.
-#[derive(Clone, Copy)]
+/// One end of a selection: a line index into the hunk's parsed patch lines, and a character
+/// column into that line's body text (the `+`/`-`/space marker removed).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct SelectionPoint {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+/// Marks "the end of whatever line this is on" without knowing how long the line is. Whole
+/// lines are selected far more often than the length of each one is at hand.
+pub(crate) const LINE_END: usize = usize::MAX;
+
+/// The selected stretch of one hunk: character-precise between two points, so a single word
+/// can be picked out of a line, while a plain click still takes the whole line.
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct LineSelection {
     pub(crate) hunk_id_hash: u64,
-    pub(crate) anchor: usize,
-    pub(crate) head: usize,
+    pub(crate) anchor: SelectionPoint,
+    pub(crate) head: SelectionPoint,
 }
 
 impl LineSelection {
-    pub(crate) fn range(&self) -> std::ops::RangeInclusive<usize> {
-        self.anchor.min(self.head)..=self.anchor.max(self.head)
+    pub(crate) fn whole_line(hunk_id_hash: u64, line: usize) -> Self {
+        Self {
+            hunk_id_hash,
+            anchor: SelectionPoint { line, column: 0 },
+            head: SelectionPoint {
+                line,
+                column: LINE_END,
+            },
+        }
+    }
+
+    /// The two ends in document order, whichever way the sweep went.
+    fn ordered(&self) -> (SelectionPoint, SelectionPoint) {
+        if (self.head.line, self.head.column) < (self.anchor.line, self.anchor.column) {
+            (self.head, self.anchor)
+        } else {
+            (self.anchor, self.head)
+        }
+    }
+
+    /// The lines the selection actually covers. A selection that merely touches the start of
+    /// its last line — the pointer a pixel over the row boundary — has not selected anything
+    /// on it, so that line is left out. This is what makes selecting a single line by
+    /// dragging possible at all: the row is 15px tall and a drag begins after 6px.
+    pub(crate) fn line_range(&self) -> std::ops::RangeInclusive<usize> {
+        let (start, end) = self.ordered();
+        if end.line > start.line && end.column == 0 {
+            start.line..=end.line - 1
+        } else {
+            start.line..=end.line
+        }
     }
 
     pub(crate) fn contains(&self, index: usize) -> bool {
-        self.range().contains(&index)
+        self.line_range().contains(&index)
+    }
+
+    /// The span of characters covered on one line, if the line is part of the selection.
+    /// `LINE_END` for the end column means "to the end of the line".
+    pub(crate) fn columns_on(&self, index: usize) -> Option<(usize, usize)> {
+        if !self.contains(index) {
+            return None;
+        }
+        let (start, end) = self.ordered();
+        let from = if index == start.line { start.column } else { 0 };
+        let to = if index == end.line { end.column } else { LINE_END };
+        Some((from, to))
     }
 }
 
@@ -83,7 +143,9 @@ pub(crate) struct ReviewState {
     pub(crate) selection: Option<LineSelection>,
     /// The hunk a drag is currently sweeping lines in, if the button is still down.
     pub(crate) selecting_in: Option<String>,
-    pub(crate) draft: Option<Draft>,
+    /// Every comment currently being written, each drawn as its own composer. Selecting a
+    /// new run opens a new one; the others stay parked at their anchors with their text.
+    pub(crate) drafts: Vec<Draft>,
     /// Full patches fetched for hunks whose preview was truncated, keyed by hunk.
     pub(crate) expanded_patches: HashMap<String, String>,
     /// What the find bar over this review is looking for, so the lines being drawn can mark
@@ -110,7 +172,7 @@ impl ReviewState {
             scroll_to_hunk: None,
             selection: None,
             selecting_in: None,
-            draft: None,
+            drafts: Vec::new(),
             expanded_patches: HashMap::new(),
             find_query: String::new(),
             find_match: None,
@@ -147,10 +209,11 @@ pub(crate) struct BoardState {
     pub(crate) columns: Vec<crate::moontasks::BoardColumn>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
-    /// The column the new-task box is open in, and the title being typed into it. The agent
-    /// it will start is not here: that is the one the review's selector holds, so picking one
-    /// on the board and picking one in the review are the same choice.
+    /// The column the new-task box is open in, and the title being typed into it.
     pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
+    /// The agent picked in the open new-task box, overriding the column's remembered
+    /// default. Cleared when the box opens or closes: each column offers its own memory.
+    pub(crate) composer_agent: Option<crate::api::AgentKind>,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) composer_focus: bool,
     pub(crate) new_title: String,
@@ -376,4 +439,65 @@ pub(crate) fn hash_of(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection(anchor: (usize, usize), head: (usize, usize)) -> LineSelection {
+        LineSelection {
+            hunk_id_hash: 1,
+            anchor: SelectionPoint {
+                line: anchor.0,
+                column: anchor.1,
+            },
+            head: SelectionPoint {
+                line: head.0,
+                column: head.1,
+            },
+        }
+    }
+
+    #[test]
+    fn a_clicked_line_covers_exactly_itself() {
+        let selection = LineSelection::whole_line(1, 4);
+
+        assert_eq!(selection.line_range(), 4..=4);
+        assert_eq!(selection.columns_on(4), Some((0, LINE_END)));
+        assert_eq!(selection.columns_on(3), None);
+    }
+
+    #[test]
+    fn a_sweep_that_only_touches_the_next_line_s_start_leaves_it_out() {
+        // The pointer crossed the row boundary but selected nothing on the lower line — the
+        // jitter at the end of a one-line drag.
+        assert_eq!(selection((4, 2), (5, 0)).line_range(), 4..=4);
+        // The moment it covers a character, the line is in.
+        assert_eq!(selection((4, 2), (5, 1)).line_range(), 4..=5);
+    }
+
+    #[test]
+    fn a_sweep_upward_reads_the_same_as_one_downward() {
+        let up = selection((6, 3), (4, 1));
+
+        assert_eq!(up.line_range(), 4..=6);
+        assert_eq!(up.columns_on(4), Some((1, LINE_END)));
+        assert_eq!(up.columns_on(5), Some((0, LINE_END)));
+        assert_eq!(up.columns_on(6), Some((0, 3)));
+    }
+
+    #[test]
+    fn an_upward_sweep_that_starts_at_a_line_s_first_column_leaves_that_line_out() {
+        // Pressed at the very start of line 6, swept up: nothing on line 6 is covered.
+        assert_eq!(selection((6, 0), (4, 1)).line_range(), 4..=5);
+    }
+
+    #[test]
+    fn a_word_selection_is_one_line_with_its_columns() {
+        let word = selection((2, 8), (2, 13));
+
+        assert_eq!(word.line_range(), 2..=2);
+        assert_eq!(word.columns_on(2), Some((8, 13)));
+    }
 }

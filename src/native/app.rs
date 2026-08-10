@@ -365,6 +365,40 @@ impl App {
                             if review.history_loaded.is_empty() {
                                 review.history_loaded = payload.history_commits.clone();
                             }
+                            // A comment being typed must survive the file changing under it.
+                            // Hunk ids are content hashes, so an agent editing the file while
+                            // a composer is open renames every hunk and would strand its
+                            // draft: re-anchor each one to the hunk that still matches.
+                            for draft in &mut review.drafts {
+                                if payload.hunks.iter().any(|hunk| hunk.id == draft.hunk_id) {
+                                    continue;
+                                }
+                                use crate::native::review::diff::{
+                                    build_diff_lines, insertion_line,
+                                };
+                                let matched = payload
+                                    .hunks
+                                    .iter()
+                                    .find(|hunk| {
+                                        hunk.file_path == draft.file_path
+                                            && insertion_line(
+                                                &build_diff_lines(&hunk.patch_preview),
+                                                &draft.selection,
+                                                &[],
+                                            )
+                                            .is_some()
+                                    })
+                                    .or_else(|| {
+                                        payload
+                                            .hunks
+                                            .iter()
+                                            .find(|hunk| hunk.file_path == draft.file_path)
+                                    });
+                                if let Some(hunk) = matched {
+                                    draft.hunk_id = hunk.id.clone();
+                                    draft.header = hunk.header.clone();
+                                }
+                            }
                             review.payload = Some(Arc::new(payload));
                         }
                         Err(error) => review.error = Some(format!("{error}")),
