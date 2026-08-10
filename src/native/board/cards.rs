@@ -531,6 +531,19 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
                         ui.close();
                     }
                 }
+                // The way back when a run's recorded session id stopped pointing anywhere:
+                // pick one straight off the agents' own records instead.
+                ui.separator();
+                if widgets::clickable(ui.button("attach a session…"))
+                    .on_hover_text("Pick a past session of one of the agents and put it on this task")
+                    .clicked()
+                {
+                    actions.push(BoardAction::OpenAttachPicker {
+                        task_id: task.id.clone(),
+                        task_title: task.title.clone(),
+                    });
+                    ui.close();
+                }
             });
             widgets::clickable(button);
         }

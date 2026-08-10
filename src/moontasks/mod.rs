@@ -49,6 +49,17 @@ pub(crate) struct StartResourceRequest {
     pub(crate) agent: AgentKind,
 }
 
+/// A session an agent already has, being put on a task as a new resource.
+///
+/// This is the way back when a task's recorded session id stopped pointing anywhere — the
+/// user switched sessions inside the agent, or the agent never persisted the one it was
+/// started on. The id here is one read off the agent's own records, so it is known to exist.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct AttachResourceRequest {
+    pub(crate) agent: AgentKind,
+    pub(crate) agent_session_id: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CreateTaskRequest {
     pub(crate) title: String,
@@ -114,9 +125,14 @@ pub(crate) struct AgentLaunch {
     pub(crate) kind: AgentKind,
     /// Args for a fresh run.
     pub(crate) start: &'static [&'static str],
-    /// Args that resume the run recorded on the task. No brief and no prompt: the session
-    /// being resumed already has both.
+    /// Args that resume a run whose session id was never recorded, by whatever the agent
+    /// itself reckons the run was. No brief and no prompt: the session being resumed
+    /// already has both.
     pub(crate) resume: &'static [&'static str],
+    /// Args that open the exact session `{session}` names. Used whenever the id is known —
+    /// resuming a run that recorded one, and attaching a session picked off the agent's own
+    /// records.
+    pub(crate) attach: &'static [&'static str],
 }
 
 pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
@@ -130,17 +146,20 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
             "--append-system-prompt",
             "{brief}",
         ],
-        resume: &["--resume", "{session}"],
+        resume: &[],
+        attach: &["--resume", "{session}"],
     },
     AgentLaunch {
         kind: AgentKind::Codex,
         start: &[],
         resume: &["resume", "--last"],
+        attach: &["resume", "{session}"],
     },
     AgentLaunch {
         kind: AgentKind::OpenCode,
         start: &[],
         resume: &["--continue"],
+        attach: &["--session", "{session}"],
     },
 ];
 

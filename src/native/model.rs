@@ -256,6 +256,22 @@ pub(crate) struct BoardState {
     /// A column move the server has not confirmed yet, so every read until then can be
     /// answered with the column where it was put rather than where it came from.
     pub(crate) pending_column_place: Option<PendingColumnPlace>,
+    /// The attach-a-session modal, while it is open.
+    pub(crate) attach_picker: Option<AttachPicker>,
+}
+
+/// The modal that attaches one of an agent's own sessions to a task.
+///
+/// A task's recorded session id stops pointing anywhere when the user switches sessions
+/// inside the agent, or the agent never persisted it — this is where a real one is picked
+/// off the agents' own records instead.
+pub(crate) struct AttachPicker {
+    pub(crate) task_id: String,
+    /// The card's title, so the modal says which task the session is going onto.
+    pub(crate) task_title: String,
+    /// What the agents' records had. `None` while they are still being read.
+    pub(crate) sessions: Option<Vec<crate::agent_sessions::AgentSessionView>>,
+    pub(crate) error: Option<String>,
 }
 
 /// A drop that has been made on the board being drawn and not yet seen in one being read.

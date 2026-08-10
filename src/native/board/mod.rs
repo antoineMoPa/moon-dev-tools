@@ -4,6 +4,7 @@
 //! gave, and everything it does goes back through the backend, so the same board works
 //! against a repo on this machine and one on another.
 
+pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
 
@@ -56,6 +57,18 @@ pub(super) enum BoardAction {
     CancelRename,
     Start(String, StartResourceRequest),
     Resume(String, String),
+    /// Open the modal that lists the agents' own sessions, for this task.
+    OpenAttachPicker {
+        task_id: String,
+        task_title: String,
+    },
+    CloseAttachPicker,
+    /// Put the picked session on the task and open a shell resumed on it.
+    Attach {
+        task_id: String,
+        agent: AgentKind,
+        agent_session_id: String,
+    },
     Stop(String, String),
     /// Take a run off the task for good, rather than leaving it to be resumed.
     DeleteResource(String, String),
@@ -86,6 +99,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
             bottom: 0,
         })
         .show(ui, |ui| draw_board(app, ui, &palette, &mut actions));
+
+    attach::draw(app, ui.ctx(), &palette, &mut actions);
 
     for action in actions {
         apply(app, action);
@@ -717,6 +732,63 @@ fn apply(app: &mut App, action: BoardAction) {
                             })
                         }
                         Err(error) => model.error(format!("could not resume it: {error}")),
+                    }
+                },
+            );
+        }
+        BoardAction::OpenAttachPicker {
+            task_id,
+            task_title,
+        } => {
+            app.model.board.attach_picker = Some(crate::native::model::AttachPicker {
+                task_id,
+                task_title,
+                sessions: None,
+                error: None,
+            });
+            // Keyed, so holding the menu item down cannot queue a listing per frame. The
+            // listing is the repo's rather than the task's, so whichever picker is open when
+            // it lands is the one it answers — including one reopened on another card while
+            // an earlier read was still on its way, whose own read the key swallowed.
+            app.tasks.spawn_keyed(
+                Some("agent-sessions".to_string()),
+                move |backend| backend.list_agent_sessions(&session_id),
+                move |model, result| {
+                    let Some(picker) = model.board.attach_picker.as_mut() else {
+                        return;
+                    };
+                    match result {
+                        Ok(sessions) => picker.sessions = Some(sessions),
+                        Err(error) => picker.error = Some(error.to_string()),
+                    }
+                },
+            );
+        }
+        BoardAction::CloseAttachPicker => app.model.board.attach_picker = None,
+        BoardAction::Attach {
+            task_id,
+            agent,
+            agent_session_id,
+        } => {
+            app.model.board.attach_picker = None;
+            let for_pane = task_id.clone();
+            let request = crate::moontasks::AttachResourceRequest {
+                agent,
+                agent_session_id,
+            };
+            app.tasks.spawn(
+                move |backend| backend.attach_task_resource(&session_id, &task_id, &request),
+                move |model, result| {
+                    model.board.refresh_requested = true;
+                    match result {
+                        Ok(terminal_id) => {
+                            model.board.opened_shell = Some(OpenedShell {
+                                terminal_id,
+                                command: Some(agent),
+                                task_id: for_pane,
+                            })
+                        }
+                        Err(error) => model.error(format!("could not attach it: {error}")),
                     }
                 },
             );

@@ -12,7 +12,10 @@ use crate::{
         SubmoduleView, server_url,
     },
     backend::Backend,
-    moontasks::{self, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest, TaskView},
+    moontasks::{
+        self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest,
+        StartResourceRequest, TaskView,
+    },
     service,
     terminal::TerminalSession,
 };
@@ -222,6 +225,22 @@ impl Backend for LocalBackend {
         resource_id: &str,
     ) -> Result<String> {
         moontasks::service::resume_resource(&self.state, session_id, task_id, resource_id)
+    }
+
+    fn list_agent_sessions(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::agent_sessions::AgentSessionView>> {
+        crate::agent_sessions::list_for_session(&self.state, session_id)
+    }
+
+    fn attach_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: &AttachResourceRequest,
+    ) -> Result<String> {
+        moontasks::service::attach_resource(&self.state, session_id, task_id, request)
     }
 
     fn stop_task_resource(

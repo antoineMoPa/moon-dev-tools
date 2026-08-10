@@ -12,11 +12,15 @@ mod remote_tests;
 use anyhow::Result;
 
 use crate::{
+    agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
     },
-    moontasks::{BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest, TaskView},
+    moontasks::{
+        AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
+        TaskView,
+    },
 };
 
 /// Every review operation the native frontend performs. Calls block, so the UI runs them
@@ -97,6 +101,17 @@ pub(crate) trait Backend: Send + Sync + 'static {
         session_id: &str,
         task_id: &str,
         resource_id: &str,
+    ) -> Result<String>;
+    /// The sessions the installed agents already have for this repo, newest first — what the
+    /// attach modal lists.
+    fn list_agent_sessions(&self, session_id: &str) -> Result<Vec<AgentSessionView>>;
+    /// Put one of those sessions on a task as a new resource, and answer with the shell it
+    /// was opened in.
+    fn attach_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: &AttachResourceRequest,
     ) -> Result<String>;
     fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str)
     -> Result<()>;

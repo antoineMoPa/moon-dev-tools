@@ -11,7 +11,8 @@ use crate::{
     api::{AgentKind, AppState},
     git::agent_is_available,
     moontasks::{
-        CreateTaskRequest, StartResourceRequest, TaskResourceView, TaskView, agent_launch,
+        AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView,
+        TaskView, agent_launch,
         store::{
             self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
@@ -482,10 +483,16 @@ pub(crate) fn resume_resource(
 
     let fillings = write_task_files(task_id, &repo_path, &metadata)?
         .with_session(resource.agent_session_id.as_deref());
+    // A run that recorded its session id is picked up by that exact session; one that could
+    // not is left to the agent's own reckoning of what its last run was.
+    let template = match resource.agent_session_id {
+        Some(_) => launch.attach,
+        None => launch.resume,
+    };
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
         program: Some(resource.agent),
-        args: fillings.fill_all(launch.resume.iter()),
+        args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
         // A resumed run is being picked up where it left off, and it was told the title when
@@ -494,6 +501,59 @@ pub(crate) fn resume_resource(
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
+    mark_as_started(&board, &mut metadata);
+    store::write_task(&repo_path, task_id, &metadata)?;
+
+    Ok(terminal_id)
+}
+
+/// Put a session an agent already has on a task, and open a shell resumed on it.
+///
+/// This is how a task is pointed back at real work when its recorded session id stopped
+/// meaning anything — the id here was read off the agent's own records, so opening it is
+/// the same as resuming a run the task had recorded itself.
+pub(crate) fn attach_resource(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    request: &AttachResourceRequest,
+) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    let board = store::read_board(&repo_path);
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+
+    let agent_session_id = request.agent_session_id.trim();
+    if agent_session_id.is_empty() {
+        bail!("attaching needs the id of the session to attach");
+    }
+    let Some(launch) = agent_launch(request.agent) else {
+        bail!("only an agent's session can be attached");
+    };
+    if !agent_is_available(state.agent_availability, request.agent) {
+        bail!("{} is not installed here", request.agent.label());
+    }
+
+    let fillings =
+        write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
+    let terminal_id = state.terminals.spawn(TerminalSpec {
+        cwd: repo_path.clone(),
+        program: Some(request.agent),
+        args: fillings.fill_all(launch.attach.iter()),
+        env: task_env(session_id, task_id, &repo_path),
+        owner: Some(task_id.to_string()),
+        // The session being attached is already under way; typing the title at it would be
+        // typing over whatever it is in the middle of.
+        type_ahead: None,
+    })?;
+
+    metadata.resources.push(TaskResource {
+        id: store::new_uuid(),
+        kind: TaskResourceKind::Agent,
+        agent: request.agent,
+        terminal_id: Some(terminal_id.clone()),
+        agent_session_id: Some(agent_session_id.to_string()),
+        started_at_unix: store::now_unix(),
+    });
     mark_as_started(&board, &mut metadata);
     store::write_task(&repo_path, task_id, &metadata)?;
 
@@ -717,9 +777,30 @@ mod tests {
     fn a_missing_session_id_takes_the_flag_in_front_of_it_with_it() {
         let launch = agent_launch(AgentKind::Claude).expect("expected claude to be launchable");
 
-        let args = fillings().fill_all(launch.resume.iter());
+        let args = fillings().fill_all(launch.attach.iter());
 
         assert!(args.is_empty(), "expected no dangling --resume: {args:?}");
+    }
+
+    /// Attaching opens the exact session that was picked, whichever agent it belongs to.
+    #[test]
+    fn an_attached_session_is_opened_by_its_own_id() {
+        let session = "11111111-2222-4333-8444-555555555555";
+        let expected: &[(AgentKind, &[&str])] = &[
+            (AgentKind::Claude, &["--resume", session]),
+            (AgentKind::Codex, &["resume", session]),
+            (AgentKind::OpenCode, &["--session", session]),
+        ];
+
+        for (kind, args) in expected {
+            let launch = agent_launch(*kind).expect("expected the agent to be launchable");
+
+            assert_eq!(
+                fillings().with_session(Some(session)).fill_all(launch.attach.iter()),
+                *args,
+                "{kind:?} did not open the picked session"
+            );
+        }
     }
 
     #[test]

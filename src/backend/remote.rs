@@ -22,8 +22,8 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        StartResourceRequest, TaskPlacementRequest, TaskView,
+        AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
+        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskView,
         TerminalOpened,
     },
 };
@@ -446,6 +446,26 @@ impl Backend for RemoteBackend {
                 "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"
             ),
             &json!({}),
+        )?;
+        Ok(opened.terminal_id)
+    }
+
+    fn list_agent_sessions(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::agent_sessions::AgentSessionView>> {
+        self.get(&format!("/api/session/{session_id}/agent-sessions"))
+    }
+
+    fn attach_task_resource(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: &AttachResourceRequest,
+    ) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/tasks/{task_id}/resources/attach"),
+            request,
         )?;
         Ok(opened.terminal_id)
     }

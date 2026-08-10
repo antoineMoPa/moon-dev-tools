@@ -1257,6 +1257,112 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     harness.snapshot("moontasks-new-task");
 }
 
+/// The attach modal offers the sessions the agents themselves have on this machine, which
+/// is nothing a test can rely on — so the listing is injected, and what is checked is the
+/// modal itself: what it shows, and Escape closing it.
+#[test]
+fn the_attach_modal_lists_the_agents_own_sessions() {
+    use crate::api::AgentKind;
+
+    let fixture = seeded_fixture("board-attach");
+    fixture.write(
+        ".moontasks/write-the-parser-1111/metadata.json",
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened_in_ui = Arc::new(AtomicBool::new(false));
+    // The board and its card have been read: the snapshot's background is settled.
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let inject = Arc::new(AtomicBool::new(false));
+    let inject_in_ui = Arc::clone(&inject);
+    // What the modal's state is right now, read back out of the draw closure.
+    let picker_open = Arc::new(AtomicBool::new(false));
+    let picker_open_in_ui = Arc::clone(&picker_open);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            // Once, when the test says so — the way OpenAttachPicker fills it in, but with
+            // sessions this machine is known not to have.
+            if inject_in_ui.swap(false, Ordering::Relaxed) {
+                app.model.board.attach_picker = Some(crate::native::model::AttachPicker {
+                    task_id: "write-the-parser-1111".to_string(),
+                    task_title: "Write the parser".to_string(),
+                    sessions: Some(vec![
+                        crate::agent_sessions::AgentSessionView {
+                            agent: AgentKind::Claude,
+                            id: "3f37e6a1-4a11-4333-8444-555555555555".to_string(),
+                            title: "Fix the login page".to_string(),
+                            updated_at_unix: 1_700_003_600,
+                        },
+                        crate::agent_sessions::AgentSessionView {
+                            agent: AgentKind::OpenCode,
+                            id: "ses_012f01ba5ffeTRe0q5MsyL9wbO".to_string(),
+                            title: "Character-precise review selection".to_string(),
+                            updated_at_unix: 1_699_900_000,
+                        },
+                        crate::agent_sessions::AgentSessionView {
+                            agent: AgentKind::Codex,
+                            id: "019efeff-2a80-7b11-b0b1-c5ab3e09b353".to_string(),
+                            title: "Rewrite the scheduler".to_string(),
+                            updated_at_unix: 1_699_800_000,
+                        },
+                    ]),
+                    error: None,
+                });
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 1,
+                Ordering::Relaxed,
+            );
+            picker_open_in_ui.store(
+                app.model.board.attach_picker.is_some(),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the task out of .moontasks"
+    );
+
+    inject.store(true, Ordering::Relaxed);
+    harness.run_steps(3);
+    assert!(
+        picker_open.load(Ordering::Relaxed),
+        "the injected modal never showed"
+    );
+    harness.snapshot("moontasks-attach-session");
+
+    // Escape is the way out that touches nothing.
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(
+        !picker_open.load(Ordering::Relaxed),
+        "escape did not close the attach modal"
+    );
+}
+
 /// Dragging a card is how a column is put in order, so where it is let go of has to be where
 /// it lands — not merely which column it landed in.
 #[test]

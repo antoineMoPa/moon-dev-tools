@@ -23,8 +23,9 @@ use crate::{
     },
     git::detect_agent_availability,
     moontasks::{
-        self, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest, StartResourceRequest,
-        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
+        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
+        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskTitleRequest, TaskView,
+        TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
     service,
@@ -134,6 +135,14 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources",
             post(start_task_resource),
+        )
+        .route(
+            "/api/session/{session_id}/agent-sessions",
+            get(list_agent_sessions),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/resources/attach",
+            post(attach_task_resource),
         )
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume",
@@ -625,6 +634,28 @@ async fn start_task_resource(
     mark_activity(&state);
     Ok(Json(TerminalOpened {
         terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
+    }))
+}
+
+async fn list_agent_sessions(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::agent_sessions::AgentSessionView>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::agent_sessions::list_for_session(
+        &state,
+        &session_id,
+    )?))
+}
+
+async fn attach_task_resource(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<AttachResourceRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::attach_resource(&state, &session_id, &task_id, &request)?,
     }))
 }
 
