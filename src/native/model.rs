@@ -211,6 +211,9 @@ pub(crate) struct BoardState {
     pub(crate) loaded: bool,
     /// The column the new-task box is open in, and the title being typed into it.
     pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
+    /// Which end of that column the box is standing at, which is the `+` that opened it. The
+    /// box is drawn there, so it is where the card it becomes will appear.
+    pub(crate) composer_at: crate::moontasks::ColumnEnd,
     /// The agent picked in the open new-task box, overriding the column's remembered
     /// default. Cleared when the box opens or closes: each column offers its own memory.
     pub(crate) composer_agent: Option<crate::api::AgentKind>,

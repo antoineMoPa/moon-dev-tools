@@ -10,6 +10,8 @@ in the repo straight away.
 | drag a card by its title | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | drag a column by its heading | move the column, cards and all |
 | double click a heading | rename the column |
+| `+` on a column's heading | a new task at the top of it |
+| `+` under a column's last card | a new task at the bottom of it |
 | `+` at the right-hand end | add a column |
 | `[start review]` | open the review of the repo in a tab |
 | `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |
@@ -33,18 +35,24 @@ is called — every card in it stays in it. A column still holding cards will no
 it is the only record of where those cards are, so the board says to move them out first
 rather than choosing somewhere for them.
 
-Two things the board does on its own are written in terms of a column, and they are pinned
-to the ones a board starts with:
+The new-task box stands where its card will be — under the heading for the `+` on it, under
+the last card for the `+` down there — so you can see where the task is about to land while
+you name it.
+
+A card changes column only when you move it. Nothing the board or an agent does moves a card:
+starting an agent, resuming one, attaching a session, an agent exiting - the card stays where
+you put it.
+
+The one thing the board does on its own is written in terms of a column, and it is pinned to
+one a board starts with:
 
 | | |
 | --- | --- |
-| `in_progress` | where a card goes when an agent is started on it, if it was waiting to the left of there |
 | `done` | where a card lets go of its shells |
 
-They are pinned by id, so renaming a column or dragging it elsewhere keeps its part in these
-and nothing changes. Deleting one turns that rule off rather than sending cards to a column
-nobody chose — a board built out of columns of its own moves nothing by itself, which is the
-honest answer to never having said where things should go.
+It is pinned by id, so renaming that column or dragging it elsewhere keeps its part in the
+rule and nothing changes. Deleting it turns the rule off rather than taking shells away in a
+column nobody pinned it to.
 
 The columns live in `.moontasks/board.json`, written the first time you change one. A board
 without that file has the three defaults.

@@ -1276,6 +1276,10 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // column, and what this checks is the box it opens.
     let compose = Arc::new(AtomicBool::new(false));
     let compose_in_ui = Arc::clone(&compose);
+    // Which end of the column that box is standing at, which is the `+` that would have been
+    // pressed to open it.
+    let at_bottom = Arc::new(AtomicBool::new(false));
+    let at_bottom_in_ui = Arc::clone(&at_bottom);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1400.0, 800.0))
@@ -1291,6 +1295,11 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
             }
             if compose_in_ui.load(Ordering::Relaxed) {
                 app.model.board.composer_in = Some(crate::moontasks::ColumnId::new("todo"));
+                app.model.board.composer_at = if at_bottom_in_ui.load(Ordering::Relaxed) {
+                    crate::moontasks::ColumnEnd::Bottom
+                } else {
+                    crate::moontasks::ColumnEnd::Top
+                };
             }
             app.draw(ui);
             ready_in_ui.store(
@@ -1323,6 +1332,12 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
     harness.snapshot("moontasks-new-task");
+
+    // And the same box opened by the `+` under the last card, standing at the bottom, where a
+    // card added from there will appear.
+    at_bottom.store(true, Ordering::Relaxed);
+    harness.run_steps(3);
+    harness.snapshot("moontasks-new-task-at-the-bottom");
 }
 
 /// The attach modal offers the sessions the agents themselves have on this machine, which
@@ -2599,7 +2614,9 @@ fn a_copy_pressed_in_a_shell_stays_with_the_shell() {
     // A diff line is selected, the way the review remembers a selection across other work.
     let rect = harness
         .ctx
-        .read_response(crate::native::review::hunks::diff_line_id(&hunk_id, line_index))
+        .read_response(crate::native::review::hunks::diff_line_id(
+            &hunk_id, line_index,
+        ))
         .expect("expected the diff line to have been drawn")
         .rect;
     click_at(&mut harness, rect.center());
@@ -3185,7 +3202,9 @@ fn double_clicking_a_word_selects_and_copies_it() {
 
     let rect = harness
         .ctx
-        .read_response(crate::native::review::hunks::diff_line_id(&hunk_id, line_index))
+        .read_response(crate::native::review::hunks::diff_line_id(
+            &hunk_id, line_index,
+        ))
         .expect("expected the diff line to have been drawn")
         .rect;
     // A few pixels into the line's first word — the row is as wide as the pane, and a
@@ -3244,11 +3263,7 @@ fn double_clicking_a_word_selects_and_copies_it() {
         .copied
         .clone()
         .expect("cmd+c should have copied the word");
-    let expected: String = body
-        .chars()
-        .skip(from)
-        .take(to - from)
-        .collect();
+    let expected: String = body.chars().skip(from).take(to - from).collect();
     assert_eq!(copied, expected, "what copies is exactly the selected word");
     assert!(
         !copied.trim().is_empty(),
@@ -4506,7 +4521,10 @@ fn the_wheel_scrolls_a_shell_pane() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let before = visible.lock().expect("poisoned").clone();
-    assert!(before.contains("195"), "expected the shell to have printed: {before}");
+    assert!(
+        before.contains("195"),
+        "expected the shell to have printed: {before}"
+    );
 
     // A wheel over the middle of the pane, where the shell is drawn.
     let middle = egui::pos2(650.0, 500.0);

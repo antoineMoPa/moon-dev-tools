@@ -63,6 +63,19 @@ pub(crate) struct BoardColumn {
     pub(crate) default_agent: Option<AgentKind>,
 }
 
+/// Which end of a column a new card joins.
+///
+/// A card is made because of what it says, so the top is where one usually wants to be
+/// looking — but a column read as a queue is worked from the top down, and a card added to
+/// the back of that queue belongs at the bottom. The board asks for the one it means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ColumnEnd {
+    #[default]
+    Top,
+    Bottom,
+}
+
 /// The columns a board starts with, left to right.
 pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
     ("todo", "TODO"),
@@ -70,15 +83,12 @@ pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
     ("done", "DONE"),
 ];
 
-/// The two columns the board itself acts on, by the id they have on a board that started
-/// from the defaults.
+/// The one column the board itself acts on, by the id it has on a board that started from the
+/// defaults. A card only ever changes column because someone moved it; what happens here is
+/// that a card let go of in this column lets go of its shells.
 ///
-/// These are the only card movements moonreview makes on its own, so they need a column to
-/// point at. They are pinned by id: renaming a column or dragging it somewhere else keeps its
-/// part in these rules, and deleting it turns that rule off rather than sending cards to a
-/// column nobody chose. A board built from scratch out of columns of its own has no automatic
-/// movement at all, which is the honest answer to not having said where it should go.
-pub(crate) const STARTS_IN: &str = "in_progress";
+/// It is pinned by id: renaming the column or dragging it somewhere else keeps its part in
+/// this rule, and deleting it turns the rule off rather than picking a column nobody chose.
 pub(crate) const RELEASES_SHELLS_IN: &str = "done";
 
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
@@ -296,8 +306,13 @@ pub(crate) fn write_task(repo_path: &Path, task_id: &str, metadata: &TaskMetadat
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
-/// Create a task folder in the given column and return the id it was given.
-pub(crate) fn create_task(repo_path: &Path, title: &str, status: &ColumnId) -> Result<String> {
+/// Create a task folder at one end of the given column and return the id it was given.
+pub(crate) fn create_task(
+    repo_path: &Path,
+    title: &str,
+    status: &ColumnId,
+    joins: ColumnEnd,
+) -> Result<String> {
     let title = title.trim();
     if title.is_empty() {
         bail!("a task needs a title");
@@ -308,10 +323,17 @@ pub(crate) fn create_task(repo_path: &Path, title: &str, status: &ColumnId) -> R
         bail!("the board has no {status} column");
     }
     let task_id = format!("{}-{}", slug_of(title), new_uuid());
+    let position = match joins {
+        ColumnEnd::Top => {
+            make_room_at_the_top(repo_path, status)?;
+            0
+        }
+        ColumnEnd::Bottom => position_under_the_column(repo_path, status),
+    };
     let metadata = TaskMetadata {
         title: title.to_string(),
         created_at_unix: now_unix(),
-        position: next_position(repo_path, status),
+        position,
         status: status.clone(),
         resources: Vec::new(),
     };
@@ -354,7 +376,7 @@ pub(crate) fn ensure_notes_file(repo_path: &Path, task_id: &str) -> Result<()> {
 ///
 /// A board that cannot be read is a board with nothing in that column as far as this is
 /// concerned: the new card goes to the top of it, which is no worse than anywhere else.
-fn next_position(repo_path: &Path, status: &ColumnId) -> u32 {
+fn position_under_the_column(repo_path: &Path, status: &ColumnId) -> u32 {
     list_task_ids(repo_path)
         .unwrap_or_default()
         .iter()
@@ -363,6 +385,25 @@ fn next_position(repo_path: &Path, status: &ColumnId) -> u32 {
         .map(|metadata| metadata.position + 1)
         .max()
         .unwrap_or_default()
+}
+
+/// Push every card already in a column down one place, so a new one can have the top.
+///
+/// Moving each card down by one keeps the order they were in among themselves.
+fn make_room_at_the_top(repo_path: &Path, status: &ColumnId) -> Result<()> {
+    for task_id in list_task_ids(repo_path)? {
+        let Ok(mut metadata) = read_task(repo_path, &task_id) else {
+            // A task whose metadata cannot be read is skipped everywhere else too; it has no
+            // place in the column to give up.
+            continue;
+        };
+        if metadata.status != *status {
+            continue;
+        }
+        metadata.position += 1;
+        write_task(repo_path, &task_id, &metadata)?;
+    }
+    Ok(())
 }
 
 /// Drop the whole task folder, including anything an agent left in it.
@@ -473,8 +514,13 @@ mod tests {
     fn a_created_task_reads_back_and_lists() {
         let repo = temp_repo("roundtrip");
 
-        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
-            .expect("expected a task");
+        let task_id = create_task(
+            &repo,
+            "Fix the login page",
+            &ColumnId::new("todo"),
+            ColumnEnd::Top,
+        )
+        .expect("expected a task");
         assert!(task_id.starts_with("fix-the-login-page-"));
 
         let metadata = read_task(&repo, &task_id).expect("expected metadata");
@@ -485,13 +531,41 @@ mod tests {
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
     }
 
+    /// A card joins the end of the column its `+` was pressed at, and the cards already there
+    /// keep the order they were in.
+    #[test]
+    fn a_card_joins_the_end_of_the_column_it_was_asked_for() {
+        let repo = temp_repo("column-ends");
+        let todo = ColumnId::new("todo");
+
+        let first = create_task(&repo, "First", &todo, ColumnEnd::Top).expect("expected a task");
+        let second = create_task(&repo, "Second", &todo, ColumnEnd::Top).expect("expected a task");
+        let last = create_task(&repo, "Last", &todo, ColumnEnd::Bottom).expect("expected a task");
+
+        let place_of = |task_id: &str| {
+            read_task(&repo, task_id)
+                .expect("expected metadata")
+                .position
+        };
+        assert_eq!(place_of(&second), 0, "the newest card asked for the top");
+        assert_eq!(place_of(&first), 1, "the card it pushed down");
+        assert_eq!(place_of(&last), 2, "the card that asked for the bottom");
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
     /// The notes file is there from the moment the task is, because the file pane can only
     /// open a file that really exists.
     #[test]
     fn a_created_task_has_an_empty_notes_file() {
         let repo = temp_repo("notes-created");
-        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
-            .expect("expected a task");
+        let task_id = create_task(
+            &repo,
+            "Fix the login page",
+            &ColumnId::new("todo"),
+            ColumnEnd::Top,
+        )
+        .expect("expected a task");
 
         let path = tasks_root(&repo).join(&task_id).join("notes.md");
         assert!(path.is_file(), "expected {} to exist", path.display());
@@ -503,8 +577,13 @@ mod tests {
     #[test]
     fn notes_round_trip_and_are_never_clobbered_by_ensure() {
         let repo = temp_repo("notes-roundtrip");
-        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
-            .expect("expected a task");
+        let task_id = create_task(
+            &repo,
+            "Fix the login page",
+            &ColumnId::new("todo"),
+            ColumnEnd::Top,
+        )
+        .expect("expected a task");
 
         write_notes(&repo, &task_id, "what the login fix is about\n")
             .expect("expected the notes to be written");
@@ -531,7 +610,13 @@ mod tests {
     fn a_new_board_ignores_itself() {
         let repo = temp_repo("gitignore");
 
-        create_task(&repo, "Fix the login page", &ColumnId::new("todo")).expect("expected a task");
+        create_task(
+            &repo,
+            "Fix the login page",
+            &ColumnId::new("todo"),
+            ColumnEnd::Top,
+        )
+        .expect("expected a task");
 
         let ignore = tasks_root(&repo).join(".gitignore");
         let text = fs::read_to_string(&ignore).expect("expected a .gitignore");
@@ -552,11 +637,13 @@ mod tests {
     #[test]
     fn a_board_that_has_been_shared_is_left_shared() {
         let repo = temp_repo("gitignore-removed");
-        create_task(&repo, "First", &ColumnId::new("todo")).expect("expected a task");
+        create_task(&repo, "First", &ColumnId::new("todo"), ColumnEnd::Top)
+            .expect("expected a task");
         let ignore = tasks_root(&repo).join(".gitignore");
         fs::remove_file(&ignore).expect("failed to remove the .gitignore");
 
-        create_task(&repo, "Second", &ColumnId::new("todo")).expect("expected another task");
+        create_task(&repo, "Second", &ColumnId::new("todo"), ColumnEnd::Top)
+            .expect("expected another task");
 
         assert!(!ignore.exists(), "the .gitignore should not have come back");
 
@@ -567,8 +654,13 @@ mod tests {
     #[test]
     fn the_boards_own_files_are_not_listed_as_tasks() {
         let repo = temp_repo("gitignore-listing");
-        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
-            .expect("expected a task");
+        let task_id = create_task(
+            &repo,
+            "Fix the login page",
+            &ColumnId::new("todo"),
+            ColumnEnd::Top,
+        )
+        .expect("expected a task");
 
         assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
 
@@ -594,43 +686,34 @@ mod tests {
             .map(|column| column.id.as_str())
             .collect();
 
-        assert_eq!(
-            order,
-            ["todo", "in_progress", "done"]
-        );
+        assert_eq!(order, ["todo", "in_progress", "done"]);
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
     }
 
-    /// Every rule the board applies on its own points at one of the default columns, so a
-    /// board that has not been changed behaves exactly as it always did.
+    /// The one rule the board applies on its own points at a default column, so a board that
+    /// has not been changed behaves exactly as it always did.
     #[test]
-    fn the_board_s_own_rules_point_at_columns_it_starts_with() {
+    fn the_board_s_own_rule_points_at_a_column_it_starts_with() {
         let config = BoardConfig::default();
 
-        for role in [STARTS_IN, RELEASES_SHELLS_IN] {
-            assert_eq!(
-                config.role(role),
-                Some(ColumnId::new(role)),
-                "{role} should be a column of a new board"
-            );
-        }
+        assert_eq!(
+            config.role(RELEASES_SHELLS_IN),
+            Some(ColumnId::new(RELEASES_SHELLS_IN)),
+            "{RELEASES_SHELLS_IN} should be a column of a new board"
+        );
     }
 
     /// A rule whose column has been deleted is off rather than pointing somewhere else: a card
-    /// must not be sent to a column nobody chose for it.
+    /// must not have its shells taken away in a column nobody pinned the rule to.
     #[test]
     fn a_rule_whose_column_is_gone_points_nowhere() {
         let mut config = BoardConfig::default();
         config
             .columns
-            .retain(|column| column.id.as_str() != STARTS_IN);
+            .retain(|column| column.id.as_str() != RELEASES_SHELLS_IN);
 
-        assert_eq!(config.role(STARTS_IN), None);
-        assert_eq!(
-            config.role(RELEASES_SHELLS_IN),
-            Some(ColumnId::new(RELEASES_SHELLS_IN))
-        );
+        assert_eq!(config.role(RELEASES_SHELLS_IN), None);
     }
 
     #[test]

@@ -204,7 +204,7 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo", "joins": "top" }))
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -372,7 +372,7 @@ fn creating_a_task_teaches_its_column_the_agent() {
     served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo", "joins": "top" }))
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -433,7 +433,7 @@ fn cards_are_dropped_where_they_are_let_go_of() {
         let created: serde_json::Value = served
             .client
             .post(&tasks_url)
-            .json(&serde_json::json!({ "title": title, "agent": "none", "status": "todo" }))
+            .json(&serde_json::json!({ "title": title, "agent": "none", "status": "todo", "joins": "top" }))
             .send()
             .expect("failed to create a task")
             .error_for_status()
@@ -478,26 +478,26 @@ fn cards_are_dropped_where_they_are_let_go_of() {
             .expect("the server refused to move the task");
     };
 
-    create("first");
+    let first = create("first");
     let second = create("second");
     let third = create("third");
-    // Until one is moved they read in the order they were made, newest at the bottom.
-    assert_eq!(column("todo"), ["first", "second", "third"]);
+    // Until one is moved they read in the order they were made, newest at the top.
+    assert_eq!(column("todo"), ["third", "second", "first"]);
 
-    place(&third, "todo", 0);
-    assert_eq!(column("todo"), ["third", "first", "second"]);
     place(&third, "todo", 1);
-    assert_eq!(column("todo"), ["first", "third", "second"]);
+    assert_eq!(column("todo"), ["second", "third", "first"]);
+    place(&third, "todo", 0);
+    assert_eq!(column("todo"), ["third", "second", "first"]);
     // Past the end is the end, which is what dropping below the last card means.
     place(&third, "todo", 9);
-    assert_eq!(column("todo"), ["first", "second", "third"]);
+    assert_eq!(column("todo"), ["second", "first", "third"]);
 
     // The order survives being read back off disk rather than only holding in this process.
     let metadata = std::fs::read_to_string(
         served
             .root
             .join(".moontasks")
-            .join(&second)
+            .join(&first)
             .join("metadata.json"),
     )
     .expect("failed to read the task");
@@ -592,7 +592,7 @@ fn the_columns_are_the_boards_to_change() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo" }))
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo", "joins": "top" }))
         .send()
         .expect("failed to create a task")
         .error_for_status()

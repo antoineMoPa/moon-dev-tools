@@ -9,7 +9,7 @@ pub(crate) mod store;
 use serde::{Deserialize, Serialize};
 
 use crate::api::AgentKind;
-pub(crate) use store::{BoardColumn, ColumnId, TaskResourceKind};
+pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, TaskResourceKind};
 
 /// One task, as the board draws it.
 #[derive(Clone, Serialize, Deserialize)]
@@ -71,6 +71,9 @@ pub(crate) struct CreateTaskRequest {
     pub(crate) agent: AgentKind,
     /// The column the new card joins — the one whose `+` opened the composer.
     pub(crate) status: ColumnId,
+    /// Which end of that column it joins, which is the `+` that was pressed: the one on the
+    /// heading puts the card on top, the one under the last card puts it at the bottom.
+    pub(crate) joins: ColumnEnd,
 }
 
 #[derive(Serialize, Deserialize)]

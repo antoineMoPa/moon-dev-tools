@@ -16,7 +16,7 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, ve
 
 use crate::{
     api::AgentKind,
-    moontasks::{BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
         model::{OpenedShell, PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
@@ -36,12 +36,12 @@ pub(super) use crate::native::widgets::CLOSE_MARK_SIZE;
 /// What a click on the board asked for. Collected while drawing and acted on afterwards, so
 /// nothing changes the pane tree or the task list while either is being read.
 pub(super) enum BoardAction {
-    /// Open the new-task box in this column.
-    OpenComposer(ColumnId),
+    /// Open the new-task box at one end of this column — the end whose `+` was pressed.
+    OpenComposer(ColumnId, ColumnEnd),
     CloseComposer,
-    /// Create the typed task in this column — the one the composer is open in — and start
+    /// Create the typed task at the end of this column the composer is standing at, and start
     /// the picked agent on it.
-    Create(ColumnId, AgentKind),
+    Create(ColumnId, ColumnEnd, AgentKind),
     /// A card let go of in a column, at the place among its cards it was dropped.
     Place(String, ColumnId, usize),
     /// A column let go of on the board, at the place among the others it was dropped.
@@ -201,14 +201,16 @@ fn draw_column_row(
     }
 }
 
-/// The new-task box, which the `+` on a column's heading opens.
+/// The new-task box, which either of a column's two `+`s opens.
 ///
 /// It is a card in the column it will add to, in the place the new card will appear, rather
-/// than a row over the whole board: what is being written is a card.
+/// than a row over the whole board: what is being written is a card. `joins` is the end it is
+/// standing at, so the box is drawn where its card is about to be.
 fn draw_composer(
     app: &mut App,
     ui: &mut Ui,
     column: &ColumnId,
+    joins: ColumnEnd,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -283,13 +285,13 @@ fn draw_composer(
                         .on_hover_text("Create the task and start the agent on it")
                         .clicked()
                     {
-                        actions.push(BoardAction::Create(column.clone(), agent));
+                        actions.push(BoardAction::Create(column.clone(), joins, agent));
                     }
                 });
             });
 
             if submitted && ready {
-                actions.push(BoardAction::Create(column.clone(), agent));
+                actions.push(BoardAction::Create(column.clone(), joins, agent));
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 actions.push(BoardAction::CloseComposer);
@@ -407,7 +409,10 @@ fn draw_column(
             columns::draw_heading(app, ui, column, tasks.len(), palette, actions);
             ui.add_space(3.0);
 
-            let composing = app.model.board.composer_in.as_ref() == Some(&column.id);
+            // Which end of this column the new-task box is standing at, if it is this column's
+            // box that is open at all.
+            let composing = (app.model.board.composer_in.as_ref() == Some(&column.id))
+                .then_some(app.model.board.composer_at);
 
             // Where a drop would land, counted against the cards it would be put among — so the
             // slot the dragged card is standing in is taken back out of the reckoning, and moving
@@ -427,8 +432,8 @@ fn draw_column(
                         // What a card's place is measured against, so scrolling the column is not
                         // read as every card in it having moved.
                         let origin = ui.min_rect().top();
-                        if composing {
-                            draw_composer(app, ui, &status, palette, actions);
+                        if composing == Some(ColumnEnd::Top) {
+                            draw_composer(app, ui, &status, ColumnEnd::Top, palette, actions);
                         }
                         for task in &tasks {
                             let card = draw_card(app, ui, task, origin, palette, actions);
@@ -440,7 +445,25 @@ fn draw_column(
                             }
                             ui.add_space(CARD_SPACING);
                         }
-                        if tasks.is_empty() && !composing {
+                        if composing == Some(ColumnEnd::Bottom) {
+                            draw_composer(app, ui, &status, ColumnEnd::Bottom, palette, actions);
+                        } else if !tasks.is_empty() {
+                            // Under the last card, where a card added here will appear. Only
+                            // once there are cards: an empty column's own `+` is already the
+                            // one under its last card.
+                            ui.vertical_centered(|ui| {
+                                if plus_button(ui, palette)
+                                    .on_hover_text("New task at the bottom")
+                                    .clicked()
+                                {
+                                    actions.push(BoardAction::OpenComposer(
+                                        status.clone(),
+                                        ColumnEnd::Bottom,
+                                    ));
+                                }
+                            });
+                        }
+                        if tasks.is_empty() && composing.is_none() {
                             ui.label(
                                 RichText::new("nothing here")
                                     .size(SMALL_SIZE)
@@ -607,8 +630,9 @@ fn apply(app: &mut App, action: BoardAction) {
     let session_id = app.model.root_session_id.clone();
 
     match action {
-        BoardAction::OpenComposer(column_id) => {
+        BoardAction::OpenComposer(column_id, joins) => {
             app.model.board.composer_in = Some(column_id);
+            app.model.board.composer_at = joins;
             app.model.board.composer_focus = true;
             // Each column's box starts from that column's own remembered agent.
             app.model.board.composer_agent = None;
@@ -618,11 +642,12 @@ fn apply(app: &mut App, action: BoardAction) {
             app.model.board.new_title.clear();
             app.model.board.composer_agent = None;
         }
-        BoardAction::Create(column_id, agent) => {
+        BoardAction::Create(column_id, joins, agent) => {
             let request = CreateTaskRequest {
                 title: app.model.board.new_title.trim().to_string(),
                 agent,
                 status: column_id,
+                joins,
             };
             if request.title.is_empty() {
                 return;

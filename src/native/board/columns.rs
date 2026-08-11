@@ -8,7 +8,7 @@
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
 
 use crate::{
-    moontasks::{BoardColumn, ColumnId},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId},
     native::{
         app::App,
         board::{
@@ -146,9 +146,13 @@ pub(super) fn draw_heading(
                 }
 
                 // Every column offers a new task, and the card joins the column whose `+`
-                // asked for it.
-                if plus_button(ui, palette).on_hover_text("New task").clicked() {
-                    actions.push(BoardAction::OpenComposer(column.id.clone()));
+                // asked for it. The heading's own `+` puts it on top; the one under the last
+                // card puts it at the bottom.
+                if plus_button(ui, palette)
+                    .on_hover_text("New task at the top")
+                    .clicked()
+                {
+                    actions.push(BoardAction::OpenComposer(column.id.clone(), ColumnEnd::Top));
                 }
                 ui.label(
                     RichText::new(cards.to_string())

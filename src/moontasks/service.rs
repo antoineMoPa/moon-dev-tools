@@ -53,8 +53,8 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
     Ok(tasks.into_iter().map(|(_, task)| task).collect())
 }
 
-/// What a card is sorted by inside its column: where it was put, and — for cards that have
-/// never been moved, and so share a position — the order they were created in.
+/// What a card is sorted by inside its column: where it was put, and — for cards off a board
+/// written before they had a place, which all read as zero — the order they were created in.
 fn place_of(metadata: &TaskMetadata) -> (u32, u64) {
     (metadata.position, metadata.created_at_unix)
 }
@@ -121,26 +121,6 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
         changed = true;
     }
     changed
-}
-
-/// Move a task into the column work is started into, if it was still waiting to the left of it.
-///
-/// Starting an agent on a card that is already at or past that column leaves it where it is:
-/// picking work back up in review has not sent it back to being merely in progress. On a board
-/// whose started column has been deleted, nothing moves.
-fn mark_as_started(board: &BoardConfig, metadata: &mut TaskMetadata) {
-    let Some(starts_in) = board.role(store::STARTS_IN) else {
-        return;
-    };
-    let (Some(now_at), Some(starts_at)) = (
-        board.position_of(&metadata.status),
-        board.position_of(&starts_in),
-    ) else {
-        return;
-    };
-    if now_at < starts_at {
-        metadata.status = starts_in;
-    }
 }
 
 /// The board's columns, left to right.
@@ -339,7 +319,7 @@ pub(crate) fn create_task(
     request: &CreateTaskRequest,
 ) -> Result<TaskView> {
     let repo_path = repo_of(state, session_id)?;
-    let task_id = store::create_task(&repo_path, &request.title, &request.status)?;
+    let task_id = store::create_task(&repo_path, &request.title, &request.status, request.joins)?;
 
     // The column remembers the agent this task was created with — including "none" — so the
     // next task created in it starts from the same choice.
@@ -404,7 +384,6 @@ pub(crate) fn start_resource(
     request: StartResourceRequest,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
-    let board = store::read_board(&repo_path);
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let agent = match request.kind {
@@ -455,8 +434,6 @@ pub(crate) fn start_resource(
             agent_session_id,
             started_at_unix: store::now_unix(),
         });
-        // Work has started, so the task is no longer waiting to be picked up.
-        mark_as_started(&board, &mut metadata);
         store::write_task(&repo_path, task_id, &metadata)?;
     }
 
@@ -471,7 +448,6 @@ pub(crate) fn resume_resource(
     resource_id: &str,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
-    let board = store::read_board(&repo_path);
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let Some(at) = metadata
@@ -514,7 +490,6 @@ pub(crate) fn resume_resource(
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
-    mark_as_started(&board, &mut metadata);
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -532,7 +507,6 @@ pub(crate) fn attach_resource(
     request: &AttachResourceRequest,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
-    let board = store::read_board(&repo_path);
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let agent_session_id = request.agent_session_id.trim();
@@ -567,7 +541,6 @@ pub(crate) fn attach_resource(
         agent_session_id: Some(agent_session_id.to_string()),
         started_at_unix: store::now_unix(),
     });
-    mark_as_started(&board, &mut metadata);
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -874,7 +847,7 @@ mod tests {
     fn a_finished_agent_is_cleared_without_moving_its_task() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: ColumnId::new(store::STARTS_IN),
+            status: ColumnId::new("in_progress"),
             created_at_unix: 0,
             position: 0,
             resources: vec![TaskResource {
@@ -893,7 +866,7 @@ mod tests {
 
         assert!(reconcile(&state, &mut metadata));
 
-        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
+        assert_eq!(metadata.status, ColumnId::new("in_progress"));
         assert_eq!(metadata.resources[0].terminal_id, None);
         assert!(
             !reconcile(&state, &mut metadata),
@@ -927,47 +900,5 @@ mod tests {
         );
 
         assert_eq!(metadata.status, ColumnId::new("done"));
-    }
-
-    /// Renaming a column leaves its id alone, so the rules that point at it still do.
-    #[test]
-    fn a_renamed_column_keeps_its_part_in_the_board_s_rules() {
-        let mut board = BoardConfig::default();
-        for column in &mut board.columns {
-            column.label = format!("{} (mine)", column.label);
-        }
-
-        let mut metadata = TaskMetadata {
-            title: "Fix the login page".to_string(),
-            status: ColumnId::new("todo"),
-            created_at_unix: 0,
-            position: 0,
-            resources: Vec::new(),
-        };
-
-        mark_as_started(&board, &mut metadata);
-
-        assert_eq!(metadata.status, ColumnId::new(store::STARTS_IN));
-    }
-
-    /// Starting an agent on a card that is already past the started column leaves it where it
-    /// is rather than sending it back to being merely in progress.
-    #[test]
-    fn starting_an_agent_does_not_drag_a_card_backwards() {
-        let board = BoardConfig::default();
-        let mut metadata = TaskMetadata {
-            title: "Fix the login page".to_string(),
-            status: ColumnId::new(store::RELEASES_SHELLS_IN),
-            created_at_unix: 0,
-            position: 0,
-            resources: Vec::new(),
-        };
-
-        mark_as_started(&board, &mut metadata);
-
-        assert_eq!(
-            metadata.status,
-            ColumnId::new(store::RELEASES_SHELLS_IN)
-        );
     }
 }

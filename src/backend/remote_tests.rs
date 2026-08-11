@@ -16,7 +16,7 @@ use crate::{
     api::{AgentKind, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
-    moontasks::{ColumnId, CreateTaskRequest},
+    moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
 };
 
 struct ServedRepo {
@@ -212,6 +212,7 @@ fn task_notes_round_trip_over_http() {
                 title: "Fix the login page".to_string(),
                 agent: AgentKind::None,
                 status: ColumnId::new("todo"),
+                joins: ColumnEnd::Top,
             },
         )
         .expect("expected the remote task to be created");
