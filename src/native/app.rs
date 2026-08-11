@@ -650,9 +650,10 @@ impl App {
     /// Read this frame's keyboard through the binding table and act on what it fired.
     fn apply_shortcuts(&mut self, ctx: &egui::Context) {
         // A shell gets every plain keystroke — `s` there is the letter s — and so does a text
-        // box. Only the chords marked as reaching anywhere are the window's while either has
-        // the keyboard. The palette is the exception: it is the window's own text box.
-        let typing = (ctx.egui_wants_keyboard_input() && !self.model.palette.open)
+        // box, the palette's search line included: a box the window owns is still a box the
+        // user is typing in. Only the chords marked as reaching anywhere are the window's
+        // while either has the keyboard.
+        let typing = ctx.egui_wants_keyboard_input()
             || self.active_pane_kind() == Some(PaneKind::Terminal);
 
         for action in self.keymap.resolve(ctx, typing) {
@@ -662,11 +663,7 @@ impl App {
 
     fn apply_action(&mut self, action: Action, ctx: &egui::Context) {
         match action {
-            Action::OpenPalette => {
-                self.model.palette.open = true;
-                self.model.palette.query.clear();
-                self.model.palette.highlighted = 0;
-            }
+            Action::OpenPalette => self.model.palette.show(),
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
             Action::SelectTab(index) => self.select_tab(index, ctx),
@@ -1214,10 +1211,8 @@ impl App {
                     self.pending_tab_action = Some(TabAction::Close);
                     continue;
                 }
-                    MenuAction::OpenCommandPalette => {
-                    self.model.palette.open = true;
-                    self.model.palette.query.clear();
-                    self.model.palette.highlighted = 0;
+                MenuAction::OpenCommandPalette => {
+                    self.model.palette.show();
                     continue;
                 }
             });

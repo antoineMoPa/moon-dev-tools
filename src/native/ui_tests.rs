@@ -3696,6 +3696,213 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
     );
 }
 
+/// A letter typed into the palette's box is a letter, even one the review binds bare — and it
+/// stays one after the cmd key has been tapped on its own, which the platform sends as a key
+/// press like any other.
+#[test]
+fn letters_type_into_the_palette_after_a_bare_cmd_press() {
+    let fixture = seeded_fixture("palette-typing");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let query = Arc::new(Mutex::new(String::new()));
+    let query_in_ui = Arc::clone(&query);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *query_in_ui.lock().expect("poisoned") = app.model.palette.query.clone();
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(
+        &mut harness,
+        egui::Key::P,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    type_letter(&mut harness, egui::Key::S, "s");
+    assert_eq!(
+        *query.lock().expect("poisoned"),
+        "s",
+        "`s` in the palette's box is the letter s"
+    );
+
+    // Tap cmd and let it go, the way a hand resting on the keyboard does.
+    press_key(&mut harness, egui::Key::SuperLeft, egui::Modifiers::COMMAND);
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::SuperLeft,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.run_steps(2);
+
+    type_letter(&mut harness, egui::Key::S, "s");
+    assert_eq!(
+        *query.lock().expect("poisoned"),
+        "ss",
+        "a tapped cmd must not take the letters with it"
+    );
+}
+
+/// Clicking away from the palette — into the review under it, a shell, a tab — puts it away,
+/// and the click lands on what was clicked rather than being spent on dismissing.
+#[test]
+fn clicking_outside_the_palette_puts_it_away() {
+    let fixture = seeded_fixture("palette-click-away");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let open = Arc::new(AtomicBool::new(false));
+    let open_in_ui = Arc::clone(&open);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            open_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(
+        &mut harness,
+        egui::Key::P,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    assert!(open.load(Ordering::Relaxed), "⌘⇧P should have opened it");
+
+    // Well below the palette, which is anchored near the top: the review's own body.
+    click_at(&mut harness, egui::pos2(600.0, 700.0));
+    assert!(
+        !open.load(Ordering::Relaxed),
+        "a click outside the palette should have put it away"
+    );
+    // And the keyboard went with it, rather than being held by a box that is no longer there:
+    // the click belongs to whatever was clicked, a shell included.
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_none(),
+        "the palette's search box should not still have the keyboard"
+    );
+}
+
+/// A pane the workspace keeps one of stays on the list once it is open, and running it then
+/// brings that pane forward rather than opening a second one.
+#[test]
+fn the_palette_still_offers_a_review_that_is_already_open() {
+    let fixture = seeded_fixture("palette-open-review");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let seen = Arc::new(Mutex::new((0_usize, String::new())));
+    let seen_in_ui = Arc::clone(&seen);
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let root = app.model.root_session_id.clone();
+            let listed = crate::native::palette::commands_for(&app);
+            let described = listed
+                .iter()
+                .find(|command| command.title == "review")
+                .map(|command| command.description.clone())
+                .unwrap_or_default();
+            let reviews = app
+                .model
+                .layout
+                .panes()
+                .filter(|(_, pane)| pane.reviews(&root))
+                .count();
+            *seen_in_ui.lock().expect("poisoned") = (reviews, described);
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&root)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    let (reviews, described) = seen.lock().expect("poisoned").clone();
+    assert_eq!(reviews, 1, "the window opens on its review");
+    assert_eq!(
+        described, "Bring the main review forward",
+        "the open review stays on the list, as something to bring forward"
+    );
+
+    press_key(
+        &mut harness,
+        egui::Key::P,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    for letter in [
+        (egui::Key::R, "r"),
+        (egui::Key::E, "e"),
+        (egui::Key::V, "v"),
+    ] {
+        type_letter(&mut harness, letter.0, letter.1);
+    }
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+
+    let (reviews, _) = seen.lock().expect("poisoned").clone();
+    assert_eq!(
+        reviews, 1,
+        "running it again should raise the open review, not open a second one"
+    );
+}
+
+/// A letter as the platform sends one: the key, then the text it produced.
+fn type_letter(harness: &mut Harness<'_>, key: egui::Key, text: &str) {
+    harness.input_mut().events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text(text.to_string()));
+    harness.step();
+    harness.run_steps(2);
+}
+
 /// Press and release a key, then let the UI settle.
 fn press_key(harness: &mut Harness<'_>, key: egui::Key, modifiers: egui::Modifiers) {
     harness.input_mut().events.push(egui::Event::Key {

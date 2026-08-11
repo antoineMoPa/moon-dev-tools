@@ -339,6 +339,27 @@ pub(crate) struct PaletteState {
     pub(crate) open: bool,
     pub(crate) query: String,
     pub(crate) highlighted: usize,
+    /// Where the palette drew last frame. A press outside it puts the palette away, and that
+    /// has to be known before this frame draws — the box takes the keyboard when it draws, and
+    /// a click meant for a shell would lose it again.
+    pub(crate) rect: Option<egui::Rect>,
+}
+
+impl PaletteState {
+    /// Open it on an empty query, at the top of the list, and drawn nowhere yet.
+    pub(crate) fn show(&mut self) {
+        self.open = true;
+        self.query.clear();
+        self.highlighted = 0;
+        self.rect = None;
+    }
+
+    /// Put it away. The rect goes with it so the next one it draws is the one clicks are
+    /// measured against.
+    pub(crate) fn dismiss(&mut self) {
+        self.open = false;
+        self.rect = None;
+    }
 }
 
 impl Default for PaletteState {
@@ -347,6 +368,7 @@ impl Default for PaletteState {
             open: false,
             query: String::new(),
             highlighted: 0,
+            rect: None,
         }
     }
 }

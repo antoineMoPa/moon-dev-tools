@@ -49,43 +49,36 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let mut commands = Vec::new();
     let root = app.model.root_session_id.clone();
 
-    if app.model.layout.find_pane(|pane| pane.reviews(&root)).is_none() {
-        commands.push(Command {
+    commands.push(single_pane_command(
+        app.model.layout.find_pane(|pane| pane.reviews(&root)).is_some(),
+        "review",
+        "Open the main review",
+        "Bring the main review forward",
+        CommandAction::OpenPane(OpenPaneRequest::Review {
+            session_id: root.clone(),
             title: "review".to_string(),
-            description: "Open the main review".to_string(),
-            action: CommandAction::OpenPane(OpenPaneRequest::Review {
-                session_id: root.clone(),
-                title: "review".to_string(),
-            }),
-            shortcut: None,
-        });
-    }
-    if app
-        .model
-        .layout
-        .find_pane(|pane| pane.kind() == PaneKind::Agents)
-        .is_none()
-    {
-        commands.push(Command {
-            title: "comment agents".to_string(),
-            description: "Open the comment agent monitor".to_string(),
-            action: CommandAction::OpenPane(OpenPaneRequest::Agents),
-            shortcut: None,
-        });
-    }
-    if app
-        .model
-        .layout
-        .find_pane(|pane| pane.kind() == PaneKind::Tasks)
-        .is_none()
-    {
-        commands.push(Command {
-            title: "moontasks".to_string(),
-            description: "Open the task board and the agents working on it".to_string(),
-            action: CommandAction::OpenPane(OpenPaneRequest::Tasks),
-            shortcut: None,
-        });
-    }
+        }),
+    ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Agents)
+            .is_some(),
+        "comment agents",
+        "Open the comment agent monitor",
+        "Bring the comment agent monitor forward",
+        CommandAction::OpenPane(OpenPaneRequest::Agents),
+    ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Tasks)
+            .is_some(),
+        "moontasks",
+        "Open the task board and the agents working on it",
+        "Bring the task board forward",
+        CommandAction::OpenPane(OpenPaneRequest::Tasks),
+    ));
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),
@@ -190,6 +183,24 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     commands
 }
 
+/// A pane the workspace keeps one of. It stays on the list once it is open — searching for
+/// "review" and finding nothing reads as the review being gone — and running it then brings
+/// the open one forward, which `Workspace::open_pane` already does for every one of these.
+fn single_pane_command(
+    already_open: bool,
+    title: &str,
+    opens: &str,
+    raises: &str,
+    action: CommandAction,
+) -> Command {
+    Command {
+        title: title.to_string(),
+        description: if already_open { raises } else { opens }.to_string(),
+        action,
+        shortcut: None,
+    }
+}
+
 /// Every typed term has to appear somewhere in the title or description, which makes
 /// "term cl" find the Claude terminal.
 pub(crate) fn filter(commands: Vec<Command>, query: &str) -> Vec<Command> {
@@ -216,6 +227,14 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if !app.model.palette.open {
         return;
     }
+    // A press anywhere else — a shell, a tab, a pane in the next frame over — puts the palette
+    // away and belongs to whatever was pressed. It is answered before anything is drawn: the
+    // search box asks for the keyboard every frame it exists, so a palette still on screen
+    // would take it straight back off the shell that was just clicked.
+    if pressed_outside(ctx, app.model.palette.rect) {
+        app.model.palette.dismiss();
+        return;
+    }
     let palette = app.palette_of();
     let matches = filter(commands_for(app), &app.model.palette.query);
 
@@ -229,7 +248,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     });
 
     if dismiss {
-        app.model.palette.open = false;
+        app.model.palette.dismiss();
         return;
     }
     if !matches.is_empty() {
@@ -249,7 +268,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     }
 
     let screen = ctx.viewport_rect();
-    egui::Area::new("moonreview-palette".into())
+    let area = egui::Area::new("moonreview-palette".into())
         .order(egui::Order::Foreground)
         .anchor(Align2::CENTER_TOP, vec2(0.0, screen.height() * 0.12))
         .show(ctx, |ui| {
@@ -293,13 +312,30 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     }
                 });
         });
+    app.model.palette.rect = Some(area.response.rect);
 
     if let Some(index) = chosen
         && let Some(command) = matches.into_iter().nth(index)
     {
-        app.model.palette.open = false;
+        app.model.palette.dismiss();
         app.pending_action = Some(command.action);
     }
+}
+
+/// Whether a pointer button went down this frame away from where the palette drew last frame.
+/// Before it has drawn once there is nowhere to be outside of, and the press is somebody
+/// else's business.
+fn pressed_outside(ctx: &egui::Context, drawn_at: Option<egui::Rect>) -> bool {
+    let Some(drawn_at) = drawn_at else {
+        return false;
+    };
+    ctx.input(|input| {
+        input.pointer.any_pressed()
+            && input
+                .pointer
+                .interact_pos()
+                .is_some_and(|at| !drawn_at.contains(at))
+    })
 }
 
 fn draw_row(
