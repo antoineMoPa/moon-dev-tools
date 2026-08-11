@@ -2306,6 +2306,131 @@ fn copy_takes_the_selected_diff_lines_without_their_diff_markers() {
     );
 }
 
+/// cmd+c pressed while the keyboard is in a shell belongs to that shell, even when the
+/// review beside it still shows a selection — the selection the user just made is the
+/// shell's, and answering with the diff's older one is what made this confusing.
+///
+/// The shell is a stand-in widget rather than a real terminal: what the review checks is
+/// "the focused id is one a terminal pane recorded", and that is what this drives.
+#[test]
+fn a_copy_pressed_in_a_shell_stays_with_the_shell() {
+    let fixture = seeded_fixture("copy-owner");
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+
+    #[derive(Default)]
+    struct Seen {
+        hunk_id: Option<String>,
+        patch: String,
+        copied: Option<String>,
+    }
+
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let in_shell = Arc::new(AtomicBool::new(false));
+    let in_shell_in_ui = Arc::clone(&in_shell);
+    let shell_id = egui::Id::new("stand-in-shell");
+    let mut app = app;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if in_shell_in_ui.load(Ordering::Relaxed) {
+                // What drawing a focused terminal pane does: a real widget holds the
+                // keyboard, and the model knows that widget is a shell's. It floats in an
+                // area of its own so the app underneath keeps its layout.
+                egui::Area::new("stand-in-shell-area".into())
+                    .fixed_pos(egui::pos2(2.0, 2.0))
+                    .show(ui.ctx(), |ui| {
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(2.0, 2.0),
+                            egui::vec2(8.0, 8.0),
+                        );
+                        let response = ui.interact(rect, shell_id, egui::Sense::click());
+                        response.request_focus();
+                    });
+                app.model.terminal_with_keyboard = Some(shell_id);
+            }
+            app.draw(ui);
+            let Some(review) = app.model.review_ref(&app.model.root_session_id) else {
+                return;
+            };
+            if let Ok(mut seen) = seen_in_ui.lock() {
+                if let Some(hunk) = review.hunks().first() {
+                    seen.hunk_id = Some(hunk.id.clone());
+                    seen.patch = hunk.patch_preview.clone();
+                }
+                if let Some(text) = ui.ctx().output(|output| {
+                    output.commands.iter().find_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                }) {
+                    seen.copied = Some(text);
+                }
+            }
+            ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the review never loaded");
+    harness.run_steps(2);
+
+    let (hunk_id, patch) = {
+        let state = seen.lock().expect("expected the hunk");
+        (
+            state.hunk_id.clone().expect("expected a hunk to select in"),
+            state.patch.clone(),
+        )
+    };
+    let lines = crate::native::review::diff::build_diff_lines(&patch);
+    let line_index = lines
+        .iter()
+        .position(|line| line.kind == crate::native::review::diff::LineKind::Added)
+        .expect("expected an added line to select");
+
+    // A diff line is selected, the way the review remembers a selection across other work.
+    let rect = harness
+        .ctx
+        .read_response(crate::native::review::hunks::diff_line_id(&hunk_id, line_index))
+        .expect("expected the diff line to have been drawn")
+        .rect;
+    click_at(&mut harness, rect.center());
+    harness.run_steps(2);
+
+    // The keyboard moves into a shell, and the chord follows it: the review must not answer.
+    in_shell.store(true, Ordering::Relaxed);
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.run_steps(3);
+    assert!(
+        seen.lock().expect("poisoned").copied.is_none(),
+        "with the keyboard in a shell, the review must leave cmd+c alone"
+    );
+
+    // The shell lets the keyboard go, and the chord is the review's again.
+    in_shell.store(false, Ordering::Relaxed);
+    harness
+        .ctx
+        .memory_mut(|memory| memory.surrender_focus(shell_id));
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.run_steps(3);
+    assert!(
+        seen.lock().expect("poisoned").copied.is_some(),
+        "with the keyboard nowhere, the review's selection answers the copy"
+    );
+}
+
 /// ⌘W is the window's own chord: it takes the tab in front, not the window around it.
 #[test]
 fn command_w_closes_the_tab_in_front() {

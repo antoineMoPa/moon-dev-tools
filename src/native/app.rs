@@ -172,6 +172,7 @@ impl App {
                 connection,
                 file_editors: HashMap::new(),
                 find: None,
+                terminal_with_keyboard: None,
                 opened_project: None,
                 project_path: None,
                 adopt_shells_pending: false,

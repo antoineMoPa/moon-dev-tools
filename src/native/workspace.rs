@@ -629,7 +629,12 @@ impl App {
             .map(|find| (find.query.clone(), find.at));
         let found = searching.map(|(query, at)| terminal.find(&query, at));
 
-        terminal.ui(ui, &palette.terminal_style());
+        let response = terminal.ui(ui, &palette.terminal_style());
+        // Remembered so the review's copy chord can tell "the keyboard is in a shell" from
+        // any other focus — see `review::hunks::copy_selected_lines`.
+        if response.has_focus() {
+            self.model.terminal_with_keyboard = Some(response.id);
+        }
 
         if let Some(total) = found
             && let Some(find) = &mut self.model.find

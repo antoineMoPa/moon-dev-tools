@@ -391,6 +391,9 @@ pub(crate) struct Model {
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
     /// The find bar, when one is open, and the pane it is searching.
     pub(crate) find: Option<crate::native::find::Find>,
+    /// The widget id of the last shell the keyboard was in. The review's copy chord checks
+    /// it against egui's focus to leave cmd+c to a shell the user just selected text in.
+    pub(crate) terminal_with_keyboard: Option<egui::Id>,
     /// A project that has just opened, waiting to be written to the recent list. Set on the
     /// worker thread's result, which is in no position to touch the settings file.
     pub(crate) opened_project: Option<String>,

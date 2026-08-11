@@ -552,6 +552,16 @@ fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     if !asked {
         return;
     }
+    // A copy pressed while the keyboard is in a shell belongs to that shell: the selection
+    // the user just made is in there, and the terminal answers the chord itself. Any other
+    // focus — the composer's box, say — leaves the chord to the diff as it always has.
+    let keyboard_in_a_shell = ui
+        .ctx()
+        .memory(|memory| memory.focused())
+        .is_some_and(|focused| app.model.terminal_with_keyboard == Some(focused));
+    if keyboard_in_a_shell {
+        return;
+    }
 
     let Some(hunk_id) = app
         .model
@@ -913,6 +923,22 @@ fn draw_diff_line(
 
     if !selectable {
         return;
+    }
+
+    // Starting a selection here takes the keyboard from whoever had it. A shell keeps its
+    // focus through a sweep that never touches it — egui only surrenders focus on clicks —
+    // and the copy chord has to follow the selection the user just made, not the one made
+    // before it.
+    if response.drag_started()
+        || response.clicked()
+        || response.double_clicked()
+        || response.triple_clicked()
+    {
+        ui.ctx().memory_mut(|memory| {
+            if let Some(focused) = memory.focused() {
+                memory.surrender_focus(focused);
+            }
+        });
     }
 
     // A drag sweeps characters. It starts where the button went down, and every line the
