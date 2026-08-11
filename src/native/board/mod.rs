@@ -745,6 +745,8 @@ fn apply(app: &mut App, action: BoardAction) {
                 task_title,
                 sessions: None,
                 error: None,
+                manual_id: String::new(),
+                manual_agent: None,
             });
             // Keyed, so holding the menu item down cannot queue a listing per frame. The
             // listing is the repo's rather than the task's, so whichever picker is open when

@@ -5,9 +5,10 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Stroke, Ui};
 
 use crate::{
     agent_sessions::AgentSessionView,
+    api::AgentKind,
     native::{
         app::App,
-        board::{BoardAction, agent_label},
+        board::{BoardAction, agent_label, available_agents},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -32,6 +33,10 @@ pub(super) fn draw(
     let task_title = picker.task_title.clone();
     let error = picker.error.clone();
     let sessions = picker.sessions.clone();
+    let agents: Vec<AgentKind> = available_agents(app)
+        .into_iter()
+        .filter(|agent| *agent != AgentKind::None)
+        .collect();
 
     let modal = egui::Modal::new(egui::Id::new("moontasks-attach-picker")).show(ctx, |ui| {
         ui.set_width(PICKER_WIDTH);
@@ -79,6 +84,10 @@ pub(super) fn draw(
             }
         }
 
+        if !agents.is_empty() {
+            draw_manual_entry(app, ui, &task_id, &agents, palette, actions);
+        }
+
         ui.add_space(6.0);
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
             if widgets::quiet_button(ui, "cancel").clicked() {
@@ -90,6 +99,83 @@ pub(super) fn draw(
     // Escape, or a click on the backdrop.
     if modal.should_close() {
         actions.push(BoardAction::CloseAttachPicker);
+    }
+}
+
+/// A session id typed or pasted by hand, with the agent it belongs to: the way in for a
+/// session the listing does not show — too old to make the newest few, or one nobody ever
+/// spoke in. The id is passed through as given; an id the agent does not know is refused by
+/// the agent itself, in the shell that opens.
+fn draw_manual_entry(
+    app: &mut App,
+    ui: &mut Ui,
+    task_id: &str,
+    agents: &[AgentKind],
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let Some(picker) = app.model.board.attach_picker.as_mut() else {
+        return;
+    };
+
+    ui.add_space(6.0);
+    widgets::divider(ui, palette);
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new("or attach a session by its id")
+            .size(SMALL_SIZE)
+            .color(palette.muted),
+    );
+    ui.add_space(4.0);
+
+    let entry = ui.add(
+        egui::TextEdit::singleline(&mut picker.manual_id)
+            .hint_text("session id")
+            .desired_width(f32::INFINITY),
+    );
+    let submitted = entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+    ui.add_space(4.0);
+
+    // Claude first: it is the agent whose ids are pasted in practice, its listing being the
+    // one that drops sessions nobody spoke in.
+    let agent = picker
+        .manual_agent
+        .filter(|picked| agents.contains(picked))
+        .or_else(|| agents.contains(&AgentKind::Claude).then_some(AgentKind::Claude))
+        .unwrap_or(agents[0]);
+    let ready = !picker.manual_id.trim().is_empty();
+    let mut attach = false;
+
+    ui.horizontal(|ui| {
+        let mut picked = agent;
+        egui::ComboBox::from_id_salt("moontasks-attach-manual-agent")
+            .selected_text(agent_label(agent))
+            .width(104.0)
+            .show_ui(ui, |ui| {
+                for option in agents {
+                    ui.selectable_value(&mut picked, *option, agent_label(*option));
+                }
+            });
+        if picked != agent {
+            picker.manual_agent = Some(picked);
+        }
+
+        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+            if widgets::clickable(ui.add_enabled(ready, egui::Button::new("attach")))
+                .on_hover_text("Put this session on the task and open it")
+                .clicked()
+            {
+                attach = true;
+            }
+        });
+    });
+
+    if (submitted || attach) && ready {
+        actions.push(BoardAction::Attach {
+            task_id: task_id.to_string(),
+            agent,
+            agent_session_id: picker.manual_id.trim().to_string(),
+        });
     }
 }
 

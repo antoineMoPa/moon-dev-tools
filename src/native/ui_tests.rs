@@ -1321,6 +1321,8 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
                         },
                     ]),
                     error: None,
+                    manual_id: String::new(),
+                    manual_agent: None,
                 });
             }
             app.draw(ui);

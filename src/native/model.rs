@@ -272,6 +272,11 @@ pub(crate) struct AttachPicker {
     /// What the agents' records had. `None` while they are still being read.
     pub(crate) sessions: Option<Vec<crate::agent_sessions::AgentSessionView>>,
     pub(crate) error: Option<String>,
+    /// A session id typed or pasted by hand, for one the listing does not show — too old to
+    /// make the newest few, or one nobody ever spoke in.
+    pub(crate) manual_id: String,
+    /// The agent the typed id belongs to. `None` until the user picks one.
+    pub(crate) manual_agent: Option<crate::api::AgentKind>,
 }
 
 /// A drop that has been made on the board being drawn and not yet seen in one being read.

@@ -399,6 +399,10 @@ impl App {
     /// there — logging out of a terminal or an agent finishing should leave the workspace as it
     /// was before the shell was opened.
     ///
+    /// An agent that fell over is never among them: the server keeps its shell and does not
+    /// mark it exited, so the tab stays open on the error — see `failure_notice` in
+    /// `crate::terminal`.
+    ///
     /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
     pub(crate) fn close_tabs_of_exited_shells(&mut self) {
         let Some(terminal_id) = self

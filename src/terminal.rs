@@ -120,6 +120,11 @@ pub(crate) struct TerminalSession {
     output: broadcast::Sender<Vec<u8>>,
     /// Flipped once the shell is gone. Attached tabs watch it so they learn about it even
     /// though they hold this session alive.
+    ///
+    /// An agent that fell over on its own is the exception: its flag stays false and its
+    /// session stays in the registry, so the tabs showing the error stay open rather than
+    /// closing over the only account of what went wrong — see the reader thread in
+    /// [`TerminalRegistry::spawn`].
     exited: watch::Sender<bool>,
     scrollback: Mutex<Scrollback>,
     /// When the shell last printed anything, which is how the type-ahead tells a program that
@@ -128,6 +133,10 @@ pub(crate) struct TerminalSession {
     /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
     /// text arriving after someone has started writing lands in the middle of their sentence.
     typed_into: std::sync::atomic::AtomicBool,
+    /// Whether the program is gone while the session is kept — a failed agent held open for
+    /// its error to be read. Input is discarded then: nothing reads the pty any more, and a
+    /// write once its buffer fills would block whoever is typing.
+    child_ended: std::sync::atomic::AtomicBool,
     /// Typing in a shell, and a shell printing output, both keep the server from idling out.
     last_activity: Arc<Mutex<Instant>>,
 }
@@ -144,8 +153,7 @@ impl TerminalSession {
     pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
         self.typed_into.store(true, Ordering::Relaxed);
-        self.writer.lock().unwrap().write_all(data)?;
-        Ok(())
+        self.write_to_child(data)
     }
 
     /// The terminal answering the program's own query. It goes to the same place a keystroke
@@ -153,6 +161,15 @@ impl TerminalSession {
     #[cfg(feature = "native")]
     pub(crate) fn write_reply(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
+        self.write_to_child(data)
+    }
+
+    /// Write to the program, unless it is gone and the session is only being kept for its
+    /// error: nothing reads the pty then, and a write once its buffer fills would block.
+    fn write_to_child(&self, data: &[u8]) -> anyhow::Result<()> {
+        if self.child_ended.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         self.writer.lock().unwrap().write_all(data)?;
         Ok(())
     }
@@ -382,6 +399,7 @@ impl TerminalRegistry {
             scrollback: Mutex::new(Scrollback::default()),
             last_output: Mutex::new(None),
             typed_into: std::sync::atomic::AtomicBool::new(false),
+            child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
         });
         self.sessions
@@ -413,14 +431,51 @@ impl TerminalRegistry {
                     }
                 }
             }
-            // `send` is refused when nothing is subscribed, and would leave the flag false for
-            // whoever asks later; the value has to be set whether or not anyone is listening.
-            exited.send_replace(true);
-            registry.remove(&reaped_id);
+            // An agent that fell over on its own — `claude --resume` on a session id that no
+            // longer exists, say — has printed the only account of what went wrong, and both
+            // frontends close the tab of a shell marked exited. So its session is kept, with a
+            // notice saying how it ended, until the user closes it themselves. A shell taken
+            // out of the registry already was ended on purpose, and has nothing to explain.
+            match failure_notice(&session) {
+                Some(notice) if registry.is_live(&reaped_id) => {
+                    session.child_ended.store(true, Ordering::Relaxed);
+                    session.scrollback.lock().unwrap().push(notice.as_bytes());
+                    let _ = output.send(notice.into_bytes());
+                }
+                _ => {
+                    // `send` is refused when nothing is subscribed, and would leave the flag
+                    // false for whoever asks later; the value has to be set whether or not
+                    // anyone is listening.
+                    exited.send_replace(true);
+                    registry.remove(&reaped_id);
+                }
+            }
         });
 
         Ok(terminal_id)
     }
+}
+
+/// The notice a shell's ending earns, if it is one worth keeping on screen: an agent whose
+/// process ended in failure. `None` says the shell is done with and can be reaped.
+///
+/// A plain login shell is never kept: it exits with whatever its last command returned, so a
+/// nonzero status there is everyday use rather than the program falling over.
+fn failure_notice(session: &TerminalSession) -> Option<String> {
+    let program = match session.program {
+        None | Some(AgentKind::None) => return None,
+        Some(agent) => agent.label().to_lowercase(),
+    };
+    let status = session.child.lock().unwrap().wait().ok()?;
+    if status.success() {
+        return None;
+    }
+
+    let ending = match status.signal() {
+        Some(signal) => format!("was ended by {signal}"),
+        None => format!("exited with code {}", status.exit_code()),
+    };
+    Some(format!("\r\n\x1b[31m[{program} {ending}]\x1b[0m\r\n"))
 }
 
 /// Type text into a shell once the program in it has a box to take it, as if a person had.
@@ -433,7 +488,10 @@ impl TerminalRegistry {
 fn type_ahead(session: &TerminalSession, text: &str) {
     let deadline = Instant::now() + TYPE_AHEAD_DEADLINE;
     while Instant::now() < deadline {
-        if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+        if *session.exited.borrow()
+            || session.child_ended.load(Ordering::Relaxed)
+            || session.typed_into.load(Ordering::Relaxed)
+        {
             return;
         }
         // Silence before the program has printed anything at all is it still starting up, not
@@ -454,7 +512,10 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     // the text rather than inside it. The shell may also have ended, and a dead pty refuses
     // writes.
     let mut writer = session.writer.lock().unwrap();
-    if *session.exited.borrow() || session.typed_into.load(Ordering::Relaxed) {
+    if *session.exited.borrow()
+        || session.child_ended.load(Ordering::Relaxed)
+        || session.typed_into.load(Ordering::Relaxed)
+    {
         return;
     }
     let _ = writer.write_all(text.as_bytes());
@@ -555,10 +616,10 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
                 match serde_json::from_str::<ClientMessage>(&text)? {
                     ClientMessage::Input { data } => {
                         session.typed_into.store(true, Ordering::Relaxed);
-                        session.writer.lock().unwrap().write_all(data.as_bytes())?;
+                        session.write_to_child(data.as_bytes())?;
                     }
                     ClientMessage::Reply { data } => {
-                        session.writer.lock().unwrap().write_all(data.as_bytes())?;
+                        session.write_to_child(data.as_bytes())?;
                     }
                     ClientMessage::Resize { cols, rows } => {
                         session.master.lock().unwrap().resize(PtySize {
@@ -683,6 +744,142 @@ mod tests {
         assert!(
             printed.contains("moonreview-typed-this"),
             "the title should still have been typed, printed: {printed:?}"
+        );
+    }
+
+    /// A folder holding a fake `claude` for the PATH, so an agent shell can be spawned
+    /// without the real agent — the spec's own env wins over the PATH the spawn sets.
+    #[cfg(unix)]
+    fn fake_claude(script: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "moonreview-fake-agent-{}",
+            crate::moontasks::store::new_uuid()
+        ));
+        std::fs::create_dir_all(&dir).expect("failed to create the fake agent's folder");
+        let path = dir.join("claude");
+        std::fs::write(&path, script).expect("failed to write the fake agent");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("failed to make the fake agent executable");
+        dir
+    }
+
+    #[cfg(unix)]
+    fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
+        let path = fake_claude(script);
+        registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: Some(AgentKind::Claude),
+                args: Vec::new(),
+                env: vec![("PATH".to_string(), path.display().to_string())],
+                owner: None,
+                type_ahead: None,
+            })
+            .expect("expected a shell")
+    }
+
+    /// An agent that falls over — `claude --resume` on a session id that no longer exists,
+    /// say — has printed the only account of what went wrong. Its shell is kept, unexited, so
+    /// the tabs showing the error stay open, and a notice says how it ended.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_agent_keeps_its_shell_open_with_a_notice() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = spawn_fake_claude(
+            &registry,
+            "#!/bin/sh\necho 'No conversation found with session ID'\nexit 1\n",
+        );
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut printed = String::new();
+        while Instant::now() < deadline {
+            printed =
+                String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+            if printed.contains("[claude exited with code 1]") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            printed.contains("No conversation found with session ID"),
+            "the error itself should still be there, printed: {printed:?}"
+        );
+        assert!(
+            printed.contains("[claude exited with code 1]"),
+            "the notice should say how it ended, printed: {printed:?}"
+        );
+        assert!(
+            registry.is_live(&terminal_id),
+            "the failed shell should be kept rather than reaped"
+        );
+        assert!(
+            !*session.exited.borrow(),
+            "kept means not exited, so attached tabs stay open"
+        );
+        // Nothing reads the pty any more, so typing at the kept shell is discarded rather
+        // than left to fill the pty's buffer and block.
+        assert!(session.child_ended.load(Ordering::Relaxed));
+        session
+            .write_to_child(b"typed at a dead shell")
+            .expect("input at a kept shell is discarded, not an error");
+        registry.remove(&terminal_id);
+    }
+
+    /// An agent that ends cleanly is done with: reaped like any shell, tab and all.
+    #[cfg(unix)]
+    #[test]
+    fn an_agent_that_ends_cleanly_is_reaped() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = spawn_fake_claude(&registry, "#!/bin/sh\nexit 0\n");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && registry.is_live(&terminal_id) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            !registry.is_live(&terminal_id),
+            "a clean ending has nothing to keep"
+        );
+    }
+
+    /// A login shell exits with whatever its last command returned, so a nonzero status there
+    /// is everyday use — reaped, never kept.
+    #[cfg(unix)]
+    #[test]
+    fn a_plain_shell_that_exits_nonzero_is_still_reaped() {
+        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+        let terminal_id = registry
+            .spawn(TerminalSpec {
+                cwd: std::env::temp_dir(),
+                program: None,
+                args: Vec::new(),
+                env: Vec::new(),
+                owner: None,
+                type_ahead: None,
+            })
+            .expect("expected a shell");
+        let session = registry.get(&terminal_id).expect("expected the shell");
+
+        session
+            .writer
+            .lock()
+            .unwrap()
+            .write_all(b"exit 1\n")
+            .expect("failed to type into the shell");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && registry.is_live(&terminal_id) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            !registry.is_live(&terminal_id),
+            "a plain shell's exit status is its last command's, not a failure to keep"
         );
     }
 
