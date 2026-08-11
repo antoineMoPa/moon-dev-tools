@@ -31,8 +31,7 @@ use crate::{
 /// this is about what a title needs rather than what the window has.
 const COLUMN_WIDTH: f32 = 286.0;
 
-/// The close mark's box, matching the one on a tab.
-pub(super) const CLOSE_MARK_SIZE: f32 = 12.0;
+pub(super) use crate::native::widgets::CLOSE_MARK_SIZE;
 
 /// What a click on the board asked for. Collected while drawing and acted on afterwards, so
 /// nothing changes the pane tree or the task list while either is being read.
@@ -328,41 +327,9 @@ impl Axis {
     }
 }
 
-/// The thin `✕` a tab carries to close it, as a button of its own.
-///
-/// Drawn rather than typeset for the reason `egui_frames` gives: a font's close glyph is a
-/// heavy emoji ✖, and this wants the hairline cross a browser tab draws.
-pub(super) fn close_button(ui: &mut Ui, palette: &Palette) -> egui::Response {
-    close_mark(ui, palette, true)
-}
-
-/// The same, for a mark that is there to be found and explained rather than pressed — a
-/// column that still holds cards has one, because a mark that vanishes is a mark nobody
-/// learns about, but it must not light up as though the press would do something.
-pub(super) fn close_mark(ui: &mut Ui, palette: &Palette, enabled: bool) -> egui::Response {
-    const SIZE: f32 = CLOSE_MARK_SIZE;
-
-    let (rect, response) = ui.allocate_exact_size(vec2(SIZE, SIZE), egui::Sense::click());
-    if ui.is_rect_visible(rect) {
-        let ink = if response.hovered() && enabled {
-            palette.warn
-        } else {
-            palette.muted
-        };
-        let reach = SIZE * 0.27;
-        let stroke = egui::Stroke::new(1.0, ink);
-        let center = rect.center();
-        ui.painter().line_segment(
-            [center + vec2(-reach, -reach), center + vec2(reach, reach)],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [center + vec2(reach, -reach), center + vec2(-reach, reach)],
-            stroke,
-        );
-    }
-    widgets::clickable(response)
-}
+// The board grew these marks first and the rest of the window took them up, so they live in
+// [`widgets`] now and keep their old names here.
+pub(super) use crate::native::widgets::{close_button, close_mark};
 
 /// Whether a resource is still going: a filled dot for running, a hollow one for ended.
 ///

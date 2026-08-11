@@ -946,7 +946,7 @@ impl App {
                                 ui.painter().rect_filled(rect, CornerRadius::same(2), ink);
                                 ui.label(RichText::new(&toast.text).color(palette.ink));
                                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                                    if widgets::quiet_button(ui, "\u{1F5D9}").clicked() {
+                                    if widgets::close_button(ui, &palette).clicked() {
                                         dismissed = Some(index);
                                     }
                                 });

@@ -37,6 +37,45 @@ pub(crate) fn quiet_button(ui: &mut Ui, text: &str) -> Response {
     clickable(ui.add(egui::Button::new(text).frame(false)))
 }
 
+/// The close mark's box, matching the one on a tab.
+pub(crate) const CLOSE_MARK_SIZE: f32 = 12.0;
+
+/// The thin cross a tab carries to close it, as a button of its own.
+///
+/// Drawn rather than typeset for the reason `egui_frames` gives: a font's close glyph is a
+/// heavy emoji, and this wants the hairline cross a browser tab draws.
+pub(crate) fn close_button(ui: &mut Ui, palette: &Palette) -> Response {
+    close_mark(ui, palette, true)
+}
+
+/// The same, for a mark that is there to be found and explained rather than pressed — a
+/// column that still holds cards has one, because a mark that vanishes is a mark nobody
+/// learns about, but it must not light up as though the press would do something.
+pub(crate) fn close_mark(ui: &mut Ui, palette: &Palette, enabled: bool) -> Response {
+    const SIZE: f32 = CLOSE_MARK_SIZE;
+
+    let (rect, response) = ui.allocate_exact_size(vec2(SIZE, SIZE), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let ink = if response.hovered() && enabled {
+            palette.warn
+        } else {
+            palette.muted
+        };
+        let reach = SIZE * 0.27;
+        let stroke = Stroke::new(1.0, ink);
+        let center = rect.center();
+        ui.painter().line_segment(
+            [center + vec2(-reach, -reach), center + vec2(reach, reach)],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [center + vec2(reach, -reach), center + vec2(-reach, reach)],
+            stroke,
+        );
+    }
+    clickable(response)
+}
+
 pub(crate) fn quiet_button_colored(ui: &mut Ui, text: &str, ink: Color32) -> Response {
     clickable(ui.add(egui::Button::new(RichText::new(text).color(ink)).frame(false)))
 }
