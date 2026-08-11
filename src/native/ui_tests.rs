@@ -525,6 +525,74 @@ fn a_file_opens_in_a_tab_of_its_own() {
     harness.snapshot("file-pane");
 }
 
+/// A markdown file opens on the rendered page, and `[edit]` is the way back to the text.
+#[test]
+fn a_markdown_file_opens_rendered() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = Fixture::new("file-markdown");
+    fixture.write(
+        "NOTES.md",
+        "# The plan\n\nShip it by *Friday*, with:\n\n- a heading\n- emphasis\n- this list\n",
+    );
+    fixture.commit("Add the notes");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "NOTES.md");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model
+                    .file_editors
+                    .values()
+                    .any(|editor| editor.content_for_test().is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the file tab never opened");
+    harness.run_steps(3);
+
+    // Rendered: the page, not the text of it — so no line-number fringe, and the way back is
+    // on screen.
+    assert!(
+        harness.query_by_label("[edit]").is_some(),
+        "a rendered markdown file should offer the way back to the text"
+    );
+    harness.snapshot("file-pane-markdown");
+
+    harness.get_by_label("[edit]").click();
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("[preview]").is_some(),
+        "the text view should offer the rendered page back"
+    );
+    harness.snapshot("file-pane-markdown-source");
+}
+
 /// Editing a file tab writes the file back, and the tab says so until it does.
 #[test]
 fn editing_a_file_tab_saves_it_to_the_working_tree() {
@@ -1440,12 +1508,12 @@ fn a_card_dropped_above_another_takes_its_place() {
             .expect("expected the card to have been drawn")
             .rect
     };
-    let first = handle_of(&harness, "write-the-parser-1111");
+    let second = handle_of(&harness, "fix-the-login-page-2222");
     let last = handle_of(&harness, "drop-the-old-api-3333");
-    // Picked up by its title and let go of below the middle of the first card, which is the
-    // gap under it.
+    // Picked up by its title and let go of just above the second card's title: past the whole
+    // of the first card — notes box and all — which is the gap between the two.
     let start = last.center();
-    let end = first.center_bottom() + egui::vec2(0.0, 12.0);
+    let end = second.center_top() - egui::vec2(0.0, 4.0);
 
     harness.input_mut().events.extend([
         egui::Event::PointerMoved(start),
@@ -1480,6 +1548,13 @@ fn a_card_dropped_above_another_takes_its_place() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.step();
+    // The pointer leaves the cards before the picture is taken: the landed card's title is
+    // right where the drop was, and hovering it long enough draws the tooltip — which names
+    // the fixture's own folder, process id and all, so no two runs would match.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(1200.0, 600.0)));
     harness.step();
 
     // Just dropped: the card is in the slot it was held over, marked so it can be picked back
@@ -1496,6 +1571,129 @@ fn a_card_dropped_above_another_takes_its_place() {
         read(),
         expected,
         "the card should have landed in the gap it was dropped in"
+    );
+}
+
+/// A card's notes are its description: their first lines sit under the title and a click
+/// opens `notes.md` in a pane down the right, straight into the editor. A task with none
+/// offers `[add notes]` instead, and its first open is what makes the file real.
+#[test]
+fn a_cards_notes_open_beside_the_board_ready_to_edit() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("board-notes");
+    for (task_id, title) in [
+        ("write-the-parser-1111", "Write the parser"),
+        ("fix-the-login-page-2222", "Fix the login page"),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+    // One task has notes to show; the other has none, and offers to start them.
+    fixture.write(
+        ".moontasks/write-the-parser-1111/notes.md",
+        "Ship it by Friday, working top down.\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // The file panes the clicks end up opening, watched for from out here: the app is the
+    // closure's from the moment the harness is built.
+    let file_panes = Arc::new(Mutex::new(Vec::<String>::new()));
+    let file_panes_in_ui = Arc::clone(&file_panes);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 2,
+                Ordering::Relaxed,
+            );
+            if let Ok(mut panes) = file_panes_in_ui.lock() {
+                *panes = app
+                    .model
+                    .layout
+                    .panes()
+                    .filter_map(|(_, pane)| match pane {
+                        Pane::File { file_path, .. } => Some(file_path.clone()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the two tasks out of .moontasks"
+    );
+    harness.run_steps(3);
+
+    // The description shows on the one card, and the way to start one on the other.
+    let panes_open = || {
+        file_panes
+            .lock()
+            .map(|panes| panes.clone())
+            .unwrap_or_default()
+    };
+    let wait_for = |harness: &mut Harness<'_>, path: &str| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline && !panes_open().iter().any(|open| open == path) {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    harness
+        .get_by_label_contains("Ship it by Friday")
+        .click();
+    wait_for(&mut harness, ".moontasks/write-the-parser-1111/notes.md");
+    assert!(
+        panes_open().contains(&".moontasks/write-the-parser-1111/notes.md".to_string()),
+        "clicking the description should have opened the notes, got {:?}",
+        panes_open()
+    );
+    harness.run_steps(3);
+    // Straight into the editor: the way to the rendered page on screen says which mode this is.
+    assert!(
+        harness.query_by_label("[preview]").is_some(),
+        "the notes should have opened on the text, not the rendered page"
+    );
+
+    harness.get_by_label("[add notes]").click();
+    wait_for(&mut harness, ".moontasks/fix-the-login-page-2222/notes.md");
+    assert!(
+        panes_open().contains(&".moontasks/fix-the-login-page-2222/notes.md".to_string()),
+        "[add notes] should have opened the other task's notes, got {:?}",
+        panes_open()
+    );
+    let started = fixture
+        .root
+        .join(".moontasks/fix-the-login-page-2222/notes.md");
+    assert!(
+        started.is_file(),
+        "opening the notes is what makes the file real"
     );
 }
 

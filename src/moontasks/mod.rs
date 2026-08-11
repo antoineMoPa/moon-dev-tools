@@ -22,6 +22,9 @@ pub(crate) struct TaskView {
     pub(crate) dir_path: String,
     /// The repo the task's agents work in, which is the repo the board belongs to.
     pub(crate) repo_path: String,
+    /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
+    /// card draws its first lines as the task's description, and typing there writes it back.
+    pub(crate) notes: String,
     pub(crate) resources: Vec<TaskResourceView>,
 }
 
@@ -73,6 +76,13 @@ pub(crate) struct CreateTaskRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskTitleRequest {
     pub(crate) title: String,
+}
+
+/// The answer to opening a task's notes: where the file pane finds the file, relative to the
+/// repo root, which is how every file pane path is addressed.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskNotesPayload {
+    pub(crate) file_path: String,
 }
 
 /// Where a dragged card was let go of: the column, and how many of that column's other cards
@@ -189,7 +199,9 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          how they know to.\n\
          \n\
          Notes, plans and scratch files that belong to this task go in the task folder rather \
-         than in the repo.\n\
+         than in the repo. Start with notes.md there: it is the task's description and shared \
+         notes, shown on the board's card, read and written by you and the person running the \
+         task alike.\n\
          \n\
          The title above is the name on a card, not the brief. Wait for the person who opened \
          this session to explain what they actually want before starting on anything."
@@ -199,6 +211,15 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
 /// The file the brief is also written to, so it can be read by a person or by an agent that
 /// had no way to be handed it.
 pub(crate) const BRIEF_FILE_NAME: &str = "brief.md";
+
+/// The task's description and shared notes, in its folder. The card draws its first lines
+/// under the title, and agents are told to write theirs there.
+pub(crate) const NOTES_FILE_NAME: &str = "notes.md";
+
+/// The notes file as the file pane addresses it: relative to the repo root.
+pub(crate) fn notes_repo_path(task_id: &str) -> String {
+    format!("{}/{task_id}/{NOTES_FILE_NAME}", store::TASKS_DIR_NAME)
+}
 
 pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {
     AGENT_LAUNCHES.iter().find(|launch| launch.kind == agent)

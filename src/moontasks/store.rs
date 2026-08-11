@@ -316,7 +316,38 @@ pub(crate) fn create_task(repo_path: &Path, title: &str, status: &ColumnId) -> R
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
+    ensure_notes_file(repo_path, &task_id)?;
     Ok(task_id)
+}
+
+/// The whole of a task's notes file. A task without one has nothing written yet, which reads
+/// as the empty string it is — the card draws its box either way.
+pub(crate) fn read_notes(repo_path: &Path, task_id: &str) -> String {
+    task_dir(repo_path, task_id)
+        .and_then(|dir| {
+            fs::read_to_string(dir.join(super::NOTES_FILE_NAME)).map_err(anyhow::Error::from)
+        })
+        .unwrap_or_default()
+}
+
+/// Write the whole of a task's notes file, creating it if it is not there.
+pub(crate) fn write_notes(repo_path: &Path, task_id: &str, content: &str) -> Result<()> {
+    let dir = task_dir(repo_path, task_id)?;
+    fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(super::NOTES_FILE_NAME);
+    fs::write(&path, content).with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Make sure the task's notes file exists, without touching what anyone wrote in it.
+///
+/// Empty rather than seeded: the card's title already sits right above the notes box, and the
+/// file pane can only open a file that is really there.
+pub(crate) fn ensure_notes_file(repo_path: &Path, task_id: &str) -> Result<()> {
+    let dir = task_dir(repo_path, task_id)?;
+    if dir.join(super::NOTES_FILE_NAME).is_file() {
+        return Ok(());
+    }
+    write_notes(repo_path, task_id, "")
 }
 
 /// The position a card takes to sit under everything already in a column.
@@ -450,6 +481,36 @@ mod tests {
         assert_eq!(metadata.title, "Fix the login page");
         assert_eq!(metadata.status, ColumnId::new("todo"));
         assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
+    /// The notes file is there from the moment the task is, because the file pane can only
+    /// open a file that really exists.
+    #[test]
+    fn a_created_task_has_an_empty_notes_file() {
+        let repo = temp_repo("notes-created");
+        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
+            .expect("expected a task");
+
+        let path = tasks_root(&repo).join(&task_id).join("notes.md");
+        assert!(path.is_file(), "expected {} to exist", path.display());
+        assert_eq!(read_notes(&repo, &task_id), "");
+
+        fs::remove_dir_all(repo).expect("failed to remove the test repo");
+    }
+
+    #[test]
+    fn notes_round_trip_and_are_never_clobbered_by_ensure() {
+        let repo = temp_repo("notes-roundtrip");
+        let task_id = create_task(&repo, "Fix the login page", &ColumnId::new("todo"))
+            .expect("expected a task");
+
+        write_notes(&repo, &task_id, "what the login fix is about\n")
+            .expect("expected the notes to be written");
+        ensure_notes_file(&repo, &task_id).expect("expected ensure to succeed");
+
+        assert_eq!(read_notes(&repo, &task_id), "what the login fix is about\n");
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
     }

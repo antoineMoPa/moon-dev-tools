@@ -54,6 +54,9 @@ pub(super) enum BoardAction {
     Delete(String),
     Rename(String, String),
     CancelRename,
+    /// Open the task's `notes.md` in a pane down the right, making the file first if the
+    /// task has none yet.
+    OpenNotes(String),
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -784,6 +787,15 @@ fn apply(app: &mut App, action: BoardAction) {
             });
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
+        BoardAction::OpenNotes(task_id) => {
+            app.tasks.spawn(
+                move |backend| backend.open_task_notes(&session_id, &task_id),
+                |model, result| match result {
+                    Ok(file_path) => model.board.opened_notes = Some(file_path),
+                    Err(error) => model.error(format!("could not open the notes: {error}")),
+                },
+            );
+        }
         BoardAction::AddColumn(label) => {
             // The box closes on the way out: the column it was standing in for is on its way.
             app.model.board.new_column_label.clear();

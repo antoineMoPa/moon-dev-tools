@@ -228,6 +228,9 @@ pub(crate) struct BoardState {
     /// A shell a board action just started, waiting for the window to open a tab on it. The
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
+    /// A notes file a board action just made sure exists, as the repo-relative path a file
+    /// pane opens it by — waiting for the window the same way an opened shell does.
+    pub(crate) opened_notes: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
@@ -323,6 +326,7 @@ pub(crate) struct TaskRename {
     pub(crate) focus: bool,
 }
 
+
 /// A shell the board started and wants shown.
 pub(crate) struct OpenedShell {
     pub(crate) terminal_id: String,
@@ -389,6 +393,9 @@ pub(crate) struct Model {
     pub(crate) restored_agent: Option<AgentKind>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
+    /// What the markdown renderer keeps between frames — loaded images above all — shared by
+    /// every file pane that is previewing.
+    pub(crate) markdown_cache: egui_commonmark::CommonMarkCache,
     /// The find bar, when one is open, and the pane it is searching.
     pub(crate) find: Option<crate::native::find::Find>,
     /// The widget id of the last shell the keyboard was in. The review's copy chord checks

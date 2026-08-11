@@ -28,6 +28,9 @@ pub(crate) struct FileEditor {
     edited: String,
     error: Option<String>,
     saving: bool,
+    /// Whether the pane is showing the markdown rendered rather than the text of it. Only
+    /// ever true for a markdown file, which is also the only kind offered the toggle.
+    preview: bool,
     /// Set when a close was asked for while there were unsaved edits: the second press goes
     /// through, the way discarding a hunk does.
     pub(crate) close_confirmed: bool,
@@ -35,12 +38,14 @@ pub(crate) struct FileEditor {
 
 impl FileEditor {
     fn loading(file_path: String) -> Self {
+        let preview = is_markdown(&file_path);
         Self {
             file_path,
             saved: None,
             edited: String::new(),
             error: None,
             saving: false,
+            preview,
             close_confirmed: false,
         }
     }
@@ -64,6 +69,14 @@ impl FileEditor {
     }
 }
 
+/// Whether the file is written in markdown, which is what decides if the pane opens on the
+/// rendered page and offers the way back to the text.
+fn is_markdown(file_path: &str) -> bool {
+    std::path::Path::new(file_path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
 impl App {
     /// Open a file in a tab of its own, or bring the tab already showing it forward.
     ///
@@ -83,6 +96,47 @@ impl App {
                 file_path: file_path.to_string(),
             },
         ));
+    }
+
+    /// Open a task's notes beside the board: in the frame the other file tabs are in, or a
+    /// new column down the right — the way a shell opens. It lands in the text editor rather
+    /// than the rendered page, because notes are opened to be written.
+    pub(crate) fn open_notes_pane(&mut self, session_id: String, file_path: String) {
+        use crate::native::panes::{Pane, PaneKind};
+
+        let pane_id = match self
+            .model
+            .layout
+            .find_pane(|pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path))
+        {
+            Some((pane, _)) => {
+                self.model.layout.focus_pane(pane);
+                pane
+            }
+            None => {
+                let pane = Pane::File {
+                    session_id: session_id.clone(),
+                    file_path: file_path.clone(),
+                };
+                let active = self.model.layout.active_frame();
+                match self
+                    .model
+                    .layout
+                    .frame_holding(active, |pane| pane.kind() == PaneKind::File)
+                {
+                    Some(frame) => self.model.layout.add_pane(frame, pane, None),
+                    None => self.model.layout.add_pane_against_edge(
+                        egui_frames::DropSide::Right,
+                        egui_frames::DEFAULT_EDGE_SHARE,
+                        pane,
+                    ),
+                }
+            }
+        };
+        self.ensure_file_editor(pane_id, &session_id, &file_path);
+        if let Some(editor) = self.model.file_editors.get_mut(&pane_id) {
+            editor.preview = false;
+        }
     }
 
     /// The file a pane is showing, fetched on first sight.
@@ -184,27 +238,62 @@ impl App {
         let saving = editor.saving;
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
+        let markdown = is_markdown(file_path);
+        // The find bar selects matches in the laid-out text, so while it is on this pane the
+        // text is what is shown, whatever the toggle says.
+        let find_is_here = self
+            .model
+            .find
+            .as_ref()
+            .is_some_and(|find| find.pane_id == pane_id);
+        let previewing = markdown && editor.preview && !find_is_here;
 
         // The pane's own margin: a frame body runs to the edge of the border, and a file name
         // or a line of code hard against it reads as a mistake.
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(PANE_PADDING, 6))
             .show(ui, |ui| {
+                // The actions are laid out first and the path takes what is left, cut with
+                // an ellipsis — a task's notes path is long, and a path that runs under the
+                // buttons is worse than one that ends in a "…".
                 ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(file_path).strong()).selectable(true),
-                    );
-                    if dirty {
-                        ui.label(
-                            RichText::new(if saving { "saving…" } else { "unsaved" })
-                                .size(SMALL_SIZE - 1.0)
-                                .color(palette.warn),
-                        );
-                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if dirty && !saving && widgets::quiet_button(ui, "[save]").clicked() {
                             self.save_file_pane(pane_id, session_id);
                         }
+                        if markdown
+                            && loaded
+                            && widgets::quiet_button(
+                                ui,
+                                if previewing { "[edit]" } else { "[preview]" },
+                            )
+                            .on_hover_text(if previewing {
+                                "Edit the file as text"
+                            } else {
+                                "Render the markdown"
+                            })
+                            .clicked()
+                            && let Some(editor) = self.model.file_editors.get_mut(&pane_id)
+                        {
+                            editor.preview = !previewing;
+                        }
+                        if dirty {
+                            ui.label(
+                                RichText::new(if saving { "saving…" } else { "unsaved" })
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.warn),
+                            );
+                        }
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(file_path).strong())
+                                    .truncate()
+                                    .selectable(true),
+                            )
+                            // The whole of it, since the pane may only have room for the
+                            // start.
+                            .on_hover_text(file_path);
+                        });
                     });
                 });
                 widgets::divider(ui, &palette);
@@ -219,7 +308,11 @@ impl App {
                     return;
                 }
 
-                draw_editor(self, ui, pane_id, &palette);
+                if previewing {
+                    draw_preview(self, ui, pane_id);
+                } else {
+                    draw_editor(self, ui, pane_id, &palette);
+                }
             });
     }
 }
@@ -252,6 +345,46 @@ pub(crate) fn matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>>
         .collect()
 }
 
+/// About the measure GitHub lays a readme out at. Prose in a full-width pane puts a whole
+/// paragraph on one line, which is more head-turning than reading.
+const PREVIEW_MAX_WIDTH: f32 = 900.0;
+/// What the rendered page keeps clear on either side even in a narrow pane — text against
+/// the pane's edge reads like a mistake.
+const PREVIEW_SIDE_PADDING: f32 = 100.0;
+
+/// The markdown rendered as the page it describes, in place of the text of it.
+///
+/// It renders the edited text rather than the saved one, so flipping to the preview shows
+/// what would be saved, not what was.
+fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
+    let Some(editor) = app.model.file_editors.get(&pane_id) else {
+        return;
+    };
+    let text = editor.edited.clone();
+
+    egui::ScrollArea::vertical()
+        .id_salt(("file-pane-preview", pane_id))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let width = (ui.available_width() - 2.0 * PREVIEW_SIDE_PADDING)
+                .min(PREVIEW_MAX_WIDTH)
+                // A pane too narrow for the full padding still gets a readable column.
+                .max(ui.available_width() * 0.5);
+            let margin = ((ui.available_width() - width) / 2.0).max(0.0);
+            ui.horizontal_top(|ui| {
+                ui.add_space(margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(width);
+                    egui_commonmark::CommonMarkViewer::new().show(
+                        ui,
+                        &mut app.model.markdown_cache,
+                        &text,
+                    );
+                });
+            });
+        });
+}
+
 fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
     let font = egui::FontId::monospace(CODE_SIZE);
     let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
@@ -280,27 +413,18 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                 let line_count = editor.edited.lines().count().max(1);
 
                 // The fringe is outside the horizontal scroll area, so scrolling the code
-                // sideways slides it under numbers that stay where they are.
+                // sideways slides it under numbers that stay where they are. Its height is
+                // only an estimate for layout — the numbers are painted where the laid-out
+                // text really put each line.
                 let fringe_height = row_height * line_count as f32;
                 let (fringe, _) = ui.allocate_exact_size(
                     vec2(FRINGE_WIDTH, fringe_height),
                     egui::Sense::hover(),
                 );
-                if ui.is_rect_visible(fringe) {
-                    for line in 0..line_count {
-                        let at = egui::pos2(
-                            fringe.max.x - 6.0,
-                            fringe.min.y + row_height * line as f32,
-                        );
-                        ui.painter().text(
-                            at,
-                            egui::Align2::RIGHT_TOP,
-                            format!("{}", line + 1),
-                            egui::FontId::monospace(CODE_SIZE - 1.0),
-                            palette.muted,
-                        );
-                    }
-                }
+                // The fringe's painter, kept from out here: the one inside the horizontal
+                // scroll area clips to the code, and the numbers sit left of it.
+                let painter = ui.painter().clone();
+                let muted = palette.muted;
 
                 egui::ScrollArea::horizontal()
                     .id_salt(("file-pane-code", pane_id))
@@ -312,6 +436,36 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             .desired_width(f32::INFINITY)
                             .desired_rows(line_count)
                             .show(ui);
+
+                        // Each number at the height the galley actually gave its line —
+                        // counting multiples of the font's row height drifts away from the
+                        // text within a screen, because the editor lays its rows out with
+                        // spacing of its own. A row only starts a line when the row before
+                        // it ended in a newline, which is what keeps the numbers right if
+                        // the text ever wraps.
+                        let visible = painter.clip_rect().expand(row_height).y_range();
+                        let mut line = 0;
+                        let mut starts_line = true;
+                        for placed in &output.galley.rows {
+                            let starts = starts_line;
+                            starts_line = placed.ends_with_newline;
+                            if !starts {
+                                continue;
+                            }
+                            line += 1;
+                            let y = output.galley_pos.y + placed.pos.y;
+                            if !visible.contains(y) {
+                                continue;
+                            }
+                            painter.text(
+                                egui::pos2(fringe.max.x - 6.0, y),
+                                egui::Align2::RIGHT_TOP,
+                                line.to_string(),
+                                egui::FontId::monospace(CODE_SIZE - 1.0),
+                                muted,
+                            );
+                        }
+
                         if let Some(searching) = &searching {
                             found = Some(show_match(ui, &editor.edited, searching, output));
                         }
@@ -377,6 +531,7 @@ mod tests {
             edited: edited.to_string(),
             error: None,
             saving: false,
+            preview: false,
             close_confirmed: false,
         }
     }
@@ -423,6 +578,20 @@ mod tests {
         assert!(editor_with("fn one() {}", "fn two() {}").is_dirty());
         // Nothing has arrived yet, so there is nothing to have changed.
         assert!(!FileEditor::loading("src/lib.rs".to_string()).is_dirty());
+    }
+
+    /// Markdown opens on the rendered page; everything else opens on the text, and never
+    /// grows the toggle at all.
+    #[test]
+    fn only_markdown_opens_on_the_rendered_page() {
+        assert!(is_markdown("notes.md"));
+        assert!(is_markdown(".moontasks/fix-login-1234/NOTES.MD"));
+        assert!(!is_markdown("src/lib.rs"));
+        assert!(!is_markdown("md"));
+        assert!(!is_markdown("README"));
+
+        assert!(FileEditor::loading("Moontasks.md".to_string()).preview);
+        assert!(!FileEditor::loading("src/lib.rs".to_string()).preview);
     }
 
 }

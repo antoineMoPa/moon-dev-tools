@@ -24,8 +24,8 @@ use crate::{
     git::detect_agent_availability,
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskPlacementRequest, TaskTitleRequest, TaskView,
-        TerminalOpened,
+        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
+        TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
     service,
@@ -159,6 +159,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/title",
             post(rename_task),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/notes/open",
+            post(open_task_notes),
         )
         .route(
             "/api/session/{session_id}/terminals",
@@ -700,6 +704,16 @@ async fn rename_task(
     mark_activity(&state);
     moontasks::service::rename_task(&state, &session_id, &task_id, &request.title)?;
     Ok("ok")
+}
+
+async fn open_task_notes(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<TaskNotesPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TaskNotesPayload {
+        file_path: moontasks::service::open_notes(&state, &session_id, &task_id)?,
+    }))
 }
 
 async fn discard_hunks(

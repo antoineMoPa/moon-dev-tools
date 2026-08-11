@@ -14,6 +14,8 @@ in the repo straight away.
 | `[start review]` | open the review of the repo in a tab |
 | `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |
 | a running resource | click its name to bring its terminal back on screen |
+| the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
+| `[add notes]` | the same, on a task that has none yet |
 
 A card being dragged leaves the place it came from and takes up the one it is being held over,
 which the cards around it move aside for, so the drop changes nothing that was not already on
@@ -63,6 +65,7 @@ The board is a folder in the repo, which is the whole of its state:
   fix-the-login-page-6f9c1e2a-…/
     metadata.json     # title, column, place in the column, and the shells and agent runs
     brief.md          # what the agents working here have been told
+    notes.md          # the task's description and shared notes, shown on the card
     …                 # anything you or an agent puts here
 ```
 
@@ -78,7 +81,8 @@ delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 
 An agent started on a task does not have to be asked twice. It is given a brief — the same
 text `brief.md` holds — naming the task, its folder, and asking it to say plainly when the
-work is ready to be looked at.
+work is ready to be looked at. It is also pointed at `notes.md` there: the task's description
+and shared notes, which the card shows and either of you may write.
 
 The card's title is then typed into its box, as if you had typed it: once the agent has
 stopped printing, which is it having drawn an input to type into and being sat waiting — a

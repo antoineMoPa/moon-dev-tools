@@ -28,6 +28,7 @@ default = ["native"]
 native = [
     "dep:eframe",
     "dep:egui",
+    "dep:egui_commonmark",
     "dep:egui_extras",
     "dep:egui_frames",
     "dep:egui_tty",
@@ -43,6 +44,8 @@ axum = { version = "0.8", features = ["json", "ws"] }
 base64 = "0.22"
 eframe = { version = "0.36", features = ["persistence"], optional = true }
 egui = { version = "0.36", optional = true }
+# Renders the markdown files the file pane opens — task notes above all.
+egui_commonmark = { version = "0.25", optional = true }
 egui_extras = { version = "0.36", features = ["image"], optional = true }
 # The tab, split and terminal widgets, kept as crates of their own: submodules under crates/,
 # published separately, and used here like any other dependency.

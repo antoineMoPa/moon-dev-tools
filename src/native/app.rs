@@ -171,6 +171,7 @@ impl App {
                 agent_log: None,
                 connection,
                 file_editors: HashMap::new(),
+                markdown_cache: Default::default(),
                 find: None,
                 terminal_with_keyboard: None,
                 opened_project: None,
@@ -465,6 +466,18 @@ impl App {
             command: opened.command,
             task_id: Some(opened.task_id),
         });
+    }
+
+    /// Open the notes file the board just made sure exists, in a pane down the right.
+    ///
+    /// The board's tasks are read from the root session's repo, so that is the session the
+    /// file pane reads the notes through.
+    fn open_notes_the_board_readied(&mut self) {
+        let Some(file_path) = self.model.board.opened_notes.take() else {
+            return;
+        };
+        let session_id = self.model.root_session_id.clone();
+        self.open_notes_pane(session_id, file_path);
     }
 
     fn poll_submodules(&mut self) {
@@ -1222,6 +1235,7 @@ impl App {
         self.poll_submodules();
         self.poll_board();
         self.open_shell_the_board_started();
+        self.open_notes_the_board_readied();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }

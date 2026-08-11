@@ -265,6 +265,10 @@ impl Backend for LocalBackend {
         moontasks::service::rename_task(&self.state, session_id, task_id, title)
     }
 
+    fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
+        moontasks::service::open_notes(&self.state, session_id, task_id)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         let repo_path = crate::api::with_session(&self.state, session_id, |session| {
             Ok(session.repo_path.clone())

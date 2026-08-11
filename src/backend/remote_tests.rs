@@ -13,9 +13,10 @@ use std::{
 };
 
 use crate::{
-    api::OpenSessionRequest,
+    api::{AgentKind, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
+    moontasks::{ColumnId, CreateTaskRequest},
 };
 
 struct ServedRepo {
@@ -188,6 +189,52 @@ fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
     backend
         .close_terminal(&opened.session_id, &terminal_id)
         .expect("expected the remote shell to close");
+}
+
+/// The card's notes and the file pane read the same file: opening the notes makes it real,
+/// the file pane's own write path edits it, and the board's next read shows what was written.
+#[test]
+fn task_notes_round_trip_over_http() {
+    let served = serve_a_repo("notes");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let task = backend
+        .create_task(
+            &opened.session_id,
+            &CreateTaskRequest {
+                title: "Fix the login page".to_string(),
+                agent: AgentKind::None,
+                status: ColumnId::new("todo"),
+            },
+        )
+        .expect("expected the remote task to be created");
+    assert_eq!(task.notes, "", "a new task has nothing written yet");
+
+    let path = backend
+        .open_task_notes(&opened.session_id, &task.id)
+        .expect("expected the notes to open");
+    assert_eq!(path, format!(".moontasks/{}/notes.md", task.id));
+
+    // The pane saves through the same write every other file uses.
+    backend
+        .write_file(&opened.session_id, &path, "what the fix is about\n")
+        .expect("expected the file pane's write to reach the notes");
+
+    let tasks = backend
+        .list_tasks(&opened.session_id)
+        .expect("expected the remote task list");
+    assert_eq!(tasks[0].notes, "what the fix is about\n");
+    let content = backend
+        .file_content(&opened.session_id, &path)
+        .expect("expected the file pane's read to find the notes");
+    assert_eq!(content.content, "what the fix is about\n");
 }
 
 #[test]

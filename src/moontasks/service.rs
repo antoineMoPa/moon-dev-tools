@@ -316,8 +316,21 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
             .display()
             .to_string(),
         repo_path: repo_path.display().to_string(),
+        notes: store::read_notes(repo_path, task_id),
         resources,
     }
+}
+
+/// Make sure the task's notes file exists, and answer with where the file pane finds it.
+///
+/// The file has to be real before the pane opens it: the repo-file pipeline the pane reads and
+/// saves through refuses a path that is not a file in the working tree, and a task made before
+/// notes existed has none yet.
+pub(crate) fn open_notes(state: &AppState, session_id: &str, task_id: &str) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    store::read_task(&repo_path, task_id)?;
+    store::ensure_notes_file(&repo_path, task_id)?;
+    Ok(super::notes_repo_path(task_id))
 }
 
 pub(crate) fn create_task(
@@ -735,6 +748,10 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     let path = dir.join(super::BRIEF_FILE_NAME);
     std::fs::write(&path, format!("{brief}\n"))
         .with_context(|| format!("failed to write {}", path.display()))?;
+
+    // The brief points the agent at notes.md, so by the time one reads it the file is there.
+    // Only made, never rewritten — it is the task's own record, unlike the brief.
+    store::ensure_notes_file(repo_path, task_id)?;
 
     Ok(Fillings {
         values: vec![("{brief}", brief)],

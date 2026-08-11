@@ -246,6 +246,8 @@ fn draw_card_body(
             ui.set_width(ui.available_width());
             draw_card_title(app, ui, task, drag_id, palette, actions);
             ui.add_space(3.0);
+            draw_notes_box(ui, task, palette, actions);
+            ui.add_space(3.0);
 
             let removing = app.model.board.pending_resource_delete.clone();
             for resource in &task.resources {
@@ -389,6 +391,52 @@ fn draw_title_editor(
         actions.push(BoardAction::Rename(task.id.clone(), title));
     } else if abandon || keep {
         actions.push(BoardAction::CancelRename);
+    }
+}
+
+/// How many lines of a task's notes the card shows before the rest is cut. The card is the
+/// description at a glance, not the whole file — that is what the notes pane is for.
+const NOTES_ROWS: usize = 3;
+
+/// The first lines of the task's `notes.md` under the title — its description. A task with
+/// none offers the link that starts them. Either way a click opens the file in a column down
+/// the right, straight into the editor.
+fn draw_notes_box(
+    ui: &mut Ui,
+    task: &TaskView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let notes = task.notes.trim();
+    if notes.is_empty() {
+        if widgets::quiet_button(ui, "[add notes]")
+            .on_hover_text("Write this task's notes.md, shared with its agents")
+            .clicked()
+        {
+            actions.push(BoardAction::OpenNotes(task.id.clone()));
+        }
+        return;
+    }
+
+    let preview = widgets::cut_to_fit(
+        ui,
+        notes,
+        egui::FontId::proportional(SMALL_SIZE),
+        palette.muted,
+        ui.available_width(),
+        NOTES_ROWS,
+    );
+    if ui
+        .add(
+            egui::Label::new(preview)
+                .selectable(false)
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open this task's notes.md")
+        .clicked()
+    {
+        actions.push(BoardAction::OpenNotes(task.id.clone()));
     }
 }
 
