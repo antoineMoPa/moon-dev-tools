@@ -9,6 +9,12 @@ PACKAGE_VERSION="$(node -p "require('./package.json').version")"
 TAG="v$PACKAGE_VERSION"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
+# The three executables Cargo builds. install.sh expects every one of them in the archive.
+PROGRAMS=(
+    "moonreview"
+    "moontasks"
+    "moonshell"
+)
 LINUX_TARGET_TRIPLES=(
     "x86_64-unknown-linux-gnu"
     "aarch64-unknown-linux-gnu"
@@ -49,22 +55,29 @@ checksum_file() {
     )
 }
 
-package_binary() {
+package_binaries() {
     target_triple="$1"
-    binary_path="$2"
+    build_dir="$2"
     asset_basename="moonreview-${target_triple}"
     stage_dir="$OUTPUT_DIR/stage/${target_triple}"
     archive_path="$OUTPUT_DIR/${asset_basename}.tar.gz"
 
+    rm -rf "$stage_dir"
     mkdir -p "$stage_dir"
 
-    cp "$binary_path" "$stage_dir/moonreview"
-    chmod 0755 "$stage_dir/moonreview"
+    for program in "${PROGRAMS[@]}"; do
+        if [ ! -f "$build_dir/$program" ]; then
+            echo "$target_triple build produced no $program in $build_dir" >&2
+            exit 1
+        fi
+        cp "$build_dir/$program" "$stage_dir/$program"
+        chmod 0755 "$stage_dir/$program"
+    done
 
-    tar -C "$stage_dir" -czf "$archive_path" moonreview
+    tar -C "$stage_dir" -czf "$archive_path" "${PROGRAMS[@]}"
     checksum_file "$archive_path"
 
-    echo "  $archive_path"
+    echo "  $archive_path (${PROGRAMS[*]})"
     echo "  ${archive_path}.sha256"
 }
 
@@ -106,7 +119,7 @@ EOF
 build_macos_arm64() {
     echo "Building moonreview $TAG for $MACOS_TARGET_TRIPLE..."
     cargo build --release --locked
-    package_binary "$MACOS_TARGET_TRIPLE" "$ROOT_DIR/target/release/moonreview"
+    package_binaries "$MACOS_TARGET_TRIPLE" "$ROOT_DIR/target/release"
 }
 
 build_linux() {
@@ -158,7 +171,7 @@ build_linux() {
             chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
         '
 
-    package_binary "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release/moonreview"
+    package_binaries "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release"
 }
 
 require_zig
