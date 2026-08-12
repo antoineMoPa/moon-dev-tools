@@ -149,9 +149,11 @@ build_linux() {
         -v "$ROOT_DIR:/work" \
         -w /work \
         "$builder_image" \
-        bash -lc '
+        bash -c '
             set -euo pipefail
-            export PATH="/opt/rust/cargo/bin:$PATH"
+            # libghostty-vt-sys clones Ghostty into the bind-mounted target dir, whose owner
+            # does not match the container user, so git refuses to touch it without this.
+            git config --global --add safe.directory "*"
             cargo build --release --locked --target "$LINUX_TARGET_TRIPLE"
             chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
         '
