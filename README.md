@@ -1,32 +1,50 @@
-# 🌚 moonreview
+# 🌚 moon-dev-tools
 
-The missing local code review step when working with AI agents.
+A collection of local tools for the agentic era.
 
-![Moon Review Screenshot](screenshot.gif)
-
-moonreview is a tiny local code review UI for git.
-
-It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude, codex, or opencode (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
-
-It installs three executables. They are one window opened on three different things:
+`moon-dev-tools` brings task planning, agent workspaces, shells and code review together. It
+installs three executables:
 
 | | |
 | --- | --- |
-| `moonreview` | a review of the repo |
-| `moontasks` | the task board, and the agents working through it |
+| `moontasks` | a sprint board for organizing tasks, agents and shells |
+| `moonreview` | a local code review UI for git |
 | `moonshell` | a shell in the repo |
+
+![Moontasks sprint board with a shell beside it](tests/snapshots/moontasks-workspace.png)
+
+**Moontasks** is a sprint board that keeps you organized while several agents and shells work
+through a repo. Each card is a task folder with notes, running shells and agents attached to it,
+so agent work has a visible place instead of disappearing into terminal tabs. Open any resource
+beside the board and move cards through your own workflow as work progresses.
+
+![Moonreview showing local changes](tests/snapshots/review-dark.png)
+
+**Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage
+them individually. Send comments to your local Claude, Codex or OpenCode using your signed-in
+account, or collect one review to paste into another AI tool. **Moonshell** opens the same
+workspace directly on a shell.
 
 Whichever you start, the other two are a command palette away — they are frames of the same
 window, not separate apps.
 
-There are two frontends over one review server:
+Moonreview has two frontends over the same local server:
 
 - a **native window**, which carries the server inside the same executable — this is the default
 - the **web frontend**, in a browser tab, which is the same review and stays fully supported
 
-## Installation
+## Quick install
 
-Build from source:
+Install the latest prebuilt release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moon-dev-tools/main/install.sh | sh
+```
+
+This installs all three executables and desktop launchers. If `~/.local/bin` is not already on
+your `PATH`, add it in your shell configuration.
+
+## Build from source
 
 Requirements:
 
@@ -59,22 +77,11 @@ Everything still links statically — the result is three executables with no ru
 dependency on Zig or on a separate server process. They share one library, so the build
 compiles once and links three times.
 
-To build without the native window (web frontend only, no Zig needed):
+To build Moonreview's web frontend only, without the native window or Zig:
 
 ```bash
 cargo install --locked --path . --no-default-features
 ```
-
-## Easy installation
-
-Install the latest prebuilt binary:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moonreview/main/install.sh | sh
-```
-
-If `~/.local/bin` is not already on your `PATH`, you may need to update your PATH in your
-shells.
 
 ## Desktop launchers
 
@@ -92,21 +99,32 @@ its macOS menu bar and in the command palette, as `install desktop launchers`. E
 runs the executable where it is installed, so `cargo install` over it is also an upgrade of
 what the launcher opens; rerun the command only after moving the executables somewhere else.
 
-A window opened that way starts outside every repo — there is no terminal it could have
-inherited one from — so it asks which repo to review, with the folder picker of the OS.
+A window opened that way starts outside every repo, so it asks which repo to open with the
+folder picker of the OS.
 
 `install.sh` writes the launchers itself, so a prebuilt install needs nothing further.
 
 ## Usage
 
 ```bash
-moonreview   # a review of the repo
-moontasks    # the task board
+moontasks    # the sprint board
+moonreview   # review local changes
 moonshell    # a shell in the repo
 ```
 
-Run any of them inside a git repository. Each opens the same native window, with the review
-server running inside it, on a different first tab.
+Run any of them inside a git repository. The other tools remain one command-palette action away
+(`⌘⇧P`).
+
+### Moontasks
+
+Create a card for a piece of work, choose an agent, and Moontasks starts it in the repo. Cards
+group the task brief, shared notes, agent runs and shells in one place. Drag cards and columns
+to make the board match your workflow.
+
+Task state lives in the repo's `.moontasks/` directory. See [Moontasks.md](Moontasks.md) for the
+complete board behavior and controls.
+
+### Moonreview
 
 Pass two paths to compare arbitrary files in a read-only review:
 
@@ -146,7 +164,7 @@ is a new place to work rather than a second view of this one; `moontasks --pick`
 thing from a shell. Everywhere else those live in the command palette, which also has them on
 macOS.
 
-### The web frontend
+### Web frontend
 
 `--web` opens a browser tab against a background server instead, which is how moonreview
 worked before the window existed:
@@ -159,11 +177,6 @@ The window also serves the web frontend, so **View → Open in Browser** (`⌘B`
 `open in browser` in the command palette, opens the same review in a browser without starting
 anything else.
 
-### Moontasks
-
-`moontasks` opens a sprint board over the repo, each card a task with an agent behind it.
-See [Moontasks.md](Moontasks.md).
-
 ## Settings
 
 What belongs to you rather than to a repo or a window is kept in one file:
@@ -172,7 +185,7 @@ What belongs to you rather than to a repo or a window is kept in one file:
 ~/.moonreview/settings.json
 ```
 
-Right now that is which agent the review hands comments to — the selector at the top right.
+Right now that is which agent Moonreview hands comments to — the selector at the top right.
 Pick one and the next window comes up on it. The file is meant to be readable and editable:
 
 ```json
@@ -181,7 +194,7 @@ Pick one and the next window comes up on it. The file is meant to be readable an
 }
 ```
 
-### Reviewing another machine
+### Working on another machine
 
 Run the server where the repo is:
 
@@ -226,7 +239,7 @@ Two pieces of the native window are libraries in their own right, kept as submod
 `crates/` and published separately:
 
 - [**egui_frames**](crates/egui_frames) — tabs, splits and draggable panes for egui. The
-  arrangement moonreview's window is made of, with nothing about reviews in it.
+  arrangement the Moon tools workspace is made of, with nothing product-specific in it.
 - [**egui_tty**](crates/egui_tty) — a terminal emulator widget for egui, on Ghostty's VT engine.
   What a shell tab holds.
 
@@ -252,9 +265,9 @@ cargo install --locked --path .; moonreview install-launchers
 
 On mac you will need to drag applications from the Applications folder to your menu bar.
 
-## Origin of name
+## Origin of the names
 
-This is a project started during lunch time, so an AI tool named it noon-review which
-was a terrible name, so I updated to moon review which sounds close and is more fun,
-later adding the friendly moon emoji. That could also be a reference to reviewing at night
-after a long hacking day.
+Moonreview started as a lunch-time project named `noon-review` by an AI tool. That was a
+terrible name, so it became Moonreview: close enough to the original, more fun, and fitting for
+reviewing after a long hacking day. Moontasks and Moonshell joined it later, and
+`moon-dev-tools` became the home for the whole collection.

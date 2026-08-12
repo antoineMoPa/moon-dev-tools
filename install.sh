@@ -2,7 +2,7 @@
 
 set -eu
 
-REPO="${MOONREVIEW_REPO:-antoineMoPa/moonreview}"
+REPO="${MOONREVIEW_REPO:-antoineMoPa/moon-dev-tools}"
 INSTALL_DIR="${MOONREVIEW_INSTALL_DIR:-$HOME/.local/bin}"
 # The three executables. They are one program opened on three different things, and they ship
 # together, but an archive from before the split holds only the first.

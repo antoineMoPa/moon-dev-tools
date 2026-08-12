@@ -1280,6 +1280,14 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // pressed to open it.
     let at_bottom = Arc::new(AtomicBool::new(false));
     let at_bottom_in_ui = Arc::clone(&at_bottom);
+    let open_shell = Arc::new(AtomicBool::new(false));
+    let open_shell_in_ui = Arc::clone(&open_shell);
+    let shell_requested = Arc::new(AtomicBool::new(false));
+    let shell_requested_in_ui = Arc::clone(&shell_requested);
+    let shell_ready = Arc::new(AtomicBool::new(false));
+    let shell_ready_in_ui = Arc::clone(&shell_ready);
+    let shell_command_sent = Arc::new(AtomicBool::new(false));
+    let shell_command_sent_in_ui = Arc::clone(&shell_command_sent);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1400.0, 800.0))
@@ -1300,8 +1308,33 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 } else {
                     crate::moontasks::ColumnEnd::Top
                 };
+            } else {
+                app.model.board.composer_in = None;
+            }
+            if open_shell_in_ui.load(Ordering::Relaxed)
+                && !shell_requested_in_ui.swap(true, Ordering::Relaxed)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Terminal { command: None });
             }
             app.draw(ui);
+            if open_shell_in_ui.load(Ordering::Relaxed)
+                && !shell_command_sent_in_ui.load(Ordering::Relaxed)
+                && let Some(terminal) = app.terminals.values().next()
+            {
+                terminal
+                    .send(b"clear; printf 'Moon tools workspace\\n\\nTasks on the board, agents and shells at hand.\\n'; PS1='$ '\n")
+                    .expect("expected to write the screenshot text to the shell");
+                shell_command_sent_in_ui.store(true, Ordering::Relaxed);
+            }
+            if let Some(terminal) = app.terminals.values_mut().next() {
+                terminal.poll();
+                shell_ready_in_ui.store(
+                    terminal
+                        .visible_text()
+                        .is_ok_and(|screen| screen.contains("agents and shells at hand")),
+                    Ordering::Relaxed,
+                );
+            }
             ready_in_ui.store(
                 app.model.board.loaded && app.model.board.tasks.len() == 3,
                 Ordering::Relaxed,
@@ -1338,6 +1371,21 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     at_bottom.store(true, Ordering::Relaxed);
     harness.run_steps(3);
     harness.snapshot("moontasks-new-task-at-the-bottom");
+
+    // The main workspace: the board stays visible while a task's shell works beside it.
+    compose.store(false, Ordering::Relaxed);
+    open_shell.store(true, Ordering::Relaxed);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if shell_ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(shell_ready.load(Ordering::Relaxed), "the shell never drew its output");
+    harness.run_steps(3);
+    harness.snapshot("moontasks-workspace");
 }
 
 /// The attach modal offers the sessions the agents themselves have on this machine, which

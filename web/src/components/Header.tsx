@@ -28,7 +28,7 @@ export function HeaderBrand() {
     <h1 className="header-brand">
       <a
         className="header-title-link"
-        href="https://github.com/antoineMoPa/moonreview"
+        href="https://github.com/antoineMoPa/moon-dev-tools"
         target="_blank"
         rel="noreferrer"
       >
