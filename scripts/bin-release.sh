@@ -14,6 +14,6 @@ sh -n install.sh
 bash -n scripts/_internal/build-release.sh
 bash -n scripts/_internal/upload-release.sh
 
-scripts/_internal/build-release.sh
+bash scripts/_internal/build-release.sh
 
-scripts/_internal/upload-release.sh
+bash scripts/_internal/upload-release.sh
