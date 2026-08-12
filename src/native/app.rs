@@ -65,9 +65,6 @@ pub(crate) type AttachInbox = Arc<Mutex<Vec<AttachedTerminal>>>;
 pub(crate) struct AttachedTerminal {
     pub(crate) terminal_id: String,
     pub(crate) attachment: Result<egui_tty::TtyStream>,
-    /// Whether it should take the keyboard once drawn: set for a shell the user just opened,
-    /// not for one being reattached because a restored arrangement mentions it.
-    pub(crate) focus: bool,
 }
 
 pub(crate) struct App {
@@ -89,6 +86,12 @@ pub(crate) struct App {
     /// The chord that raises each tab within cmd+1..cmd+9's reach — the active frame's tabs —
     /// worked out before the strips are drawn and worn at the right of their titles.
     pub(crate) tab_shortcuts: HashMap<PaneId, String>,
+    /// The tab the keyboard was last handed to, so a different one coming to the front —
+    /// however it got there — is noticed once rather than every frame it stays there.
+    pub(crate) keyboard_pane: Option<PaneId>,
+    /// The tab owed the keyboard, waiting for its own draw to take it. A shell and a file
+    /// editor can only ask for focus from inside the widget that would hold it.
+    pub(crate) pane_taking_keyboard: Option<PaneId>,
     /// The keyboard, read through the binding table. It holds the state of a prefix chord
     /// that has begun — the `C-x` of `C-x o` — between frames.
     keymap: Keymap,
@@ -200,6 +203,8 @@ impl App {
             pending_close: None,
             pending_tab_action: None,
             tab_shortcuts: HashMap::new(),
+            keyboard_pane: None,
+            pane_taking_keyboard: None,
             menu: None,
             diffs: HashMap::new(),
             hunk_heights: HashMap::new(),
@@ -657,16 +662,16 @@ impl App {
             || self.active_pane_kind() == Some(PaneKind::Terminal);
 
         for action in self.keymap.resolve(ctx, typing) {
-            self.apply_action(action, ctx);
+            self.apply_action(action);
         }
     }
 
-    fn apply_action(&mut self, action: Action, ctx: &egui::Context) {
+    fn apply_action(&mut self, action: Action) {
         match action {
             Action::OpenPalette => self.model.palette.show(),
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
-            Action::SelectTab(index) => self.select_tab(index, ctx),
+            Action::SelectTab(index) => self.select_tab(index),
             // Deferred into the same slot the menu bar's item uses: on macOS the chord can
             // arrive as both, and two windows is not what one ⌘N asked for.
             Action::NewWindow => self.pending_action = Some(CommandAction::NewWindow(self.frame)),
@@ -679,7 +684,7 @@ impl App {
             Action::ToggleTheme => self.set_theme(self.model.theme.toggled()),
             Action::AdvanceHunk => self.apply_hunk_shortcut(true),
             Action::ReverseHunk => self.apply_hunk_shortcut(false),
-            Action::FocusNextFrame => self.focus_next_frame(ctx),
+            Action::FocusNextFrame => self.focus_next_frame(),
             Action::Find => find::open(self),
         }
     }

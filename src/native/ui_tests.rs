@@ -3681,6 +3681,102 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
         .expect("expected the shell to close");
 }
 
+/// The same for a shell: raising its tab puts the keyboard in it, so what is typed next goes
+/// to the program running there rather than nowhere.
+#[test]
+fn raising_a_shell_tab_hands_it_the_keyboard() {
+    let fixture = seeded_fixture("shell-tab-keyboard");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let shell = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+        frame: crate::cli::Frame::Review,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), shell);
+
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    let for_pane = terminal_id.clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Beside the review, so the frame has a review tab and a shell tab.
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
+                        terminal_id: for_pane.clone(),
+                        command: None,
+                        task_id: None,
+                    },
+                    None,
+                );
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    let ready = settle(&mut harness, || placed.load(Ordering::Relaxed));
+    assert!(ready, "the shell tab was never placed");
+    // A shell takes focus the frame after it is asked for, so this is not the first frame.
+    harness.run_steps(3);
+    let in_the_shell = harness
+        .ctx
+        .memory(|memory| memory.focused())
+        .expect("opening a shell should have put the keyboard in it");
+
+    press_key(&mut harness, egui::Key::Num1, egui::Modifiers::COMMAND);
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_none(),
+        "the review has nothing to type into, so the shell must have let the keyboard go"
+    );
+
+    press_key(&mut harness, egui::Key::Num2, egui::Modifiers::COMMAND);
+    assert_eq!(
+        harness.ctx.memory(|memory| memory.focused()),
+        Some(in_the_shell),
+        "raising the shell again should have given it the keyboard back"
+    );
+
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
 /// `C-x o` walks the keyboard round the workspace's frames. The prefix has to survive the
 /// frame it was pressed in — it is two presses, and each one arrives in a pass of its own.
 #[test]
@@ -3756,6 +3852,65 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
         wrapped,
         Some(active),
         "the walk wraps round at the last frame"
+    );
+}
+
+/// The tab brought to the front is the one being worked in, so it is the one with the
+/// keyboard: a file raised with cmd+2 can be typed into without clicking into its text, and
+/// going back to the review with cmd+1 takes the keyboard back off it.
+#[test]
+fn raising_a_tab_hands_it_the_keyboard() {
+    let fixture = seeded_fixture("tab-keyboard");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // A file beside the review, so the frame has two tabs to move between.
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::File {
+                        session_id,
+                        file_path: "src/lib.rs".to_string(),
+                    },
+                    None,
+                );
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    let ready = settle(&mut harness, || opened.load(Ordering::Relaxed));
+    assert!(ready, "the file tab was never opened");
+    // The file arrives in front and its text has to be fetched before there is an editor to
+    // type into, which is a round trip through the backend.
+    let ctx = harness.ctx.clone();
+    let typing = settle(&mut harness, || {
+        ctx.memory(|memory| memory.focused()).is_some()
+    });
+    assert!(
+        typing,
+        "opening a file should have put the keyboard in its editor"
+    );
+
+    press_key(&mut harness, egui::Key::Num1, egui::Modifiers::COMMAND);
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_none(),
+        "the review has nothing to type into, so the file must have let the keyboard go"
+    );
+
+    press_key(&mut harness, egui::Key::Num2, egui::Modifiers::COMMAND);
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_some(),
+        "raising the file again should have given its editor the keyboard back"
     );
 }
 

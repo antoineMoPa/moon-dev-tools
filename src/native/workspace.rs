@@ -84,6 +84,7 @@ impl App {
         // can leave one on screen, whatever it forgot. A workspace with nothing open at all
         // keeps its single frame: that is a state rather than a leftover.
         self.model.layout.drop_empty_frames();
+        self.follow_front_tab(ui.ctx());
         self.stamp_tab_shortcuts();
         *self.frames.style_mut() = self.palette_of().frames_style();
 
@@ -275,7 +276,6 @@ impl App {
                         inbox.push(AttachedTerminal {
                             terminal_id,
                             attachment,
-                            focus: true,
                         });
                     }
                 }
@@ -305,7 +305,6 @@ impl App {
                     inbox.push(AttachedTerminal {
                         terminal_id: for_inbox,
                         attachment,
-                        focus: false,
                     });
                 }
             },
@@ -326,7 +325,6 @@ impl App {
             let AttachedTerminal {
                 terminal_id,
                 attachment,
-                focus,
             } = attached;
             let opened = attachment.and_then(|stream| {
                 egui_tty::Terminal::new(stream)
@@ -335,13 +333,11 @@ impl App {
             });
 
             match opened {
-                Ok(mut terminal) => {
+                // A shell the user just opened starts with the keyboard, so they can type into
+                // it without clicking first — its tab comes to the front as it opens, and the
+                // front tab is the one with the keyboard. See `follow_front_tab`.
+                Ok(terminal) => {
                     self.terminal_errors.remove(&terminal_id);
-                    // A shell the user just opened starts with the keyboard, so they can type
-                    // into it without clicking first.
-                    if focus {
-                        terminal.request_focus();
-                    }
                     self.terminals.insert(terminal_id, terminal);
                 }
                 Err(error) => {
@@ -536,17 +532,16 @@ impl App {
     }
 
     /// `C-x o`: hand the keyboard to the next frame of the workspace, wrapping round at the end.
-    pub(crate) fn focus_next_frame(&mut self, ctx: &egui::Context) {
+    pub(crate) fn focus_next_frame(&mut self) {
         if self.model.layout.frame_count() < 2 {
             return;
         }
-        let arrived_at = self.model.layout.focus_next_frame();
-        self.hand_keyboard_to_front(ctx, arrived_at);
+        self.model.layout.focus_next_frame();
     }
 
-    /// cmd+1 through cmd+9: bring the active frame's nth tab to the front, and hand it the
-    /// keyboard. A digit past the last tab does nothing.
-    pub(crate) fn select_tab(&mut self, index: usize, ctx: &egui::Context) {
+    /// cmd+1 through cmd+9: bring the active frame's nth tab to the front. A digit past the
+    /// last tab does nothing.
+    pub(crate) fn select_tab(&mut self, index: usize) {
         let frame = self.model.layout.active_frame();
         let Some(pane) = self
             .model
@@ -557,7 +552,6 @@ impl App {
             return;
         };
         self.model.layout.focus_pane(pane);
-        self.hand_keyboard_to_front(ctx, frame);
     }
 
     /// The chords that raise tabs reach the active frame, so its tabs and only its tabs wear
@@ -579,24 +573,28 @@ impl App {
         }
     }
 
-    /// After a focus change, egui's keyboard has to move too, or the shell left behind would
-    /// keep the keys.
-    fn hand_keyboard_to_front(&mut self, ctx: &egui::Context, frame: FrameId) {
+    /// The tab in front of the active frame is the one being worked in, so it is the one with
+    /// the keyboard — whatever put it there: a click on its tab or in its frame, cmd+1, `C-x o`,
+    /// a tab dragged across, a pane opened or closed. Watching the arrangement rather than
+    /// each of those means none of them can be the one that forgets.
+    ///
+    /// The keyboard itself moves in two steps, because egui's focus can only be taken by the
+    /// widget that would hold it: the pane left behind lets go here, and the pane arriving takes
+    /// it while it draws — in [`App::draw_terminal`] for a shell, and in `file_pane::draw_editor`
+    /// for a file or a task's notes.
+    fn follow_front_tab(&mut self, ctx: &egui::Context) {
+        let front = self.active_pane_id();
+        if front == self.keyboard_pane {
+            return;
+        }
+        self.keyboard_pane = front;
+        // A shell that keeps the keyboard keeps every key sent to the window, and a pane with
+        // nothing to type into never takes it off it, so letting go is not the arriving pane's
+        // job to do.
         if let Some(focused) = ctx.memory(|memory| memory.focused()) {
             ctx.memory_mut(|memory| memory.surrender_focus(focused));
         }
-        // A shell only takes the keyboard when asked to, so a frame showing one asks here.
-        let showing = self
-            .model
-            .layout
-            .frame(frame)
-            .and_then(egui_frames::Frame::active_pane)
-            .and_then(|pane| self.model.layout.pane(pane));
-        if let Some(Pane::Terminal { terminal_id, .. }) = showing
-            && let Some(terminal) = self.terminals.get_mut(&terminal_id.clone())
-        {
-            terminal.request_focus();
-        }
+        self.pane_taking_keyboard = front;
     }
 
     /// Draw a shell, or say why there isn't one to draw.
@@ -618,6 +616,14 @@ impl App {
             });
             return;
         };
+
+        // The shell takes the keyboard it is owed. A tab brought forward while its shell is
+        // still attaching keeps the offer until the emulator is there to take it, which is why
+        // this is below the wait above rather than at the top.
+        if self.pane_taking_keyboard == Some(pane_id) {
+            self.pane_taking_keyboard = None;
+            terminal.request_focus();
+        }
 
         // The find bar asks for a search only when its query or its place in the matches moved,
         // because a search reads the whole scrollback.

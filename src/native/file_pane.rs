@@ -401,6 +401,14 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
             pending: find.pending,
         });
     let mut found: Option<usize> = None;
+    // The editor takes the keyboard it is owed, so a file or a task's notes brought forward
+    // can be typed into without clicking into the text first. A file still being fetched, or
+    // a markdown file showing its rendered page, has no editor to take it and leaves the
+    // offer standing — see `App::follow_front_tab`.
+    let takes_keyboard = app.pane_taking_keyboard == Some(pane_id);
+    if takes_keyboard {
+        app.pane_taking_keyboard = None;
+    }
 
     egui::ScrollArea::vertical()
         .id_salt(("file-pane", pane_id))
@@ -436,6 +444,9 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             .desired_width(f32::INFINITY)
                             .desired_rows(line_count)
                             .show(ui);
+                        if takes_keyboard {
+                            output.response.request_focus();
+                        }
 
                         // Each number at the height the galley actually gave its line —
                         // counting multiples of the font's row height drifts away from the
