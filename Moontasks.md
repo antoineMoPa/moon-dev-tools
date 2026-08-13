@@ -70,10 +70,12 @@ The board is a folder in the repo, which is the whole of its state:
 .moontasks/
   .gitignore          # ignores the whole board, written when the board is created
   board.json          # the columns, once you have changed them
+  autopilot.md        # what an autopilot window is told, once one has been opened
   fix-the-login-page-6f9c1e2a-…/
-    metadata.json     # title, column, place in the column, and the shells and agent runs
+    metadata.json     # title, column, place, tags, worktree, and the agent runs
     brief.md          # what the agents working here have been told
     notes.md          # the task's description and shared notes, shown on the card
+    runs/             # what each one-shot run printed, one file per run
     …                 # anything you or an agent puts here
 ```
 
@@ -106,6 +108,28 @@ the end of it.
 
 The brief is worth its own file because it is the difference between an agent that knows which
 task it is on and one that has to be told twice.
+
+## Runs that finish on their own
+
+`[new agent]` can start one unattended run with the whole job supplied up front. It still
+appears on the card, supports `stop` and `resume`, and saves its output under `runs/`.
+
+## Tags, and a checkout of its own
+
+`[tags]` adds arbitrary tags; `autopilot` marks cards for autopilot. `[worktree]` creates an
+isolated branch and checkout under `~/.moontasks/worktrees`. Moving the card to DONE or
+deleting it removes the checkout but keeps the branch.
+
+## Reviewing a card
+
+`[start review]` removes the worktree, checks its branch out in the repo, and opens the review.
+It refuses if either the worktree or repo has uncommitted changes.
+
+## The autopilot window
+
+`[autopilot]` processes tagged cards one at a time through worktree, run, and review. Its policy
+lives in `.moontasks/autopilot.md`. The board prevents it from creating cards, changing the
+`autopilot` tag, or editing files directly. Its tools are exposed at `/mcp`.
 
 ## What survives a restart
 

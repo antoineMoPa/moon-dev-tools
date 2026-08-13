@@ -7,6 +7,7 @@
 pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
+pub(crate) mod marks;
 
 use cards::{
     CARD_SPACING, DraggedTask, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in,
@@ -19,7 +20,10 @@ use crate::{
     moontasks::{BoardColumn, ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
-        model::{OpenedShell, PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
+        model::{
+            OpenedShell, PendingColumnPlace, PendingPlace, RunComposer, TagComposer, TaskDropped,
+            TaskLanding,
+        },
         palette::CommandAction,
         panes::{OpenPaneRequest, PaneKind},
         theme::{Palette, SMALL_SIZE},
@@ -82,8 +86,26 @@ pub(super) enum BoardAction {
         command: Option<AgentKind>,
         task_id: String,
     },
-    /// Open the review of what the task has changed.
-    OpenReview(String, String),
+    /// What the card is marked with, set whole: the tag menu knows the list it wants.
+    SetTags(String, Vec<String>),
+    /// The tag being typed into the card's `new tag…` box, and what it is for.
+    OpenTagComposer(String),
+    CloseTagComposer,
+    /// Open the box a one-shot run's work is written in, on this card, for this agent.
+    OpenRunComposer(String, AgentKind),
+    CloseRunComposer,
+    /// Give the task a checkout of its own, on a branch named after it.
+    CreateWorktree(String),
+    /// Give that checkout back. `force` takes uncommitted work in it with it, which is what
+    /// the card's second press means.
+    DiscardWorktree(String, bool),
+    ArmWorktreeDiscard(String),
+    CancelWorktreeDiscard,
+    /// Put the task's work where it can be looked at: for a task with a worktree, its branch
+    /// goes into the repo itself and the review opens there.
+    Review(String),
+    /// Open a window that works the board itself, running this agent.
+    StartAutopilot(AgentKind),
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
@@ -104,6 +126,16 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
 
     attach::draw(app, ui.ctx(), &palette, &mut actions);
 
+    // A review the server prepared on a worker thread — which may have put a task's branch in
+    // the repo on the way — becomes a tab here, where the panes can be reached.
+    if let Some(review) = app.model.board.opening_review.take() {
+        app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
+            repo_path: review.repo_path,
+            title: review.title,
+            base: review.base_branch,
+        }));
+    }
+
     for action in actions {
         apply(app, action);
     }
@@ -122,6 +154,8 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         return;
     }
 
+    draw_board_actions(app, ui, palette, actions);
+
     // The columns are as tall as the pane, and the board scrolls sideways to reach the ones
     // that do not fit — measured before the scroll area, which has no height of its own.
     let height = ui.available_height();
@@ -135,6 +169,46 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         .show(ui, |ui| {
             ui.horizontal_top(|ui| draw_column_row(app, ui, height, palette, actions));
         });
+}
+
+/// What the board itself offers, above the columns: the one thing here that is about the whole
+/// board rather than about a card.
+fn draw_board_actions(
+    app: &mut App,
+    ui: &mut Ui,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let agents: Vec<AgentKind> = available_agents(app)
+        .into_iter()
+        .filter(|agent| *agent != AgentKind::None)
+        .collect();
+    if agents.is_empty() {
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        let (button, _) = egui::containers::menu::MenuButton::from_button(
+            egui::Button::new("[autopilot]").frame(false),
+        )
+        .ui(ui, |ui| {
+            for agent in agents {
+                if widgets::clickable(ui.button(agent_label(agent))).clicked() {
+                    actions.push(BoardAction::StartAutopilot(agent));
+                    ui.close();
+                }
+            }
+        });
+        widgets::clickable(button).on_hover_text(
+            "Open an agent that works this board: it picks up the cards tagged autopilot, one              at a time, and starts runs on them",
+        );
+        ui.label(
+            RichText::new("works the cards tagged autopilot")
+                .size(SMALL_SIZE)
+                .color(palette.muted),
+        );
+    });
+    ui.add_space(4.0);
 }
 
 /// The row of columns, and the drag that reorders it.
@@ -692,7 +766,7 @@ fn apply(app: &mut App, action: BoardAction) {
                             model.board.opened_shell = Some(OpenedShell {
                                 terminal_id,
                                 command,
-                                task_id: for_pane,
+                                task_id: Some(for_pane),
                             })
                         }
                         Err(error) => model.error(format!("could not start it: {error}")),
@@ -723,7 +797,7 @@ fn apply(app: &mut App, action: BoardAction) {
                             model.board.opened_shell = Some(OpenedShell {
                                 terminal_id,
                                 command,
-                                task_id: for_pane,
+                                task_id: Some(for_pane),
                             })
                         }
                         Err(error) => model.error(format!("could not resume it: {error}")),
@@ -782,7 +856,7 @@ fn apply(app: &mut App, action: BoardAction) {
                             model.board.opened_shell = Some(OpenedShell {
                                 terminal_id,
                                 command: Some(agent),
-                                task_id: for_pane,
+                                task_id: Some(for_pane),
                             })
                         }
                         Err(error) => model.error(format!("could not attach it: {error}")),
@@ -870,11 +944,85 @@ fn apply(app: &mut App, action: BoardAction) {
                 task_id: Some(task_id),
             }));
         }
-        BoardAction::OpenReview(repo_path, title) => {
-            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
-                repo_path,
-                title,
-            }));
+        BoardAction::SetTags(task_id, tags) => {
+            let session_id = app.model.root_session_id.clone();
+            act(app, "could not set the tags", move |backend| {
+                backend.set_task_tags(&session_id, &task_id, &tags)
+            });
+        }
+        BoardAction::OpenTagComposer(task_id) => {
+            app.model.board.tagging = Some(TagComposer {
+                task_id,
+                text: String::new(),
+                focus: true,
+            });
+        }
+        BoardAction::CloseTagComposer => app.model.board.tagging = None,
+        BoardAction::OpenRunComposer(task_id, agent) => {
+            app.model.board.running_once = Some(RunComposer {
+                task_id,
+                agent,
+                text: String::new(),
+                focus: true,
+            });
+        }
+        BoardAction::CloseRunComposer => app.model.board.running_once = None,
+        BoardAction::CreateWorktree(task_id) => {
+            let session_id = app.model.root_session_id.clone();
+            act(app, "could not make a worktree", move |backend| {
+                backend
+                    .create_task_worktree(&session_id, &task_id)
+                    .map(|_| ())
+            });
+        }
+        BoardAction::DiscardWorktree(task_id, force) => {
+            app.model.board.pending_worktree_discard = None;
+            let session_id = app.model.root_session_id.clone();
+            act(app, "could not remove the worktree", move |backend| {
+                backend.discard_task_worktree(&session_id, &task_id, force)
+            });
+        }
+        BoardAction::ArmWorktreeDiscard(task_id) => {
+            app.model.board.pending_worktree_discard = Some(task_id);
+        }
+        BoardAction::CancelWorktreeDiscard => app.model.board.pending_worktree_discard = None,
+        BoardAction::StartAutopilot(agent) => {
+            let session_id = app.model.root_session_id.clone();
+            app.tasks.spawn(
+                move |backend| backend.start_autopilot(&session_id, agent),
+                move |model, result| {
+                    model.board.refresh_requested = true;
+                    match result {
+                        Ok(terminal_id) => {
+                            model.board.opened_shell = Some(OpenedShell {
+                                terminal_id,
+                                command: Some(agent),
+                                // The board's, not a card's: nothing owns it, so closing its
+                                // tab is closing a shell of the workspace's own.
+                                task_id: None,
+                            })
+                        }
+                        Err(error) => model.error(format!("could not start autopilot: {error}")),
+                    }
+                },
+            );
+        }
+        BoardAction::Review(task_id) => {
+            // Reviewing may move the repo onto the task's branch, and it may refuse — so the
+            // work is the server's and the pane is opened on what it answers with.
+            let session_id = app.model.root_session_id.clone();
+            app.tasks.spawn(
+                move |backend| backend.review_task(&session_id, &task_id),
+                move |model, result| {
+                    match result {
+                        // The pane belongs to the window rather than to the model this
+                        // callback has, so it is left here for the next frame to open.
+                        Ok(review) => model.board.opening_review = Some(review),
+                        Err(error) => model.error(format!("{error}")),
+                    }
+                    model.board.refresh_requested = true;
+                },
+            );
         }
     }
 }

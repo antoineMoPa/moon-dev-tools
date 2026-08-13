@@ -14,7 +14,7 @@ use crate::{
     backend::Backend,
     moontasks::{
         self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest,
-        StartResourceRequest, TaskView,
+        StartResourceRequest, TaskReviewPayload, TaskView, TaskWorktreeView,
     },
     service,
     terminal::TerminalSession,
@@ -47,7 +47,9 @@ impl egui_tty::Tty for LocalShell {
     }
 
     fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
-        self.session.resize(cols, rows).map_err(egui_tty::Error::msg)
+        self.session
+            .resize(cols, rows)
+            .map_err(egui_tty::Error::msg)
     }
 
     /// The pane is what holds this shell's session alive, so its output channel stays open
@@ -243,12 +245,7 @@ impl Backend for LocalBackend {
         moontasks::service::attach_resource(&self.state, session_id, task_id, request)
     }
 
-    fn stop_task_resource(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        resource_id: &str,
-    ) -> Result<()> {
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()> {
         moontasks::service::stop_resource(&self.state, session_id, task_id, resource_id)
     }
 
@@ -267,6 +264,30 @@ impl Backend for LocalBackend {
 
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
         moontasks::service::open_notes(&self.state, session_id, task_id)
+    }
+
+    fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
+        moontasks::service::set_tags(&self.state, session_id, task_id, tags)
+    }
+
+    fn create_task_worktree(&self, session_id: &str, task_id: &str) -> Result<TaskWorktreeView> {
+        moontasks::worktrees::create(&self.state, session_id, task_id)
+    }
+
+    fn discard_task_worktree(&self, session_id: &str, task_id: &str, force: bool) -> Result<()> {
+        moontasks::worktrees::discard(&self.state, session_id, task_id, force)
+    }
+
+    fn review_task(&self, session_id: &str, task_id: &str) -> Result<TaskReviewPayload> {
+        moontasks::worktrees::review(&self.state, session_id, task_id)
+    }
+
+    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String> {
+        moontasks::service::start_autopilot(&self.state, session_id, agent)
+    }
+
+    fn take_window_requests(&self, session_id: &str) -> Result<Vec<crate::api::WindowRequest>> {
+        Ok(crate::api::take_window_requests(&self.state, session_id))
     }
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {

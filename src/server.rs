@@ -32,6 +32,8 @@ use crate::{
 };
 
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
+/// How long to wait before asking again, when the idle clock is spent but a shell is open.
+const IDLE_RECHECK: Duration = Duration::from_secs(30);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
@@ -111,7 +113,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/tasks",
             get(list_tasks).post(create_task),
         )
-        .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}",
+            delete(delete_task),
+        )
         .route(
             "/api/session/{session_id}/tasks/{task_id}/placement",
             post(place_task),
@@ -165,6 +170,24 @@ pub(crate) fn router(state: AppState) -> Router {
             post(open_task_notes),
         )
         .route(
+            "/api/session/{session_id}/tasks/{task_id}/tags",
+            post(set_task_tags),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/worktree",
+            post(create_task_worktree).delete(discard_task_worktree),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/review",
+            post(review_task),
+        )
+        .route(
+            "/api/session/{session_id}/window-requests",
+            get(take_window_requests),
+        )
+        .route("/api/session/{session_id}/autopilot", post(start_autopilot))
+        .route("/mcp", post(mcp))
+        .route(
             "/api/session/{session_id}/terminals",
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
         )
@@ -185,17 +208,34 @@ pub(crate) async fn run_server() -> Result<()> {
     serve(state, Some(last_activity)).await
 }
 
+/// Take the review port, or `None` if another process is already on it.
+pub(crate) async fn try_bind() -> Result<Option<tokio::net::TcpListener>> {
+    try_bind_on(&bind_host(), port()?).await
+}
+
+/// Take one address, on a listener the caller names — which is how a test gets a port it can
+/// hold and let go of on purpose.
+pub(crate) async fn try_bind_on(
+    host: &str,
+    port: u16,
+) -> Result<Option<tokio::net::TcpListener>> {
+    match tokio::net::TcpListener::bind((host, port)).await {
+        Ok(listener) => Ok(Some(listener)),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to bind {host}:{port}")),
+    }
+}
+
 /// Serve the web frontend. `idle_shutdown` is the clock the standalone server stops on;
 /// the native app passes `None` because its window decides when the process ends.
 pub(crate) async fn serve(
     state: AppState,
     idle_shutdown: Option<Arc<Mutex<Instant>>>,
 ) -> Result<()> {
-    let port = port()?;
-    let host = bind_host();
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .with_context(|| format!("failed to bind {host}:{port}"))?;
+    let Some(listener) = try_bind().await? else {
+        let (host, port) = (bind_host(), port()?);
+        anyhow::bail!("{host}:{port} is already serving Moon Review");
+    };
 
     println!("Moon Review listening on {}", server_url());
     serve_on(state, listener, idle_shutdown).await
@@ -208,23 +248,33 @@ pub(crate) async fn serve_on(
     idle_shutdown: Option<Arc<Mutex<Instant>>>,
 ) -> Result<()> {
     match idle_shutdown {
-        Some(last_activity) => axum::serve(listener, router(state))
-            .with_graceful_shutdown(shutdown_signal(last_activity))
-            .await
-            .context("server failed"),
+        Some(last_activity) => {
+            let terminals = Arc::clone(&state.terminals);
+            axum::serve(listener, router(state))
+                .with_graceful_shutdown(shutdown_signal(last_activity, terminals))
+                .await
+                .context("server failed")
+        }
         None => axum::serve(listener, router(state))
             .await
             .context("server failed"),
     }
 }
 
-async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
+/// Stop once nothing has asked for anything in a while — but never while a shell is still
+/// open.
+async fn shutdown_signal(
+    last_activity: Arc<Mutex<Instant>>,
+    terminals: Arc<crate::terminal::TerminalRegistry>,
+) {
     loop {
         let idle_for = last_activity
             .lock()
             .map(|value| value.elapsed())
             .unwrap_or(SERVER_LIFETIME);
-        let remaining = SERVER_LIFETIME.saturating_sub(idle_for);
+        // Never zero: once the clock is spent it stays spent, and an open shell keeps this
+        // loop going, so a zero wait here would spin instead of wait.
+        let remaining = SERVER_LIFETIME.saturating_sub(idle_for).max(IDLE_RECHECK);
         let timeout = tokio::time::sleep(remaining);
         tokio::pin!(timeout);
 
@@ -234,7 +284,8 @@ async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
                     .lock()
                     .map(|value| value.elapsed())
                     .unwrap_or(SERVER_LIFETIME);
-                if idle_for >= SERVER_LIFETIME {
+                let shells = terminals.terminal_ids().len();
+                if idle_for >= SERVER_LIFETIME && shells == 0 {
                     eprintln!(
                         "[moonreview] shutting down after {} minutes of inactivity",
                         SERVER_LIFETIME.as_secs() / 60
@@ -442,12 +493,7 @@ async fn cancel_comment_dispatch_request(
     Json(request): Json<crate::api::CancelCommentDispatchRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    service::cancel_dispatch(
-        &state,
-        &session_id,
-        &request.hunk_id,
-        request.comment_index,
-    )?;
+    service::cancel_dispatch(&state, &session_id, &request.hunk_id, request.comment_index)?;
     Ok("ok")
 }
 
@@ -716,6 +762,112 @@ async fn open_task_notes(
     }))
 }
 
+/// Open a window that works the board.
+async fn start_autopilot(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::AgentSelectionRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::service::start_autopilot(&state, &session_id, request.agent)?,
+    }))
+}
+
+/// The tools, for whichever agent has been pointed at this board.
+async fn mcp(
+    Query(query): Query<McpQuery>,
+    State(state): State<AppState>,
+    Json(message): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    mark_activity(&state);
+    let board = crate::service::open_session(
+        &state,
+        crate::api::OpenSessionRequest {
+            repo_path: query.repo.clone(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .map(|opened| moontasks::mcp::Board {
+        state: &state,
+        session_id: opened.session_id,
+    })
+    .with_context(|| format!("could not open a board in {}", query.repo));
+
+    match moontasks::mcp::handle(board, &message) {
+        Some(answer) => Json(answer).into_response(),
+        // A notification is answered with nothing at all, which is what the protocol asks for.
+        None => axum::http::StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct McpQuery {
+    /// The repo whose board these tools work. Absolute, as the agent's own working directory.
+    repo: String,
+}
+
+/// What the tools have asked the window to do since it last looked.
+async fn take_window_requests(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Json<Vec<crate::api::WindowRequest>> {
+    Json(crate::api::take_window_requests(&state, &session_id))
+}
+
+async fn set_task_tags(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::TaskTagsRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_tags(&state, &session_id, &task_id, &request.tags)?;
+    Ok("ok")
+}
+
+async fn create_task_worktree(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<moontasks::TaskWorktreeView>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::worktrees::create(
+        &state,
+        &session_id,
+        &task_id,
+    )?))
+}
+
+/// Give a task's checkout back. Uncommitted work in it is refused unless `force` is asked for,
+/// which is the card's `[really discard]`.
+async fn discard_task_worktree(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    Query(query): Query<ForceQuery>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::worktrees::discard(&state, &session_id, &task_id, query.force)?;
+    Ok("ok")
+}
+
+#[derive(serde::Deserialize)]
+struct ForceQuery {
+    #[serde(default)]
+    force: bool,
+}
+
+async fn review_task(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<moontasks::TaskReviewPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::worktrees::review(
+        &state,
+        &session_id,
+        &task_id,
+    )?))
+}
+
 async fn discard_hunks(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
@@ -724,4 +876,57 @@ async fn discard_hunks(
     mark_activity(&state);
     service::discard_hunks(&state, &session_id, &request.hunk_ids)?;
     Ok("ok")
+}
+
+#[cfg(test)]
+mod bind_tests {
+    //! Two windows want one port, and the second one opened has to live without it until the
+    //! first quits. Both halves of that are here: losing without failing, and taking over.
+
+    use super::*;
+
+    async fn free_port() -> u16 {
+        tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("failed to bind a test port")
+            .local_addr()
+            .expect("failed to read the test port")
+            .port()
+    }
+
+    /// A window that loses the race is not a window that failed: it gets `None`, which is
+    /// something it can wait out, rather than an error it would report and stop on.
+    #[tokio::test]
+    async fn a_port_another_listener_holds_is_not_an_error() {
+        let port = free_port().await;
+        let held = try_bind_on("127.0.0.1", port)
+            .await
+            .expect("the first bind should have succeeded")
+            .expect("the port was free, so it should have been taken");
+
+        let second = try_bind_on("127.0.0.1", port)
+            .await
+            .expect("a busy port is not an error");
+
+        assert!(second.is_none(), "the port was held, so it cannot be taken twice");
+        drop(held);
+    }
+
+    /// The whole reason the server thread comes back to look: the holder quits, and the port
+    /// has to be there for whoever is still open.
+    #[tokio::test]
+    async fn the_port_can_be_taken_once_the_holder_lets_go() {
+        let port = free_port().await;
+        let held = try_bind_on("127.0.0.1", port)
+            .await
+            .expect("the first bind should have succeeded")
+            .expect("the port was free, so it should have been taken");
+        drop(held);
+
+        let taken = try_bind_on("127.0.0.1", port)
+            .await
+            .expect("the port was let go, so binding it is not an error");
+
+        assert!(taken.is_some(), "a port nobody holds should be there for the next window");
+    }
 }

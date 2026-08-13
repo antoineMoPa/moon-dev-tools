@@ -103,6 +103,10 @@ pub(crate) enum OpenPaneRequest {
     ReviewRepo {
         repo_path: String,
         title: String,
+        /// What the working tree is read against. `None` is an ordinary review of what has not
+        /// been committed; a base is how a task's branch is reviewed whole, because once that
+        /// branch is checked out there is nothing uncommitted left to show.
+        base: Option<String>,
     },
     Agents,
     Terminal {

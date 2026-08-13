@@ -3,13 +3,19 @@
 //! [`store`] is the `.moontasks` folder on disk and [`service`] is everything both frontends
 //! do to it.
 
+pub(crate) mod autopilot;
+pub(crate) mod mcp;
 pub(crate) mod service;
 pub(crate) mod store;
+pub(crate) mod worktrees;
 
 use serde::{Deserialize, Serialize};
 
 use crate::api::AgentKind;
 pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, TaskResourceKind};
+
+/// The tag that says a card may be worked without being handed over one at a time.
+pub(crate) const AUTOPILOT_TAG: &str = "autopilot";
 
 /// One task, as the board draws it.
 #[derive(Clone, Serialize, Deserialize)]
@@ -20,12 +26,30 @@ pub(crate) struct TaskView {
     pub(crate) created_at_unix: u64,
     /// The task folder itself, so the board can offer it to a shell or a file browser.
     pub(crate) dir_path: String,
-    /// The repo the task's agents work in, which is the repo the board belongs to.
+    /// Where the task's agents and shells work: its own checkout once it has one, and the repo
+    /// the board belongs to until then.
     pub(crate) repo_path: String,
+    /// The checkout of its own this task was given, for the card to draw and the review step
+    /// to work from.
+    #[serde(default)]
+    pub(crate) worktree: Option<TaskWorktreeView>,
+    /// What the card is marked with. Tags are the person's; see [`AUTOPILOT_TAG`].
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
     /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
     /// card draws its first lines as the task's description, and typing there writes it back.
     pub(crate) notes: String,
     pub(crate) resources: Vec<TaskResourceView>,
+}
+
+/// A task's own checkout, as the board draws it.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TaskWorktreeView {
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    /// Whether the checkout has nothing uncommitted in it. A card cannot be reviewed until it
+    /// does, because reviewing puts the branch in the repo and only committed work is on it.
+    pub(crate) is_clean: bool,
 }
 
 /// A shell or an agent run belonging to a task.
@@ -45,11 +69,15 @@ pub(crate) struct TaskResourceView {
 }
 
 /// What starting a task's resource asked for.
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StartResourceRequest {
     pub(crate) kind: TaskResourceKind,
     /// Which agent to run, for an agent resource.
     pub(crate) agent: AgentKind,
+    /// The whole of the work, for a run that is to be given it up front and left to finish on
+    /// its own — see [`AgentLaunch::one_shot`].
+    #[serde(default)]
+    pub(crate) prompt: Option<String>,
 }
 
 /// A session an agent already has, being put on a task as a new resource.
@@ -79,6 +107,22 @@ pub(crate) struct CreateTaskRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskTitleRequest {
     pub(crate) title: String,
+}
+
+/// What a card is marked with, set whole rather than one tag at a time: the tag menu knows the
+/// list it wants when it closes, and sending that is one write instead of a diff.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskTagsRequest {
+    pub(crate) tags: Vec<String>,
+}
+
+/// The answer to reviewing a task: where the review opens, and against what.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TaskReviewPayload {
+    pub(crate) repo_path: String,
+    pub(crate) title: String,
+    /// The base branch for a task reviewed from its own branch.
+    pub(crate) base_branch: Option<String>,
 }
 
 /// The answer to opening a task's notes: where the file pane finds the file, relative to the
@@ -121,10 +165,11 @@ pub(crate) struct ColumnPlacementRequest {
 /// | --- | --- |
 /// | `{session}` | the session id moontasks generated for this run |
 /// | `{brief}` | the standing instructions: which task, and where its notes go |
+/// | `{prompt}` | the work, for a run that was given it up front |
 ///
-/// No agent is handed the work as a prompt. Starting one is opening a conversation, not
-/// firing a job off: it comes up knowing which task it is on, and waits to be told what to do
-/// about it. `brief.md` in the task folder is the same text, for an agent with no system
+/// Starting an agent the ordinary way does not hand it the work. It is opening a conversation,
+/// not firing a job off: it comes up knowing which task it is on, and waits to be told what to
+/// do about it. `brief.md` in the task folder is the same text, for an agent with no system
 /// prompt to be given it in.
 ///
 /// The card's title is typed into its box a moment after it starts — see
@@ -132,12 +177,19 @@ pub(crate) struct ColumnPlacementRequest {
 /// written and nothing sent. That is a keystroke short of firing the job off, and the
 /// keystroke is the person's.
 ///
+/// [`AgentLaunch::one_shot`] is the other way, and the difference is only where the work comes
+/// from: it is on the command line rather than typed, so nothing is ever typed into that run
+/// at all. The keystroke was still the person's — it happened further up, when they asked for
+/// the run.
+///
 /// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
 /// so an agent that cannot be told its session id is simply run without one.
 pub(crate) struct AgentLaunch {
     pub(crate) kind: AgentKind,
     /// Args for a fresh run.
     pub(crate) start: &'static [&'static str],
+    /// Args for a run given the whole of its work up front, which finishes on its own.
+    pub(crate) one_shot: &'static [&'static str],
     /// Args that resume a run whose session id was never recorded, by whatever the agent
     /// itself reckons the run was. No brief and no prompt: the session being resumed
     /// already has both.
@@ -159,18 +211,31 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
             "--append-system-prompt",
             "{brief}",
         ],
+        // Claude accepts a chosen session id for one-shot runs.
+        one_shot: &[
+            "-p",
+            "--session-id",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+            "--permission-mode",
+            "bypassPermissions",
+            "{prompt}",
+        ],
         resume: &[],
         attach: &["--resume", "{session}"],
     },
     AgentLaunch {
         kind: AgentKind::Codex,
         start: &[],
+        one_shot: &["exec", "--full-auto", "{prompt}"],
         resume: &["resume", "--last"],
         attach: &["resume", "{session}"],
     },
     AgentLaunch {
         kind: AgentKind::OpenCode,
         start: &[],
+        one_shot: &["run", "--auto", "{prompt}"],
         resume: &["--continue"],
         attach: &["--session", "{session}"],
     },
@@ -182,7 +247,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
 /// Which placeholders exist has to be written down, because a filled-in value can contain
 /// braces of its own — the brief is free text — and so cannot be told apart from an unfilled
 /// placeholder by looking at the result.
-pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}"];
+pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}", "{prompt}"];
 
 /// What an agent working in a task is told, beyond the work itself.
 ///

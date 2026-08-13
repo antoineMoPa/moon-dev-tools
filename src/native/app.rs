@@ -76,7 +76,7 @@ pub(crate) struct App {
     pub(crate) attaching: AttachInbox,
     /// Panes whose terminal could not be attached, so the pane can say so.
     pub(crate) terminal_errors: HashMap<String, String>,
-    pub(crate) serves_web: bool,
+    pub(crate) serves_web: crate::native::ServesWeb,
     last_poll: Instant,
     last_board_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
@@ -233,7 +233,7 @@ impl App {
     /// not where a test runs.
     pub(crate) fn install_menu(&mut self) {
         let picks_files = self.backend().reads_this_machine();
-        self.menu = NativeMenu::install(self.serves_web, picks_files, self.frame);
+        self.menu = NativeMenu::install(self.serves_web.may_serve(), picks_files, self.frame);
     }
 
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {
@@ -287,7 +287,8 @@ impl App {
             .flat_map(|review| review.hunks().iter().map(|hunk| hunk.id.clone()))
             .collect();
         self.diffs.retain(|hunk_id, _| live.contains(hunk_id));
-        self.hunk_heights.retain(|hunk_id, _| live.contains(hunk_id));
+        self.hunk_heights
+            .retain(|hunk_id, _| live.contains(hunk_id));
     }
 
     fn open_review(&mut self, open: OpenSessionRequest) {
@@ -445,15 +446,27 @@ impl App {
             move |backend| {
                 let columns = backend.list_columns(&session_id)?;
                 let tasks = backend.list_tasks(&session_id)?;
-                Ok((columns, tasks))
+                // Read with the board rather than on a poll of its own: what the tools ask for
+                // is about the board, and one round trip keeps them in step.
+                let asked = backend.take_window_requests(&session_id)?;
+                Ok((columns, tasks, asked))
             },
             |model, result| {
                 model.board.loaded = true;
                 match result {
-                    Ok((columns, tasks)) => {
+                    Ok((columns, tasks, asked)) => {
                         model.board.error = None;
                         board::columns::accept_columns(model, columns);
                         board::cards::accept_board(model, tasks);
+                        for request in asked {
+                            match request {
+                                // The same waiting room the card's own button uses, so a review
+                                // opens the same way whoever asked for it.
+                                crate::api::WindowRequest::Review(review) => {
+                                    model.board.opening_review = Some(review)
+                                }
+                            }
+                        }
                     }
                     Err(error) => model.board.error = Some(format!("{error}")),
                 }
@@ -469,7 +482,7 @@ impl App {
         self.open_pane(OpenPaneRequest::AttachTerminal {
             terminal_id: opened.terminal_id,
             command: opened.command,
-            task_id: Some(opened.task_id),
+            task_id: opened.task_id,
         });
     }
 
@@ -613,14 +626,19 @@ impl App {
     }
 
     fn open_in_browser(&mut self) {
-        if !self.serves_web {
-            self.model
-                .error("this window is not serving the web frontend");
+        if !self.serves_web.is_serving() {
+            // Another window got the port first, or this window never had a server. Either
+            // way the review is reachable at the same address — just not because of this one.
+            self.model.error(format!(
+                "this window is not the one serving {} right now",
+                crate::api::server_url()
+            ));
             return;
         }
         let url = self.backend().web_url(&self.model.root_session_id);
         if let Err(error) = webbrowser::open(&url) {
-            self.model.error(format!("could not open a browser: {error}"));
+            self.model
+                .error(format!("could not open a browser: {error}"));
         }
     }
 
@@ -647,8 +665,9 @@ impl App {
         }
         editor.close_confirmed = true;
         let file_path = editor.file_path.clone();
-        self.model
-            .error(format!("{file_path} has unsaved edits — close again to discard them"));
+        self.model.error(format!(
+            "{file_path} has unsaved edits — close again to discard them"
+        ));
         true
     }
 
@@ -701,7 +720,12 @@ impl App {
         let Some(active) = review.active_hunk_id.clone() else {
             return;
         };
-        let Some(hunk) = review.hunks().iter().find(|hunk| hunk.id == active).cloned() else {
+        let Some(hunk) = review
+            .hunks()
+            .iter()
+            .find(|hunk| hunk.id == active)
+            .cloned()
+        else {
             return;
         };
         let read_only = review.read_only();
@@ -978,9 +1002,7 @@ impl App {
 
         ctx.request_repaint_after(Duration::from_millis(120));
     }
-
 }
-
 
 /// Where the pane arrangement is kept between runs. Which agent comments go to is not here:
 /// that belongs to the person rather than to the window, so it lives in
@@ -997,7 +1019,9 @@ impl eframe::App for App {
     /// app's own palette is used rather than the visuals handed in, which lag behind it on
     /// the first frames.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        theme::Palette::of(self.model.theme).bg.to_normalized_gamma_f32()
+        theme::Palette::of(self.model.theme)
+            .bg
+            .to_normalized_gamma_f32()
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1201,7 +1225,12 @@ impl App {
             Stage::Ready => {}
         }
 
-        for action in self.menu.as_ref().map(NativeMenu::drain).unwrap_or_default() {
+        for action in self
+            .menu
+            .as_ref()
+            .map(NativeMenu::drain)
+            .unwrap_or_default()
+        {
             self.pending_action = Some(match action {
                 MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
@@ -1457,6 +1486,9 @@ mod path_tests {
     fn a_file_that_is_not_there_is_not_a_file_of_the_repo() {
         let repo = TestDir::new();
 
-        assert_eq!(path_inside_repo(&repo.path, &repo.path.join("gone.rs")), None);
+        assert_eq!(
+            path_inside_repo(&repo.path, &repo.path.join("gone.rs")),
+            None
+        );
     }
 }

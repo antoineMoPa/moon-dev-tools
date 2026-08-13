@@ -62,6 +62,42 @@ pub(crate) struct AppState {
 #[derive(Default)]
 pub(crate) struct ServerState {
     pub(crate) sessions: HashMap<String, RepoSession>,
+    /// What the tools have asked the window to do, oldest first, per session.
+    pub(crate) window_requests: HashMap<String, Vec<WindowRequest>>,
+}
+
+/// Leave a request for the window, to be picked up by the board's next poll.
+pub(crate) fn ask_the_window(
+    state: &AppState,
+    session_id: &str,
+    request: WindowRequest,
+) -> Result<()> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| anyhow!("state lock poisoned"))?;
+    guard
+        .window_requests
+        .entry(session_id.to_string())
+        .or_default()
+        .push(request);
+    Ok(())
+}
+
+/// Everything asked of the window since the last time it looked, taken as it is read.
+pub(crate) fn take_window_requests(state: &AppState, session_id: &str) -> Vec<WindowRequest> {
+    let Ok(mut guard) = state.inner.lock() else {
+        return Vec::new();
+    };
+    guard.window_requests.remove(session_id).unwrap_or_default()
+}
+
+/// Something a tool asked the window to open.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum WindowRequest {
+    /// Show a task's work, which the server has already put where it can be looked at.
+    Review(crate::moontasks::TaskReviewPayload),
 }
 
 pub(crate) struct RepoSession {

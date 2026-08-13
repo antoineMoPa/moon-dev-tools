@@ -217,6 +217,56 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Whether a checkout has nothing uncommitted in it, untracked files included.
+pub(crate) fn is_clean(path: &Path) -> Result<bool> {
+    Ok(run_git(path, &["status", "--porcelain"])?.trim().is_empty())
+}
+
+/// Make a checkout of its own at `worktree_path`, on `branch`, and answer with the commit it
+/// starts from.
+pub(crate) fn add_worktree(repo_path: &Path, worktree_path: &Path, branch: &str) -> Result<String> {
+    let path = worktree_path
+        .to_str()
+        .context("a worktree path has to be text git can be given")?;
+    let args = match git_ref_exists(repo_path, branch)? {
+        true => vec!["worktree", "add", path, branch],
+        false => vec!["worktree", "add", "-b", branch, path],
+    };
+    run_git_no_output(repo_path, &args)?;
+    Ok(run_git(worktree_path, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string())
+}
+
+/// Give a task's checkout back, leaving its branch alone.
+pub(crate) fn remove_worktree(repo_path: &Path, worktree_path: &Path, force: bool) -> Result<()> {
+    let worktree_path = worktree_path
+        .to_str()
+        .context("a worktree path has to be text git can be given")?;
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(worktree_path);
+    run_git_no_output(repo_path, &args)?;
+    // A worktree directory removed by hand leaves its registration behind, and the next
+    // `worktree add` at that path fails on a worktree git still believes in.
+    run_git_no_output(repo_path, &["worktree", "prune"])
+}
+
+/// How many commits `branch` has that `base` does not.
+pub(crate) fn commits_ahead(repo_path: &Path, base: &str, branch: &str) -> Result<usize> {
+    let range = format!("{base}..{branch}");
+    Ok(run_git(repo_path, &["rev-list", "--count", &range])?
+        .trim()
+        .parse()
+        .unwrap_or_default())
+}
+
+pub(crate) fn checkout_branch(repo_path: &Path, branch: &str) -> Result<()> {
+    run_git_no_output(repo_path, &["checkout", branch])
+}
+
 pub(crate) fn branch_commits_since_default(
     repo_path: &Path,
 ) -> Result<(Option<String>, Vec<CommitView>)> {
@@ -299,7 +349,7 @@ pub(crate) fn commit_view(repo_path: &Path, commit: &str) -> Result<Option<Commi
     Ok(output.lines().find_map(parse_commit_view))
 }
 
-fn default_branch_ref(repo_path: &Path) -> Result<Option<String>> {
+pub(crate) fn default_branch_ref(repo_path: &Path) -> Result<Option<String>> {
     if let Some(origin_head) = origin_head_ref(repo_path)? {
         return Ok(Some(origin_head));
     }
@@ -423,8 +473,7 @@ pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) 
         bail!("{file_path} is not a file in the working tree");
     }
 
-    fs::write(&resolved, content)
-        .with_context(|| format!("failed to write {}", resolved.display()))
+    fs::write(&resolved, content).with_context(|| format!("failed to write {}", resolved.display()))
 }
 
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
@@ -1050,18 +1099,25 @@ mod tests {
         // Two edits far enough apart that git would otherwise split them into two hunks.
         let spacer = "  <rect width=\"1\" height=\"1\"/>\n".repeat(12);
         let svg = |first: &str, last: &str| {
-            format!("<svg xmlns=\"http://www.w3.org/2000/svg\">\n  {first}\n{spacer}  {last}\n</svg>\n")
+            format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\">\n  {first}\n{spacer}  {last}\n</svg>\n"
+            )
         };
-        fs::write(repo_root.join("logo.svg"), svg("<g id=\"a\"/>", "<g id=\"z\"/>"))
-            .expect("failed to write the svg");
+        fs::write(
+            repo_root.join("logo.svg"),
+            svg("<g id=\"a\"/>", "<g id=\"z\"/>"),
+        )
+        .expect("failed to write the svg");
         run_git_no_output(&repo_root, &["add", "logo.svg"]).expect("failed to add the svg");
-        run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"])
-            .expect("failed to commit");
-        fs::write(repo_root.join("logo.svg"), svg("<g id=\"b\"/>", "<g id=\"y\"/>"))
-            .expect("failed to change the svg");
+        run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"]).expect("failed to commit");
+        fs::write(
+            repo_root.join("logo.svg"),
+            svg("<g id=\"b\"/>", "<g id=\"y\"/>"),
+        )
+        .expect("failed to change the svg");
 
-        let hunks = collect_hunks(&repo_root, &DiffTarget::default())
-            .expect("failed to collect the hunks");
+        let hunks =
+            collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect the hunks");
 
         let svg_hunks: Vec<_> = hunks
             .iter()
@@ -1085,7 +1141,10 @@ mod tests {
             .expect("the whole-file patch should stage cleanly");
         let staged = run_git(&repo_root, &["diff", "--cached", "--name-only"])
             .expect("failed to list staged files");
-        assert!(staged.contains("logo.svg"), "staging the hunk stages the file");
+        assert!(
+            staged.contains("logo.svg"),
+            "staging the hunk stages the file"
+        );
     }
 
     #[test]
@@ -1216,10 +1275,8 @@ mod tests {
         run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
         run_git_no_output(&repo_root, &["commit", "-m", "first"]).expect("failed to commit");
         run_git_no_output(&repo_root, &["branch", "-M", "main"]).expect("failed to name main");
-        run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
-            .expect("failed to branch");
-        fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n")
-            .expect("failed to write");
+        run_git_no_output(&repo_root, &["checkout", "-b", "feature"]).expect("failed to branch");
+        fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n").expect("failed to write");
         run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
         run_git_no_output(&repo_root, &["commit", "-m", "second"]).expect("failed to commit");
 

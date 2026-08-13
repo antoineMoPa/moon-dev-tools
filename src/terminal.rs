@@ -47,10 +47,17 @@ const BROADCAST_CAPACITY: usize = 256;
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
-    Input { data: String },
+    Input {
+        data: String,
+    },
     /// The terminal answering a query the program made of it, which is not somebody typing.
-    Reply { data: String },
-    Resize { cols: u16, rows: u16 },
+    Reply {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
 }
 
 #[derive(Deserialize)]
@@ -81,12 +88,17 @@ pub(crate) struct TerminalSpec {
     /// close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
     /// Text typed into the shell once the program has come up, as if the user had typed it.
-    ///
-    /// Never ends in a newline, and nothing here sends one: what this does is leave something
-    /// written in an agent's box for the person to send. A write that lands too early — while
-    /// the agent is still asking whether it trusts the folder — is lost rather than acted on,
-    /// which is what makes typing at a program that has not said it is ready acceptable.
-    pub(crate) type_ahead: Option<String>,
+    pub(crate) type_ahead: Option<TypeAhead>,
+    /// A file everything this shell prints is also written to, as it is printed.
+    pub(crate) transcript: Option<std::path::PathBuf>,
+}
+
+/// Text written into a shell once the program in it has a box to take it.
+pub(crate) struct TypeAhead {
+    /// What to type. Never ends in a newline; whether one follows is [`TypeAhead::submit`].
+    pub(crate) text: String,
+    /// Whether to send it.
+    pub(crate) submit: bool,
 }
 
 impl TerminalSpec {
@@ -99,6 +111,7 @@ impl TerminalSpec {
             env: Vec::new(),
             owner: None,
             type_ahead: None,
+            transcript: None,
         }
     }
 }
@@ -416,6 +429,16 @@ impl TerminalRegistry {
 
         let registry = Arc::clone(self);
         let reaped_id = terminal_id.clone();
+        // Opened once rather than per chunk, and a transcript that cannot be opened is simply
+        // not written: a run is worth more than its record of itself.
+        let mut transcript = spec.transcript.and_then(|path| {
+            path.parent().map(std::fs::create_dir_all);
+            std::fs::File::create(&path)
+                .inspect_err(|error| {
+                    eprintln!("[moonreview] no transcript at {}: {error}", path.display())
+                })
+                .ok()
+        });
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; OUTPUT_CHUNK_SIZE];
             loop {
@@ -426,11 +449,15 @@ impl TerminalRegistry {
                         crate::api::mark_activity(&session.last_activity);
                         *session.last_output.lock().unwrap() = Some(Instant::now());
                         session.scrollback.lock().unwrap().push(chunk);
+                        if let Some(file) = transcript.as_mut() {
+                            let _ = file.write_all(chunk);
+                        }
                         // No attached tab is normal: the shell keeps running regardless.
                         let _ = output.send(chunk.to_vec());
                     }
                 }
             }
+            drop(transcript);
             // An agent that fell over on its own — `claude --resume` on a session id that no
             // longer exists, say — has printed the only account of what went wrong, and both
             // frontends close the tab of a shell marked exited. So its session is kept, with a
@@ -485,7 +512,7 @@ fn failure_notice(session: &TerminalSession) -> Option<String> {
 /// point — before the person starts writing over it. So it waits for the program to stop
 /// drawing rather than for a fixed span, and if the person got there first it types nothing:
 /// a title landing in the middle of a sentence someone is writing is worse than no title.
-fn type_ahead(session: &TerminalSession, text: &str) {
+fn type_ahead(session: &TerminalSession, typed: &TypeAhead) {
     let deadline = Instant::now() + TYPE_AHEAD_DEADLINE;
     while Instant::now() < deadline {
         if *session.exited.borrow()
@@ -518,7 +545,13 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     {
         return;
     }
-    let _ = writer.write_all(text.as_bytes());
+    let _ = writer.write_all(typed.text.as_bytes());
+    if typed.submit {
+        // Separately, and after the text is in: an agent's box takes the Enter as "send what
+        // is written", and the two arriving in one write can be read as one paste.
+        let _ = writer.flush();
+        let _ = writer.write_all(b"\r");
+    }
 }
 
 pub(crate) async fn create_terminal(
@@ -588,7 +621,11 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
         loop {
             match output.recv().await {
                 Ok(chunk) => {
-                    if socket_sender.send(Message::Binary(chunk.into())).await.is_err() {
+                    if socket_sender
+                        .send(Message::Binary(chunk.into()))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -659,7 +696,11 @@ mod tests {
                 args: Vec::new(),
                 env: Vec::new(),
                 owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
+                type_ahead: Some(TypeAhead {
+                    text: "moonreview-typed-this".to_string(),
+                    submit: false,
+                }),
+                transcript: None,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -717,7 +758,11 @@ mod tests {
                 args: Vec::new(),
                 env: Vec::new(),
                 owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
+                type_ahead: Some(TypeAhead {
+                    text: "moonreview-typed-this".to_string(),
+                    submit: false,
+                }),
+                transcript: None,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -776,6 +821,7 @@ mod tests {
                 env: vec![("PATH".to_string(), path.display().to_string())],
                 owner: None,
                 type_ahead: None,
+                transcript: None,
             })
             .expect("expected a shell")
     }
@@ -861,6 +907,7 @@ mod tests {
                 env: Vec::new(),
                 owner: None,
                 type_ahead: None,
+                transcript: None,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -894,7 +941,11 @@ mod tests {
                 args: Vec::new(),
                 env: Vec::new(),
                 owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
+                type_ahead: Some(TypeAhead {
+                    text: "moonreview-typed-this".to_string(),
+                    submit: false,
+                }),
+                transcript: None,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");

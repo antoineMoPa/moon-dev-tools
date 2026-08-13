@@ -16,10 +16,11 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
+        WindowRequest,
     },
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
-        TaskView,
+        TaskReviewPayload, TaskView, TaskWorktreeView,
     },
 };
 
@@ -123,6 +124,21 @@ pub(crate) trait Backend: Send + Sync + 'static {
         resource_id: &str,
     ) -> Result<()>;
     fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()>;
+    /// What a card is marked with, set whole. Tags are how a person says which cards an
+    /// autopilot window may work.
+    fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()>;
+    /// Give a task a checkout of its own, on a branch named after it. Everything the task
+    /// starts from then on runs there instead of in the repo.
+    fn create_task_worktree(&self, session_id: &str, task_id: &str) -> Result<TaskWorktreeView>;
+    /// Give that checkout back. `force` takes uncommitted work in it with it.
+    fn discard_task_worktree(&self, session_id: &str, task_id: &str, force: bool) -> Result<()>;
+    /// Prepare a task's work for review.
+    fn review_task(&self, session_id: &str, task_id: &str) -> Result<TaskReviewPayload>;
+    /// Open a window that works the board with the given agent, and answer with the shell it
+    /// runs in. It belongs to the board rather than to any card.
+    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String>;
+    /// What the tools have asked the window to do since it last looked, taken as it is read.
+    fn take_window_requests(&self, session_id: &str) -> Result<Vec<WindowRequest>>;
     /// Make sure the task's notes file exists, and answer with the repo-relative path a file
     /// pane opens it by. Editing then goes through [`Backend::write_file`] like any file.
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String>;

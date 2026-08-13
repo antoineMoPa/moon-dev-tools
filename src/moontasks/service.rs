@@ -11,17 +11,18 @@ use crate::{
     api::{AgentKind, AppState},
     git::agent_is_available,
     moontasks::{
-        AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView,
-        TaskView, agent_launch,
+        AgentLaunch, AttachResourceRequest, CreateTaskRequest, StartResourceRequest,
+        TaskResourceView, TaskView, agent_launch, autopilot,
         store::{
             self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
+        worktrees,
     },
     terminal::TerminalSpec,
 };
 
 /// The repo a session's board belongs to.
-fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
+pub(crate) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
     crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))
 }
 
@@ -77,7 +78,7 @@ pub(crate) fn place_task(
     }
 
     let mut moved = store::read_task(&repo_path, task_id)?;
-    release_a_finished_task(state, &board, task_id, &mut moved, &status);
+    release_a_finished_task(state, &board, &repo_path, task_id, &mut moved, &status);
     moved.status = status.clone();
 
     // The cards already in that column, in the order the board draws them.
@@ -295,7 +296,13 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
             .join(task_id)
             .display()
             .to_string(),
-        repo_path: repo_path.display().to_string(),
+        // Where the task's work happens, which is its own checkout once it has one. This is
+        // what the card hands to a new shell and to `[start review]`.
+        repo_path: worktrees::work_dir_of(repo_path, metadata)
+            .display()
+            .to_string(),
+        worktree: worktrees::view_of(metadata),
+        tags: metadata.tags.clone(),
         notes: store::read_notes(repo_path, task_id),
         resources,
     }
@@ -344,6 +351,7 @@ pub(crate) fn create_task(
             StartResourceRequest {
                 kind: TaskResourceKind::Agent,
                 agent: request.agent,
+                prompt: None,
             },
         )?;
     }
@@ -352,11 +360,12 @@ pub(crate) fn create_task(
     Ok(view_of(state, &repo_path, &task_id, &metadata))
 }
 
-/// A finished task lets go of its shells. Until then they keep running with no tab open,
-/// which is what makes closing an agent's tab safe.
+/// A finished task lets go of its shells, and of the checkout they were working in. Until then
+/// the shells keep running with no tab open, which is what makes closing an agent's tab safe.
 fn release_a_finished_task(
     state: &AppState,
     board: &BoardConfig,
+    repo_path: &Path,
     task_id: &str,
     metadata: &mut TaskMetadata,
     status: &ColumnId,
@@ -368,12 +377,31 @@ fn release_a_finished_task(
     for resource in &mut metadata.resources {
         resource.terminal_id = None;
     }
+    worktrees::discard_quietly(repo_path, metadata);
 }
 
 pub(crate) fn delete_task(state: &AppState, session_id: &str, task_id: &str) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     state.terminals.remove_owned_by(task_id);
+    // A deleted card has nowhere left to record its worktree, so the directory would be
+    // unreachable rather than merely unused.
+    if let Ok(mut metadata) = store::read_task(&repo_path, task_id) {
+        worktrees::discard_quietly(&repo_path, &mut metadata);
+    }
     store::delete_task(&repo_path, task_id)
+}
+
+/// What a card is marked with, set whole.
+pub(crate) fn set_tags(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    tags: &[String],
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+    metadata.tags = store::tags_of(tags.iter().map(String::as_str));
+    store::write_task(&repo_path, task_id, &metadata)
 }
 
 /// Start a shell or an agent in a task, and record it on the task.
@@ -396,30 +424,42 @@ pub(crate) fn start_resource(
         }
     };
     let launch = agent_launch(agent);
-    // Only an agent whose start args name a session id has a run that can be resumed exactly.
+    // The work up front means the one-shot argv; nothing up front means a conversation opened
+    // on the task and left waiting. Everything past this point is the same either way — a
+    // finished one-shot run is resumed and attached to exactly like any other.
+    let template = |launch: &AgentLaunch| match request.prompt {
+        Some(_) => launch.one_shot,
+        None => launch.start,
+    };
+    // Only an agent whose args name a session id has a run that can be resumed exactly.
     let agent_session_id = launch
-        .filter(|launch| launch.start.iter().any(|arg| arg.contains("{session}")))
+        .filter(|launch| template(launch).iter().any(|arg| arg.contains("{session}")))
         .map(|_| store::new_uuid());
 
-    let fillings =
-        write_task_files(task_id, &repo_path, &metadata)?.with_session(agent_session_id.as_deref());
+    // Named before the run starts, because the run writes its transcript under this name.
+    let resource_id = store::new_uuid();
+    let fillings = write_task_files(task_id, &repo_path, &metadata)?
+        .with_session(agent_session_id.as_deref())
+        .with_prompt(request.prompt.as_deref());
     let args = match launch {
-        Some(launch) => fillings.fill_all(launch.start.iter()),
+        Some(launch) => fillings.fill_all(template(launch).iter()),
         None => Vec::new(),
     };
     let env = task_env(session_id, task_id, &repo_path);
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: (agent != AgentKind::None).then_some(agent),
         args,
         env,
         owner: Some(task_id.to_string()),
-        // An agent comes up with the card's title already written in its box, waiting on the
-        // Enter that sends it. It is still the person who starts the work — the title is a
-        // card's name and rarely the whole of what is wanted — but the common case, where it
-        // is, is one keystroke away. A task's plain shell gets nothing typed at it.
-        type_ahead: (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone()),
+        type_ahead: type_ahead_for(&request, &metadata),
+        // Only a run given its work up front keeps one: an interactive run is a conversation
+        // someone is having, and its scrollback is where that lives.
+        transcript: request
+            .prompt
+            .is_some()
+            .then(|| store::run_log_path(&repo_path, task_id, &resource_id)),
     })?;
 
     // A shell is not written down: nothing survives its pty, so a record of one from a run of
@@ -427,7 +467,7 @@ pub(crate) fn start_resource(
     // ones that are open, and that is the whole life of a shell.
     if request.kind == TaskResourceKind::Agent {
         metadata.resources.push(TaskResource {
-            id: store::new_uuid(),
+            id: resource_id,
             kind: request.kind,
             agent,
             terminal_id: Some(terminal_id.clone()),
@@ -438,6 +478,38 @@ pub(crate) fn start_resource(
     }
 
     Ok(terminal_id)
+}
+
+/// Open a window that works the board, running the given agent.
+pub(crate) fn start_autopilot(
+    state: &AppState,
+    session_id: &str,
+    agent: AgentKind,
+) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    if !agent_is_available(state.agent_availability, agent) {
+        bail!("{} is not installed here", agent.label());
+    }
+    autopilot::ensure_brief(&repo_path)?;
+
+    let prompt = autopilot::opening_prompt(&repo_path);
+    let (args, types_its_prompt) = autopilot::launch_args(agent, &repo_path, &prompt);
+
+    state.terminals.spawn(TerminalSpec {
+        cwd: repo_path.clone(),
+        program: Some(agent),
+        args,
+        env: Vec::new(),
+        owner: None,
+        // Only for the agent that cannot be handed its opening message on the command line.
+        // It is sent, unlike everywhere else, because a window nobody is going to type into is
+        // one a person opened in order for it to start — the Enter was theirs, further up.
+        type_ahead: types_its_prompt.then(|| crate::terminal::TypeAhead {
+            text: prompt,
+            submit: true,
+        }),
+        transcript: None,
+    })
 }
 
 /// Start a past agent run again where it left off.
@@ -479,7 +551,7 @@ pub(crate) fn resume_resource(
         None => launch.resume,
     };
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: Some(resource.agent),
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
@@ -487,6 +559,7 @@ pub(crate) fn resume_resource(
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
         type_ahead: None,
+        transcript: None,
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
@@ -523,7 +596,7 @@ pub(crate) fn attach_resource(
     let fillings =
         write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: Some(request.agent),
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
@@ -531,6 +604,7 @@ pub(crate) fn attach_resource(
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
         type_ahead: None,
+        transcript: None,
     })?;
 
     metadata.resources.push(TaskResource {
@@ -652,6 +726,15 @@ impl Fillings {
         self
     }
 
+    /// The work, for a run that was given it up front. A run that was not has no value for
+    /// `{prompt}`, which is what makes the one-shot arguments unfillable for it.
+    fn with_prompt(mut self, prompt: Option<&str>) -> Self {
+        if let Some(prompt) = prompt {
+            self.values.push(("{prompt}", prompt.to_string()));
+        }
+        self
+    }
+
     /// Fill one template string in. `None` means a placeholder in it had nothing to fill it.
     ///
     /// Whether it can be filled is decided from the template, before anything is substituted:
@@ -685,6 +768,20 @@ impl Fillings {
         }
         args
     }
+}
+
+/// What is written into a run's box a moment after it starts, if anything.
+fn type_ahead_for(
+    request: &StartResourceRequest,
+    metadata: &TaskMetadata,
+) -> Option<crate::terminal::TypeAhead> {
+    if request.kind != TaskResourceKind::Agent || request.prompt.is_some() {
+        return None;
+    }
+    Some(crate::terminal::TypeAhead {
+        text: metadata.title.clone(),
+        submit: false,
+    })
 }
 
 /// What every process started for a task is told about itself.
@@ -786,7 +883,9 @@ mod tests {
             let launch = agent_launch(*kind).expect("expected the agent to be launchable");
 
             assert_eq!(
-                fillings().with_session(Some(session)).fill_all(launch.attach.iter()),
+                fillings()
+                    .with_session(Some(session))
+                    .fill_all(launch.attach.iter()),
                 *args,
                 "{kind:?} did not open the picked session"
             );
@@ -850,6 +949,8 @@ mod tests {
             status: ColumnId::new("in_progress"),
             created_at_unix: 0,
             position: 0,
+            tags: Vec::new(),
+            worktree: None,
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
@@ -881,6 +982,8 @@ mod tests {
             status: ColumnId::new("done"),
             created_at_unix: 0,
             position: 0,
+            tags: Vec::new(),
+            worktree: None,
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,

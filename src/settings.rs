@@ -46,15 +46,42 @@ impl Settings {
     }
 }
 
-fn home_settings_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|home| !home.is_empty())?;
-    Some(
-        PathBuf::from(home)
-            .join(SETTINGS_DIR_NAME)
-            .join(SETTINGS_FILE_NAME),
-    )
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+fn home_settings_path() -> Option<PathBuf> {
+    Some(home_dir()?.join(SETTINGS_DIR_NAME).join(SETTINGS_FILE_NAME))
+}
+
+/// Where a task's own checkout is made, for every repo the person opens a board in.
+pub(crate) fn worktrees_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        let test: String = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .chars()
+            .map(|character| {
+                if character.is_alphanumeric() {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        Some(std::env::temp_dir().join(format!(
+            "moonreview-test-worktrees-{}-{test}",
+            std::process::id()
+        )))
+    }
+    #[cfg(not(test))]
+    {
+        Some(home_dir()?.join(SETTINGS_DIR_NAME).join("worktrees"))
+    }
 }
 
 /// The file this run reads and writes.
@@ -71,7 +98,13 @@ pub(crate) fn path() -> Option<PathBuf> {
             .name()
             .unwrap_or("unnamed")
             .chars()
-            .map(|character| if character.is_alphanumeric() { character } else { '-' })
+            .map(|character| {
+                if character.is_alphanumeric() {
+                    character
+                } else {
+                    '-'
+                }
+            })
             .collect();
         Some(std::env::temp_dir().join(format!(
             "moonreview-test-settings-{}-{test}.json",
@@ -171,7 +204,10 @@ mod tests {
         settings.remember_project("/b");
 
         assert!(settings.remember_project("/a"));
-        assert_eq!(settings.recent_projects, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(
+            settings.recent_projects,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
     }
 
     #[test]
@@ -191,7 +227,10 @@ mod tests {
 
         assert_eq!(settings.recent_projects.len(), RECENT_PROJECTS_KEPT);
         assert_eq!(settings.recent_projects[0], "/project-10");
-        assert_eq!(settings.recent_projects[RECENT_PROJECTS_KEPT - 1], "/project-3");
+        assert_eq!(
+            settings.recent_projects[RECENT_PROJECTS_KEPT - 1],
+            "/project-3"
+        );
     }
 
     #[test]

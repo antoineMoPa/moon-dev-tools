@@ -18,6 +18,9 @@ through a repo. Each card is a task folder with notes, running shells and agents
 so agent work has a visible place instead of disappearing into terminal tabs. Open any resource
 beside the board and move cards through your own workflow as work progresses.
 
+Cards can use isolated checkouts, while `[autopilot]` manages tagged jobs without file access;
+all work remains visible and reviewable from the board.
+
 ![Moonreview showing local changes](tests/snapshots/review-dark.png)
 
 **Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage

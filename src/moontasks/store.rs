@@ -18,6 +18,8 @@ use crate::api::AgentKind;
 /// The directory, in the repo being reviewed, that holds every task.
 pub(crate) const TASKS_DIR_NAME: &str = ".moontasks";
 const METADATA_FILE_NAME: &str = "metadata.json";
+/// Where a task keeps what its one-shot runs printed, one file per run.
+const RUNS_DIR_NAME: &str = "runs";
 /// The board's own file, beside the task folders: what its columns are and what they are
 /// called. A board without one has the columns in [`DEFAULT_COLUMNS`], and only grows the file
 /// once someone changes them.
@@ -159,6 +161,17 @@ pub(crate) struct TaskResource {
     pub(crate) started_at_unix: u64,
 }
 
+/// The checkout a task's agents work in, once it has one of its own.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct TaskWorktree {
+    /// Where the checkout is, absolute — outside the repo, so nothing in the repo walks it.
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    /// The commit the branch grew from, recorded when the checkout was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_commit: Option<String>,
+}
+
 /// The `metadata.json` of one task folder.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskMetadata {
@@ -175,8 +188,46 @@ pub(crate) struct TaskMetadata {
     /// which is the order that board was already drawn in.
     #[serde(default)]
     pub(crate) position: u32,
+    /// What the card is marked with, in the spelling [`tag_of`] settles on. Tags are what the
+    /// board's hook scripts key off: `autopilot` is a tag before it is a feature.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tags: Vec<String>,
+    /// The checkout this task's agents work in, for a task that was given one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) worktree: Option<TaskWorktree>,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
+}
+
+/// One tag in the single spelling the board keeps it in, or nothing at all for text that has
+/// no tag in it.
+pub(crate) fn tag_of(text: &str) -> Option<String> {
+    let mut tag = String::new();
+    let mut pending_dash = false;
+    for character in text.chars() {
+        if character.is_alphanumeric() || character == '-' || character == '_' {
+            if pending_dash && !tag.is_empty() {
+                tag.push('-');
+            }
+            pending_dash = false;
+            tag.extend(character.to_lowercase());
+        } else {
+            pending_dash = true;
+        }
+    }
+    (!tag.is_empty()).then_some(tag)
+}
+
+/// A list of tags as the board keeps it: each one spelled by [`tag_of`], in the order given,
+/// with nothing said twice.
+pub(crate) fn tags_of<'a>(text: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for tag in text.into_iter().filter_map(tag_of) {
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
 }
 
 pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
@@ -247,6 +298,14 @@ pub(crate) fn write_board(repo_path: &Path, config: &BoardConfig) -> Result<()> 
     let text = serde_json::to_string_pretty(config).context("failed to encode the board")?;
     fs::write(&path, format!("{text}\n"))
         .with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Where a run given its work up front writes what it printed.
+pub(crate) fn run_log_path(repo_path: &Path, task_id: &str, resource_id: &str) -> PathBuf {
+    tasks_root(repo_path)
+        .join(task_id)
+        .join(RUNS_DIR_NAME)
+        .join(format!("{resource_id}.log"))
 }
 
 pub(crate) fn task_dir(repo_path: &Path, task_id: &str) -> Result<PathBuf> {
@@ -335,6 +394,8 @@ pub(crate) fn create_task(
         created_at_unix: now_unix(),
         position,
         status: status.clone(),
+        tags: Vec::new(),
+        worktree: None,
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;

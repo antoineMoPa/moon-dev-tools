@@ -23,8 +23,8 @@ use crate::{
     backend::Backend,
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
-        TerminalOpened,
+        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
+        TaskReviewPayload, TaskTagsRequest, TaskView, TaskWorktreeView, TerminalOpened,
     },
 };
 
@@ -291,7 +291,10 @@ impl Backend for RemoteBackend {
     }
 
     fn send_comment_batch(&self, session_id: &str) -> Result<()> {
-        self.post(&format!("/api/session/{session_id}/comment-batch"), &json!({}))
+        self.post(
+            &format!("/api/session/{session_id}/comment-batch"),
+            &json!({}),
+        )
     }
 
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()> {
@@ -442,9 +445,7 @@ impl Backend for RemoteBackend {
         resource_id: &str,
     ) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
-            &format!(
-                "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"
-            ),
+            &format!("/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"),
             &json!({}),
         )?;
         Ok(opened.terminal_id)
@@ -470,12 +471,7 @@ impl Backend for RemoteBackend {
         Ok(opened.terminal_id)
     }
 
-    fn stop_task_resource(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        resource_id: &str,
-    ) -> Result<()> {
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop"),
             &json!({}),
@@ -506,6 +502,47 @@ impl Backend for RemoteBackend {
             &json!({}),
         )?;
         Ok(notes.file_path)
+    }
+
+    fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/tags"),
+            &TaskTagsRequest {
+                tags: tags.to_vec(),
+            },
+        )
+    }
+
+    fn create_task_worktree(&self, session_id: &str, task_id: &str) -> Result<TaskWorktreeView> {
+        self.post_json(
+            &format!("/api/session/{session_id}/tasks/{task_id}/worktree"),
+            &json!({}),
+        )
+    }
+
+    fn discard_task_worktree(&self, session_id: &str, task_id: &str, force: bool) -> Result<()> {
+        self.delete(&format!(
+            "/api/session/{session_id}/tasks/{task_id}/worktree?force={force}"
+        ))
+    }
+
+    fn review_task(&self, session_id: &str, task_id: &str) -> Result<TaskReviewPayload> {
+        self.post_json(
+            &format!("/api/session/{session_id}/tasks/{task_id}/review"),
+            &json!({}),
+        )
+    }
+
+    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/autopilot"),
+            &json!({ "agent": agent }),
+        )?;
+        Ok(opened.terminal_id)
+    }
+
+    fn take_window_requests(&self, session_id: &str) -> Result<Vec<crate::api::WindowRequest>> {
+        self.get(&format!("/api/session/{session_id}/window-requests"))
     }
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {

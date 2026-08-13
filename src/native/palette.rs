@@ -50,7 +50,10 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let root = app.model.root_session_id.clone();
 
     commands.push(single_pane_command(
-        app.model.layout.find_pane(|pane| pane.reviews(&root)).is_some(),
+        app.model
+            .layout
+            .find_pane(|pane| pane.reviews(&root))
+            .is_some(),
         "review",
         "Open the main review",
         "Bring the main review forward",
@@ -105,16 +108,21 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         }
         commands.push(Command {
             title: format!("new {} window", frame.program()),
-            description: format!("Open another window on {}, asking which repo", frame.opens()),
+            description: format!(
+                "Open another window on {}, asking which repo",
+                frame.opens()
+            ),
             action: CommandAction::NewWindow(*frame),
             // Only this window's own program has a chord; the other two are named only.
-            shortcut: (*frame == app.frame()).then(|| bindings::chord_of(Action::NewWindow)).flatten(),
+            shortcut: (*frame == app.frame())
+                .then(|| bindings::chord_of(Action::NewWindow))
+                .flatten(),
         });
     }
 
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
-    if app.serves_web {
+    if app.serves_web.is_serving() {
         commands.push(Command {
             title: "open in browser".to_string(),
             description: "Open this review in a browser".to_string(),
@@ -146,6 +154,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             title: submodule.name.clone(),
             description: format!("Review the changed submodule at {}", submodule.repo_path),
             action: CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
+                base: None,
                 repo_path: submodule.repo_path.clone(),
                 title: submodule.name.clone(),
             }),
@@ -402,7 +411,10 @@ mod tests {
 
     #[test]
     fn an_empty_query_keeps_every_command() {
-        let commands = vec![command("review", "Open the main review"), command("terminal", "Open a new shell")];
+        let commands = vec![
+            command("review", "Open the main review"),
+            command("terminal", "Open a new shell"),
+        ];
 
         assert_eq!(filter(commands, "  ").len(), 2);
     }

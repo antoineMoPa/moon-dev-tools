@@ -126,14 +126,21 @@ impl App {
                     .layout
                     .add_pane(frame, Pane::Review { session_id, title }, None);
             }
-            OpenPaneRequest::ReviewRepo { repo_path, title } => {
+            OpenPaneRequest::ReviewRepo {
+                repo_path,
+                title,
+                base,
+            } => {
                 // The session has to exist before a pane can point at it, and creating one runs
                 // git in the repo, so the pane appears once that comes back.
                 self.tasks.spawn(
                     move |backend| {
                         backend.open_session(OpenSessionRequest {
                             repo_path,
-                            diff_target: None,
+                            diff_target: base.map(|base| crate::api::DiffTarget {
+                                base: Some(base),
+                                ..Default::default()
+                            }),
                             active_commit: None,
                         })
                     },
@@ -176,9 +183,9 @@ impl App {
                 file_path,
             } => {
                 // The same file twice is the same tab: opening it again brings it forward.
-                if let Some((pane, _)) = self.model.layout.find_pane(|pane| {
-                    matches!(pane, Pane::File { file_path: open, .. } if *open == file_path)
-                }) {
+                if let Some((pane, _)) = self.model.layout.find_pane(
+                    |pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path),
+                ) {
                     self.model.layout.focus_pane(pane);
                     return;
                 }
@@ -749,7 +756,10 @@ mod tests {
         let doomed = layout.add_pane_beside(layout.active_frame(), DropSide::Right, shell("gone"));
         let gone = layout.frame_of(doomed).expect("expected a frame");
         layout.close_pane(doomed);
-        assert!(layout.frame(gone).is_none(), "the frame went with its shell");
+        assert!(
+            layout.frame(gone).is_none(),
+            "the frame went with its shell"
+        );
 
         place_shell(&mut layout, &TerminalPlacement::Tab(gone), shell("a"));
 

@@ -264,6 +264,32 @@ pub(crate) struct BoardState {
     pub(crate) pending_column_place: Option<PendingColumnPlace>,
     /// The attach-a-session modal, while it is open.
     pub(crate) attach_picker: Option<AttachPicker>,
+    /// The `run once…` box on a card, and the work being typed into it.
+    pub(crate) running_once: Option<RunComposer>,
+    /// The `new tag…` box on a card, and what is being typed into it.
+    pub(crate) tagging: Option<TagComposer>,
+    /// The task whose `[discard worktree]` has been pressed once, so a stray click cannot
+    /// throw a checkout away.
+    pub(crate) pending_worktree_discard: Option<String>,
+    /// A review the server has just prepared — it may have put a task's branch in the repo on
+    /// the way — waiting for the window to open a tab on it, the way an opened shell does.
+    pub(crate) opening_review: Option<crate::moontasks::TaskReviewPayload>,
+}
+
+/// The box a one-shot run's work is typed into, on the card it will run in.
+pub(crate) struct RunComposer {
+    pub(crate) task_id: String,
+    pub(crate) agent: crate::api::AgentKind,
+    pub(crate) text: String,
+    pub(crate) focus: bool,
+}
+
+/// The box a tag is typed into, on the card it will be put on.
+pub(crate) struct TagComposer {
+    pub(crate) task_id: String,
+    pub(crate) text: String,
+    /// Set when the box has just opened, so it takes the keyboard once.
+    pub(crate) focus: bool,
 }
 
 /// The modal that attaches one of an agent's own sessions to a task.
@@ -329,12 +355,13 @@ pub(crate) struct TaskRename {
     pub(crate) focus: bool,
 }
 
-
 /// A shell the board started and wants shown.
 pub(crate) struct OpenedShell {
     pub(crate) terminal_id: String,
     pub(crate) command: Option<AgentKind>,
-    pub(crate) task_id: String,
+    /// The card it belongs to. `None` for a shell of the board's own — the autopilot window is
+    /// about the whole board, so no card owns it and closing its tab lets go of it.
+    pub(crate) task_id: Option<String>,
 }
 
 /// The command palette, and the query typed into it.

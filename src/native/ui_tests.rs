@@ -150,7 +150,7 @@ fn app_for_frame(repo_path: &Path, theme: ThemeMode, frame: crate::cli::Frame) -
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame,
     };
 
@@ -274,7 +274,7 @@ fn a_shell_that_exits_closes_its_tab() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -370,7 +370,7 @@ fn quitting_with_a_shell_still_running_asks_first() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -1056,7 +1056,7 @@ fn an_unchanged_file_opens_as_the_file_itself() {
             }),
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -1131,7 +1131,7 @@ fn a_window_with_no_repo_asks_which_one_to_review() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
+            serves_web: crate::native::ServesWeb::Never,
             frame: crate::cli::Frame::Review,
         },
     );
@@ -1159,7 +1159,7 @@ fn the_launch_screen_of_the_board_does_not_offer_a_review() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
+            serves_web: crate::native::ServesWeb::Never,
             frame: crate::cli::Frame::Tasks,
         },
     );
@@ -1202,7 +1202,7 @@ fn the_launch_screen_offers_the_projects_opened_before() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
+            serves_web: crate::native::ServesWeb::Never,
             frame: crate::cli::Frame::Review,
         },
     );
@@ -1383,7 +1383,10 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(shell_ready.load(Ordering::Relaxed), "the shell never drew its output");
+    assert!(
+        shell_ready.load(Ordering::Relaxed),
+        "the shell never drew its output"
+    );
     harness.run_steps(3);
     harness.snapshot("moontasks-workspace");
 }
@@ -1461,10 +1464,7 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
                 app.model.board.loaded && app.model.board.tasks.len() == 1,
                 Ordering::Relaxed,
             );
-            picker_open_in_ui.store(
-                app.model.board.attach_picker.is_some(),
-                Ordering::Relaxed,
-            );
+            picker_open_in_ui.store(app.model.board.attach_picker.is_some(), Ordering::Relaxed);
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -1728,9 +1728,7 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
             std::thread::sleep(Duration::from_millis(10));
         }
     };
-    harness
-        .get_by_label_contains("Ship it by Friday")
-        .click();
+    harness.get_by_label_contains("Ship it by Friday").click();
     wait_for(&mut harness, ".moontasks/write-the-parser-1111/notes.md");
     assert!(
         panes_open().contains(&".moontasks/write-the-parser-1111/notes.md".to_string()),
@@ -1879,6 +1877,80 @@ fn a_long_task_title_is_cut_into_its_column() {
 
     harness.run_steps(3);
     harness.snapshot("moontasks-long-title");
+}
+
+/// What a card says about itself besides its title: what it is marked with, and where its work
+/// is happening.
+#[test]
+fn a_card_shows_its_tags_and_the_checkout_it_works_in() {
+    let fixture = seeded_fixture("board-tags");
+    let elsewhere = fixture.root.join("elsewhere").display().to_string();
+    for (task_id, title, status, extra) in [
+        (
+            "write-the-parser-1111",
+            "Write the parser",
+            "todo",
+            "\"tags\": [\"autopilot\", \"parser\"],".to_string(),
+        ),
+        (
+            "fix-the-login-page-2222",
+            "Fix the login page",
+            "in_progress",
+            format!(
+                "\"tags\": [\"autopilot\"],\n  \"worktree\": {{ \"path\": \"{elsewhere}\", \
+                 \"branch\": \"moontask/fix-the-login-page-2222\" }},"
+            ),
+        ),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"{status}\",\n  \
+                 \"created_at_unix\": 1700000000,\n  {extra}\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 2,
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the two tasks out of .moontasks"
+    );
+
+    harness.run_steps(3);
+    harness.snapshot("moontasks-tags");
 }
 
 /// The three executables are the same window opened on three different things, which is the
@@ -2605,10 +2677,8 @@ fn a_copy_pressed_in_a_shell_stays_with_the_shell() {
                 egui::Area::new("stand-in-shell-area".into())
                     .fixed_pos(egui::pos2(2.0, 2.0))
                     .show(ui.ctx(), |ui| {
-                        let rect = egui::Rect::from_min_size(
-                            egui::pos2(2.0, 2.0),
-                            egui::vec2(8.0, 8.0),
-                        );
+                        let rect =
+                            egui::Rect::from_min_size(egui::pos2(2.0, 2.0), egui::vec2(8.0, 8.0));
                         let response = ui.interact(rect, shell_id, egui::Sense::click());
                         response.request_focus();
                     });
@@ -3618,7 +3688,7 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -3718,7 +3788,7 @@ fn raising_a_shell_tab_hands_it_the_keyboard() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -4176,7 +4246,7 @@ fn dragging_over_a_shell_selects_its_text() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -4582,7 +4652,7 @@ fn a_recent_project_opens_from_the_middle_of_its_row() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
+            serves_web: crate::native::ServesWeb::Never,
             frame: crate::cli::Frame::Review,
         },
     );
@@ -4675,7 +4745,7 @@ fn the_wheel_scrolls_a_shell_pane() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
+        serves_web: crate::native::ServesWeb::Never,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);

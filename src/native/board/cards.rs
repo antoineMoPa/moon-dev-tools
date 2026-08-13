@@ -13,7 +13,7 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, CLOSE_MARK_SIZE, agent_label, available_agents, close_button,
+            Axis, BoardAction, CLOSE_MARK_SIZE, agent_label, available_agents, close_button, marks,
             running_dot, slide_into_place, stamp_place,
         },
         model::Model,
@@ -246,6 +246,7 @@ fn draw_card_body(
             ui.set_width(ui.available_width());
             draw_card_title(app, ui, task, drag_id, palette, actions);
             ui.add_space(3.0);
+            marks::draw_marks(ui, task, palette);
             draw_notes_box(ui, task, palette, actions);
             ui.add_space(3.0);
 
@@ -258,7 +259,7 @@ fn draw_card_body(
                 ui.add_space(3.0);
             }
 
-            draw_card_actions(app, ui, task, actions);
+            draw_card_actions(app, ui, task, palette, actions);
         })
         .response
         .rect
@@ -401,12 +402,7 @@ const NOTES_ROWS: usize = 3;
 /// The first lines of the task's `notes.md` under the title — its description. A task with
 /// none offers the link that starts them. Either way a click opens the file in a column down
 /// the right, straight into the editor.
-fn draw_notes_box(
-    ui: &mut Ui,
-    task: &TaskView,
-    palette: &Palette,
-    actions: &mut Vec<BoardAction>,
-) {
+fn draw_notes_box(ui: &mut Ui, task: &TaskView, palette: &Palette, actions: &mut Vec<BoardAction>) {
     let notes = task.notes.trim();
     if notes.is_empty() {
         if widgets::quiet_button(ui, "[add notes]")
@@ -530,21 +526,89 @@ fn draw_resource(
     });
 }
 
-fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
+/// The box a one-shot run's work is written in, standing on the card it will run in.
+fn draw_run_composer(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
+    let composing = app
+        .model
+        .board
+        .running_once
+        .as_ref()
+        .is_some_and(|composer| composer.task_id == task.id);
+    if !composing {
+        return;
+    }
+    let Some(composer) = app.model.board.running_once.as_mut() else {
+        return;
+    };
+
+    let agent = composer.agent;
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut composer.text)
+            .hint_text("what this run should do, in full")
+            .desired_width(f32::INFINITY)
+            .desired_rows(3),
+    );
+    if std::mem::take(&mut composer.focus) {
+        response.request_focus();
+    }
+    let typed = composer.text.trim().to_string();
+
+    ui.horizontal(|ui| {
+        // Enter makes a new line here rather than sending, because this is a paragraph — so
+        // the run is started by pressing the thing that says it starts a run.
+        let ready = !typed.is_empty();
+        if ui
+            .add_enabled(
+                ready,
+                egui::Button::new(format!("[run {}]", agent_label(agent))).frame(false),
+            )
+            .clicked()
+        {
+            actions.push(BoardAction::Start(
+                task.id.clone(),
+                StartResourceRequest {
+                    kind: TaskResourceKind::Agent,
+                    agent,
+                    prompt: Some(typed),
+                },
+            ));
+            actions.push(BoardAction::CloseRunComposer);
+        }
+        if widgets::quiet_button(ui, "[cancel]").clicked()
+            || ui.input(|input| input.key_pressed(egui::Key::Escape))
+        {
+            actions.push(BoardAction::CloseRunComposer);
+        }
+    });
+    ui.add_space(3.0);
+}
+
+fn draw_card_actions(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
     let agents: Vec<AgentKind> = available_agents(app)
         .into_iter()
         .filter(|agent| *agent != AgentKind::None)
         .collect();
 
-    ui.horizontal(|ui| {
+    draw_run_composer(app, ui, task, actions);
+
+    ui.horizontal_wrapped(|ui| {
+        // A task with a worktree is reviewed by putting its branch in the repo, which is the
+        // server's work and can be refused — so this asks rather than opening a pane itself.
+        let hover = match &task.worktree {
+            Some(worktree) => format!("Check {} out in the repo and review it", worktree.branch),
+            None => "Open the review of this repo in a tab".to_string(),
+        };
         if widgets::quiet_button(ui, "[start review]")
-            .on_hover_text("Open the review of this repo in a tab")
+            .on_hover_text(hover)
             .clicked()
         {
-            actions.push(BoardAction::OpenReview(
-                task.repo_path.clone(),
-                task.title.clone(),
-            ));
+            actions.push(BoardAction::Review(task.id.clone()));
         }
 
         if widgets::quiet_button(ui, "[launch shell]")
@@ -556,6 +620,7 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
                 StartResourceRequest {
                     kind: TaskResourceKind::Shell,
                     agent: AgentKind::None,
+                    prompt: None,
                 },
             ));
         }
@@ -567,15 +632,30 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
                 egui::Button::new("[new agent]").frame(false),
             )
             .ui(ui, |ui| {
-                for agent in agents {
+                for agent in &agents {
+                    let agent = *agent;
                     if widgets::clickable(ui.button(agent_label(agent))).clicked() {
                         actions.push(BoardAction::Start(
                             task.id.clone(),
                             StartResourceRequest {
                                 kind: TaskResourceKind::Agent,
                                 agent,
+                                prompt: None,
                             },
                         ));
+                        ui.close();
+                    }
+                }
+                // The same agents again, given the whole of the work up front instead of a
+                // conversation to be told it in. A run started this way finishes on its own.
+                ui.separator();
+                for agent in &agents {
+                    let agent = *agent;
+                    if widgets::clickable(ui.button(format!("{} once…", agent_label(agent))))
+                        .on_hover_text("Give this agent the whole job and let it finish on its own")
+                        .clicked()
+                    {
+                        actions.push(BoardAction::OpenRunComposer(task.id.clone(), agent));
                         ui.close();
                     }
                 }
@@ -583,7 +663,9 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
                 // pick one straight off the agents' own records instead.
                 ui.separator();
                 if widgets::clickable(ui.button("attach a session…"))
-                    .on_hover_text("Pick a past session of one of the agents and put it on this task")
+                    .on_hover_text(
+                        "Pick a past session of one of the agents and put it on this task",
+                    )
                     .clicked()
                 {
                     actions.push(BoardAction::OpenAttachPicker {
@@ -595,5 +677,8 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
             });
             widgets::clickable(button);
         }
+
+        marks::draw_tag_menu(app, ui, task, actions);
+        marks::draw_worktree_actions(app, ui, task, palette, actions);
     });
 }
