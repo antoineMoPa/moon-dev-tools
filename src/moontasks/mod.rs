@@ -254,7 +254,7 @@ pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}", "{prom
 /// It names the task, says where to put anything that belongs to it, and says how the work
 /// being finished is reported — which is by saying so, since the person reading this shell is
 /// the one who moves the card.
-pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
+pub(crate) fn brief_for(title: &str, task_dir: &str, style: RunStyle) -> String {
     format!(
         "You are working on a task from moonreview's moontasks board.\n\
          \n\
@@ -271,9 +271,50 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          notes, shown on the board's card, read and written by you and the person running the \
          task alike.\n\
          \n\
-         The title above is the name on a card, not the brief. Wait for the person who opened \
-         this session to explain what they actually want before starting on anything."
+         {}",
+        closing_for(style)
     )
+}
+
+/// How a run is given its work, which is the one thing the brief's last paragraph turns on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RunStyle {
+    /// Someone opened a session on the card and will type into it.
+    Conversation,
+    /// The work went in on the command line and nobody will ever type into this run.
+    OneShot,
+}
+
+/// The last paragraph of the brief, per run style.
+///
+/// The rest of the brief is true of any run. This paragraph is the one place the two differ,
+/// and they differ completely: telling a headless run to wait for a person is telling it to do
+/// nothing, and telling a conversation to commit and stop is telling it to run off with a card
+/// someone opened to talk about.
+const RUN_STYLE_CLOSINGS: &[(RunStyle, &str)] = &[
+    (
+        RunStyle::Conversation,
+        "The title above is the name on a card, not the brief. Wait for the person who opened \
+         this session to explain what they actually want before starting on anything.",
+    ),
+    (
+        RunStyle::OneShot,
+        "Nobody is reading this run as it goes and there is no one to ask, so do not stop to \
+         ask: the work you were given is the whole of the brief, and where it leaves something \
+         open, make the call and write down in notes.md which call you made. Commit what you \
+         finish before you stop — an uncommitted change is one nobody can review, and this run \
+         is judged by what is on the branch when it ends. If you truly cannot get there, commit \
+         what stands up on its own, write what stopped you in notes.md, and end the run rather \
+         than waiting.",
+    ),
+];
+
+fn closing_for(style: RunStyle) -> &'static str {
+    RUN_STYLE_CLOSINGS
+        .iter()
+        .find(|(candidate, _)| *candidate == style)
+        .map(|(_, closing)| *closing)
+        .expect("every run style has a closing")
 }
 
 /// The file the brief is also written to, so it can be read by a person or by an agent that

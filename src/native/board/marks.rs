@@ -32,9 +32,18 @@ fn tags_to_offer(app: &App, task: &TaskView) -> Vec<String> {
     offered
 }
 
-/// The pills under a card's title: what it is marked with, and what it is working in.
+/// The pills under a card's title: what it is marked with, and anything about its checkout
+/// that stands in the way.
+///
+/// The branch a card works on is not a pill. Every card with a checkout has one, it is always
+/// the same as the card's id, and a row of them says nothing that differs between two cards —
+/// so it is in the `[worktree]` menu, where it is read when it is wanted.
 pub(super) fn draw_marks(ui: &mut Ui, task: &TaskView, palette: &Palette) {
-    if task.tags.is_empty() && task.worktree.is_none() {
+    let uncommitted = task
+        .worktree
+        .as_ref()
+        .is_some_and(|worktree| !worktree.is_clean);
+    if task.tags.is_empty() && !uncommitted {
         return;
     }
 
@@ -43,23 +52,13 @@ pub(super) fn draw_marks(ui: &mut Ui, task: &TaskView, palette: &Palette) {
         for tag in &task.tags {
             widgets::pill(ui, tag, palette.ink, palette.status_neutral_bg);
         }
-        if let Some(worktree) = &task.worktree {
-            widgets::pill(
-                ui,
-                &worktree.branch,
-                palette.muted,
-                palette.status_neutral_bg,
-            )
-            .on_hover_text(format!("This task works in {}", worktree.path));
-            // Only committed work can be checked out in the repo, so a card that cannot be
-            // reviewed yet says why before the button is pressed.
-            if !worktree.is_clean {
-                widgets::pill(ui, "uncommitted", palette.warn, palette.status_failed_bg)
-                    .on_hover_text(
-                        "Commit in the worktree before reviewing — the review checks this branch \
+        // Only committed work can be checked out in the repo, so a card that cannot be
+        // reviewed yet says why before the button is pressed.
+        if uncommitted {
+            widgets::pill(ui, "uncommitted", palette.warn, palette.status_failed_bg).on_hover_text(
+                "Commit in the worktree before reviewing — the review checks this branch \
                      out in the repo",
-                    );
-            }
+            );
         }
     });
     ui.add_space(3.0);

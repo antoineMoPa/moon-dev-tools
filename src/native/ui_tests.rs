@@ -1879,10 +1879,11 @@ fn a_long_task_title_is_cut_into_its_column() {
     harness.snapshot("moontasks-long-title");
 }
 
-/// What a card says about itself besides its title: what it is marked with, and where its work
-/// is happening.
+/// What a card says about itself besides its title: what it is marked with, and anything about
+/// its checkout that stands in the way of reviewing it. Not the branch — every card with a
+/// checkout has the same one, named after itself, so the pill said nothing and took a line.
 #[test]
-fn a_card_shows_its_tags_and_the_checkout_it_works_in() {
+fn a_card_shows_its_tags_and_what_stands_in_the_way() {
     let fixture = seeded_fixture("board-tags");
     let elsewhere = fixture.root.join("elsewhere").display().to_string();
     for (task_id, title, status, extra) in [

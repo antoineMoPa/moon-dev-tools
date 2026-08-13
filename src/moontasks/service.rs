@@ -11,7 +11,7 @@ use crate::{
     api::{AgentKind, AppState},
     git::agent_is_available,
     moontasks::{
-        AgentLaunch, AttachResourceRequest, CreateTaskRequest, StartResourceRequest,
+        AgentLaunch, AttachResourceRequest, CreateTaskRequest, RunStyle, StartResourceRequest,
         TaskResourceView, TaskView, agent_launch, autopilot,
         store::{
             self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
@@ -438,7 +438,11 @@ pub(crate) fn start_resource(
 
     // Named before the run starts, because the run writes its transcript under this name.
     let resource_id = store::new_uuid();
-    let fillings = write_task_files(task_id, &repo_path, &metadata)?
+    let style = match request.prompt {
+        Some(_) => RunStyle::OneShot,
+        None => RunStyle::Conversation,
+    };
+    let fillings = write_task_files(task_id, &repo_path, &metadata, style)?
         .with_session(agent_session_id.as_deref())
         .with_prompt(request.prompt.as_deref());
     let args = match launch {
@@ -542,7 +546,8 @@ pub(crate) fn resume_resource(
         bail!("{} is not installed here", resource.agent.label());
     }
 
-    let fillings = write_task_files(task_id, &repo_path, &metadata)?
+    // Resuming is someone opening a conversation on the run, whatever the run was started as.
+    let fillings = write_task_files(task_id, &repo_path, &metadata, RunStyle::Conversation)?
         .with_session(resource.agent_session_id.as_deref());
     // A run that recorded its session id is picked up by that exact session; one that could
     // not is left to the agent's own reckoning of what its last run was.
@@ -593,8 +598,8 @@ pub(crate) fn attach_resource(
         bail!("{} is not installed here", request.agent.label());
     }
 
-    let fillings =
-        write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
+    let fillings = write_task_files(task_id, &repo_path, &metadata, RunStyle::Conversation)?
+        .with_session(Some(agent_session_id));
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: Some(request.agent),
@@ -811,10 +816,15 @@ fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, S
 ///
 /// The brief is rewritten on every start rather than once at creation, so a card that has been
 /// renamed starts its next agent on the name it has now.
-fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) -> Result<Fillings> {
+fn write_task_files(
+    task_id: &str,
+    repo_path: &Path,
+    metadata: &TaskMetadata,
+    style: RunStyle,
+) -> Result<Fillings> {
     let dir = store::task_dir(repo_path, task_id)?;
 
-    let brief = super::brief_for(&metadata.title, &dir.display().to_string());
+    let brief = super::brief_for(&metadata.title, &dir.display().to_string(), style);
     let path = dir.join(super::BRIEF_FILE_NAME);
     std::fs::write(&path, format!("{brief}\n"))
         .with_context(|| format!("failed to write {}", path.display()))?;
@@ -936,10 +946,13 @@ mod tests {
     /// know beyond the work itself.
     #[test]
     fn the_brief_names_the_task_and_its_folder() {
-        let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+        for style in [RunStyle::Conversation, RunStyle::OneShot] {
+            let brief =
+                crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", style);
 
-        assert!(brief.contains("Fix the login page"));
-        assert!(brief.contains("/repo/.moontasks/task"));
+            assert!(brief.contains("Fix the login page"), "{style:?}");
+            assert!(brief.contains("/repo/.moontasks/task"), "{style:?}");
+        }
     }
 
     #[test]
