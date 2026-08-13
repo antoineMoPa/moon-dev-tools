@@ -11,14 +11,14 @@ installs three executables:
 | `moonreview` | a local code review UI for git |
 | `moonshell` | a shell in the repo |
 
-![Moontasks sprint board with a shell beside it](tests/snapshots/moontasks-workspace.png)
+![Moontasks sprint board with a shell beside it](docs/assets/moontasks-workspace.png)
 
 **Moontasks** is a sprint board that keeps you organized while several agents and shells work
 through a repo. Each card is a task folder with notes, running shells and agents attached to it,
 so agent work has a visible place instead of disappearing into terminal tabs. Open any resource
 beside the board and move cards through your own workflow as work progresses.
 
-![Moonreview showing local changes](tests/snapshots/review-dark.png)
+![Moonreview showing local changes](docs/assets/review-dark.png)
 
 **Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage
 them individually. Send comments to your local Claude, Codex or OpenCode using your signed-in

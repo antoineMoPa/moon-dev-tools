@@ -15,7 +15,7 @@ use std::{
 };
 
 use egui_frames::PaneId;
-use egui_kittest::Harness;
+use egui_kittest::{Harness, SnapshotOptions};
 
 use crate::{
     api::OpenSessionRequest,
@@ -231,7 +231,10 @@ fn the_review_window_draws_the_diff_it_was_opened_on() {
     let mut harness = harness_with_loaded_review(app, ThemeMode::Dark);
 
     // The window is one image; if the diff failed to draw, this is where it shows.
-    harness.snapshot("review-dark");
+    harness.snapshot_options(
+        "review-dark",
+        &SnapshotOptions::new().output_path("docs/assets"),
+    );
 }
 
 /// A shell that ends takes its tab with it: logging out of a terminal, or an agent finishing,
@@ -1322,7 +1325,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 && let Some(terminal) = app.terminals.values().next()
             {
                 terminal
-                    .send(b"clear; printf 'Moon tools workspace\\n\\nTasks on the board, agents and shells at hand.\\n'; PS1='$ '\n")
+                    .send(b"clear; printf '\\033]0;terminal\\007Moon tools workspace\\n\\nTasks on the board, agents and shells at 'hand'.\\n$ '; sleep 30\n")
                     .expect("expected to write the screenshot text to the shell");
                 shell_command_sent_in_ui.store(true, Ordering::Relaxed);
             }
@@ -1385,7 +1388,10 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     }
     assert!(shell_ready.load(Ordering::Relaxed), "the shell never drew its output");
     harness.run_steps(3);
-    harness.snapshot("moontasks-workspace");
+    harness.snapshot_options(
+        "moontasks-workspace",
+        &SnapshotOptions::new().output_path("docs/assets"),
+    );
 }
 
 /// The attach modal offers the sessions the agents themselves have on this machine, which

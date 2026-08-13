@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090b10">
+    <meta name="description" content="MoonTask is a local sprint board for organizing tasks, coding agents, shells, and review in one focused workspace.">
+    <meta property="og:title" content="MoonTask - Keep agent work in sight">
+    <meta property="og:description" content="A local sprint board where every task keeps its notes, agents, shells, and review together.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://antoinemopa.github.io/moon-dev-tools/assets/social-preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>MoonTask - Keep agent work in sight</title>
+    <link rel="icon" href="assets/logos/moontasks-32.png" sizes="32x32">
+    <link rel="apple-touch-icon" href="assets/logos/moontasks-128.png">
+    <link rel="stylesheet" href="site.css">
+    <script src="site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="MoonTask home">
+        <img src="assets/logos/moontasks-64.png" alt="" width="36" height="36">
+        <span>moon<span class="brand-accent">task</span></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#why">Why MoonTask</a>
+        <a href="#workflow">How it works</a>
+        <a class="nav-github" href="https://github.com/antoineMoPa/moon-dev-tools">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Local-first agent workspace</p>
+          <h1>Keep agent work<br><em>in sight.</em></h1>
+          <p class="hero-lede">MoonTask helps you stay focused when working with agents by keeping each task's notes, coding agents, shells, and review in one place.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#install">Install MoonTask</a>
+            <a class="button button-secondary" href="https://github.com/antoineMoPa/moon-dev-tools">View on GitHub</a>
+          </div>
+          <p class="hero-meta">Open source <span>·</span> Rust / egui based <span>·</span> macOS &amp; Linux <span>·</span> Works with Claude, Codex &amp; OpenCode</p>
+        </div>
+
+        <div class="product-stage">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <img class="mascot" src="assets/logos/moontasks-512.png" alt="" width="512" height="512">
+          <figure class="app-window">
+            <div class="window-bar">
+              <span class="window-controls" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="window-title">moon-dev-tools</span>
+              <span class="window-mode"><i></i> local</span>
+            </div>
+            <img src="assets/moontasks-workspace.png" alt="MoonTask showing a three-column task board beside a task shell" width="1400" height="800">
+          </figure>
+          <aside class="context-card context-agent">
+            <span class="status-dot"></span>
+            <div><strong>Agent working</strong><small>Fix the login page</small></div>
+          </aside>
+          <aside class="context-card context-review">
+            <span class="review-mark">✓</span>
+            <div><strong>Ready to review</strong><small>Open the diff beside your board</small></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="idea" id="why">
+        <p class="section-label">The idea</p>
+        <h2>Your agents have terminals.<br><span>Now give them context.</span></h2>
+        <p class="section-intro">Terminal tabs hide the shape of the work. MoonTask gives every task a visible place, so you can prioritize local work from first prompt to final review.</p>
+        <div class="feature-grid">
+          <article class="feature-card feature-featured">
+            <span class="feature-number">01</span>
+            <div class="feature-graphic mini-board" aria-hidden="true">
+              <div><small>TODO</small><span>Plan the API</span><span>Update docs</span></div>
+              <div><small>IN PROGRESS</small><span class="active-card"><i></i>Fix the login page</span></div>
+              <div><small>DONE</small><span>Ship v0.17</span></div>
+            </div>
+            <h3>One board for the whole run</h3>
+            <p>See what is queued, active, and done, and watch your progress build. Rename, reorder, add, or remove columns to match your workflow.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">02</span>
+            <div class="feature-graphic agent-stack" aria-hidden="true">
+              <span>Claude<i></i></span><span>Codex<i></i></span><span>OpenCode<i></i></span>
+            </div>
+            <h3>Agents stay attached</h3>
+            <p>Start, watch, close, and resume agent sessions from the task they belong to.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">03</span>
+            <div class="feature-graphic file-stack" aria-hidden="true">
+              <span><i>MD</i> notes.md</span><span><i>›_</i> agent runs</span><span><i>↗</i> review</span>
+            </div>
+            <h3>Context that survives</h3>
+            <p>Shared notes and task state live in your repo, not in a cloud dashboard.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow" id="workflow">
+        <div class="workflow-heading">
+          <p class="section-label">The workflow</p>
+          <h2>From task to done,<br><span>without losing the thread.</span></h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-number">1</span>
+            <div><h3>Name the work</h3><p>Add a card and choose your coding agent. MoonTask creates a dedicated task folder for its notes and runs.</p></div>
+          </li>
+          <li>
+            <span class="step-number">2</span>
+            <div><h3>Work beside it</h3><p>Open the agent or a shell next to the board. Notes and resources stay on the card.</p></div>
+          </li>
+          <li>
+            <span class="step-number">3</span>
+            <div><h3>Review and move on</h3><p>Open the repo review in place, then move the card through your own workflow when it is ready.</p></div>
+          </li>
+        </ol>
+        <figure class="review-preview">
+          <div class="review-preview-bar">
+            <span><i></i> MoonReview</span>
+            <small>Local changes, ready to inspect</small>
+          </div>
+          <img src="assets/review-dark.png" alt="MoonReview showing local Rust changes in a side-by-side review workspace" width="1500" height="940">
+          <figcaption class="review-points">
+            <span><i>01</i><strong>Send review comments to your agent to fix.</strong></span>
+            <span><i>02</i><strong>Stage or unstage individual changes.</strong></span>
+            <span><i>03</i><strong>Open a terminal when you are ready to commit.</strong></span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="install" id="install">
+        <img class="install-moon" src="assets/logos/moontasks-512.png" alt="" width="512" height="512">
+        <div class="install-copy">
+          <p class="section-label">Start here</p>
+          <h2>Put your agents<br>on the board.</h2>
+          <p>Install the moon dev tools suite: MoonTask, MoonReview, and MoonShell.</p>
+          <div class="terminal-command">
+            <span aria-hidden="true">$</span>
+            <code>curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moon-dev-tools/main/install.sh | sh</code>
+            <button type="button" data-copy aria-label="Copy install command"><span class="copy-icon" aria-hidden="true"></span><span class="copy-label">Copy</span></button>
+          </div>
+          <p class="install-note">Then open a git repository and run <code>moontasks</code>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="#top">
+        <img src="assets/logos/moontasks-64.png" alt="" width="32" height="32">
+        <span>moon<span class="brand-accent">task</span></span>
+      </a>
+      <p>Part of <a href="https://github.com/antoineMoPa/moon-dev-tools">moon-dev-tools</a>. Open source under MIT.</p>
+      <div><a href="https://github.com/antoineMoPa/moon-dev-tools">GitHub</a><a href="https://github.com/antoineMoPa/moon-dev-tools/blob/main/Moontasks.md">Docs</a><a href="https://github.com/antoineMoPa/moon-dev-tools/releases/latest">Releases</a></div>
+    </footer>
+  </body>
+</html>

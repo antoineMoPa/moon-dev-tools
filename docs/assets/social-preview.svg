@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#090b10"/><stop offset="1" stop-color="#17142b"/></linearGradient>
+    <linearGradient id="moon" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#65b8ff"/><stop offset=".55" stop-color="#9a87ff"/><stop offset="1" stop-color="#d6d1ee"/></linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1025" cy="95" r="290" fill="none" stroke="#9a87ff" stroke-opacity=".1"/>
+  <circle cx="1025" cy="95" r="210" fill="none" stroke="#9a87ff" stroke-opacity=".14"/>
+  <text x="75" y="95" fill="#f6f7fb" font-family="Arial, sans-serif" font-size="33" font-weight="700">moon<tspan fill="#9a87ff">task</tspan></text>
+  <text x="75" y="260" fill="#f6f7fb" font-family="Arial, sans-serif" font-size="82" font-weight="700" letter-spacing="-4">Keep agent work</text>
+  <text x="75" y="350" fill="#9a87ff" font-family="Arial, sans-serif" font-size="82" font-weight="700" letter-spacing="-4">in sight.</text>
+  <text x="80" y="425" fill="#a3a9b7" font-family="Arial, sans-serif" font-size="24">Tasks, agents, shells, and review in one local workspace.</text>
+  <rect x="77" y="489" width="335" height="61" rx="9" fill="#f6f7fb"/>
+  <text x="115" y="528" fill="#101218" font-family="monospace" font-size="20" font-weight="700">$ moontasks</text>
+  <circle cx="1000" cy="335" r="128" fill="url(#moon)"/>
+  <circle cx="956" cy="310" r="13" fill="#090b10"/><circle cx="1022" cy="310" r="13" fill="#090b10"/>
+  <path d="M965 350 Q990 375 1018 350" fill="none" stroke="#090b10" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="1075" cy="418" r="72" fill="#19175b"/>
+  <path d="M1038 419 l25 27 52-57" fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
