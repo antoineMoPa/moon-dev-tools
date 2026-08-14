@@ -17,7 +17,7 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, ve
 
 use crate::{
     api::AgentKind,
-    moontasks::{BoardColumn, ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
+    moontasks::{BoardColumn, ColumnEnd, ColumnName, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
         model::{
@@ -41,19 +41,19 @@ pub(super) use crate::native::widgets::CLOSE_MARK_SIZE;
 /// nothing changes the pane tree or the task list while either is being read.
 pub(super) enum BoardAction {
     /// Open the new-task box at one end of this column — the end whose `+` was pressed.
-    OpenComposer(ColumnId, ColumnEnd),
+    OpenComposer(ColumnName, ColumnEnd),
     CloseComposer,
     /// Create the typed task at the end of this column the composer is standing at, and start
     /// the picked agent on it.
-    Create(ColumnId, ColumnEnd, AgentKind),
+    Create(ColumnName, ColumnEnd, AgentKind),
     /// A card let go of in a column, at the place among its cards it was dropped.
-    Place(String, ColumnId, usize),
+    Place(String, ColumnName, usize),
     /// A column let go of on the board, at the place among the others it was dropped.
-    PlaceColumn(ColumnId, usize),
+    PlaceColumn(ColumnName, usize),
     AddColumn(String),
-    RenameColumn(ColumnId, String),
+    RenameColumn(ColumnName, String),
     CancelColumnRename,
-    DeleteColumn(ColumnId),
+    DeleteColumn(ColumnName),
     CloseColumnComposer,
     Delete(String),
     Rename(String, String),
@@ -105,7 +105,10 @@ pub(super) enum BoardAction {
     /// goes into the repo itself and the review opens there.
     Review(String),
     /// Open a window that works the board itself, running this agent.
-    StartAutopilot(AgentKind),
+    /// Start the board acting on itself, or stop it.
+    SetHooksRunning(bool),
+    /// Open the script that picks work up, in a pane, so what autopilot does can be edited.
+    EditAutopilot,
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
@@ -179,34 +182,49 @@ fn draw_board_actions(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    let agents: Vec<AgentKind> = available_agents(app)
-        .into_iter()
-        .filter(|agent| *agent != AgentKind::None)
-        .collect();
-    if agents.is_empty() {
-        return;
-    }
-
+    let running = app.model.board.hooks_running;
     ui.horizontal(|ui| {
-        let (button, _) = egui::containers::menu::MenuButton::from_button(
-            egui::Button::new("[autopilot]").frame(false),
-        )
-        .ui(ui, |ui| {
-            for agent in agents {
-                if widgets::clickable(ui.button(agent_label(agent))).clicked() {
-                    actions.push(BoardAction::StartAutopilot(agent));
-                    ui.close();
+        // The label says what pressing it does, not what the board is doing, so there is never
+        // a moment where the button and the words beside it have to be read together.
+        let button = egui::Button::new(match running {
+            true => "[pause]",
+            false => "[play]",
+        })
+        .frame(false);
+        if widgets::clickable(ui.add(button))
+            .on_hover_text(match running {
+                true => "Stop the board acting on itself. Runs already going are left alone",
+                false => {
+                    "Let the board act on itself: its hooks fire, and cards tagged \
+                          autopilot are picked up"
                 }
-            }
-        });
-        widgets::clickable(button).on_hover_text(
-            "Open an agent that works this board: it picks up the cards tagged autopilot, one              at a time, and starts runs on them",
-        );
+            })
+            .clicked()
+        {
+            actions.push(BoardAction::SetHooksRunning(!running));
+        }
         ui.label(
-            RichText::new("works the cards tagged autopilot")
-                .size(SMALL_SIZE)
-                .color(palette.muted),
+            RichText::new(match running {
+                true => "autopilot running",
+                false => "autopilot paused",
+            })
+            .size(SMALL_SIZE)
+            .color(match running {
+                true => palette.ink,
+                false => palette.muted,
+            }),
         );
+
+        // What the board does when it is running is a script in the repo rather than anything
+        // in here, so the way to change it is to open that file.
+        let edit =
+            egui::Button::new(RichText::new("[edit autopilot]").size(SMALL_SIZE)).frame(false);
+        if widgets::clickable(ui.add(edit))
+            .on_hover_text("Open the script that picks work up, to read and edit")
+            .clicked()
+        {
+            actions.push(BoardAction::EditAutopilot);
+        }
     });
     ui.add_space(4.0);
 }
@@ -228,13 +246,13 @@ fn draw_column_row(
 
     // Where each column ended up, for working out what a dragged one is being held over. The
     // dragged one is left out: it is on the cursor rather than where it was laid out.
-    let mut headings: Vec<(ColumnId, f32)> = Vec::new();
+    let mut headings: Vec<(ColumnName, f32)> = Vec::new();
     for column in &order {
         let rect = columns::with_column_drag(app, ui, column, origin, |app, ui| {
             draw_column(app, ui, column, height, palette, actions)
         });
-        if Some(&column.id) != dragged.as_ref() {
-            headings.push((column.id.clone(), rect.center().x));
+        if Some(&column.name) != dragged.as_ref() {
+            headings.push((column.name.clone(), rect.center().x));
         }
         ui.add_space(6.0);
     }
@@ -267,7 +285,7 @@ fn draw_column_row(
     {
         app.model.board.column_landing = None;
         app.model.board.pending_column_place = Some(PendingColumnPlace {
-            column_id: dragged.clone(),
+            column: dragged.clone(),
             index: at,
         });
         columns::place_column_in(&mut app.model.board.columns, &dragged, at);
@@ -283,7 +301,7 @@ fn draw_column_row(
 fn draw_composer(
     app: &mut App,
     ui: &mut Ui,
-    column: &ColumnId,
+    column: &ColumnName,
     joins: ColumnEnd,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
@@ -298,7 +316,7 @@ fn draw_composer(
         .board
         .columns
         .iter()
-        .find(|candidate| candidate.id == *column)
+        .find(|candidate| candidate.name == *column)
         .and_then(|candidate| candidate.default_agent);
     let mut agent = app
         .model
@@ -469,7 +487,7 @@ fn draw_column(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) -> egui::Rect {
-    let status = column.id.clone();
+    let status = column.name.clone();
     let carried = egui::DragAndDrop::payload::<DraggedTask>(ui.ctx());
     let dragged_id = carried.as_deref().map(|carried| carried.0.clone());
     let tasks = column_cards(app, &status, dragged_id.as_deref());
@@ -485,7 +503,7 @@ fn draw_column(
 
             // Which end of this column the new-task box is standing at, if it is this column's
             // box that is open at all.
-            let composing = (app.model.board.composer_in.as_ref() == Some(&column.id))
+            let composing = (app.model.board.composer_in.as_ref() == Some(&column.name))
                 .then_some(app.model.board.composer_at);
 
             // Where a drop would land, counted against the cards it would be put among — so the
@@ -704,8 +722,8 @@ fn apply(app: &mut App, action: BoardAction) {
     let session_id = app.model.root_session_id.clone();
 
     match action {
-        BoardAction::OpenComposer(column_id, joins) => {
-            app.model.board.composer_in = Some(column_id);
+        BoardAction::OpenComposer(column, joins) => {
+            app.model.board.composer_in = Some(column);
             app.model.board.composer_at = joins;
             app.model.board.composer_focus = true;
             // Each column's box starts from that column's own remembered agent.
@@ -716,11 +734,11 @@ fn apply(app: &mut App, action: BoardAction) {
             app.model.board.new_title.clear();
             app.model.board.composer_agent = None;
         }
-        BoardAction::Create(column_id, joins, agent) => {
+        BoardAction::Create(column, joins, agent) => {
             let request = CreateTaskRequest {
                 title: app.model.board.new_title.trim().to_string(),
                 agent,
-                status: column_id,
+                status: column,
                 joins,
             };
             if request.title.is_empty() {
@@ -890,7 +908,7 @@ fn apply(app: &mut App, action: BoardAction) {
             app.tasks.spawn(
                 move |backend| backend.open_task_notes(&session_id, &task_id),
                 |model, result| match result {
-                    Ok(file_path) => model.board.opened_notes = Some(file_path),
+                    Ok(file_path) => model.board.opened_file = Some(file_path),
                     Err(error) => model.error(format!("could not open the notes: {error}")),
                 },
             );
@@ -907,22 +925,22 @@ fn apply(app: &mut App, action: BoardAction) {
             app.model.board.column_composer_open = false;
             app.model.board.new_column_label.clear();
         }
-        BoardAction::RenameColumn(column_id, label) => {
+        BoardAction::RenameColumn(column, label) => {
             app.model.board.renaming_column = None;
             act(app, "could not rename the column", move |backend| {
-                backend.rename_column(&session_id, &column_id, &label)
+                backend.rename_column(&session_id, &column, &label)
             });
         }
         BoardAction::CancelColumnRename => app.model.board.renaming_column = None,
-        BoardAction::DeleteColumn(column_id) => {
+        BoardAction::DeleteColumn(column) => {
             app.model.board.pending_column_delete = None;
             act(app, "could not remove the column", move |backend| {
-                backend.delete_column(&session_id, &column_id)
+                backend.delete_column(&session_id, &column)
             });
         }
-        BoardAction::PlaceColumn(column_id, position) => {
+        BoardAction::PlaceColumn(column, position) => {
             app.tasks.spawn(
-                move |backend| backend.place_column(&session_id, &column_id, position),
+                move |backend| backend.place_column(&session_id, &column, position),
                 |model, result| {
                     // A move the server would not make is not one to keep drawing.
                     if result.is_err() {
@@ -986,27 +1004,22 @@ fn apply(app: &mut App, action: BoardAction) {
             app.model.board.pending_worktree_discard = Some(task_id);
         }
         BoardAction::CancelWorktreeDiscard => app.model.board.pending_worktree_discard = None,
-        BoardAction::StartAutopilot(agent) => {
+        BoardAction::SetHooksRunning(running) => {
             let session_id = app.model.root_session_id.clone();
+            // Set here as well as on the server, so the button answers the press rather than
+            // waiting a poll to catch up. The next poll is what it is really worth.
+            app.model.board.hooks_running = running;
             app.tasks.spawn(
-                move |backend| backend.start_autopilot(&session_id, agent),
+                move |backend| backend.set_hooks_running(&session_id, running),
                 move |model, result| {
                     model.board.refresh_requested = true;
-                    match result {
-                        Ok(terminal_id) => {
-                            model.board.opened_shell = Some(OpenedShell {
-                                terminal_id,
-                                command: Some(agent),
-                                // The board's, not a card's: nothing owns it, so closing its
-                                // tab is closing a shell of the workspace's own.
-                                task_id: None,
-                            })
-                        }
-                        Err(error) => model.error(format!("could not start autopilot: {error}")),
+                    if let Err(error) = result {
+                        model.error(format!("could not change the board: {error}"));
                     }
                 },
             );
         }
+        BoardAction::EditAutopilot => app.edit_autopilot(),
         BoardAction::Review(task_id) => {
             // Reviewing may move the repo onto the task's branch, and it may refuse — so the
             // work is the server's and the pane is opened on what it answers with.

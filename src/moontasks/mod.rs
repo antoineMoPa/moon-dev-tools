@@ -1,18 +1,22 @@
 //! Moontasks: the sprint board moonreview runs agents from.
 //!
 //! [`store`] is the `.moontasks` folder on disk and [`service`] is everything both frontends
-//! do to it.
+//! do to it. [`hooks`] is the board acting on itself, which is written in scripts rather than
+//! here, and [`tools`] is what those scripts may call.
 
-pub(crate) mod autopilot;
-pub(crate) mod mcp;
+mod board_migration;
+pub(crate) mod hooks;
 pub(crate) mod service;
 pub(crate) mod store;
+#[cfg(test)]
+mod tool_tests;
+pub(crate) mod tools;
 pub(crate) mod worktrees;
 
 use serde::{Deserialize, Serialize};
 
 use crate::api::AgentKind;
-pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, TaskResourceKind};
+pub(crate) use store::{BoardColumn, ColumnEnd, ColumnName, RunStarter, TaskResourceKind};
 
 /// The tag that says a card may be worked without being handed over one at a time.
 pub(crate) const AUTOPILOT_TAG: &str = "autopilot";
@@ -22,7 +26,7 @@ pub(crate) const AUTOPILOT_TAG: &str = "autopilot";
 pub(crate) struct TaskView {
     pub(crate) id: String,
     pub(crate) title: String,
-    pub(crate) status: ColumnId,
+    pub(crate) status: ColumnName,
     pub(crate) created_at_unix: u64,
     /// The task folder itself, so the board can offer it to a shell or a file browser.
     pub(crate) dir_path: String,
@@ -58,6 +62,9 @@ pub(crate) struct TaskResourceView {
     pub(crate) id: String,
     pub(crate) kind: TaskResourceKind,
     pub(crate) agent: AgentKind,
+    /// Who set it going, which is how a script tells a run the board started from one you are
+    /// driving yourself — `"person"` or `"hook"`. A shell is always a person's.
+    pub(crate) started_by: RunStarter,
     pub(crate) label: String,
     /// The shell it is attached to, while it is still running.
     pub(crate) terminal_id: Option<String>,
@@ -98,7 +105,7 @@ pub(crate) struct CreateTaskRequest {
     /// column with nothing running.
     pub(crate) agent: AgentKind,
     /// The column the new card joins — the one whose `+` opened the composer.
-    pub(crate) status: ColumnId,
+    pub(crate) status: ColumnName,
     /// Which end of that column it joins, which is the `+` that was pressed: the one on the
     /// heading puts the card on top, the one under the last card puts it at the bottom.
     pub(crate) joins: ColumnEnd,
@@ -116,8 +123,14 @@ pub(crate) struct TaskTagsRequest {
     pub(crate) tags: Vec<String>,
 }
 
+/// Whether the board acts on itself, read and set by the play/pause control.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct HooksRunningPayload {
+    pub(crate) running: bool,
+}
+
 /// The answer to reviewing a task: where the review opens, and against what.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct TaskReviewPayload {
     pub(crate) repo_path: String,
     pub(crate) title: String,
@@ -125,10 +138,11 @@ pub(crate) struct TaskReviewPayload {
     pub(crate) base_branch: Option<String>,
 }
 
-/// The answer to opening a task's notes: where the file pane finds the file, relative to the
-/// repo root, which is how every file pane path is addressed.
+/// The answer to opening one of the board's files — a task's notes, a hook script: where the
+/// file pane finds it, relative to the repo root, which is how every file pane path is
+/// addressed.
 #[derive(Serialize, Deserialize)]
-pub(crate) struct TaskNotesPayload {
+pub(crate) struct OpenedFilePayload {
     pub(crate) file_path: String,
 }
 
@@ -136,7 +150,7 @@ pub(crate) struct TaskNotesPayload {
 /// are above it.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskPlacementRequest {
-    pub(crate) status: ColumnId,
+    pub(crate) status: ColumnName,
     pub(crate) position: usize,
 }
 
@@ -145,15 +159,32 @@ pub(crate) struct TerminalOpened {
     pub(crate) terminal_id: String,
 }
 
-/// A column being added, or one being renamed: in both cases what it is to be called.
+/// A column being added: what it is to be called.
+///
+/// Which column an existing one is goes in the body too, here and below, rather than in the
+/// path — a column is named by the heading it draws now, and headings have spaces in them.
 #[derive(Serialize, Deserialize)]
-pub(crate) struct ColumnLabelRequest {
-    pub(crate) label: String,
+pub(crate) struct AddColumnRequest {
+    pub(crate) name: String,
+}
+
+/// A column being renamed: which one, and what it is to be called instead.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct RenameColumnRequest {
+    pub(crate) column: ColumnName,
+    pub(crate) name: String,
+}
+
+/// A column being dropped, cards and all.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct DeleteColumnRequest {
+    pub(crate) column: ColumnName,
 }
 
 /// Where a dragged column was let go of: how many of the other columns are to its left.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ColumnPlacementRequest {
+    pub(crate) column: ColumnName,
     pub(crate) position: usize,
 }
 
@@ -190,6 +221,10 @@ pub(crate) struct AgentLaunch {
     pub(crate) start: &'static [&'static str],
     /// Args for a run given the whole of its work up front, which finishes on its own.
     pub(crate) one_shot: &'static [&'static str],
+    /// How to read what such a run prints. An agent that can report itself as it goes is
+    /// started that way — see [`crate::agent_output`] — because nobody is sitting in front of
+    /// a headless run to be told at the end.
+    pub(crate) one_shot_output: crate::agent_output::OutputStyle,
     /// Args that resume a run whose session id was never recorded, by whatever the agent
     /// itself reckons the run was. No brief and no prompt: the session being resumed
     /// already has both.
@@ -220,8 +255,14 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
             "{brief}",
             "--permission-mode",
             "bypassPermissions",
+            // What it is doing, as it does it, one JSON object per line. `--verbose` is what
+            // claude asks for alongside it in print mode.
+            "--output-format",
+            "stream-json",
+            "--verbose",
             "{prompt}",
         ],
+        one_shot_output: crate::agent_output::OutputStyle::ClaudeStreamJson,
         resume: &[],
         attach: &["--resume", "{session}"],
     },
@@ -229,6 +270,8 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         kind: AgentKind::Codex,
         start: &[],
         one_shot: &["exec", "--full-auto", "{prompt}"],
+        // Codex prints what it is doing as it does it, in words.
+        one_shot_output: crate::agent_output::OutputStyle::AsPrinted,
         resume: &["resume", "--last"],
         attach: &["resume", "{session}"],
     },
@@ -236,6 +279,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         kind: AgentKind::OpenCode,
         start: &[],
         one_shot: &["run", "--auto", "{prompt}"],
+        one_shot_output: crate::agent_output::OutputStyle::AsPrinted,
         resume: &["--continue"],
         attach: &["--session", "{session}"],
     },
@@ -303,9 +347,13 @@ const RUN_STYLE_CLOSINGS: &[(RunStyle, &str)] = &[
          ask: the work you were given is the whole of the brief, and where it leaves something \
          open, make the call and write down in notes.md which call you made. Commit what you \
          finish before you stop — an uncommitted change is one nobody can review, and this run \
-         is judged by what is on the branch when it ends. If you truly cannot get there, commit \
-         what stands up on its own, write what stopped you in notes.md, and end the run rather \
-         than waiting.",
+         is judged by what is on the branch when it ends. Commit to this branch and nothing \
+         else: no push, no merge, no rebase, and nothing at all to git's configuration, gpg, or \
+         any agent or service on this machine — signing is already off for this run, and a \
+         failing command is something to write down and work around, never something to fix by \
+         changing how this machine is set up. If you truly cannot get there, commit what stands \
+         up on its own, write what stopped you in notes.md, and end the run rather than \
+         waiting.",
     ),
 ];
 
@@ -328,6 +376,24 @@ pub(crate) const NOTES_FILE_NAME: &str = "notes.md";
 /// The notes file as the file pane addresses it: relative to the repo root.
 pub(crate) fn notes_repo_path(task_id: &str) -> String {
     format!("{}/{task_id}/{NOTES_FILE_NAME}", store::TASKS_DIR_NAME)
+}
+
+/// The hook autopilot is: the script that decides which cards get picked up and what is
+/// started on them. The other two hooks sit beside it in the same folder.
+pub(crate) const AUTOPILOT_HOOK: &str = "tick";
+
+/// That script as the file pane addresses it: relative to the repo root.
+pub(crate) fn autopilot_script_repo_path() -> String {
+    format!(
+        "{}/{}/{AUTOPILOT_HOOK}.rhai",
+        store::TASKS_DIR_NAME,
+        store::HOOKS_DIR_NAME
+    )
+}
+
+/// What the board wrote down about its own decisions, as the file pane addresses it.
+pub(crate) fn hooks_log_repo_path() -> String {
+    format!("{}/{}", store::TASKS_DIR_NAME, store::HOOKS_LOG_FILE_NAME)
 }
 
 pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {

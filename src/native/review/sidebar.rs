@@ -9,9 +9,7 @@ use crate::{
     api::{CommitReviewStatus, CommitView},
     native::{
         app::App,
-        review::files::{
-            FileStageStatus, SidebarFile, build_sidebar_files, local_changes_summary,
-        },
+        review::files::{FileStageStatus, SidebarFile, build_sidebar_files, local_changes_summary},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -46,7 +44,15 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            draw_files_section(app, ui, session_id, &files, read_only, is_commit_review, palette);
+            draw_files_section(
+                app,
+                ui,
+                session_id,
+                &files,
+                read_only,
+                is_commit_review,
+                palette,
+            );
             ui.add_space(10.0);
             widgets::divider(ui, palette);
             ui.add_space(8.0);
@@ -99,7 +105,15 @@ fn draw_files_section(
     }
 
     for file in files {
-        draw_file_row(app, ui, session_id, file, read_only, is_commit_review, palette);
+        draw_file_row(
+            app,
+            ui,
+            session_id,
+            file,
+            read_only,
+            is_commit_review,
+            palette,
+        );
     }
 }
 
@@ -326,10 +340,9 @@ fn draw_file_row(
         ui.separator();
         // Discarding a whole file goes through the batch endpoint so the file is either
         // fully reverted or left alone, rather than half-reverted on a mid-way failure.
-        let confirming = app
-            .model
-            .review_ref(session_id)
-            .is_some_and(|review| review.pending_discard.as_deref() == Some(file.file_path.as_str()));
+        let confirming = app.model.review_ref(session_id).is_some_and(|review| {
+            review.pending_discard.as_deref() == Some(file.file_path.as_str())
+        });
         if confirming {
             match widgets::confirm(
                 ui,
@@ -385,7 +398,11 @@ fn draw_commits_section(
 ) {
     widgets::section_header(ui, "commits", palette, |ui| {
         if let Some(base) = base {
-            ui.label(RichText::new(base).size(SMALL_SIZE - 1.0).color(palette.muted));
+            ui.label(
+                RichText::new(base)
+                    .size(SMALL_SIZE - 1.0)
+                    .color(palette.muted),
+            );
         }
     });
     ui.add_space(3.0);

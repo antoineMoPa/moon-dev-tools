@@ -23,10 +23,9 @@ use crate::{
     },
     git::detect_agent_availability,
     moontasks::{
-        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
-        TaskTitleRequest, TaskView, TerminalOpened,
-        store::{BoardColumn, ColumnId},
+        self, AddColumnRequest, AttachResourceRequest, ColumnPlacementRequest, CreateTaskRequest,
+        DeleteColumnRequest, OpenedFilePayload, RenameColumnRequest, StartResourceRequest,
+        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened, store::BoardColumn,
     },
     service,
 };
@@ -126,15 +125,15 @@ pub(crate) fn router(state: AppState) -> Router {
             get(list_columns).post(add_column),
         )
         .route(
-            "/api/session/{session_id}/columns/{column_id}",
-            delete(delete_column),
+            "/api/session/{session_id}/columns/deletion",
+            post(delete_column),
         )
         .route(
-            "/api/session/{session_id}/columns/{column_id}/title",
+            "/api/session/{session_id}/columns/name",
             post(rename_column),
         )
         .route(
-            "/api/session/{session_id}/columns/{column_id}/placement",
+            "/api/session/{session_id}/columns/placement",
             post(place_column),
         )
         .route(
@@ -182,11 +181,17 @@ pub(crate) fn router(state: AppState) -> Router {
             post(review_task),
         )
         .route(
-            "/api/session/{session_id}/window-requests",
-            get(take_window_requests),
+            "/api/session/{session_id}/autopilot/open",
+            post(open_autopilot_script),
         )
-        .route("/api/session/{session_id}/autopilot", post(start_autopilot))
-        .route("/mcp", post(mcp))
+        .route(
+            "/api/session/{session_id}/autopilot/log",
+            post(open_hooks_log),
+        )
+        .route(
+            "/api/session/{session_id}/hooks-running",
+            get(hooks_running).post(set_hooks_running),
+        )
         .route(
             "/api/session/{session_id}/terminals",
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
@@ -205,6 +210,7 @@ pub(crate) fn router(state: AppState) -> Router {
 pub(crate) async fn run_server() -> Result<()> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = build_state(Arc::clone(&last_activity));
+    moontasks::hooks::watch(state.clone());
     serve(state, Some(last_activity)).await
 }
 
@@ -215,10 +221,7 @@ pub(crate) async fn try_bind() -> Result<Option<tokio::net::TcpListener>> {
 
 /// Take one address, on a listener the caller names — which is how a test gets a port it can
 /// hold and let go of on purpose.
-pub(crate) async fn try_bind_on(
-    host: &str,
-    port: u16,
-) -> Result<Option<tokio::net::TcpListener>> {
+pub(crate) async fn try_bind_on(host: &str, port: u16) -> Result<Option<tokio::net::TcpListener>> {
     match tokio::net::TcpListener::bind((host, port)).await {
         Ok(listener) => Ok(Some(listener)),
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => Ok(None),
@@ -611,52 +614,43 @@ async fn list_columns(
 async fn add_column(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<ColumnLabelRequest>,
+    Json(request): Json<AddColumnRequest>,
 ) -> Result<Json<BoardColumn>, AppError> {
     mark_activity(&state);
     Ok(Json(moontasks::service::add_column(
         &state,
         &session_id,
-        &request.label,
+        &request.name,
     )?))
 }
 
 async fn rename_column(
-    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<ColumnLabelRequest>,
+    Json(request): Json<RenameColumnRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    moontasks::service::rename_column(
-        &state,
-        &session_id,
-        &ColumnId::new(column_id),
-        &request.label,
-    )?;
+    moontasks::service::rename_column(&state, &session_id, &request.column, &request.name)?;
     Ok("ok")
 }
 
 async fn delete_column(
-    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    Json(request): Json<DeleteColumnRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    moontasks::service::delete_column(&state, &session_id, &ColumnId::new(column_id))?;
+    moontasks::service::delete_column(&state, &session_id, &request.column)?;
     Ok("ok")
 }
 
 async fn place_column(
-    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
     Json(request): Json<ColumnPlacementRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    moontasks::service::place_column(
-        &state,
-        &session_id,
-        &ColumnId::new(column_id),
-        request.position,
-    )?;
+    moontasks::service::place_column(&state, &session_id, &request.column, request.position)?;
     Ok("ok")
 }
 
@@ -683,7 +677,13 @@ async fn start_task_resource(
 ) -> Result<Json<TerminalOpened>, AppError> {
     mark_activity(&state);
     Ok(Json(TerminalOpened {
-        terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
+        terminal_id: moontasks::service::start_resource(
+            &state,
+            &session_id,
+            &task_id,
+            request,
+            moontasks::store::RunStarter::Person,
+        )?,
     }))
 }
 
@@ -755,65 +755,54 @@ async fn rename_task(
 async fn open_task_notes(
     AxumPath((session_id, task_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
-) -> Result<Json<TaskNotesPayload>, AppError> {
+) -> Result<Json<OpenedFilePayload>, AppError> {
     mark_activity(&state);
-    Ok(Json(TaskNotesPayload {
+    Ok(Json(OpenedFilePayload {
         file_path: moontasks::service::open_notes(&state, &session_id, &task_id)?,
     }))
 }
 
-/// Open a window that works the board.
-async fn start_autopilot(
+/// Where the script autopilot is lives, for a pane to open and edit.
+async fn open_autopilot_script(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<crate::api::AgentSelectionRequest>,
-) -> Result<Json<TerminalOpened>, AppError> {
+) -> Result<Json<OpenedFilePayload>, AppError> {
     mark_activity(&state);
-    Ok(Json(TerminalOpened {
-        terminal_id: moontasks::service::start_autopilot(&state, &session_id, request.agent)?,
+    Ok(Json(OpenedFilePayload {
+        file_path: moontasks::service::open_autopilot_script(&state, &session_id)?,
     }))
 }
 
-/// The tools, for whichever agent has been pointed at this board.
-async fn mcp(
-    Query(query): Query<McpQuery>,
-    State(state): State<AppState>,
-    Json(message): Json<serde_json::Value>,
-) -> impl IntoResponse {
-    mark_activity(&state);
-    let board = crate::service::open_session(
-        &state,
-        crate::api::OpenSessionRequest {
-            repo_path: query.repo.clone(),
-            diff_target: None,
-            active_commit: None,
-        },
-    )
-    .map(|opened| moontasks::mcp::Board {
-        state: &state,
-        session_id: opened.session_id,
-    })
-    .with_context(|| format!("could not open a board in {}", query.repo));
-
-    match moontasks::mcp::handle(board, &message) {
-        Some(answer) => Json(answer).into_response(),
-        // A notification is answered with nothing at all, which is what the protocol asks for.
-        None => axum::http::StatusCode::ACCEPTED.into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct McpQuery {
-    /// The repo whose board these tools work. Absolute, as the agent's own working directory.
-    repo: String,
-}
-
-/// What the tools have asked the window to do since it last looked.
-async fn take_window_requests(
+/// Where what the board decided is written down, for a pane to read.
+async fn open_hooks_log(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-) -> Json<Vec<crate::api::WindowRequest>> {
-    Json(crate::api::take_window_requests(&state, &session_id))
+) -> Result<Json<OpenedFilePayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(OpenedFilePayload {
+        file_path: moontasks::service::open_hooks_log(&state, &session_id)?,
+    }))
+}
+
+/// Whether the board is acting on itself.
+async fn hooks_running(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<moontasks::HooksRunningPayload>, AppError> {
+    Ok(Json(moontasks::HooksRunningPayload {
+        running: moontasks::service::hooks_running(&state, &session_id)?,
+    }))
+}
+
+/// Start the board, or stop it.
+async fn set_hooks_running(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::HooksRunningPayload>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_hooks_running(&state, &session_id, request.running)?;
+    Ok("ok")
 }
 
 async fn set_task_tags(
@@ -908,7 +897,10 @@ mod bind_tests {
             .await
             .expect("a busy port is not an error");
 
-        assert!(second.is_none(), "the port was held, so it cannot be taken twice");
+        assert!(
+            second.is_none(),
+            "the port was held, so it cannot be taken twice"
+        );
         drop(held);
     }
 
@@ -927,6 +919,9 @@ mod bind_tests {
             .await
             .expect("the port was let go, so binding it is not an error");
 
-        assert!(taken.is_some(), "a port nobody holds should be there for the next window");
+        assert!(
+            taken.is_some(),
+            "a port nobody holds should be there for the next window"
+        );
     }
 }

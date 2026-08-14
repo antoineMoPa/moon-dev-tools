@@ -16,7 +16,7 @@ use crate::{
     api::{AgentKind, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
-    moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
+    moontasks::{ColumnEnd, ColumnName, CreateTaskRequest},
 };
 
 struct ServedRepo {
@@ -32,7 +32,8 @@ impl Drop for ServedRepo {
 
 /// Start a `moonreview serve` on a free port, over a throwaway repo with pending changes.
 fn serve_a_repo(name: &str) -> ServedRepo {
-    let root = std::env::temp_dir().join(format!("moonreview-remote-{}-{name}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("moonreview-remote-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("failed to create the fixture directory");
 
@@ -44,12 +45,18 @@ fn serve_a_repo(name: &str) -> ServedRepo {
     ] {
         run_git_no_output(&root, &["config", key, value]).expect("failed to configure git");
     }
-    fs::write(root.join("main.rs"), "fn main() {\n    println!(\"one\");\n}\n")
-        .expect("failed to write the fixture file");
+    fs::write(
+        root.join("main.rs"),
+        "fn main() {\n    println!(\"one\");\n}\n",
+    )
+    .expect("failed to write the fixture file");
     run_git_no_output(&root, &["add", "-A"]).expect("failed to stage the fixture");
     run_git_no_output(&root, &["commit", "-m", "first"]).expect("failed to commit the fixture");
-    fs::write(root.join("main.rs"), "fn main() {\n    println!(\"two\");\n}\n")
-        .expect("failed to change the fixture file");
+    fs::write(
+        root.join("main.rs"),
+        "fn main() {\n    println!(\"two\");\n}\n",
+    )
+    .expect("failed to change the fixture file");
 
     let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
     let (port_sender, port_receiver) = std::sync::mpsc::channel();
@@ -191,6 +198,35 @@ fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
         .expect("expected the remote shell to close");
 }
 
+/// Autopilot is a script in the repo, and editing it from a window working a repo on another
+/// machine is the file pane reading and writing that file like any other.
+#[test]
+fn the_autopilot_script_opens_over_http() {
+    let served = serve_a_repo("autopilot-script");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let path = backend
+        .open_autopilot_script(&opened.session_id)
+        .expect("expected the script to open");
+    assert_eq!(path, ".moontasks/hooks/tick.rhai");
+
+    let content = backend
+        .file_content(&opened.session_id, &path)
+        .expect("expected the file pane's read to find the script");
+    assert!(
+        content.content.contains("list_tasks"),
+        "the shipped tick hook reads the board; got:\n{}",
+        content.content
+    );
+}
+
 /// The card's notes and the file pane read the same file: opening the notes makes it real,
 /// the file pane's own write path edits it, and the board's next read shows what was written.
 #[test]
@@ -211,7 +247,7 @@ fn task_notes_round_trip_over_http() {
             &CreateTaskRequest {
                 title: "Fix the login page".to_string(),
                 agent: AgentKind::None,
-                status: ColumnId::new("todo"),
+                status: ColumnName::new("todo"),
                 joins: ColumnEnd::Top,
             },
         )

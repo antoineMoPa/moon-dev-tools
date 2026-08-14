@@ -30,9 +30,18 @@ const SYSTEM_FONTS: &[(&str, &str)] = &[
 #[cfg(target_os = "linux")]
 const SYSTEM_FONTS: &[(&str, &str)] = &[
     // DejaVu carries the braille, the box drawing and the block elements between them.
-    ("dejavu-sans-mono", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
-    ("dejavu-sans-mono-fedora", "/usr/share/fonts/dejavu/DejaVuSansMono.ttf"),
-    ("noto-sans-mono", "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"),
+    (
+        "dejavu-sans-mono",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ),
+    (
+        "dejavu-sans-mono-fedora",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+    ),
+    (
+        "noto-sans-mono",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+    ),
 ];
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

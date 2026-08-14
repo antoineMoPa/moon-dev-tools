@@ -120,7 +120,11 @@ mod tests {
         assert_eq!(width, 3);
         // The marker is not part of the body, so the column is an index into the code.
         assert_eq!(
-            line.body().chars().skip(column).take(width).collect::<String>(),
+            line.body()
+                .chars()
+                .skip(column)
+                .take(width)
+                .collect::<String>(),
             "one"
         );
     }

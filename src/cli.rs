@@ -242,12 +242,7 @@ fn pick_project(_frame: Frame) -> Result<()> {
     bail!("this build has no desktop frontend, so there is no window to pick a repo in")
 }
 
-fn launch_review(
-    target: ReviewTarget,
-    logs: bool,
-    frontend: Frontend,
-    frame: Frame,
-) -> Result<()> {
+fn launch_review(target: ReviewTarget, logs: bool, frontend: Frontend, frame: Frame) -> Result<()> {
     #[cfg(feature = "native")]
     if let Frontend::Remote { target, repo_path } = &frontend {
         // The repo lives on the far side, so nothing here is resolved against this machine.
@@ -547,10 +542,10 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
             "--remote" => {
-                remote = Some(
-                    args.next()
-                        .ok_or_else(|| anyhow!("--remote needs an address, e.g. --remote dev-box"))?,
-                );
+                remote =
+                    Some(args.next().ok_or_else(|| {
+                        anyhow!("--remote needs an address, e.g. --remote dev-box")
+                    })?);
             }
             "--repo" => {
                 remote_repo = Some(
@@ -826,7 +821,10 @@ mod tests {
         )
         .expect("expected review request");
 
-        assert_eq!(request.diff_target.base.as_deref(), Some("main..egui-version"));
+        assert_eq!(
+            request.diff_target.base.as_deref(),
+            Some("main..egui-version")
+        );
         assert_eq!(request.diff_target.pathspec, None);
         assert_eq!(request.active_commit, None);
     }

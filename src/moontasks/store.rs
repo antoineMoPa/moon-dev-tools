@@ -20,23 +20,33 @@ pub(crate) const TASKS_DIR_NAME: &str = ".moontasks";
 const METADATA_FILE_NAME: &str = "metadata.json";
 /// Where a task keeps what its one-shot runs printed, one file per run.
 const RUNS_DIR_NAME: &str = "runs";
+/// Where the board keeps the scripts it runs itself by, beside the task folders.
+pub(crate) const HOOKS_DIR_NAME: &str = "hooks";
+/// What the board writes down about its own decisions, beside the task folders. One line per
+/// decision, newest at the bottom.
+pub(crate) const HOOKS_LOG_FILE_NAME: &str = "hooks.log";
 /// The board's own file, beside the task folders: what its columns are and what they are
 /// called. A board without one has the columns in [`DEFAULT_COLUMNS`], and only grows the file
 /// once someone changes them.
 const BOARD_FILE_NAME: &str = "board.json";
 
-/// Which column a task sits in, by the name that column goes by in the board's file.
+/// A column's name — the heading on the board, and what a card says it is in.
 ///
-/// A name rather than one of a fixed set: the columns belong to the board, and a card says
-/// which of them it is in. This is what `metadata.json` has always held in its `status`, so a
-/// board written before columns could be changed reads back unchanged.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+/// The one name is the whole of it: what the heading reads, what `metadata.json` holds in its
+/// `status`, and what a script names a column by. A column used to carry a second, hidden id
+/// beside its heading, which is how a board could end up drawing "IN REVIEW" over a column
+/// every script had to call `in_local_review`.
+///
+/// Two names are the same name whatever case they are typed in, and the board refuses a second
+/// column whose name differs from another's only by case — so a script saying `"todo"` finds
+/// the TODO column, and there is never a question of which one it found.
+#[derive(Clone, Eq, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct ColumnId(String);
+pub(crate) struct ColumnName(String);
 
-impl ColumnId {
-    pub(crate) fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+impl ColumnName {
+    pub(crate) fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -44,20 +54,31 @@ impl ColumnId {
     }
 }
 
-impl std::fmt::Display for ColumnId {
+impl PartialEq for ColumnName {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_lowercase() == other.0.to_lowercase()
+    }
+}
+
+impl std::hash::Hash for ColumnName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_lowercase().hash(state);
+    }
+}
+
+impl std::fmt::Display for ColumnName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-/// One column of the board: the name cards are in it under, and what it is called on screen.
+/// One column of the board: its name, and what the board remembers about it.
 ///
-/// Renaming changes the label and leaves the id alone, so every card already in the column
-/// stays in it and a board someone renamed a column on is still readable by hand.
+/// Renaming a column moves every card in it to the new name, because the name is the only
+/// thing a card holds — see [`crate::moontasks::service::rename_column`].
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(crate) struct BoardColumn {
-    pub(crate) id: ColumnId,
-    pub(crate) label: String,
+    pub(crate) name: ColumnName,
     /// The agent the last task created in this column was started with. The new-task box
     /// offers it first, so a column that always goes to the same agent only has to be told
     /// once. Absent until a task has been created in the column.
@@ -79,25 +100,29 @@ pub(crate) enum ColumnEnd {
 }
 
 /// The columns a board starts with, left to right.
-pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
-    ("todo", "TODO"),
-    ("in_progress", "IN PROGRESS"),
-    ("done", "DONE"),
-];
+pub(crate) const DEFAULT_COLUMNS: &[&str] = &["TODO", "IN PROGRESS", "DONE"];
 
-/// The one column the board itself acts on, by the id it has on a board that started from the
-/// defaults. A card only ever changes column because someone moved it; what happens here is
-/// that a card let go of in this column lets go of its shells.
+/// The one column the board itself acts on, by the name it has on a board that started from
+/// the defaults. A card only ever changes column because someone moved it; what happens here
+/// is that a card let go of in this column lets go of its shells.
 ///
-/// It is pinned by id: renaming the column or dragging it somewhere else keeps its part in
-/// this rule, and deleting it turns the rule off rather than picking a column nobody chose.
-pub(crate) const RELEASES_SHELLS_IN: &str = "done";
+/// It is the name and nothing behind it, so a board with no column of this name — renamed or
+/// deleted — has the rule turned off rather than pinned on a column nobody chose.
+pub(crate) const RELEASES_SHELLS_IN: &str = "DONE";
 
-/// The board's columns, left to right. This is the whole order: a card naming a column that is
-/// not here has nowhere to be drawn.
+/// The board's columns, left to right — the whole order, since a card naming a column that is
+/// not here has nowhere to be drawn — and whether the board is acting on itself.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(crate) struct BoardConfig {
     pub(crate) columns: Vec<BoardColumn>,
+    /// Whether the board's hooks fire: work is picked up, runs are noticed, cards move on
+    /// their own. Off until someone presses play, so opening a board never sets anything going
+    /// by itself.
+    ///
+    /// It is in the board's file rather than in this machine's settings because it is a fact
+    /// about the board — a board left running is running when you open it again.
+    #[serde(default)]
+    pub(crate) hooks_running: bool,
 }
 
 impl Default for BoardConfig {
@@ -105,29 +130,35 @@ impl Default for BoardConfig {
         Self {
             columns: DEFAULT_COLUMNS
                 .iter()
-                .map(|(id, label)| BoardColumn {
-                    id: ColumnId::new(*id),
-                    label: (*label).to_string(),
+                .map(|name| BoardColumn {
+                    name: ColumnName::new(*name),
                     default_agent: None,
                 })
                 .collect(),
+            hooks_running: false,
         }
     }
 }
 
 impl BoardConfig {
-    pub(crate) fn position_of(&self, id: &ColumnId) -> Option<usize> {
-        self.columns.iter().position(|column| column.id == *id)
+    pub(crate) fn position_of(&self, name: &ColumnName) -> Option<usize> {
+        self.columns.iter().position(|column| column.name == *name)
     }
 
-    pub(crate) fn has(&self, id: &ColumnId) -> bool {
-        self.position_of(id).is_some()
+    pub(crate) fn has(&self, name: &ColumnName) -> bool {
+        self.position_of(name).is_some()
     }
 
-    /// The column one of the board's own rules points at, if it is still on the board.
-    pub(crate) fn role(&self, role: &str) -> Option<ColumnId> {
-        let id = ColumnId::new(role);
-        self.has(&id).then_some(id)
+    /// The board's own spelling of a column somebody named, if the board has it.
+    ///
+    /// A name typed in another case is the same column, and this is what turns it back into the
+    /// spelling the heading uses — so a script saying `"todo"` still leaves `TODO` written on
+    /// the card.
+    pub(crate) fn column_named(&self, name: &ColumnName) -> Option<ColumnName> {
+        self.columns
+            .iter()
+            .find(|column| column.name == *name)
+            .map(|column| column.name.clone())
     }
 }
 
@@ -139,6 +170,22 @@ pub(crate) enum TaskResourceKind {
     Agent,
 }
 
+/// Who set a run going.
+///
+/// The board's own scripts wait on each other — two runs on one repo fight — but a shell you
+/// opened, or an agent you are talking to, is yours and the board works around it. It cannot
+/// tell the two apart from the process, so it is written down when the run is started.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunStarter {
+    /// Someone at the board pressed something. A run written down before this was recorded
+    /// reads as one of these, which is the careful way round: the board waits on it.
+    #[default]
+    Person,
+    /// A hook script started it, unattended.
+    Hook,
+}
+
 /// Something the task has running, or had running: a shell, or a run of an agent.
 ///
 /// Whether it is running right now is not written down — the shells the server has are what
@@ -147,6 +194,10 @@ pub(crate) enum TaskResourceKind {
 pub(crate) struct TaskResource {
     pub(crate) id: String,
     pub(crate) kind: TaskResourceKind,
+    /// Who started this run — see [`RunStarter`]. Resuming a run makes it the person's,
+    /// because from then on there is someone at the keyboard.
+    #[serde(default)]
+    pub(crate) started_by: RunStarter,
     /// Which agent this is a run of. `None` for a shell.
     #[serde(default)]
     pub(crate) agent: AgentKind,
@@ -177,7 +228,7 @@ pub(crate) struct TaskWorktree {
 pub(crate) struct TaskMetadata {
     pub(crate) title: String,
     /// The column the card is in, by the id the board's file gives it.
-    pub(crate) status: ColumnId,
+    pub(crate) status: ColumnName,
     pub(crate) created_at_unix: u64,
     /// Where the card sits in its column, lowest at the top. Renumbered from zero across the
     /// whole column whenever one is dragged into it, so the numbers stay small and readable
@@ -234,6 +285,80 @@ pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
     repo_path.join(TASKS_DIR_NAME)
 }
 
+/// Where the board's hooks live: one script per hook point, and the generated reference.
+pub(crate) fn hooks_dir(repo_path: &Path) -> PathBuf {
+    tasks_root(repo_path).join(HOOKS_DIR_NAME)
+}
+
+pub(crate) fn hooks_log_path(repo_path: &Path) -> PathBuf {
+    tasks_root(repo_path).join(HOOKS_LOG_FILE_NAME)
+}
+
+/// How many lines of the board's own log are kept. A tick that says the same thing twice
+/// running only says it once (see [`append_hooks_log`]), so this is a long memory in practice
+/// and a bound on a file nobody prunes by hand.
+const HOOKS_LOG_LINES: usize = 2_000;
+
+/// Write down something the board decided.
+///
+/// A line the same as the one before it is not written: the tick fires every couple of seconds
+/// and would otherwise bury the log in "waiting on a run" while it waits on that run. What the
+/// log holds is where the board's reasoning *changed*, which is what someone reading it wants.
+///
+/// Best effort, and deliberately not a `Result`: a board that cannot write its log is still a
+/// board, and a caller that had to handle this would be a hook that failed for saying so.
+pub(crate) fn append_hooks_log(repo_path: &Path, line: &str) {
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    let Ok(root) = ensure_tasks_root(repo_path) else {
+        return;
+    };
+    let path = root.join(HOOKS_LOG_FILE_NAME);
+    let held = fs::read_to_string(&path).unwrap_or_default();
+
+    let said_before = held
+        .lines()
+        .next_back()
+        .and_then(|last| last.split_once("  "))
+        .is_some_and(|(_, said)| said == line);
+    if said_before {
+        return;
+    }
+
+    let mut lines: Vec<&str> = held.lines().collect();
+    let stamped = format!("{}  {line}", clock_of(now_unix()));
+    lines.push(&stamped);
+    let kept = lines.len().saturating_sub(HOOKS_LOG_LINES);
+    let _ = fs::write(&path, format!("{}\n", lines[kept..].join("\n")));
+}
+
+/// A unix time as a clock a person reads, in UTC: `2026-08-14 13:54:02`.
+///
+/// Written out here rather than taken from a date library, because this is the only place in
+/// the board that puts a time on the page and a whole dependency for one line of arithmetic is
+/// worse than the arithmetic.
+fn clock_of(unix: u64) -> String {
+    let (days, seconds) = (unix / 86_400, unix % 86_400);
+    let (hour, minute, second) = (seconds / 3_600, (seconds % 3_600) / 60, seconds % 60);
+
+    // Days since 1970-01-01, turned into a date by the civil-from-days algorithm: shift the
+    // year to start in March so a leap day is the last day of it and no month needs a table.
+    let shifted = days as i64 + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let march_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * march_month + 2) / 5 + 1;
+    let month = march_month + if march_month < 10 { 3 } else { -9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+}
+
 /// What the board's own `.gitignore` says.
 ///
 /// A board is working state — running agents, scratch files, whatever an agent leaves in a
@@ -249,7 +374,7 @@ const TASKS_GITIGNORE: &str = "\
 # A task folder holds running state — shells, agent sessions, scratch files — so by default
 # none of it is committed and none of it shows up in `git status`.
 #
-# Delete this file to share the board with the rest of the team.
+# Delete this file to share the whole board with the rest of the team.
 *
 ";
 
@@ -278,7 +403,13 @@ fn ensure_tasks_root(repo_path: &Path) -> Result<PathBuf> {
 /// error, and nothing here is the only writer.
 pub(crate) fn read_board(repo_path: &Path) -> BoardConfig {
     let path = tasks_root(repo_path).join(BOARD_FILE_NAME);
-    let Ok(text) = fs::read_to_string(&path) else {
+    let text = fs::read_to_string(&path).ok();
+    // A board written when a column had an id behind its label is brought up to date the first
+    // time it is read, cards and all. See [`super::board_migration`].
+    if let Some(upgraded) = super::board_migration::upgrade(repo_path, text.as_deref()) {
+        return upgraded;
+    }
+    let Some(text) = text else {
         return BoardConfig::default();
     };
     let Ok(config) = serde_json::from_str::<BoardConfig>(&text) else {
@@ -369,7 +500,7 @@ pub(crate) fn write_task(repo_path: &Path, task_id: &str, metadata: &TaskMetadat
 pub(crate) fn create_task(
     repo_path: &Path,
     title: &str,
-    status: &ColumnId,
+    status: &ColumnName,
     joins: ColumnEnd,
 ) -> Result<String> {
     let title = title.trim();
@@ -377,10 +508,12 @@ pub(crate) fn create_task(
         bail!("a task needs a title");
     }
     // A card in a column the board does not have has nowhere to be drawn, so the mistake is
-    // refused here rather than written down.
-    if !read_board(repo_path).has(status) {
+    // refused here rather than written down. What is written down is the board's own spelling
+    // of the column, so every card in it reads the way the heading does.
+    let Some(status) = read_board(repo_path).column_named(status) else {
         bail!("the board has no {status} column");
-    }
+    };
+    let status = &status;
     let task_id = format!("{}-{}", slug_of(title), new_uuid());
     let position = match joins {
         ColumnEnd::Top => {
@@ -437,7 +570,7 @@ pub(crate) fn ensure_notes_file(repo_path: &Path, task_id: &str) -> Result<()> {
 ///
 /// A board that cannot be read is a board with nothing in that column as far as this is
 /// concerned: the new card goes to the top of it, which is no worse than anywhere else.
-fn position_under_the_column(repo_path: &Path, status: &ColumnId) -> u32 {
+fn position_under_the_column(repo_path: &Path, status: &ColumnName) -> u32 {
     list_task_ids(repo_path)
         .unwrap_or_default()
         .iter()
@@ -451,7 +584,7 @@ fn position_under_the_column(repo_path: &Path, status: &ColumnId) -> u32 {
 /// Push every card already in a column down one place, so a new one can have the top.
 ///
 /// Moving each card down by one keeps the order they were in among themselves.
-fn make_room_at_the_top(repo_path: &Path, status: &ColumnId) -> Result<()> {
+fn make_room_at_the_top(repo_path: &Path, status: &ColumnName) -> Result<()> {
     for task_id in list_task_ids(repo_path)? {
         let Ok(mut metadata) = read_task(repo_path, &task_id) else {
             // A task whose metadata cannot be read is skipped everywhere else too; it has no
@@ -552,6 +685,38 @@ mod tests {
         path
     }
 
+    /// The log puts a time on the page, and date arithmetic written by hand is worth checking
+    /// at the corners: a leap day, a century that is not a leap year, and one that is.
+    #[test]
+    fn a_unix_time_reads_as_a_clock() {
+        for (unix, expected) in [
+            (0, "1970-01-01 00:00:00"),
+            (1_786_649_537, "2026-08-13 19:32:17"),
+            (951_782_400, "2000-02-29 00:00:00"),
+            (4_107_542_400, "2100-03-01 00:00:00"),
+            (1_735_689_599, "2024-12-31 23:59:59"),
+        ] {
+            assert_eq!(clock_of(unix), expected, "{unix}");
+        }
+    }
+
+    /// A run written down before the board recorded who started it is read as a person's, so
+    /// the board waits on it rather than working over the top of something someone is at.
+    #[test]
+    fn a_run_with_nobody_recorded_is_read_as_a_person_s() {
+        let resource: TaskResource = serde_json::from_str(
+            r#"{ "id": "run", "kind": "agent", "agent": "claude", "started_at_unix": 0 }"#,
+        )
+        .expect("expected a resource");
+
+        assert_eq!(resource.started_by, RunStarter::Person);
+        assert_eq!(
+            serde_json::to_value(RunStarter::Hook).expect("json"),
+            serde_json::json!("hook"),
+            "a script reads this as a plain word"
+        );
+    }
+
     #[test]
     fn a_title_becomes_a_readable_slug() {
         assert_eq!(slug_of("Fix the login page"), "fix-the-login-page");
@@ -578,7 +743,7 @@ mod tests {
         let task_id = create_task(
             &repo,
             "Fix the login page",
-            &ColumnId::new("todo"),
+            &ColumnName::new("todo"),
             ColumnEnd::Top,
         )
         .expect("expected a task");
@@ -586,7 +751,7 @@ mod tests {
 
         let metadata = read_task(&repo, &task_id).expect("expected metadata");
         assert_eq!(metadata.title, "Fix the login page");
-        assert_eq!(metadata.status, ColumnId::new("todo"));
+        assert_eq!(metadata.status, ColumnName::new("todo"));
         assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
@@ -597,7 +762,7 @@ mod tests {
     #[test]
     fn a_card_joins_the_end_of_the_column_it_was_asked_for() {
         let repo = temp_repo("column-ends");
-        let todo = ColumnId::new("todo");
+        let todo = ColumnName::new("todo");
 
         let first = create_task(&repo, "First", &todo, ColumnEnd::Top).expect("expected a task");
         let second = create_task(&repo, "Second", &todo, ColumnEnd::Top).expect("expected a task");
@@ -623,7 +788,7 @@ mod tests {
         let task_id = create_task(
             &repo,
             "Fix the login page",
-            &ColumnId::new("todo"),
+            &ColumnName::new("todo"),
             ColumnEnd::Top,
         )
         .expect("expected a task");
@@ -641,7 +806,7 @@ mod tests {
         let task_id = create_task(
             &repo,
             "Fix the login page",
-            &ColumnId::new("todo"),
+            &ColumnName::new("todo"),
             ColumnEnd::Top,
         )
         .expect("expected a task");
@@ -674,7 +839,7 @@ mod tests {
         create_task(
             &repo,
             "Fix the login page",
-            &ColumnId::new("todo"),
+            &ColumnName::new("todo"),
             ColumnEnd::Top,
         )
         .expect("expected a task");
@@ -698,12 +863,12 @@ mod tests {
     #[test]
     fn a_board_that_has_been_shared_is_left_shared() {
         let repo = temp_repo("gitignore-removed");
-        create_task(&repo, "First", &ColumnId::new("todo"), ColumnEnd::Top)
+        create_task(&repo, "First", &ColumnName::new("todo"), ColumnEnd::Top)
             .expect("expected a task");
         let ignore = tasks_root(&repo).join(".gitignore");
         fs::remove_file(&ignore).expect("failed to remove the .gitignore");
 
-        create_task(&repo, "Second", &ColumnId::new("todo"), ColumnEnd::Top)
+        create_task(&repo, "Second", &ColumnName::new("todo"), ColumnEnd::Top)
             .expect("expected another task");
 
         assert!(!ignore.exists(), "the .gitignore should not have come back");
@@ -718,7 +883,7 @@ mod tests {
         let task_id = create_task(
             &repo,
             "Fix the login page",
-            &ColumnId::new("todo"),
+            &ColumnName::new("todo"),
             ColumnEnd::Top,
         )
         .expect("expected a task");
@@ -744,10 +909,10 @@ mod tests {
         let order: Vec<&str> = board
             .columns
             .iter()
-            .map(|column| column.id.as_str())
+            .map(|column| column.name.as_str())
             .collect();
 
-        assert_eq!(order, ["todo", "in_progress", "done"]);
+        assert_eq!(order, ["TODO", "IN PROGRESS", "DONE"]);
 
         fs::remove_dir_all(repo).expect("failed to remove the test repo");
     }
@@ -759,8 +924,8 @@ mod tests {
         let config = BoardConfig::default();
 
         assert_eq!(
-            config.role(RELEASES_SHELLS_IN),
-            Some(ColumnId::new(RELEASES_SHELLS_IN)),
+            config.column_named(&ColumnName::new(RELEASES_SHELLS_IN)),
+            Some(ColumnName::new(RELEASES_SHELLS_IN)),
             "{RELEASES_SHELLS_IN} should be a column of a new board"
         );
     }
@@ -772,19 +937,22 @@ mod tests {
         let mut config = BoardConfig::default();
         config
             .columns
-            .retain(|column| column.id.as_str() != RELEASES_SHELLS_IN);
+            .retain(|column| column.name.as_str() != RELEASES_SHELLS_IN);
 
-        assert_eq!(config.role(RELEASES_SHELLS_IN), None);
+        assert_eq!(
+            config.column_named(&ColumnName::new(RELEASES_SHELLS_IN)),
+            None
+        );
     }
 
     #[test]
-    fn a_column_id_is_written_down_as_the_plain_string_it_has_always_been() {
-        let encoded = serde_json::to_string(&ColumnId::new("quality_review")).expect("json");
+    fn a_column_name_is_written_down_as_the_plain_string_it_has_always_been() {
+        let encoded = serde_json::to_string(&ColumnName::new("quality_review")).expect("json");
 
         assert_eq!(encoded, "\"quality_review\"");
         assert_eq!(
-            serde_json::from_str::<ColumnId>(&encoded).expect("expected a column"),
-            ColumnId::new("quality_review")
+            serde_json::from_str::<ColumnName>(&encoded).expect("expected a column"),
+            ColumnName::new("quality_review")
         );
     }
 
@@ -794,16 +962,15 @@ mod tests {
         let config = BoardConfig {
             columns: vec![
                 BoardColumn {
-                    id: ColumnId::new("todo"),
-                    label: "BACKLOG".to_string(),
+                    name: ColumnName::new("BACKLOG"),
                     default_agent: Some(AgentKind::Claude),
                 },
                 BoardColumn {
-                    id: ColumnId::new("shipped"),
-                    label: "SHIPPED".to_string(),
+                    name: ColumnName::new("SHIPPED"),
                     default_agent: None,
                 },
             ],
+            hooks_running: false,
         };
 
         write_board(&repo, &config).expect("expected the board to be written");
@@ -836,6 +1003,7 @@ mod tests {
             &repo,
             &BoardConfig {
                 columns: Vec::new(),
+                hooks_running: false,
             },
         )
         .expect("expected the board to be written");

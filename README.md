@@ -18,8 +18,10 @@ through a repo. Each card is a task folder with notes, running shells and agents
 so agent work has a visible place instead of disappearing into terminal tabs. Open any resource
 beside the board and move cards through your own workflow as work progresses.
 
-Cards can use isolated checkouts, while `[autopilot]` manages tagged jobs without file access;
-all work remains visible and reviewable from the board.
+Cards can use isolated checkouts, and the board can run itself: press play and its hooks — Rhai
+scripts in the repo, shipped as working defaults you are meant to edit — pick up cards tagged
+`autopilot`, run an agent on each in its own checkout, and say on the card what came of it. All
+work stays visible and reviewable from the board, and reviewing stays yours to start.
 
 ![Moonreview showing local changes](tests/snapshots/review-dark.png)
 

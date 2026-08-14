@@ -133,7 +133,13 @@ mod tests {
         assert_eq!(command.get_program(), "open");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            ["-n", "-a", "/Applications/Moontasks.app", "--args", "--pick"]
+            [
+                "-n",
+                "-a",
+                "/Applications/Moontasks.app",
+                "--args",
+                "--pick"
+            ]
         );
     }
 }

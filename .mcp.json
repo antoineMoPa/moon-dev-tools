@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "moontasks": {
-      "type": "http",
-      "url": "http://localhost:42000/mcp?repo=${CLAUDE_PROJECT_DIR:-.}"
-    }
-  }
-}

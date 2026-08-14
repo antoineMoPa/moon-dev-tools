@@ -97,15 +97,13 @@ fn draw_file_link(app: &mut App, ui: &mut Ui, file_path: &str, palette: &Palette
 
     ui.horizontal(|ui| {
         ui.add(
-            egui::Label::new(
-                RichText::new(file_path)
-                    .size(SMALL_SIZE)
-                    .color(if full_path.is_some() {
-                        palette.accent
-                    } else {
-                        palette.muted
-                    }),
-            )
+            egui::Label::new(RichText::new(file_path).size(SMALL_SIZE).color(
+                if full_path.is_some() {
+                    palette.accent
+                } else {
+                    palette.muted
+                },
+            ))
             .selectable(true),
         );
 
@@ -171,7 +169,10 @@ mod tests {
 
     #[test]
     fn a_data_uri_gives_up_its_bytes_and_a_name_to_read_them_as() {
-        let uri = format!("data:image/png;base64,{}", BASE64.encode(b"not really a png"));
+        let uri = format!(
+            "data:image/png;base64,{}",
+            BASE64.encode(b"not really a png")
+        );
 
         let (extension, bytes) = decode_image_data_uri(&uri).expect("the uri should decode");
 

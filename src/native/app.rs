@@ -446,27 +446,20 @@ impl App {
             move |backend| {
                 let columns = backend.list_columns(&session_id)?;
                 let tasks = backend.list_tasks(&session_id)?;
-                // Read with the board rather than on a poll of its own: what the tools ask for
-                // is about the board, and one round trip keeps them in step.
-                let asked = backend.take_window_requests(&session_id)?;
-                Ok((columns, tasks, asked))
+                // Read with the board rather than on a poll of its own: it is a fact about the
+                // board, it is written in the board's own file, and one round trip keeps the
+                // play/pause control honest about a board another window may have started.
+                let running = backend.hooks_running(&session_id)?;
+                Ok((columns, tasks, running))
             },
             |model, result| {
                 model.board.loaded = true;
                 match result {
-                    Ok((columns, tasks, asked)) => {
+                    Ok((columns, tasks, running)) => {
                         model.board.error = None;
                         board::columns::accept_columns(model, columns);
                         board::cards::accept_board(model, tasks);
-                        for request in asked {
-                            match request {
-                                // The same waiting room the card's own button uses, so a review
-                                // opens the same way whoever asked for it.
-                                crate::api::WindowRequest::Review(review) => {
-                                    model.board.opening_review = Some(review)
-                                }
-                            }
-                        }
+                        model.board.hooks_running = running;
                     }
                     Err(error) => model.board.error = Some(format!("{error}")),
                 }
@@ -486,16 +479,48 @@ impl App {
         });
     }
 
-    /// Open the notes file the board just made sure exists, in a pane down the right.
+    /// Open the file the board just made sure exists — a task's notes, or the script autopilot
+    /// is — in a pane down the right.
     ///
-    /// The board's tasks are read from the root session's repo, so that is the session the
-    /// file pane reads the notes through.
-    fn open_notes_the_board_readied(&mut self) {
-        let Some(file_path) = self.model.board.opened_notes.take() else {
+    /// The board is read from the root session's repo, so that is the session the file pane
+    /// reads and saves through.
+    fn open_file_the_board_readied(&mut self) {
+        let Some(file_path) = self.model.board.opened_file.take() else {
             return;
         };
         let session_id = self.model.root_session_id.clone();
         self.open_notes_pane(session_id, file_path);
+    }
+
+    /// Open the hook that picks work up, which is where what autopilot does is written.
+    ///
+    /// The board installs its hooks the first time it is read, but a board that has never been
+    /// running has none yet — so the server makes sure the file is there and answers with where
+    /// it is, the same way a task's notes are opened.
+    pub(crate) fn edit_autopilot(&mut self) {
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn(
+            move |backend| backend.open_autopilot_script(&session_id),
+            |model, result| match result {
+                Ok(file_path) => model.board.opened_file = Some(file_path),
+                Err(error) => model.error(format!("could not open autopilot: {error}")),
+            },
+        );
+    }
+
+    /// Open what the board wrote down about its own decisions.
+    ///
+    /// The same rails as the script: the server makes sure the file is there and answers with
+    /// where, and it opens in a pane down the right like any other file of the board's.
+    pub(crate) fn view_autopilot_log(&mut self) {
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn(
+            move |backend| backend.open_hooks_log(&session_id),
+            |model, result| match result {
+                Ok(file_path) => model.board.opened_file = Some(file_path),
+                Err(error) => model.error(format!("could not open the autopilot log: {error}")),
+            },
+        );
     }
 
     fn poll_submodules(&mut self) {
@@ -523,6 +548,8 @@ impl App {
             CommandAction::InstallLaunchers => self.install_launchers(),
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
+            CommandAction::EditAutopilot => self.edit_autopilot(),
+            CommandAction::ViewAutopilotLog => self.view_autopilot_log(),
         }
     }
 
@@ -677,8 +704,8 @@ impl App {
         // box, the palette's search line included: a box the window owns is still a box the
         // user is typing in. Only the chords marked as reaching anywhere are the window's
         // while either has the keyboard.
-        let typing = ctx.egui_wants_keyboard_input()
-            || self.active_pane_kind() == Some(PaneKind::Terminal);
+        let typing =
+            ctx.egui_wants_keyboard_input() || self.active_pane_kind() == Some(PaneKind::Terminal);
 
         for action in self.keymap.resolve(ctx, typing) {
             self.apply_action(action);
@@ -840,9 +867,7 @@ impl App {
         });
 
         // Both deferred: the dialog blocks, and opening a review takes `self`.
-        if pick_folder
-            && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone())
-        {
+        if pick_folder && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone()) {
             open_path = Some(picked);
         }
         if let Some(repo_path) = open_path {
@@ -1237,6 +1262,8 @@ impl App {
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
                 MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
                 MenuAction::OpenFile => CommandAction::OpenFile,
+                MenuAction::EditAutopilot => CommandAction::EditAutopilot,
+                MenuAction::ViewAutopilotLog => CommandAction::ViewAutopilotLog,
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
                     continue;
@@ -1264,7 +1291,7 @@ impl App {
         self.poll_submodules();
         self.poll_board();
         self.open_shell_the_board_started();
-        self.open_notes_the_board_readied();
+        self.open_file_the_board_readied();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }

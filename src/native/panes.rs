@@ -34,7 +34,10 @@ pub(crate) enum PaneKind {
 pub(crate) enum Pane {
     /// One review of one repo. The window opens on the repo it was launched in; changed
     /// submodules are further reviews, each with its own session and its own tab title.
-    Review { session_id: String, title: String },
+    Review {
+        session_id: String,
+        title: String,
+    },
     Agents,
     Terminal {
         terminal_id: String,

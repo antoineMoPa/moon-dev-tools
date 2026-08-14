@@ -5,6 +5,7 @@
 //! executable, and each is a single call to [`run`].
 
 mod agent;
+mod agent_output;
 mod agent_sessions;
 mod api;
 #[cfg(feature = "native")]

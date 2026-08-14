@@ -1249,13 +1249,13 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // Written by hand rather than through the service: the ids a real one generates carry a
     // uuid, and the point here is a picture that is the same on every run.
     for (task_id, title, status) in [
-        ("write-the-parser-1111", "Write the parser", "todo"),
+        ("write-the-parser-1111", "Write the parser", "TODO"),
         (
             "fix-the-login-page-2222",
             "Fix the login page",
-            "in_progress",
+            "IN PROGRESS",
         ),
-        ("drop-the-old-api-3333", "Drop the old API", "done"),
+        ("drop-the-old-api-3333", "Drop the old API", "DONE"),
     ] {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
@@ -1302,7 +1302,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             if compose_in_ui.load(Ordering::Relaxed) {
-                app.model.board.composer_in = Some(crate::moontasks::ColumnId::new("todo"));
+                app.model.board.composer_in = Some(crate::moontasks::ColumnName::new("TODO"));
                 app.model.board.composer_at = if at_bottom_in_ui.load(Ordering::Relaxed) {
                     crate::moontasks::ColumnEnd::Bottom
                 } else {
@@ -1401,7 +1401,7 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
     let fixture = seeded_fixture("board-attach");
     fixture.write(
         ".moontasks/write-the-parser-1111/metadata.json",
-        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"TODO\",\n  \
          \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
     );
 
@@ -1511,7 +1511,7 @@ fn a_card_dropped_above_another_takes_its_place() {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
             &format!(
-                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"TODO\",\n  \
                  \"created_at_unix\": {created},\n  \"resources\": []\n}}\n"
             ),
         );
@@ -1652,7 +1652,7 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
             &format!(
-                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"TODO\",\n  \
                  \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
             ),
         );
@@ -1758,6 +1758,80 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
     );
 }
 
+/// What autopilot does is a script in the repo, so the board's way to change it is to open
+/// that file — including on a board whose hooks folder was never written.
+#[test]
+fn edit_autopilot_opens_the_script_the_board_picks_work_up_by() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("edit-autopilot");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let file_panes = Arc::new(Mutex::new(Vec::<String>::new()));
+    let file_panes_in_ui = Arc::clone(&file_panes);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(app.model.board.loaded, Ordering::Relaxed);
+            if let Ok(mut panes) = file_panes_in_ui.lock() {
+                *panes = app
+                    .model
+                    .layout
+                    .panes()
+                    .filter_map(|(_, pane)| match pane {
+                        Pane::File { file_path, .. } => Some(file_path.clone()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the board never read itself");
+    harness.run_steps(3);
+
+    let panes_open = || {
+        file_panes
+            .lock()
+            .map(|panes| panes.clone())
+            .unwrap_or_default()
+    };
+    harness.get_by_label("[edit autopilot]").click();
+    let script = ".moontasks/hooks/tick.rhai";
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !panes_open().iter().any(|open| open == script) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(
+        panes_open().contains(&script.to_string()),
+        "[edit autopilot] should have opened the tick hook, got {:?}",
+        panes_open()
+    );
+    assert!(
+        fixture.root.join(script).is_file(),
+        "the script has to be a real file before a pane can edit it"
+    );
+}
+
 /// Several windows on several projects is the ordinary way to work, so the title bar has to
 /// say which project each one is on.
 #[test]
@@ -1820,12 +1894,12 @@ fn a_long_task_title_is_cut_into_its_column() {
             "long-title-1111",
             "Rework the dispatch queue so held comments survive a restart, and take the \
              chance to rename everything around it while we are here",
-            "todo",
+            "TODO",
         ),
         (
             "fix-the-login-page-2222",
             "Fix the login page",
-            "in_progress",
+            "IN PROGRESS",
         ),
     ] {
         fixture.write(
@@ -1890,13 +1964,13 @@ fn a_card_shows_its_tags_and_what_stands_in_the_way() {
         (
             "write-the-parser-1111",
             "Write the parser",
-            "todo",
+            "TODO",
             "\"tags\": [\"autopilot\", \"parser\"],".to_string(),
         ),
         (
             "fix-the-login-page-2222",
             "Fix the login page",
-            "in_progress",
+            "IN PROGRESS",
             format!(
                 "\"tags\": [\"autopilot\"],\n  \"worktree\": {{ \"path\": \"{elsewhere}\", \
                  \"branch\": \"moontask/fix-the-login-page-2222\" }},"
@@ -2007,7 +2081,7 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
     let task_id = "write-the-parser-1111";
     fixture.write(
         &format!(".moontasks/{task_id}/metadata.json"),
-        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"TODO\",\n  \
          \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
     );
 
@@ -2058,7 +2132,7 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
     harness.run_steps(3);
 
     let (handle, status) = seen.lock().expect("poisoned").clone();
-    assert_eq!(status, "todo", "the card starts in TODO");
+    assert_eq!(status, "TODO", "the card starts in TODO");
     assert!(
         handle.is_positive(),
         "the card's drag handle was never drawn"
@@ -2072,7 +2146,7 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         harness.step();
-        if seen.lock().expect("poisoned").1 == "in_progress" {
+        if seen.lock().expect("poisoned").1 == "IN PROGRESS" {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -2080,7 +2154,7 @@ fn dragging_a_card_moves_it_to_the_column_it_is_dropped_on() {
 
     assert_eq!(
         seen.lock().expect("poisoned").1,
-        "in_progress",
+        "IN PROGRESS",
         "dropping the card on IN PROGRESS should have moved it there"
     );
 }
@@ -2097,7 +2171,7 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     let task_id = "write-the-parser-1111";
     fixture.write(
         &format!(".moontasks/{task_id}/metadata.json"),
-        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"TODO\",\n  \
          \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
     );
 
@@ -2134,14 +2208,14 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
 
             let heading = ui
                 .ctx()
-                .read_response(egui::Id::new(("moontask-column", "todo")));
+                .read_response(egui::Id::new(("moontask-column", "TODO")));
             if let Ok(mut seen) = seen_in_ui.lock() {
                 seen.order = app
                     .model
                     .board
                     .columns
                     .iter()
-                    .map(|column| column.id.to_string())
+                    .map(|column| column.name.to_string())
                     .collect();
                 seen.handle = heading
                     .map(|response| response.rect)
@@ -2169,11 +2243,11 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     let before = seen.lock().expect("poisoned").clone();
     assert_eq!(
         before.order.first().map(String::as_str),
-        Some("todo"),
+        Some("TODO"),
         "TODO starts on the left, got {:?}",
         before.order
     );
-    assert_eq!(before.card_status, "todo");
+    assert_eq!(before.card_status, "TODO");
     assert!(
         before.handle.is_positive(),
         "the column's drag handle was never drawn"
@@ -2197,7 +2271,7 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
             .order
             .first()
             .map(String::as_str)
-            == Some("in_progress")
+            == Some("IN PROGRESS")
         {
             break;
         }
@@ -2207,11 +2281,11 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     let after = seen.lock().expect("poisoned").clone();
     assert_eq!(
         after.order,
-        ["in_progress", "todo", "done"],
+        ["IN PROGRESS", "TODO", "DONE"],
         "dropping the heading one place right should have moved the column there"
     );
     assert_eq!(
-        after.card_status, "todo",
+        after.card_status, "TODO",
         "the card should have travelled with its column, unchanged"
     );
 }

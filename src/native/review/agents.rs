@@ -7,7 +7,11 @@ use egui::{Align, CornerRadius, Layout, RichText, Stroke, Ui};
 
 use crate::{
     api::{CommentDispatchStatus, ReviewCommentView},
-    native::{app::App, theme::{Palette, SMALL_SIZE}, widgets},
+    native::{
+        app::App,
+        theme::{Palette, SMALL_SIZE},
+        widgets,
+    },
 };
 
 /// A comment whose agent run is worth watching, paired with the review it belongs to.
@@ -29,7 +33,10 @@ fn status_rank(status: CommentDispatchStatus) -> u8 {
     }
 }
 
-fn status_colors(status: CommentDispatchStatus, palette: &Palette) -> (egui::Color32, egui::Color32) {
+fn status_colors(
+    status: CommentDispatchStatus,
+    palette: &Palette,
+) -> (egui::Color32, egui::Color32) {
     match status {
         CommentDispatchStatus::Running | CommentDispatchStatus::Queued => {
             (palette.accent, palette.status_open_bg)
@@ -85,7 +92,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                         .color(palette.muted),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if app.model.agent_log.is_some() && widgets::quiet_button(ui, "hide log").clicked()
+                    if app.model.agent_log.is_some()
+                        && widgets::quiet_button(ui, "hide log").clicked()
                     {
                         app.model.agent_log = None;
                     }
@@ -140,7 +148,14 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
 
     egui::Frame::new()
         .fill(palette.panel)
-        .stroke(Stroke::new(1.0, if showing_log { palette.accent } else { palette.line }))
+        .stroke(Stroke::new(
+            1.0,
+            if showing_log {
+                palette.accent
+            } else {
+                palette.line
+            },
+        ))
         .corner_radius(CornerRadius::same(5))
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -166,7 +181,8 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if comment.dispatch.can_cancel && widgets::quiet_button(ui, "cancel").clicked() {
+                    if comment.dispatch.can_cancel && widgets::quiet_button(ui, "cancel").clicked()
+                    {
                         let session_id = entry.session_id.clone();
                         let hunk_id = comment.hunk_id.clone();
                         let index = comment.comment_index;

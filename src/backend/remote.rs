@@ -22,9 +22,10 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
-        TaskReviewPayload, TaskTagsRequest, TaskView, TaskWorktreeView, TerminalOpened,
+        AddColumnRequest, AttachResourceRequest, BoardColumn, ColumnName, ColumnPlacementRequest,
+        CreateTaskRequest, DeleteColumnRequest, OpenedFilePayload, RenameColumnRequest,
+        StartResourceRequest, TaskPlacementRequest, TaskReviewPayload, TaskTagsRequest, TaskView,
+        TaskWorktreeView, TerminalOpened,
     },
 };
 
@@ -379,7 +380,7 @@ impl Backend for RemoteBackend {
         &self,
         session_id: &str,
         task_id: &str,
-        status: ColumnId,
+        status: ColumnName,
         position: usize,
     ) -> Result<()> {
         self.post(
@@ -396,32 +397,41 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/columns"))
     }
 
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
+    fn add_column(&self, session_id: &str, name: &str) -> Result<BoardColumn> {
         self.post_json(
             &format!("/api/session/{session_id}/columns"),
-            &ColumnLabelRequest {
-                label: label.to_string(),
+            &AddColumnRequest {
+                name: name.to_string(),
             },
         )
     }
 
-    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()> {
+    fn rename_column(&self, session_id: &str, column: &ColumnName, name: &str) -> Result<()> {
         self.post(
-            &format!("/api/session/{session_id}/columns/{column_id}/title"),
-            &ColumnLabelRequest {
-                label: label.to_string(),
+            &format!("/api/session/{session_id}/columns/name"),
+            &RenameColumnRequest {
+                column: column.clone(),
+                name: name.to_string(),
             },
         )
     }
 
-    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
-        self.delete(&format!("/api/session/{session_id}/columns/{column_id}"))
+    fn delete_column(&self, session_id: &str, column: &ColumnName) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/deletion"),
+            &DeleteColumnRequest {
+                column: column.clone(),
+            },
+        )
     }
 
-    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()> {
+    fn place_column(&self, session_id: &str, column: &ColumnName, position: usize) -> Result<()> {
         self.post(
-            &format!("/api/session/{session_id}/columns/{column_id}/placement"),
-            &ColumnPlacementRequest { position },
+            &format!("/api/session/{session_id}/columns/placement"),
+            &ColumnPlacementRequest {
+                column: column.clone(),
+                position,
+            },
         )
     }
 
@@ -497,11 +507,27 @@ impl Backend for RemoteBackend {
     }
 
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
-        let notes: TaskNotesPayload = self.post_json(
+        let notes: OpenedFilePayload = self.post_json(
             &format!("/api/session/{session_id}/tasks/{task_id}/notes/open"),
             &json!({}),
         )?;
         Ok(notes.file_path)
+    }
+
+    fn open_autopilot_script(&self, session_id: &str) -> Result<String> {
+        let script: OpenedFilePayload = self.post_json(
+            &format!("/api/session/{session_id}/autopilot/open"),
+            &json!({}),
+        )?;
+        Ok(script.file_path)
+    }
+
+    fn open_hooks_log(&self, session_id: &str) -> Result<String> {
+        let log: OpenedFilePayload = self.post_json(
+            &format!("/api/session/{session_id}/autopilot/log"),
+            &json!({}),
+        )?;
+        Ok(log.file_path)
     }
 
     fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
@@ -533,16 +559,17 @@ impl Backend for RemoteBackend {
         )
     }
 
-    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String> {
-        let opened: TerminalOpened = self.post_json(
-            &format!("/api/session/{session_id}/autopilot"),
-            &json!({ "agent": agent }),
-        )?;
-        Ok(opened.terminal_id)
+    fn hooks_running(&self, session_id: &str) -> Result<bool> {
+        let payload: crate::moontasks::HooksRunningPayload =
+            self.get(&format!("/api/session/{session_id}/hooks-running"))?;
+        Ok(payload.running)
     }
 
-    fn take_window_requests(&self, session_id: &str) -> Result<Vec<crate::api::WindowRequest>> {
-        self.get(&format!("/api/session/{session_id}/window-requests"))
+    fn set_hooks_running(&self, session_id: &str, running: bool) -> Result<()> {
+        self.post_json(
+            &format!("/api/session/{session_id}/hooks-running"),
+            &json!({ "running": running }),
+        )
     }
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {

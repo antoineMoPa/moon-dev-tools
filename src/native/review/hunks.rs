@@ -15,9 +15,9 @@ use crate::{
     comments::{AnchoredComment, build_anchored_comment_value, parse_anchored_comments},
     native::{
         app::App,
-        panes::OpenPaneRequest,
         model::{Draft, LINE_END, LineSelection, SelectionPoint, hash_of},
         palette::CommandAction,
+        panes::OpenPaneRequest,
         review::diff::{DiffLine, LineKind, insertion_line},
         review::image_diff,
         review::search,
@@ -103,11 +103,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
     let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
 
-    let scroll_target = app
-        .model
-        .review(session_id)
-        .scroll_to_hunk
-        .take();
+    let scroll_target = app.model.review(session_id).scroll_to_hunk.take();
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -202,8 +198,11 @@ fn draw_empty(ui: &mut Ui, palette: &Palette) {
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
-    parameter struct that only exists to be destructured immediately")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_section(
     app: &mut App,
     ui: &mut Ui,
@@ -266,7 +265,13 @@ fn draw_section(
     }
 }
 
-fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &str, palette: &Palette) {
+fn draw_file_heading(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    file_path: &str,
+    palette: &Palette,
+) {
     let collapsed = app
         .model
         .review_ref(session_id)
@@ -274,7 +279,8 @@ fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &s
 
     ui.horizontal(|ui| {
         let arrow = if collapsed { "\u{23F5}" } else { "\u{23F7}" };
-        if widgets::quiet_button_colored(ui, &format!("{arrow} {file_path}"), palette.ink).clicked() {
+        if widgets::quiet_button_colored(ui, &format!("{arrow} {file_path}"), palette.ink).clicked()
+        {
             let review = app.model.review(session_id);
             if collapsed {
                 review.collapsed_files.remove(file_path);
@@ -285,8 +291,11 @@ fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &s
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
-    parameter struct that only exists to be destructured immediately")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_hunk_card(
     app: &mut App,
     ui: &mut Ui,
@@ -320,10 +329,7 @@ fn draw_hunk_card(
     if scroll_target != Some(hunk.id.as_str())
         && let Some(height) = app.hunk_heights.get(&hunk.id).copied()
     {
-        let skipped = Rect::from_min_size(
-            ui.cursor().min,
-            vec2(ui.available_width(), height),
-        );
+        let skipped = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
         if !ui.is_rect_visible(skipped) {
             ui.allocate_exact_size(skipped.size(), Sense::hover());
             return;
@@ -334,7 +340,11 @@ fn draw_hunk_card(
         .fill(palette.code_bg)
         .stroke(Stroke::new(
             1.0,
-            if is_active { palette.accent } else { palette.line },
+            if is_active {
+                palette.accent
+            } else {
+                palette.line
+            },
         ))
         // Square: a hunk is a block of code, and a rounded box around monospaced rows that
         // run to its edges reads as a card the code is escaping rather than a frame round it.
@@ -347,7 +357,15 @@ fn draw_hunk_card(
 
     let response = frame
         .show(ui, |ui| {
-            draw_hunk_toolbar(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+            draw_hunk_toolbar(
+                app,
+                ui,
+                session_id,
+                hunk,
+                read_only,
+                is_commit_review,
+                palette,
+            );
             if let Some(image) = &hunk.image_diff {
                 image_diff::draw_image_diff(app, ui, &hunk.file_path, image, palette);
                 return;
@@ -399,7 +417,15 @@ fn draw_hunk_toolbar(
             // wide count never squeezes them out to the edge of the card.
             if !read_only || is_commit_review {
                 ui.horizontal(|ui| {
-                    draw_hunk_actions(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+                    draw_hunk_actions(
+                        app,
+                        ui,
+                        session_id,
+                        hunk,
+                        read_only,
+                        is_commit_review,
+                        palette,
+                    );
                 });
             }
 
@@ -447,7 +473,10 @@ fn moved_hint(
     hint: &crate::api::HunkMoveHint,
     palette: &Palette,
 ) {
-    let text = format!("{label} {}", widgets::elide_path(&hint.target_file_path, 26));
+    let text = format!(
+        "{label} {}",
+        widgets::elide_path(&hint.target_file_path, 26)
+    );
     if widgets::quiet_button_colored(ui, &text, palette.snoozed)
         .on_hover_text(format!(
             "{} {}\n{}% similar — click to jump there",
@@ -482,7 +511,10 @@ fn draw_hunk_actions(
                     });
             }
         } else {
-            if widgets::quiet_button(ui, "[stage hunk]").on_hover_text("stage this hunk (s)").clicked() {
+            if widgets::quiet_button(ui, "[stage hunk]")
+                .on_hover_text("stage this hunk (s)")
+                .clicked()
+            {
                 let hunk_id = hunk.id.clone();
                 let for_call = session_id.to_string();
                 app.tasks
@@ -523,7 +555,16 @@ fn draw_hunk_actions(
 
     if is_commit_review || read_only {
         let next = !hunk.reviewed;
-        if widgets::quiet_button(ui, if next { "[mark reviewed]" } else { "[mark unreviewed]" }).clicked() {
+        if widgets::quiet_button(
+            ui,
+            if next {
+                "[mark reviewed]"
+            } else {
+                "[mark unreviewed]"
+            },
+        )
+        .clicked()
+        {
             let hunk_id = hunk.id.clone();
             let for_call = session_id.to_string();
             app.tasks
@@ -532,7 +573,6 @@ fn draw_hunk_actions(
                 });
         }
     }
-
 }
 
 /// cmd+c over a diff: put the selected characters on the clipboard.
@@ -641,17 +681,13 @@ fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<S
     }
     // The lines have to come from the same patch the user was clicking on, which is the
     // expanded one where the hunk was expanded.
-    let patch = review
-        .expanded_patches
-        .get(hunk_id)
-        .cloned()
-        .or_else(|| {
-            review
-                .hunks()
-                .iter()
-                .find(|hunk| hunk.id == hunk_id)
-                .map(|hunk| hunk.patch_preview.clone())
-        })?;
+    let patch = review.expanded_patches.get(hunk_id).cloned().or_else(|| {
+        review
+            .hunks()
+            .iter()
+            .find(|hunk| hunk.id == hunk_id)
+            .map(|hunk| hunk.patch_preview.clone())
+    })?;
 
     let lines = app.diff_lines(hunk_id, &patch);
     let selected: Vec<&str> = selection
@@ -708,7 +744,9 @@ fn draw_hunk_body(
         .review_ref(session_id)
         .and_then(|review| review.expanded_patches.get(&hunk.id))
         .cloned();
-    let patch = full_patch.clone().unwrap_or_else(|| hunk.patch_preview.clone());
+    let patch = full_patch
+        .clone()
+        .unwrap_or_else(|| hunk.patch_preview.clone());
     let lines = app.diff_lines(&hunk.id, &patch);
 
     let anchored = parse_anchored_comments(&hunk.comment);
@@ -736,7 +774,11 @@ fn draw_hunk_body(
     let mut draft_at: Vec<(usize, String)> = Vec::new();
     let mut unplaced: Vec<String> = Vec::new();
     if let Some(review) = app.model.review_ref(session_id) {
-        for draft in review.drafts.iter().filter(|draft| draft.hunk_id == hunk.id) {
+        for draft in review
+            .drafts
+            .iter()
+            .filter(|draft| draft.hunk_id == hunk.id)
+        {
             let at = if selection_anchor.as_deref() == Some(draft.selection.as_str()) {
                 selection_end
             } else {
@@ -805,7 +847,11 @@ fn draw_truncation_notice(
                 let busy = app.tasks.is_busy(&format!("patch:{}", hunk.id));
                 if widgets::clickable(ui.add_enabled(
                     !busy,
-                    egui::Button::new(if busy { "loading…" } else { "show the whole hunk" }),
+                    egui::Button::new(if busy {
+                        "loading…"
+                    } else {
+                        "show the whole hunk"
+                    }),
                 ))
                 .clicked()
                 {
@@ -889,8 +935,9 @@ fn draw_diff_line(
             let font = egui::FontId::monospace(CODE_SIZE);
             let body: Vec<char> = line.body().chars().collect();
             let width_of = |from: usize, to: usize| {
-                let text: String =
-                    body[from.min(body.len())..to.min(body.len())].iter().collect();
+                let text: String = body[from.min(body.len())..to.min(body.len())]
+                    .iter()
+                    .collect();
                 ui.painter()
                     .layout_no_wrap(text, font.clone(), palette.ink)
                     .size()
@@ -988,10 +1035,7 @@ fn draw_diff_line(
                 && existing.hunk_id_hash == hunk_hash
                 && existing.head != head
             {
-                review.selection = Some(LineSelection {
-                    head,
-                    ..existing
-                });
+                review.selection = Some(LineSelection { head, ..existing });
             }
         }
         return;
@@ -1000,15 +1044,18 @@ fn draw_diff_line(
     // A double-click takes the word under the pointer, split the same way the word diff
     // splits a line; a triple-click takes the whole line back.
     if response.triple_clicked() {
-        select_and_open(app, session_id, hunk, LineSelection::whole_line(hunk_hash, index));
+        select_and_open(
+            app,
+            session_id,
+            hunk,
+            LineSelection::whole_line(hunk_hash, index),
+        );
         return;
     }
     if response.double_clicked() {
         let selection = response
             .interact_pointer_pos()
-            .and_then(|at| {
-                word_bounds_at(line.body(), column_at(ui, rect, line, at.x))
-            })
+            .and_then(|at| word_bounds_at(line.body(), column_at(ui, rect, line, at.x)))
             .map(|(from, to)| LineSelection {
                 hunk_id_hash: hunk_hash,
                 anchor: SelectionPoint {
@@ -1125,11 +1172,7 @@ fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
     );
 
     let font = egui::FontId::monospace(CODE_SIZE - 1.0);
-    let number = |value: Option<usize>| {
-        value
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    };
+    let number = |value: Option<usize>| value.map(|value| value.to_string()).unwrap_or_default();
     painter.text(
         egui::pos2(rect.min.x + 32.0, rect.center().y),
         Align2::RIGHT_CENTER,
@@ -1198,7 +1241,9 @@ fn draw_find_marks(
 ) {
     let body: Vec<char> = line.body().chars().collect();
     let width_of = |from: usize, to: usize| {
-        let text: String = body[from.min(body.len())..to.min(body.len())].iter().collect();
+        let text: String = body[from.min(body.len())..to.min(body.len())]
+            .iter()
+            .collect();
         painter
             .layout_no_wrap(text, font.clone(), palette.ink)
             .size()
@@ -1324,13 +1369,17 @@ fn draw_inline_comment(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(if entry.resolved { "resolved" } else { "comment" })
-                        .size(SMALL_SIZE - 1.0)
-                        .color(if entry.resolved {
-                            palette.accent_2
-                        } else {
-                            palette.accent
-                        }),
+                    RichText::new(if entry.resolved {
+                        "resolved"
+                    } else {
+                        "comment"
+                    })
+                    .size(SMALL_SIZE - 1.0)
+                    .color(if entry.resolved {
+                        palette.accent_2
+                    } else {
+                        palette.accent
+                    }),
                 );
 
                 if let Some(dispatch) = &dispatch
@@ -1354,13 +1403,10 @@ fn draw_inline_comment(
                         if dispatch.can_cancel && widgets::quiet_button(ui, "cancel").clicked() {
                             let hunk_id = hunk.id.clone();
                             let for_call = session_id.to_string();
-                            app.tasks.act(
-                                session_id,
-                                "could not cancel the run",
-                                move |backend| {
+                            app.tasks
+                                .act(session_id, "could not cancel the run", move |backend| {
                                     backend.cancel_dispatch(&for_call, &hunk_id, comment_index)
-                                },
-                            );
+                                });
                         }
                         if dispatch.has_log && widgets::quiet_button(ui, "log").clicked() {
                             open_dispatch_log(app, session_id, &dispatch.key);
@@ -1438,17 +1484,13 @@ fn draw_composer(
     read_only: bool,
     palette: &Palette,
 ) {
-    let Some(mut draft) = app
-        .model
-        .review_ref(session_id)
-        .and_then(|review| {
-            review
-                .drafts
-                .iter()
-                .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
-                .cloned()
-        })
-    else {
+    let Some(mut draft) = app.model.review_ref(session_id).and_then(|review| {
+        review
+            .drafts
+            .iter()
+            .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
+            .cloned()
+    }) else {
         return;
     };
     let payload = app

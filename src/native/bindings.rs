@@ -155,7 +155,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     // and `C-x C-s` — which nothing here claims — arrives whole.
     Binding {
         action: Action::FocusNextFrame,
-        chord: &[press(Modifiers::CTRL, Key::X), press(Modifiers::NONE, Key::O)],
+        chord: &[
+            press(Modifiers::CTRL, Key::X),
+            press(Modifiers::NONE, Key::O),
+        ],
         reach: Reach::Anywhere,
     },
     Binding {
@@ -379,7 +382,11 @@ mod tests {
     }
 
     /// Drive the map over a run of events, the way a frame's input would.
-    fn run(keymap: &mut Keymap, typing: bool, events: Vec<egui::Event>) -> (Vec<Action>, Vec<egui::Event>) {
+    fn run(
+        keymap: &mut Keymap,
+        typing: bool,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Action>, Vec<egui::Event>) {
         let ctx = egui::Context::default();
         let input = egui::RawInput {
             events,
@@ -488,7 +495,11 @@ mod tests {
     #[test]
     fn command_chords_still_reach_the_app_from_inside_a_shell() {
         let mut keymap = Keymap::default();
-        let (fired, _) = run(&mut keymap, true, vec![key_event(Modifiers::COMMAND, Key::W)]);
+        let (fired, _) = run(
+            &mut keymap,
+            true,
+            vec![key_event(Modifiers::COMMAND, Key::W)],
+        );
 
         assert_eq!(fired, vec![Action::CloseTab]);
     }
@@ -498,10 +509,18 @@ mod tests {
     #[test]
     fn command_digits_pick_tabs_by_place() {
         let mut keymap = Keymap::default();
-        let (fired, _) = run(&mut keymap, true, vec![key_event(Modifiers::COMMAND, Key::Num1)]);
+        let (fired, _) = run(
+            &mut keymap,
+            true,
+            vec![key_event(Modifiers::COMMAND, Key::Num1)],
+        );
         assert_eq!(fired, vec![Action::SelectTab(0)]);
 
-        let (fired, _) = run(&mut keymap, true, vec![key_event(Modifiers::COMMAND, Key::Num9)]);
+        let (fired, _) = run(
+            &mut keymap,
+            true,
+            vec![key_event(Modifiers::COMMAND, Key::Num9)],
+        );
         assert_eq!(fired, vec![Action::SelectTab(8)]);
     }
 

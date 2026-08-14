@@ -104,11 +104,9 @@ impl App {
     pub(crate) fn open_notes_pane(&mut self, session_id: String, file_path: String) {
         use crate::native::panes::{Pane, PaneKind};
 
-        let pane_id = match self
-            .model
-            .layout
-            .find_pane(|pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path))
-        {
+        let pane_id = match self.model.layout.find_pane(
+            |pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path),
+        ) {
             Some((pane, _)) => {
                 self.model.layout.focus_pane(pane);
                 pane
@@ -425,10 +423,8 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                 // only an estimate for layout — the numbers are painted where the laid-out
                 // text really put each line.
                 let fringe_height = row_height * line_count as f32;
-                let (fringe, _) = ui.allocate_exact_size(
-                    vec2(FRINGE_WIDTH, fringe_height),
-                    egui::Sense::hover(),
-                );
+                let (fringe, _) =
+                    ui.allocate_exact_size(vec2(FRINGE_WIDTH, fringe_height), egui::Sense::hover());
                 // The fringe's painter, kept from out here: the one inside the horizontal
                 // scroll area clips to the code, and the numbers sit left of it.
                 let painter = ui.painter().clone();
@@ -555,7 +551,10 @@ mod tests {
         assert_eq!(found.len(), 2);
         let first = found[0].clone();
         assert_eq!(
-            text.chars().skip(first.start).take(first.len()).collect::<String>(),
+            text.chars()
+                .skip(first.start)
+                .take(first.len())
+                .collect::<String>(),
             "greet"
         );
     }
@@ -604,5 +603,4 @@ mod tests {
         assert!(FileEditor::loading("Moontasks.md".to_string()).preview);
         assert!(!FileEditor::loading("src/lib.rs".to_string()).preview);
     }
-
 }

@@ -113,7 +113,11 @@ impl LineSelection {
         }
         let (start, end) = self.ordered();
         let from = if index == start.line { start.column } else { 0 };
-        let to = if index == end.line { end.column } else { LINE_END };
+        let to = if index == end.line {
+            end.column
+        } else {
+            LINE_END
+        };
         Some((from, to))
     }
 }
@@ -209,8 +213,11 @@ pub(crate) struct BoardState {
     pub(crate) columns: Vec<crate::moontasks::BoardColumn>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
+    /// Whether the board is acting on itself — its hooks firing, autopilot cards being picked
+    /// up — as the last read had it. What the play/pause control draws.
+    pub(crate) hooks_running: bool,
     /// The column the new-task box is open in, and the title being typed into it.
-    pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
+    pub(crate) composer_in: Option<crate::moontasks::ColumnName>,
     /// Which end of that column the box is standing at, which is the `+` that opened it. The
     /// box is drawn there, so it is where the card it becomes will appear.
     pub(crate) composer_at: crate::moontasks::ColumnEnd,
@@ -233,7 +240,7 @@ pub(crate) struct BoardState {
     pub(crate) opened_shell: Option<OpenedShell>,
     /// A notes file a board action just made sure exists, as the repo-relative path a file
     /// pane opens it by — waiting for the window the same way an opened shell does.
-    pub(crate) opened_notes: Option<String>,
+    pub(crate) opened_file: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
@@ -251,7 +258,7 @@ pub(crate) struct BoardState {
     pub(crate) renaming_column: Option<ColumnRename>,
     /// The column whose delete mark has been pressed once, so a stray click cannot take a
     /// column off the board.
-    pub(crate) pending_column_delete: Option<crate::moontasks::ColumnId>,
+    pub(crate) pending_column_delete: Option<crate::moontasks::ColumnName>,
     /// The new-column box at the right-hand end of the board, and what is being typed into it.
     pub(crate) column_composer_open: bool,
     pub(crate) column_composer_focus: bool,
@@ -314,13 +321,13 @@ pub(crate) struct AttachPicker {
 /// A drop that has been made on the board being drawn and not yet seen in one being read.
 pub(crate) struct PendingPlace {
     pub(crate) task_id: String,
-    pub(crate) status: crate::moontasks::ColumnId,
+    pub(crate) status: crate::moontasks::ColumnName,
     pub(crate) index: usize,
 }
 
 /// The same, for a column dragged to another place on the board.
 pub(crate) struct PendingColumnPlace {
-    pub(crate) column_id: crate::moontasks::ColumnId,
+    pub(crate) column: crate::moontasks::ColumnName,
     pub(crate) index: usize,
 }
 
@@ -328,14 +335,14 @@ pub(crate) struct PendingColumnPlace {
 /// are above it.
 #[derive(Clone, PartialEq)]
 pub(crate) struct TaskLanding {
-    pub(crate) status: crate::moontasks::ColumnId,
+    pub(crate) status: crate::moontasks::ColumnName,
     pub(crate) index: usize,
 }
 
 /// A column's heading, open for editing after a double click.
 pub(crate) struct ColumnRename {
-    pub(crate) column_id: crate::moontasks::ColumnId,
-    pub(crate) label: String,
+    pub(crate) column: crate::moontasks::ColumnName,
+    pub(crate) name: String,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) focus: bool,
 }
@@ -359,8 +366,8 @@ pub(crate) struct TaskRename {
 pub(crate) struct OpenedShell {
     pub(crate) terminal_id: String,
     pub(crate) command: Option<AgentKind>,
-    /// The card it belongs to. `None` for a shell of the board's own — the autopilot window is
-    /// about the whole board, so no card owns it and closing its tab lets go of it.
+    /// The card it belongs to. `None` for a shell of the board's own, which no card owns and
+    /// closing the tab of lets go of.
     pub(crate) task_id: Option<String>,
 }
 

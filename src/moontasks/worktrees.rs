@@ -207,7 +207,7 @@ mod tests {
     fn a_task_without_a_worktree_works_in_the_repo() {
         let metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: store::ColumnId::new("todo"),
+            status: store::ColumnName::new("todo"),
             created_at_unix: 0,
             position: 0,
             tags: Vec::new(),
@@ -225,7 +225,7 @@ mod tests {
     fn a_task_with_a_worktree_works_in_it() {
         let metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: store::ColumnId::new("todo"),
+            status: store::ColumnName::new("todo"),
             created_at_unix: 0,
             position: 0,
             tags: Vec::new(),

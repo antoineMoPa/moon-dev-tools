@@ -14,14 +14,12 @@ pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32, background: Color32) -
         ink,
     );
     let padding = vec2(5.0, 2.0);
-    let (rect, response) =
-        ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
 
     if ui.is_rect_visible(rect) {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(3), background);
-        ui.painter()
-            .galley(rect.min + padding, galley, ink);
+        ui.painter().galley(rect.min + padding, galley, ink);
     }
     response
 }

@@ -9,7 +9,7 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
 
 use crate::{
     api::AgentKind,
-    moontasks::{ColumnId, StartResourceRequest, TaskResourceKind, TaskResourceView, TaskView},
+    moontasks::{ColumnName, StartResourceRequest, TaskResourceKind, TaskResourceView, TaskView},
     native::{
         app::App,
         board::{
@@ -48,7 +48,7 @@ const TITLE_ROWS: usize = 3;
 /// once it is over, so nothing jumps when the card is let go of.
 pub(super) fn column_cards(
     app: &App,
-    status: &ColumnId,
+    status: &ColumnName,
     dragged_id: Option<&str>,
 ) -> Vec<TaskView> {
     let landing = app.model.board.landing.clone();
@@ -119,7 +119,12 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
 /// What the board draws is the last answer the server gave, and the next one is a worker
 /// thread and a poll away. Without this the dropped card springs back to where it came from
 /// for those few frames and then moves again — which reads as the drop having failed.
-pub(super) fn place_in(tasks: &mut Vec<TaskView>, task_id: &str, status: &ColumnId, index: usize) {
+pub(super) fn place_in(
+    tasks: &mut Vec<TaskView>,
+    task_id: &str,
+    status: &ColumnName,
+    index: usize,
+) {
     let Some(at) = tasks.iter().position(|task| task.id == task_id) else {
         return;
     };

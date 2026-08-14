@@ -36,7 +36,11 @@ impl Settings {
     /// Returns whether the list changed, so a reopen of the project already at the head does
     /// not rewrite the file.
     pub(crate) fn remember_project(&mut self, path: &str) -> bool {
-        if self.recent_projects.first().is_some_and(|first| first == path) {
+        if self
+            .recent_projects
+            .first()
+            .is_some_and(|first| first == path)
+        {
             return false;
         }
         self.recent_projects.retain(|recent| recent != path);

@@ -13,7 +13,7 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest,
+        self, AttachResourceRequest, BoardColumn, ColumnName, CreateTaskRequest,
         StartResourceRequest, TaskReviewPayload, TaskView, TaskWorktreeView,
     },
     service,
@@ -181,7 +181,7 @@ impl Backend for LocalBackend {
         &self,
         session_id: &str,
         task_id: &str,
-        status: ColumnId,
+        status: ColumnName,
         position: usize,
     ) -> Result<()> {
         moontasks::service::place_task(&self.state, session_id, task_id, status, position)
@@ -195,20 +195,20 @@ impl Backend for LocalBackend {
         moontasks::service::list_columns(&self.state, session_id)
     }
 
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
-        moontasks::service::add_column(&self.state, session_id, label)
+    fn add_column(&self, session_id: &str, name: &str) -> Result<BoardColumn> {
+        moontasks::service::add_column(&self.state, session_id, name)
     }
 
-    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()> {
-        moontasks::service::rename_column(&self.state, session_id, column_id, label)
+    fn rename_column(&self, session_id: &str, column: &ColumnName, name: &str) -> Result<()> {
+        moontasks::service::rename_column(&self.state, session_id, column, name)
     }
 
-    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
-        moontasks::service::delete_column(&self.state, session_id, column_id)
+    fn delete_column(&self, session_id: &str, column: &ColumnName) -> Result<()> {
+        moontasks::service::delete_column(&self.state, session_id, column)
     }
 
-    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()> {
-        moontasks::service::place_column(&self.state, session_id, column_id, position)
+    fn place_column(&self, session_id: &str, column: &ColumnName, position: usize) -> Result<()> {
+        moontasks::service::place_column(&self.state, session_id, column, position)
     }
 
     fn start_task_resource(
@@ -217,7 +217,13 @@ impl Backend for LocalBackend {
         task_id: &str,
         request: StartResourceRequest,
     ) -> Result<String> {
-        moontasks::service::start_resource(&self.state, session_id, task_id, request)
+        moontasks::service::start_resource(
+            &self.state,
+            session_id,
+            task_id,
+            request,
+            moontasks::store::RunStarter::Person,
+        )
     }
 
     fn resume_task_resource(
@@ -266,6 +272,14 @@ impl Backend for LocalBackend {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }
 
+    fn open_autopilot_script(&self, session_id: &str) -> Result<String> {
+        moontasks::service::open_autopilot_script(&self.state, session_id)
+    }
+
+    fn open_hooks_log(&self, session_id: &str) -> Result<String> {
+        moontasks::service::open_hooks_log(&self.state, session_id)
+    }
+
     fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
         moontasks::service::set_tags(&self.state, session_id, task_id, tags)
     }
@@ -282,12 +296,12 @@ impl Backend for LocalBackend {
         moontasks::worktrees::review(&self.state, session_id, task_id)
     }
 
-    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String> {
-        moontasks::service::start_autopilot(&self.state, session_id, agent)
+    fn hooks_running(&self, session_id: &str) -> Result<bool> {
+        moontasks::service::hooks_running(&self.state, session_id)
     }
 
-    fn take_window_requests(&self, session_id: &str) -> Result<Vec<crate::api::WindowRequest>> {
-        Ok(crate::api::take_window_requests(&self.state, session_id))
+    fn set_hooks_running(&self, session_id: &str, running: bool) -> Result<()> {
+        moontasks::service::set_hooks_running(&self.state, session_id, running)
     }
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {

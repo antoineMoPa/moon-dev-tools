@@ -59,6 +59,9 @@ pub(crate) fn launch_local(
 ) -> Result<Launch> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = server::build_state(last_activity);
+    // The board acts on itself from here rather than from the window, so it keeps going while
+    // the window is on another tab and answers a board opened over HTTP just the same.
+    crate::moontasks::hooks::watch(state.clone());
 
     let serves_web = if serve_web {
         spawn_server(state.clone())?
@@ -247,6 +250,7 @@ pub(crate) fn launch_remote(
 pub(crate) fn launch_prompt(frame: crate::cli::Frame) -> Result<Launch> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = server::build_state(last_activity);
+    crate::moontasks::hooks::watch(state.clone());
     // The server answers for whichever repo is asked for, so it needs no project up front.
     // Which is what lets a window opened on the launch screen — every window the Window menu
     // and the OS launchers open — still be one an agent can reach.

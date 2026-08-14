@@ -18,6 +18,9 @@ pub(crate) enum MenuAction {
     /// Open another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
     InstallLaunchers,
+    /// Open the script the board picks work up by.
+    EditAutopilot,
+    ViewAutopilotLog,
 }
 
 #[cfg(target_os = "macos")]
@@ -45,6 +48,8 @@ mod platform {
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
         install_launchers: MenuId,
+        edit_autopilot: MenuId,
+        view_autopilot_log: MenuId,
     }
 
     impl NativeMenu {
@@ -162,6 +167,17 @@ mod platform {
                 })
                 .collect();
 
+            // What the board does when it is running is a script in the repo, so the menu's
+            // one autopilot item opens that file rather than offering settings there are none
+            // of. The board's own [edit autopilot] link does the same thing.
+            let edit_autopilot = MenuItem::new("Edit Autopilot Script", true, None);
+            // What it did and why it did nothing: a hook fires unattended, so the only account
+            // of its reasoning is the one it wrote down.
+            let view_autopilot_log = MenuItem::new("View Autopilot Logs", true, None);
+            let autopilot_menu = Submenu::new("Autopilot", true);
+            autopilot_menu.append(&edit_autopilot).ok()?;
+            autopilot_menu.append(&view_autopilot_log).ok()?;
+
             let window_menu = Submenu::new("Window", true);
             for (item, _) in &new_windows {
                 window_menu.append(item).ok()?;
@@ -177,8 +193,14 @@ mod platform {
                 ])
                 .ok()?;
 
-            menu.append_items(&[&app_menu, &file_menu, &view_menu, &window_menu])
-                .ok()?;
+            menu.append_items(&[
+                &app_menu,
+                &file_menu,
+                &view_menu,
+                &autopilot_menu,
+                &window_menu,
+            ])
+            .ok()?;
             menu.init_for_nsapp();
 
             Some(Self {
@@ -194,6 +216,8 @@ mod platform {
                     .map(|(item, frame)| (item.id().clone(), *frame))
                     .collect(),
                 install_launchers: install_launchers.id().clone(),
+                edit_autopilot: edit_autopilot.id().clone(),
+                view_autopilot_log: view_autopilot_log.id().clone(),
             })
         }
 
@@ -215,10 +239,12 @@ mod platform {
                     MenuAction::CloseTab
                 } else if event.id == self.install_launchers {
                     MenuAction::InstallLaunchers
-                } else if let Some((_, frame)) = self
-                    .new_windows
-                    .iter()
-                    .find(|(id, _)| *id == event.id)
+                } else if event.id == self.edit_autopilot {
+                    MenuAction::EditAutopilot
+                } else if event.id == self.view_autopilot_log {
+                    MenuAction::ViewAutopilotLog
+                } else if let Some((_, frame)) =
+                    self.new_windows.iter().find(|(id, _)| *id == event.id)
                 {
                     MenuAction::NewWindow(*frame)
                 } else {

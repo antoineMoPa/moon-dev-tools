@@ -18,9 +18,7 @@ pub(crate) fn login_shell() -> String {
 /// The PATH a login shell of this user has, resolved once for the life of the process.
 pub(crate) fn agent_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
-    PATH.get_or_init(|| {
-        login_shell_path().unwrap_or_else(|| env::var("PATH").unwrap_or_default())
-    })
+    PATH.get_or_init(|| login_shell_path().unwrap_or_else(|| env::var("PATH").unwrap_or_default()))
 }
 
 /// Run the login shell for its PATH. `None` when it cannot be run or says nothing, which is
@@ -38,4 +36,3 @@ fn login_shell_path() -> Option<String> {
     let path = path.trim().to_string();
     (!path.is_empty()).then_some(path)
 }
-

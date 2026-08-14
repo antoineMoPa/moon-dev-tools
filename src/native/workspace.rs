@@ -115,7 +115,10 @@ impl App {
         match request {
             OpenPaneRequest::Review { session_id, title } => {
                 // A review that is already open is brought forward instead of duplicated.
-                if let Some((pane, _)) = self.model.layout.find_pane(|pane| pane.reviews(&session_id))
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.reviews(&session_id))
                 {
                     self.model.layout.focus_pane(pane);
                     return;

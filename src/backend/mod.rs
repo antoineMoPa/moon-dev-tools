@@ -16,10 +16,9 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
-        WindowRequest,
     },
     moontasks::{
-        AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
+        AttachResourceRequest, BoardColumn, ColumnName, CreateTaskRequest, StartResourceRequest,
         TaskReviewPayload, TaskView, TaskWorktreeView,
     },
 };
@@ -86,7 +85,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
         &self,
         session_id: &str,
         task_id: &str,
-        status: ColumnId,
+        status: ColumnName,
         position: usize,
     ) -> Result<()>;
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()>;
@@ -114,8 +113,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
         task_id: &str,
         request: &AttachResourceRequest,
     ) -> Result<String>;
-    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str)
-    -> Result<()>;
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()>;
     /// Take a run off the task for good, rather than leaving it to be resumed.
     fn delete_task_resource(
         &self,
@@ -134,26 +132,30 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn discard_task_worktree(&self, session_id: &str, task_id: &str, force: bool) -> Result<()>;
     /// Prepare a task's work for review.
     fn review_task(&self, session_id: &str, task_id: &str) -> Result<TaskReviewPayload>;
-    /// Open a window that works the board with the given agent, and answer with the shell it
-    /// runs in. It belongs to the board rather than to any card.
-    fn start_autopilot(&self, session_id: &str, agent: AgentKind) -> Result<String>;
-    /// What the tools have asked the window to do since it last looked, taken as it is read.
-    fn take_window_requests(&self, session_id: &str) -> Result<Vec<WindowRequest>>;
+    /// Whether the board acts on itself: hooks fire, work is picked up, cards move on their
+    /// own. This is what the play/pause control on the board reads and writes.
+    fn hooks_running(&self, session_id: &str) -> Result<bool>;
+    fn set_hooks_running(&self, session_id: &str, running: bool) -> Result<()>;
     /// Make sure the task's notes file exists, and answer with the repo-relative path a file
     /// pane opens it by. Editing then goes through [`Backend::write_file`] like any file.
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String>;
+    /// Make sure the board has its hooks, and answer with the repo-relative path of the one
+    /// autopilot is, so it can be opened in a pane and edited like any other file.
+    fn open_autopilot_script(&self, session_id: &str) -> Result<String>;
+    /// Where the board wrote down what it decided, for a pane to read.
+    fn open_hooks_log(&self, session_id: &str) -> Result<String>;
 
     /// The board's columns, left to right. A board that has never had them changed answers
     /// with the three defaults.
     fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>>;
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn>;
-    fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()>;
+    fn add_column(&self, session_id: &str, name: &str) -> Result<BoardColumn>;
+    fn rename_column(&self, session_id: &str, column: &ColumnName, name: &str) -> Result<()>;
     /// Take an empty column off the board. One still holding cards is refused rather than
     /// taking them with it.
-    fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()>;
+    fn delete_column(&self, session_id: &str, column: &ColumnName) -> Result<()>;
     /// Put a column at a place among the others, which is what dragging its heading does. Its
     /// cards go with it, because a card names its column rather than its place on screen.
-    fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()>;
+    fn place_column(&self, session_id: &str, column: &ColumnName, position: usize) -> Result<()>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;

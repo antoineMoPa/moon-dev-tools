@@ -141,7 +141,11 @@ fn draw_manual_entry(
     let agent = picker
         .manual_agent
         .filter(|picked| agents.contains(picked))
-        .or_else(|| agents.contains(&AgentKind::Claude).then_some(AgentKind::Claude))
+        .or_else(|| {
+            agents
+                .contains(&AgentKind::Claude)
+                .then_some(AgentKind::Claude)
+        })
         .unwrap_or(agents[0]);
     let ready = !picker.manual_id.trim().is_empty();
     let mut attach = false;

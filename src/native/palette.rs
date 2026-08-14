@@ -36,11 +36,19 @@ pub(crate) enum CommandAction {
     NewWindow(crate::cli::Frame),
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
     OpenFile,
+    /// Open the script the board picks work up by, which is what autopilot does.
+    EditAutopilot,
+    /// Open what the board wrote down about its own decisions.
+    ViewAutopilotLog,
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
 const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
-    (AgentKind::OpenCode, "opencode", "Open OpenCode in a terminal"),
+    (
+        AgentKind::OpenCode,
+        "opencode",
+        "Open OpenCode in a terminal",
+    ),
     (AgentKind::Claude, "claude", "Open Claude in a terminal"),
     (AgentKind::Codex, "codex", "Open Codex in a terminal"),
 ];
@@ -82,6 +90,18 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         "Bring the task board forward",
         CommandAction::OpenPane(OpenPaneRequest::Tasks),
     ));
+    commands.push(Command {
+        title: "edit autopilot".to_string(),
+        description: "Open the script the board picks work up by, to read and edit".to_string(),
+        action: CommandAction::EditAutopilot,
+        shortcut: None,
+    });
+    commands.push(Command {
+        title: "autopilot log".to_string(),
+        description: "Read what the board decided, and why it did nothing".to_string(),
+        action: CommandAction::ViewAutopilotLog,
+        shortcut: None,
+    });
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),

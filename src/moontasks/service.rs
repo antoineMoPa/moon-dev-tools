@@ -12,9 +12,10 @@ use crate::{
     git::agent_is_available,
     moontasks::{
         AgentLaunch, AttachResourceRequest, CreateTaskRequest, RunStyle, StartResourceRequest,
-        TaskResourceView, TaskView, agent_launch, autopilot,
+        TaskResourceView, TaskView, agent_launch,
         store::{
-            self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
+            self, BoardColumn, BoardConfig, ColumnName, TaskMetadata, TaskResource,
+            TaskResourceKind,
         },
         worktrees,
     },
@@ -68,14 +69,16 @@ pub(crate) fn place_task(
     state: &AppState,
     session_id: &str,
     task_id: &str,
-    status: ColumnId,
+    status: ColumnName,
     position: usize,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     let board = store::read_board(&repo_path);
-    if !board.has(&status) {
+    // The board's own spelling of the column, so a script saying `"todo"` still leaves the
+    // heading's `TODO` written on the card.
+    let Some(status) = board.column_named(&status) else {
         bail!("{status} is not a column of this board");
-    }
+    };
 
     let mut moved = store::read_task(&repo_path, task_id)?;
     release_a_finished_task(state, &board, &repo_path, task_id, &mut moved, &status);
@@ -132,30 +135,22 @@ pub(crate) fn list_columns(state: &AppState, session_id: &str) -> Result<Vec<Boa
 
 /// Add a column at the right-hand end of the board.
 ///
-/// Its id is made from its name the same way a task folder's is, so the board file stays
-/// readable — and made unique, because two columns sharing an id would be one column with two
-/// headings and every card in either would be in both.
-pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Result<BoardColumn> {
-    let label = label.trim();
-    if label.is_empty() {
+/// Two columns cannot share a name, in any case: a card names its column, and two columns of
+/// the same name would be one column with two headings, with every card in either in both.
+pub(crate) fn add_column(state: &AppState, session_id: &str, name: &str) -> Result<BoardColumn> {
+    let name = ColumnName::new(name.trim());
+    if name.as_str().is_empty() {
         bail!("a column needs a name");
     }
 
     let repo_path = repo_of(state, session_id)?;
     let mut board = store::read_board(&repo_path);
-
-    let base = store::slug_of(label);
-    let mut id = ColumnId::new(base.clone());
-    for suffix in 2.. {
-        if !board.has(&id) {
-            break;
-        }
-        id = ColumnId::new(format!("{base}-{suffix}"));
+    if let Some(taken) = board.column_named(&name) {
+        bail!("this board already has a {taken} column");
     }
 
     let column = BoardColumn {
-        id,
-        label: label.to_string(),
+        name,
         default_agent: None,
     };
     board.columns.push(column.clone());
@@ -163,28 +158,46 @@ pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Res
     Ok(column)
 }
 
-/// Rename a column. The id is left alone, so every card in it stays in it.
+/// Rename a column, and every card in it with it.
+///
+/// The name is the whole of what a card holds, so the cards are rewritten here — first, so that
+/// a rename that cannot finish leaves them in a column the board still has.
 pub(crate) fn rename_column(
     state: &AppState,
     session_id: &str,
-    column_id: &ColumnId,
-    label: &str,
+    column: &ColumnName,
+    name: &str,
 ) -> Result<()> {
-    let label = label.trim();
-    if label.is_empty() {
+    let name = ColumnName::new(name.trim());
+    if name.as_str().is_empty() {
         bail!("a column needs a name");
     }
 
     let repo_path = repo_of(state, session_id)?;
     let mut board = store::read_board(&repo_path);
-    let Some(column) = board
-        .columns
-        .iter_mut()
-        .find(|column| column.id == *column_id)
-    else {
-        bail!("{column_id} is not a column of this board");
+    let Some(at) = board.position_of(column) else {
+        bail!("{column} is not a column of this board");
     };
-    column.label = label.to_string();
+    // Only the spelling changing is still a rename — TODO to Todo — and it is only another
+    // column's name that is taken.
+    if let Some(taken) = board.column_named(&name)
+        && taken != *column
+    {
+        bail!("this board already has a {taken} column");
+    }
+
+    for task_id in store::list_task_ids(&repo_path)? {
+        let Ok(mut metadata) = store::read_task(&repo_path, &task_id) else {
+            continue;
+        };
+        if metadata.status != *column {
+            continue;
+        }
+        metadata.status = name.clone();
+        store::write_task(&repo_path, &task_id, &metadata)?;
+    }
+
+    board.columns[at].name = name;
     store::write_board(&repo_path, &board)
 }
 
@@ -196,12 +209,12 @@ pub(crate) fn rename_column(
 pub(crate) fn delete_column(
     state: &AppState,
     session_id: &str,
-    column_id: &ColumnId,
+    column_name: &ColumnName,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     let mut board = store::read_board(&repo_path);
-    if !board.has(column_id) {
-        bail!("{column_id} is not a column of this board");
+    if !board.has(column_name) {
+        bail!("{column_name} is not a column of this board");
     }
     if board.columns.len() == 1 {
         bail!("a board needs a column to put its cards in");
@@ -210,7 +223,7 @@ pub(crate) fn delete_column(
     let holding = store::list_task_ids(&repo_path)?
         .iter()
         .filter_map(|task_id| store::read_task(&repo_path, task_id).ok())
-        .filter(|metadata| metadata.status == *column_id)
+        .filter(|metadata| metadata.status == *column_name)
         .count();
     if holding > 0 {
         bail!(
@@ -221,7 +234,7 @@ pub(crate) fn delete_column(
         );
     }
 
-    board.columns.retain(|column| column.id != *column_id);
+    board.columns.retain(|column| column.name != *column_name);
     store::write_board(&repo_path, &board)
 }
 
@@ -232,13 +245,13 @@ pub(crate) fn delete_column(
 pub(crate) fn place_column(
     state: &AppState,
     session_id: &str,
-    column_id: &ColumnId,
+    column_name: &ColumnName,
     position: usize,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     let mut board = store::read_board(&repo_path);
-    let Some(at) = board.position_of(column_id) else {
-        bail!("{column_id} is not a column of this board");
+    let Some(at) = board.position_of(column_name) else {
+        bail!("{column_name} is not a column of this board");
     };
 
     let column = board.columns.remove(at);
@@ -258,6 +271,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
             id: resource.id.clone(),
             kind: resource.kind,
             agent: resource.agent,
+            started_by: resource.started_by,
             label: resource.agent.label().to_lowercase(),
             running: resource
                 .terminal_id
@@ -278,6 +292,8 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: shell.terminal_id.clone(),
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
+                // A shell is opened by hand and by nothing else: no tool starts one.
+                started_by: store::RunStarter::Person,
                 label: "shell".to_string(),
                 running: true,
                 terminal_id: Some(shell.terminal_id),
@@ -320,6 +336,32 @@ pub(crate) fn open_notes(state: &AppState, session_id: &str, task_id: &str) -> R
     Ok(super::notes_repo_path(task_id))
 }
 
+/// Make sure the board has its hooks, and answer with where the file pane finds the one
+/// autopilot is: the script that picks work up.
+///
+/// A board whose hooks were never installed — one made by an older build, or one whose folder
+/// was emptied — gets them here, for the same reason the notes file is made before its pane
+/// opens: the pane refuses a path that is not a file in the working tree.
+pub(crate) fn open_autopilot_script(state: &AppState, session_id: &str) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    super::hooks::install(&repo_path)?;
+    Ok(super::autopilot_script_repo_path())
+}
+
+/// Where the file pane finds what the board wrote down about its own decisions.
+///
+/// The file is made if the board has never written a line, for the same reason the notes file
+/// is: a pane cannot open a path that is not a file. An empty log is also an answer — it says
+/// the board has decided nothing, which usually means it has never been running.
+pub(crate) fn open_hooks_log(state: &AppState, session_id: &str) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    let path = store::hooks_log_path(&repo_path);
+    if !path.is_file() {
+        store::append_hooks_log(&repo_path, "the board has not decided anything yet");
+    }
+    Ok(super::hooks_log_repo_path())
+}
+
 pub(crate) fn create_task(
     state: &AppState,
     session_id: &str,
@@ -334,7 +376,7 @@ pub(crate) fn create_task(
     if let Some(column) = board
         .columns
         .iter_mut()
-        .find(|column| column.id == request.status)
+        .find(|column| column.name == request.status)
         && column.default_agent != Some(request.agent)
     {
         column.default_agent = Some(request.agent);
@@ -353,6 +395,7 @@ pub(crate) fn create_task(
                 agent: request.agent,
                 prompt: None,
             },
+            store::RunStarter::Person,
         )?;
     }
 
@@ -368,9 +411,13 @@ fn release_a_finished_task(
     repo_path: &Path,
     task_id: &str,
     metadata: &mut TaskMetadata,
-    status: &ColumnId,
+    status: &ColumnName,
 ) {
-    if board.role(store::RELEASES_SHELLS_IN).as_ref() != Some(status) {
+    if board
+        .column_named(&ColumnName::new(store::RELEASES_SHELLS_IN))
+        .as_ref()
+        != Some(status)
+    {
         return;
     }
     state.terminals.remove_owned_by(task_id);
@@ -404,12 +451,48 @@ pub(crate) fn set_tags(
     store::write_task(&repo_path, task_id, &metadata)
 }
 
+/// Whether the board acts on itself: hooks fire, work is picked up, cards move on their own.
+pub(crate) fn hooks_running(state: &AppState, session_id: &str) -> Result<bool> {
+    let repo_path = repo_of(state, session_id)?;
+    Ok(store::read_board(&repo_path).hooks_running)
+}
+
+/// Start the board, or stop it.
+///
+/// Stopping does not stop what is already running: a run that was started keeps going and its
+/// card stays where it is. What stops is the board acting again — nothing new is picked up and
+/// no hook fires — which is what someone wanting to take the wheel back means by it.
+pub(crate) fn set_hooks_running(state: &AppState, session_id: &str, running: bool) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+    if board.hooks_running == running {
+        return Ok(());
+    }
+    board.hooks_running = running;
+    // Written down because it is the first thing that explains a quiet log: a board nobody
+    // started decides nothing, and says so here rather than by saying nothing at all.
+    super::hooks::script::log_line(
+        state,
+        session_id,
+        match running {
+            true => "board started — hooks are firing",
+            false => "board paused — nothing fires until it is started again",
+        },
+    );
+    store::write_board(&repo_path, &board)
+}
+
 /// Start a shell or an agent in a task, and record it on the task.
+///
+/// `starter` is who is asking. Everything reaching this over HTTP or from the window is a
+/// person; a hook script is the one caller that says otherwise, and the board reads it back
+/// to decide what it may work around — see [`store::RunStarter`].
 pub(crate) fn start_resource(
     state: &AppState,
     session_id: &str,
     task_id: &str,
     request: StartResourceRequest,
+    starter: store::RunStarter,
 ) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
@@ -449,7 +532,7 @@ pub(crate) fn start_resource(
         Some(launch) => fillings.fill_all(template(launch).iter()),
         None => Vec::new(),
     };
-    let env = task_env(session_id, task_id, &repo_path);
+    let env = task_env(session_id, task_id, &repo_path, style);
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: worktrees::work_dir_of(&repo_path, &metadata),
@@ -464,6 +547,12 @@ pub(crate) fn start_resource(
             .prompt
             .is_some()
             .then(|| store::run_log_path(&repo_path, task_id, &resource_id)),
+        // Only a one-shot run is read: an interactive one is a program drawing its own screen,
+        // and reading that would be reading over the top of it.
+        output_style: match (request.prompt.is_some(), launch) {
+            (true, Some(launch)) => launch.one_shot_output,
+            _ => crate::agent_output::OutputStyle::AsPrinted,
+        },
     })?;
 
     // A shell is not written down: nothing survives its pty, so a record of one from a run of
@@ -473,6 +562,7 @@ pub(crate) fn start_resource(
         metadata.resources.push(TaskResource {
             id: resource_id,
             kind: request.kind,
+            started_by: starter,
             agent,
             terminal_id: Some(terminal_id.clone()),
             agent_session_id,
@@ -482,38 +572,6 @@ pub(crate) fn start_resource(
     }
 
     Ok(terminal_id)
-}
-
-/// Open a window that works the board, running the given agent.
-pub(crate) fn start_autopilot(
-    state: &AppState,
-    session_id: &str,
-    agent: AgentKind,
-) -> Result<String> {
-    let repo_path = repo_of(state, session_id)?;
-    if !agent_is_available(state.agent_availability, agent) {
-        bail!("{} is not installed here", agent.label());
-    }
-    autopilot::ensure_brief(&repo_path)?;
-
-    let prompt = autopilot::opening_prompt(&repo_path);
-    let (args, types_its_prompt) = autopilot::launch_args(agent, &repo_path, &prompt);
-
-    state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
-        program: Some(agent),
-        args,
-        env: Vec::new(),
-        owner: None,
-        // Only for the agent that cannot be handed its opening message on the command line.
-        // It is sent, unlike everywhere else, because a window nobody is going to type into is
-        // one a person opened in order for it to start — the Enter was theirs, further up.
-        type_ahead: types_its_prompt.then(|| crate::terminal::TypeAhead {
-            text: prompt,
-            submit: true,
-        }),
-        transcript: None,
-    })
 }
 
 /// Start a past agent run again where it left off.
@@ -559,15 +617,19 @@ pub(crate) fn resume_resource(
         cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: Some(resource.agent),
         args: fillings.fill_all(template.iter()),
-        env: task_env(session_id, task_id, &repo_path),
+        // Resuming and attaching are both someone opening a conversation, at a keyboard.
+        env: task_env(session_id, task_id, &repo_path, RunStyle::Conversation),
         owner: Some(task_id.to_string()),
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
         type_ahead: None,
         transcript: None,
+        output_style: crate::agent_output::OutputStyle::AsPrinted,
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
+    // Whoever started it, there is a person at it now, so the board stops waiting on it.
+    metadata.resources[at].started_by = store::RunStarter::Person;
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -604,17 +666,21 @@ pub(crate) fn attach_resource(
         cwd: worktrees::work_dir_of(&repo_path, &metadata),
         program: Some(request.agent),
         args: fillings.fill_all(launch.attach.iter()),
-        env: task_env(session_id, task_id, &repo_path),
+        // Resuming and attaching are both someone opening a conversation, at a keyboard.
+        env: task_env(session_id, task_id, &repo_path, RunStyle::Conversation),
         owner: Some(task_id.to_string()),
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
         type_ahead: None,
         transcript: None,
+        output_style: crate::agent_output::OutputStyle::AsPrinted,
     })?;
 
     metadata.resources.push(TaskResource {
         id: store::new_uuid(),
         kind: TaskResourceKind::Agent,
+        // Attaching is someone putting a session they already have on a card, by hand.
+        started_by: store::RunStarter::Person,
         agent: request.agent,
         terminal_id: Some(terminal_id.clone()),
         agent_session_id: Some(agent_session_id.to_string()),
@@ -785,13 +851,20 @@ fn type_ahead_for(
     }
     Some(crate::terminal::TypeAhead {
         text: metadata.title.clone(),
-        submit: false,
     })
 }
 
 /// What every process started for a task is told about itself.
-fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, String)> {
-    vec![
+///
+/// `style` decides one thing beyond that: whether the run may be asked for a passphrase — see
+/// [`unsigned_commits`].
+fn task_env(
+    session_id: &str,
+    task_id: &str,
+    repo_path: &Path,
+    style: RunStyle,
+) -> Vec<(String, String)> {
+    let mut env = vec![
         (super::TASK_ID_ENV_VAR.to_string(), task_id.to_string()),
         (
             super::TASK_DIR_ENV_VAR.to_string(),
@@ -808,6 +881,38 @@ fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, S
             super::SERVER_URL_ENV_VAR.to_string(),
             crate::api::export_server_url(),
         ),
+    ];
+    if style == RunStyle::OneShot {
+        env.extend(unsigned_commits());
+    }
+    env
+}
+
+/// Turn commit signing off, for this run and nothing else.
+///
+/// A run given its work up front has nobody sitting at it, and gpg's pinentry needs a terminal
+/// with a person in front of it to ask for a passphrase. Left on, every `git commit` the run
+/// makes fails — and an unattended agent told to commit does not shrug at that, it goes looking
+/// for the reason and starts restarting your gpg agent.
+///
+/// So it is off for the process the board starts, in that process's environment, and nowhere
+/// else: what a run leaves on a scratch branch is unsigned, and the commit you make of it when
+/// you have reviewed it is signed by you as it always was. A shell you open on a card has you
+/// in front of it and signs like anything else you do.
+fn unsigned_commits() -> Vec<(String, String)> {
+    // `GIT_CONFIG_COUNT` may already be set in what moonreview itself was started with, and
+    // this goes after whatever is there rather than over the top of it.
+    let held: usize = std::env::var("GIT_CONFIG_COUNT")
+        .ok()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    vec![
+        ("GIT_CONFIG_COUNT".to_string(), (held + 1).to_string()),
+        (
+            format!("GIT_CONFIG_KEY_{held}"),
+            "commit.gpgsign".to_string(),
+        ),
+        (format!("GIT_CONFIG_VALUE_{held}"), "false".to_string()),
     ]
 }
 
@@ -955,11 +1060,45 @@ mod tests {
         }
     }
 
+    /// A run nobody is sitting at cannot answer pinentry, so it is told not to sign rather
+    /// than left to fail and go looking for why.
+    #[test]
+    fn only_a_run_with_nobody_at_it_is_told_not_to_sign() {
+        let unattended = task_env("session", "task", Path::new("/repo"), RunStyle::OneShot);
+        let value = |env: &[(String, String)], key: &str| {
+            env.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        };
+
+        let count: usize = value(&unattended, "GIT_CONFIG_COUNT")
+            .expect("a one-shot run should carry git configuration")
+            .parse()
+            .expect("expected a count");
+        assert_eq!(
+            value(&unattended, &format!("GIT_CONFIG_KEY_{}", count - 1)).as_deref(),
+            Some("commit.gpgsign")
+        );
+        assert_eq!(
+            value(&unattended, &format!("GIT_CONFIG_VALUE_{}", count - 1)).as_deref(),
+            Some("false")
+        );
+
+        // Someone opened this one and is sitting in front of it, so it signs as they always do.
+        let conversation = task_env(
+            "session",
+            "task",
+            Path::new("/repo"),
+            RunStyle::Conversation,
+        );
+        assert_eq!(value(&conversation, "GIT_CONFIG_COUNT"), None);
+    }
+
     #[test]
     fn a_finished_agent_is_cleared_without_moving_its_task() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: ColumnId::new("in_progress"),
+            status: ColumnName::new("in_progress"),
             created_at_unix: 0,
             position: 0,
             tags: Vec::new(),
@@ -967,6 +1106,7 @@ mod tests {
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
+                started_by: store::RunStarter::Hook,
                 agent: AgentKind::Claude,
                 // No server in this test, so no shell of this name is live.
                 terminal_id: Some("terminal-gone".to_string()),
@@ -980,7 +1120,7 @@ mod tests {
 
         assert!(reconcile(&state, &mut metadata));
 
-        assert_eq!(metadata.status, ColumnId::new("in_progress"));
+        assert_eq!(metadata.status, ColumnName::new("in_progress"));
         assert_eq!(metadata.resources[0].terminal_id, None);
         assert!(
             !reconcile(&state, &mut metadata),
@@ -992,7 +1132,7 @@ mod tests {
     fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
         let mut metadata = TaskMetadata {
             title: "Fix the login page".to_string(),
-            status: ColumnId::new("done"),
+            status: ColumnName::new("done"),
             created_at_unix: 0,
             position: 0,
             tags: Vec::new(),
@@ -1000,6 +1140,7 @@ mod tests {
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
+                started_by: store::RunStarter::Hook,
                 agent: AgentKind::Claude,
                 terminal_id: Some("terminal-gone".to_string()),
                 agent_session_id: None,
@@ -1015,6 +1156,6 @@ mod tests {
             "the shell is still recorded"
         );
 
-        assert_eq!(metadata.status, ColumnId::new("done"));
+        assert_eq!(metadata.status, ColumnName::new("done"));
     }
 }

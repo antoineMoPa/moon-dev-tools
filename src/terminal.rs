@@ -91,14 +91,20 @@ pub(crate) struct TerminalSpec {
     pub(crate) type_ahead: Option<TypeAhead>,
     /// A file everything this shell prints is also written to, as it is printed.
     pub(crate) transcript: Option<std::path::PathBuf>,
+    /// How what the program prints is read before anyone sees it. Everything but a headless
+    /// run of an agent that reports itself as JSON is [`OutputStyle::AsPrinted`].
+    pub(crate) output_style: crate::agent_output::OutputStyle,
 }
 
 /// Text written into a shell once the program in it has a box to take it.
+///
+/// Written, never sent: no newline follows it, and there is no way to ask for one. What is
+/// typed is a card's title into an agent that has just come up, so the conversation opens with
+/// something written and nothing sent — and the keystroke that sends it is the person's. A run
+/// that is meant to go by itself is given its work on the command line instead, so this never
+/// has to be the thing that starts one.
 pub(crate) struct TypeAhead {
-    /// What to type. Never ends in a newline; whether one follows is [`TypeAhead::submit`].
     pub(crate) text: String,
-    /// Whether to send it.
-    pub(crate) submit: bool,
 }
 
 impl TerminalSpec {
@@ -112,6 +118,7 @@ impl TerminalSpec {
             owner: None,
             type_ahead: None,
             transcript: None,
+            output_style: crate::agent_output::OutputStyle::AsPrinted,
         }
     }
 }
@@ -439,23 +446,38 @@ impl TerminalRegistry {
                 })
                 .ok()
         });
+        let mut reading = crate::agent_output::Reader::new(spec.output_style);
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; OUTPUT_CHUNK_SIZE];
             loop {
-                match reader.read(&mut buffer) {
+                let shown = match reader.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
                     Ok(count) => {
-                        let chunk = &buffer[..count];
                         crate::api::mark_activity(&session.last_activity);
                         *session.last_output.lock().unwrap() = Some(Instant::now());
-                        session.scrollback.lock().unwrap().push(chunk);
-                        if let Some(file) = transcript.as_mut() {
-                            let _ = file.write_all(chunk);
-                        }
-                        // No attached tab is normal: the shell keeps running regardless.
-                        let _ = output.send(chunk.to_vec());
+                        // Read before it is kept, so the tab, the scrollback and the run's log
+                        // are all the same account of what happened.
+                        reading.read(&buffer[..count])
                     }
+                };
+                if shown.is_empty() {
+                    continue;
                 }
+                session.scrollback.lock().unwrap().push(&shown);
+                if let Some(file) = transcript.as_mut() {
+                    let _ = file.write_all(&shown);
+                }
+                // No attached tab is normal: the shell keeps running regardless.
+                let _ = output.send(shown);
+            }
+            // A last line the program left without a newline after it.
+            let rest = reading.finish();
+            if !rest.is_empty() {
+                session.scrollback.lock().unwrap().push(&rest);
+                if let Some(file) = transcript.as_mut() {
+                    let _ = file.write_all(&rest);
+                }
+                let _ = output.send(rest);
             }
             drop(transcript);
             // An agent that fell over on its own — `claude --resume` on a session id that no
@@ -546,12 +568,6 @@ fn type_ahead(session: &TerminalSession, typed: &TypeAhead) {
         return;
     }
     let _ = writer.write_all(typed.text.as_bytes());
-    if typed.submit {
-        // Separately, and after the text is in: an agent's box takes the Enter as "send what
-        // is written", and the two arriving in one write can be read as one paste.
-        let _ = writer.flush();
-        let _ = writer.write_all(b"\r");
-    }
 }
 
 pub(crate) async fn create_terminal(
@@ -698,9 +714,9 @@ mod tests {
                 owner: None,
                 type_ahead: Some(TypeAhead {
                     text: "moonreview-typed-this".to_string(),
-                    submit: false,
                 }),
                 transcript: None,
+                output_style: crate::agent_output::OutputStyle::AsPrinted,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -760,9 +776,9 @@ mod tests {
                 owner: None,
                 type_ahead: Some(TypeAhead {
                     text: "moonreview-typed-this".to_string(),
-                    submit: false,
                 }),
                 transcript: None,
+                output_style: crate::agent_output::OutputStyle::AsPrinted,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -822,6 +838,7 @@ mod tests {
                 owner: None,
                 type_ahead: None,
                 transcript: None,
+                output_style: crate::agent_output::OutputStyle::AsPrinted,
             })
             .expect("expected a shell")
     }
@@ -908,6 +925,7 @@ mod tests {
                 owner: None,
                 type_ahead: None,
                 transcript: None,
+                output_style: crate::agent_output::OutputStyle::AsPrinted,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");
@@ -943,9 +961,9 @@ mod tests {
                 owner: None,
                 type_ahead: Some(TypeAhead {
                     text: "moonreview-typed-this".to_string(),
-                    submit: false,
                 }),
                 transcript: None,
+                output_style: crate::agent_output::OutputStyle::AsPrinted,
             })
             .expect("expected a shell");
         let session = registry.get(&terminal_id).expect("expected the shell");

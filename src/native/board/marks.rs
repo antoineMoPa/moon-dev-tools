@@ -111,8 +111,10 @@ pub(super) fn draw_tag_menu(
                     actions.push(BoardAction::OpenTagComposer(task.id.clone()));
                 }
             });
-    widgets::clickable(button)
-        .on_hover_text("What this card is marked with — see the autopilot window");
+    widgets::clickable(button).on_hover_text(
+        "What this card is marked with. The board's hooks read these — autopilot is the one \
+             the shipped hooks pick work up by",
+    );
 }
 
 /// The box a new tag is typed into, standing in the menu where the tag will appear.

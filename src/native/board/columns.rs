@@ -8,7 +8,7 @@
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
 
 use crate::{
-    moontasks::{BoardColumn, ColumnEnd, ColumnId},
+    moontasks::{BoardColumn, ColumnEnd, ColumnName},
     native::{
         app::App,
         board::{
@@ -24,15 +24,15 @@ use crate::{
 /// The column a drag is carrying. A type of its own so the board can tell a column being moved
 /// from a card being moved, and never read one as the other.
 #[derive(Clone)]
-pub(super) struct DraggedColumn(pub(super) ColumnId);
+pub(super) struct DraggedColumn(pub(super) ColumnName);
 
 /// How wide the box for a new column's name is. Narrower than a column, because it is a name
 /// rather than a column of cards.
 const NEW_COLUMN_WIDTH: f32 = 150.0;
 
 /// The id a column is dragged by, which is also the layer its ghost is drawn into.
-pub(super) fn column_drag_id(column_id: &ColumnId) -> egui::Id {
-    egui::Id::new(("moontask-column", column_id.as_str()))
+pub(super) fn column_drag_id(column: &ColumnName) -> egui::Id {
+    egui::Id::new(("moontask-column", column.as_str()))
 }
 
 /// The columns of the board, in the order they are drawn — with the one being dragged already
@@ -40,7 +40,7 @@ pub(super) fn column_drag_id(column_id: &ColumnId) -> egui::Id {
 ///
 /// The move is made as it is being made rather than once it is over, so the columns around it
 /// are already out of the way when it is let go of and nothing jumps.
-pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnId>) -> Vec<BoardColumn> {
+pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnName>) -> Vec<BoardColumn> {
     let mut columns = app.model.board.columns.clone();
     let Some(landing) = app.model.board.column_landing else {
         return columns;
@@ -48,7 +48,7 @@ pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnId>) -> Vec<Boar
     let Some(dragged) = dragged else {
         return columns;
     };
-    let Some(at) = columns.iter().position(|column| column.id == *dragged) else {
+    let Some(at) = columns.iter().position(|column| column.name == *dragged) else {
         return columns;
     };
 
@@ -59,8 +59,8 @@ pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnId>) -> Vec<Boar
 
 /// Move a column on the board being drawn, ahead of the server being told about it — the same
 /// reasoning [`super::place_in`] has for cards.
-pub(crate) fn place_column_in(columns: &mut Vec<BoardColumn>, column_id: &ColumnId, index: usize) {
-    let Some(at) = columns.iter().position(|column| column.id == *column_id) else {
+pub(crate) fn place_column_in(columns: &mut Vec<BoardColumn>, moved: &ColumnName, index: usize) {
+    let Some(at) = columns.iter().position(|column| column.name == *moved) else {
         return;
     };
     let column = columns.remove(at);
@@ -75,13 +75,13 @@ pub(crate) fn accept_columns(
     if let Some(pending) = &model.board.pending_column_place {
         let landed = columns
             .iter()
-            .position(|column| column.id == pending.column_id)
+            .position(|column| column.name == pending.column)
             .is_some_and(|at| at == pending.index.min(columns.len().saturating_sub(1)));
         if landed {
             model.board.pending_column_place = None;
         } else {
-            let (column_id, index) = (pending.column_id.clone(), pending.index);
-            place_column_in(&mut columns, &column_id, index);
+            let (column, index) = (pending.column.clone(), pending.index);
+            place_column_in(&mut columns, &column, index);
         }
     }
     model.board.columns = columns;
@@ -105,8 +105,8 @@ pub(super) fn draw_heading(
         .board
         .renaming_column
         .as_ref()
-        .is_some_and(|rename| rename.column_id == column.id);
-    let pending_delete = app.model.board.pending_column_delete.as_ref() == Some(&column.id);
+        .is_some_and(|rename| rename.column == column.name);
+    let pending_delete = app.model.board.pending_column_delete.as_ref() == Some(&column.name);
 
     ui.horizontal(|ui| {
         if editing {
@@ -126,7 +126,7 @@ pub(super) fn draw_heading(
                 ) {
                     widgets::Confirmed::Yes => {
                         app.model.board.pending_column_delete = None;
-                        actions.push(BoardAction::DeleteColumn(column.id.clone()));
+                        actions.push(BoardAction::DeleteColumn(column.name.clone()));
                     }
                     widgets::Confirmed::No => app.model.board.pending_column_delete = None,
                     widgets::Confirmed::Waiting => {}
@@ -142,7 +142,7 @@ pub(super) fn draw_heading(
                     mark.on_hover_text("Move this column's cards elsewhere before removing it")
                 };
                 if mark.clicked() && cards == 0 {
-                    app.model.board.pending_column_delete = Some(column.id.clone());
+                    app.model.board.pending_column_delete = Some(column.name.clone());
                 }
 
                 // Every column offers a new task, and the card joins the column whose `+`
@@ -152,7 +152,10 @@ pub(super) fn draw_heading(
                     .on_hover_text("New task at the top")
                     .clicked()
                 {
-                    actions.push(BoardAction::OpenComposer(column.id.clone(), ColumnEnd::Top));
+                    actions.push(BoardAction::OpenComposer(
+                        column.name.clone(),
+                        ColumnEnd::Top,
+                    ));
                 }
                 ui.label(
                     RichText::new(cards.to_string())
@@ -170,7 +173,7 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
     let laid_out = ui
         .add(
             egui::Label::new(
-                RichText::new(&column.label)
+                RichText::new(column.name.as_str())
                     .size(SMALL_SIZE - 1.0)
                     .color(palette.muted)
                     .strong(),
@@ -182,7 +185,7 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
     let handle = ui
         .interact(
             laid_out,
-            column_drag_id(&column.id),
+            column_drag_id(&column.name),
             egui::Sense::click_and_drag(),
         )
         .on_hover_cursor(egui::CursorIcon::Grab)
@@ -190,8 +193,8 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
 
     if handle.double_clicked() {
         app.model.board.renaming_column = Some(ColumnRename {
-            column_id: column.id.clone(),
-            label: column.label.clone(),
+            column: column.name.clone(),
+            name: column.name.to_string(),
             focus: true,
         });
     }
@@ -210,18 +213,18 @@ fn draw_heading_editor(
     };
     let entry = ui.add_sized(
         vec2(NEW_COLUMN_WIDTH, ui.spacing().interact_size.y),
-        egui::TextEdit::singleline(&mut rename.label).hint_text("Column name"),
+        egui::TextEdit::singleline(&mut rename.name).hint_text("Column name"),
     );
     if std::mem::take(&mut rename.focus) {
         entry.request_focus();
     }
 
-    let label = rename.label.clone();
+    let name = rename.name.clone();
     let abandon = ui.input(|input| input.key_pressed(egui::Key::Escape));
     let keep = entry.lost_focus() && !abandon;
 
-    if keep && !label.trim().is_empty() && label != column.label {
-        actions.push(BoardAction::RenameColumn(column.id.clone(), label));
+    if keep && !name.trim().is_empty() && name != column.name.as_str() {
+        actions.push(BoardAction::RenameColumn(column.name.clone(), name));
     } else if abandon || keep {
         actions.push(BoardAction::CancelColumnRename);
     }
@@ -239,12 +242,12 @@ pub(super) fn with_column_drag(
     origin: f32,
     draw: impl FnOnce(&mut App, &mut Ui) -> egui::Rect,
 ) -> egui::Rect {
-    let drag_id = column_drag_id(&column.id);
+    let drag_id = column_drag_id(&column.name);
     if !ui.ctx().is_being_dragged(drag_id) {
         return slide_into_place(ui, Axis::Horizontal, drag_id, origin, |ui| draw(app, ui));
     }
 
-    egui::DragAndDrop::set_payload(ui.ctx(), DraggedColumn(column.id.clone()));
+    egui::DragAndDrop::set_payload(ui.ctx(), DraggedColumn(column.name.clone()));
     stamp_place(ui, Axis::Horizontal, drag_id, origin);
 
     let layer_id = egui::LayerId::new(egui::Order::Tooltip, drag_id);
@@ -279,7 +282,7 @@ pub(super) fn with_column_drag(
 /// middle against middle, against the columns as they are drawn now with the dragged one
 /// already out of the reckoning, so carrying it over a column cannot bounce between two
 /// answers.
-pub(super) fn landing_for(dragged_centre: f32, headings: &[(ColumnId, f32)]) -> usize {
+pub(super) fn landing_for(dragged_centre: f32, headings: &[(ColumnName, f32)]) -> usize {
     headings
         .iter()
         .filter(|(_, centre)| *centre < dragged_centre)
