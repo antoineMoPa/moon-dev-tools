@@ -1360,6 +1360,64 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     harness.run_steps(3);
     harness.snapshot("moontasks-board");
 
+    // A card under the pointer, which is what brings out its offer to start the notes: above,
+    // the row it stands in is held open and empty, so the card is the same height either way.
+    // The corner of the card is pointed at rather than the middle of it, because a widget
+    // under the pointer would draw its tooltip over the picture.
+    let handle = harness
+        .ctx
+        .read_response(egui::Id::new((
+            "moontask-card",
+            &"write-the-parser-1111".to_string(),
+        )))
+        .expect("expected the first card to have been drawn")
+        .rect;
+    // Just under the title, at the far end of the row from the offer itself.
+    let empty = egui::pos2(handle.right() - 12.0, handle.bottom() + 12.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(empty));
+    // Long enough for the fade to have run out, so the picture is of the offers all the way
+    // up rather than of a moment on the way there.
+    harness.run_steps(3);
+    harness.snapshot("moontasks-card-pointed-at");
+    // Everything the card starts is on the one menu, which is what `[start]` opens: a review
+    // of the repo, a shell in the task, and an agent — the ones this machine has.
+    use egui_kittest::kittest::Queryable as _;
+
+    harness
+        .get_all_by_label("[start]")
+        .next()
+        .expect("expected the first card to offer [start]")
+        .click();
+    harness.run_steps(3);
+    // The pointer moved down into the menu, which hangs below the card: the card holds its
+    // offers out for as long as its menu is up, rather than fading away under the hand
+    // reaching into it.
+    let into_menu = harness.get_by_label("shell").rect().center();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(into_menu));
+    harness.run_steps(3);
+    harness.snapshot("moontasks-start-menu");
+
+    // Off the cards again, so the pictures below are of a board nothing is pointed at, with
+    // the menu shut behind them.
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(1200.0, 600.0)));
+    harness.run_steps(3);
+
     // And the new-task box the `+` on the TODO column opens, standing where its card will go.
     compose.store(true, Ordering::Relaxed);
     // Its title box has focus, and a blinking caret would make the image differ run to run.

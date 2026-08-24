@@ -15,11 +15,16 @@ in the repo straight away.
 | `+` on a column's heading | a new task at the top of it |
 | `+` under a column's last card | a new task at the bottom of it |
 | `+` at the right-hand end | add a column |
-| `[start review]` | open the review of the repo in a tab |
-| `[launch shell]` / `[new agent]` | start another shell or another agent inside the task |
+| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, or an agent |
 | a running resource | click its name to bring its terminal back on screen |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
 | `[add notes]` | the same, on a task that has none yet |
+
+`[add notes]` and `[start]` are a card's offers: they fade up when the pointer comes onto the
+card and fade away again when it leaves, over a sixth of a second, and hold their rows while
+they are out of sight — so a card at rest is its title and its description, and no card changes
+height as the pointer crosses the column. A card whose `[start]` menu is up keeps them out,
+because the menu hangs below the card and reaching into it takes the pointer off.
 
 A filtered board is still the board: the columns keep their place and their names, a column
 whose cards are all hidden says so rather than reading as an empty one, and a card can be

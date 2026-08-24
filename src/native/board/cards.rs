@@ -37,6 +37,14 @@ pub(super) const CARD_SPACING: f32 = 5.0;
 /// How long a card that has just been dropped stays marked, in seconds.
 const DROP_FLASH: f32 = 1.2;
 
+/// How long a card's offers take to come up under the pointer and go again, in seconds.
+const OFFER_FADE: f32 = 0.15;
+
+/// Where a card's actions row records whether its menu is up, for the card to read next frame.
+fn menu_up_id(drag_id: egui::Id) -> egui::Id {
+    drag_id.with("menu-up")
+}
+
 /// How many lines of a card's title are shown before the rest is cut. Enough for a sentence
 /// of a task name, short enough that one long title does not push every card down the column.
 const TITLE_ROWS: usize = 3;
@@ -297,9 +305,24 @@ fn draw_card_body(
         .inner_margin(egui::Margin::symmetric(8, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            // What a card offers to start is only drawn while the pointer is on the card,
+            // and comes up and goes over [`OFFER_FADE`] rather than at once. Read from the
+            // card's own background, which the buttons drawn over it do not take the pointer
+            // away from, so pointing at one of them still counts as being on the card — and
+            // so does having its menu up, which hangs below the card and would otherwise
+            // fade the card out from under the hand reaching into it. That one is read from
+            // the frame before, because whether the menu is up is only known once the row
+            // that opens it has been drawn.
+            let holding = ui
+                .data(|data| data.get_temp::<bool>(menu_up_id(drag_id)))
+                .unwrap_or(false);
+            let pointed_at = holding || ui.response().contains_pointer();
+            let showing = ui
+                .ctx()
+                .animate_bool_with_time(drag_id.with("offers"), pointed_at, OFFER_FADE);
             draw_card_title(app, ui, task, drag_id, palette, actions);
             ui.add_space(3.0);
-            draw_notes_box(ui, task, palette, actions);
+            draw_notes_box(ui, task, palette, showing, actions);
             ui.add_space(3.0);
 
             let removing = app.model.board.pending_resource_delete.clone();
@@ -311,7 +334,7 @@ fn draw_card_body(
                 ui.add_space(3.0);
             }
 
-            draw_card_actions(app, ui, task, actions);
+            draw_card_actions(app, ui, task, drag_id, showing, actions);
         })
         .response
         .rect
@@ -454,20 +477,30 @@ const NOTES_ROWS: usize = 3;
 /// The first lines of the task's `notes.md` under the title — its description. A task with
 /// none offers the link that starts them. Either way a click opens the file in a column down
 /// the right, straight into the editor.
+///
+/// The offer is worth its row only while the pointer is on the card, but a card that dropped
+/// the row when it is not would change height under the pointer as it crossed the column. So
+/// the button keeps its place either way, and what fades over [`OFFER_FADE`] is how much of
+/// it is drawn — `showing` is 0 on a card at rest and 1 on the one under the pointer.
 fn draw_notes_box(
     ui: &mut Ui,
     task: &TaskView,
     palette: &Palette,
+    showing: f32,
     actions: &mut Vec<BoardAction>,
 ) {
     let notes = task.notes.trim();
     if notes.is_empty() {
-        if widgets::quiet_button(ui, "[add notes]")
-            .on_hover_text("Write this task's notes.md, shared with its agents")
-            .clicked()
-        {
-            actions.push(BoardAction::OpenNotes(task.id.clone()));
-        }
+        ui.scope(|ui| {
+            // Multiplied rather than set, so the ghost of a card being dragged stays a ghost.
+            ui.multiply_opacity(showing);
+            if widgets::quiet_button_colored(ui, "[add notes]", palette.muted)
+                .on_hover_text("Write this task's notes.md, shared with its agents")
+                .clicked()
+            {
+                actions.push(BoardAction::OpenNotes(task.id.clone()));
+            }
+        });
         return;
     }
 
@@ -583,71 +616,98 @@ fn draw_resource(
     });
 }
 
-fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
+/// Everything a card starts, on the one menu: a review of the repo, a shell in the task, or
+/// an agent. They were three buttons across the card, which is three times the row for three
+/// things you press once each.
+///
+/// It comes up with the notes offer above it and goes the same way, so a card at rest is its
+/// title and its description and nothing else. It sits at the bottom right, out of the way of
+/// the description the card is read by, and under the mark that deletes the card — the two
+/// ends of the card are what it is acted on from.
+fn draw_card_actions(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    drag_id: egui::Id,
+    showing: f32,
+    actions: &mut Vec<BoardAction>,
+) {
     let agents: Vec<AgentKind> = available_agents(app)
         .into_iter()
         .filter(|agent| *agent != AgentKind::None)
         .collect();
 
-    ui.horizontal(|ui| {
-        if widgets::quiet_button(ui, "[start review]")
-            .on_hover_text("Open the review of this repo in a tab")
-            .clicked()
-        {
-            actions.push(BoardAction::OpenReview(
-                task.repo_path.clone(),
-                task.title.clone(),
-            ));
-        }
+    // A row of its own, the width of the card and no taller than the button, and the button
+    // laid out from the right-hand end of it. The row has to be allocated rather than laid
+    // out into what is left: a right-to-left layout given the rest of the column takes the
+    // rest of the column, and the button would come to rest at the foot of it.
+    let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, UiLayout::right_to_left(Align::Center), |ui| {
+        // Multiplied rather than set, so the ghost of a card being dragged stays a ghost.
+        ui.multiply_opacity(showing);
+        // The menu is built from the button rather than the other way round, so it can be one.
+        let (button, menu) = egui::containers::menu::MenuButton::from_button(
+            egui::Button::new("[start]").frame(false),
+        )
+        .ui(ui, |ui| {
+            if widgets::clickable(ui.button("review"))
+                .on_hover_text("Open the review of this repo in a tab")
+                .clicked()
+            {
+                actions.push(BoardAction::OpenReview(
+                    task.repo_path.clone(),
+                    task.title.clone(),
+                ));
+                ui.close();
+            }
 
-        if widgets::quiet_button(ui, "[launch shell]")
-            .on_hover_text("Open a shell in this task")
-            .clicked()
-        {
-            actions.push(BoardAction::Start(
-                task.id.clone(),
-                StartResourceRequest {
-                    kind: TaskResourceKind::Shell,
-                    agent: AgentKind::None,
-                },
-            ));
-        }
+            if widgets::clickable(ui.button("shell"))
+                .on_hover_text("Open a shell in this task")
+                .clicked()
+            {
+                actions.push(BoardAction::Start(
+                    task.id.clone(),
+                    StartResourceRequest {
+                        kind: TaskResourceKind::Shell,
+                        agent: AgentKind::None,
+                    },
+                ));
+                ui.close();
+            }
 
-        // The same bracketed action as the other two, opening onto which agent to run: the
-        // menu is built from the button rather than the other way round, so it can be one.
-        if !agents.is_empty() {
-            let (button, _) = egui::containers::menu::MenuButton::from_button(
-                egui::Button::new("[new agent]").frame(false),
-            )
-            .ui(ui, |ui| {
-                for agent in agents {
-                    if widgets::clickable(ui.button(agent_label(agent))).clicked() {
-                        actions.push(BoardAction::Start(
-                            task.id.clone(),
-                            StartResourceRequest {
-                                kind: TaskResourceKind::Agent,
-                                agent,
-                            },
-                        ));
-                        ui.close();
-                    }
-                }
-                // The way back when a run's recorded session id stopped pointing anywhere:
-                // pick one straight off the agents' own records instead.
-                ui.separator();
-                if widgets::clickable(ui.button("attach a session…"))
-                    .on_hover_text("Pick a past session of one of the agents and put it on this task")
-                    .clicked()
-                {
-                    actions.push(BoardAction::OpenAttachPicker {
-                        task_id: task.id.clone(),
-                        task_title: task.title.clone(),
-                    });
+            if agents.is_empty() {
+                return;
+            }
+            ui.separator();
+            for agent in agents {
+                if widgets::clickable(ui.button(agent_label(agent))).clicked() {
+                    actions.push(BoardAction::Start(
+                        task.id.clone(),
+                        StartResourceRequest {
+                            kind: TaskResourceKind::Agent,
+                            agent,
+                        },
+                    ));
                     ui.close();
                 }
-            });
-            widgets::clickable(button);
-        }
+            }
+            // The way back when a run's recorded session id stopped pointing anywhere:
+            // pick one straight off the agents' own records instead.
+            ui.separator();
+            if widgets::clickable(ui.button("attach a session…"))
+                .on_hover_text("Pick a past session of one of the agents and put it on this task")
+                .clicked()
+            {
+                actions.push(BoardAction::OpenAttachPicker {
+                    task_id: task.id.clone(),
+                    task_title: task.title.clone(),
+                });
+                ui.close();
+            }
+        });
+        // Told to the card, which keeps its offers out for as long as this is up.
+        ui.data_mut(|data| data.insert_temp(menu_up_id(drag_id), menu.is_some()));
+        widgets::clickable(button);
     });
 }
 
