@@ -239,19 +239,43 @@ pub(crate) fn add_worktree(repo_path: &Path, worktree_path: &Path, branch: &str)
 }
 
 /// Give a task's checkout back, leaving its branch alone.
+///
+/// `force` is git's own: remove it even though there is work in it that is not committed.
 pub(crate) fn remove_worktree(repo_path: &Path, worktree_path: &Path, force: bool) -> Result<()> {
-    let worktree_path = worktree_path
+    let path = worktree_path
         .to_str()
         .context("a worktree path has to be text git can be given")?;
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
     }
-    args.push(worktree_path);
-    run_git_no_output(repo_path, &args)?;
+    args.push(path);
+
+    if let Err(error) = run_git_no_output(repo_path, &args) {
+        if !refuses_over_submodules(&error) {
+            return Err(error);
+        }
+        // A repo with submodules has every one of its checkouts refused, whatever is in them —
+        // `--force` is the only way git will do it, and it is the same removal. What `--force`
+        // waives is the check on uncommitted work, so that check is made here instead of being
+        // lost with it.
+        if !force && !is_clean(Path::new(path))? {
+            bail!(
+                "there is work in {path} that is not committed — commit it on the task's branch, \
+                 or discard the checkout"
+            );
+        }
+        run_git_no_output(repo_path, &["worktree", "remove", "--force", path])?;
+    }
     // A worktree directory removed by hand leaves its registration behind, and the next
     // `worktree add` at that path fails on a worktree git still believes in.
     run_git_no_output(repo_path, &["worktree", "prune"])
+}
+
+/// Whether git turned a removal down because the repo has submodules, rather than because of
+/// anything about this checkout.
+fn refuses_over_submodules(error: &anyhow::Error) -> bool {
+    format!("{error}").contains("submodules")
 }
 
 /// How many commits `branch` has that `base` does not.
@@ -1071,6 +1095,106 @@ mod tests {
             .expect("failed to configure git user");
         run_git_no_output(repo_root, &["config", "commit.gpgsign", "false"])
             .expect("failed to disable git signing");
+    }
+
+    /// git turns down every removal of a checkout belonging to a repo with submodules, whatever
+    /// is in that checkout — which is every task's checkout, on a repo that has any.
+    #[test]
+    fn a_checkout_of_a_repo_with_submodules_can_still_be_given_back() {
+        let dir = TestDir::new();
+        let dependency = dir.path.join("dep");
+        init_test_repo(&dependency);
+        fs::write(dependency.join("lib.txt"), "lib\n").expect("failed to write the dependency");
+        run_git_no_output(&dependency, &["add", "-A"]).expect("failed to add");
+        run_git_no_output(&dependency, &["commit", "-m", "dep"]).expect("failed to commit");
+
+        let repo = dir.path.join("repo");
+        init_test_repo(&repo);
+        fs::write(repo.join("a.txt"), "one\n").expect("failed to write the repo file");
+        run_git_no_output(&repo, &["add", "-A"]).expect("failed to add");
+        run_git_no_output(&repo, &["commit", "-m", "first"]).expect("failed to commit");
+        run_git_no_output(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                dependency.to_str().expect("a path"),
+                "vendor",
+            ],
+        )
+        .expect("failed to add the submodule");
+        run_git_no_output(&repo, &["commit", "-m", "add the submodule"])
+            .expect("failed to commit the submodule");
+
+        let checkout = dir.path.join("checkout");
+        super::add_worktree(&repo, &checkout, "task").expect("expected a checkout");
+
+        super::remove_worktree(&repo, &checkout, false).expect("expected the checkout given back");
+
+        assert!(!checkout.is_dir(), "the checkout should be gone");
+        assert!(
+            !run_git(&repo, &["worktree", "list"])
+                .expect("failed to list worktrees")
+                .contains("checkout"),
+            "the checkout should not be registered any more"
+        );
+    }
+
+    /// What `--force` waives is the check on uncommitted work, so taking that road for a repo
+    /// with submodules must not take the check with it.
+    #[test]
+    fn a_checkout_with_work_in_it_is_still_refused() {
+        let dir = TestDir::new();
+        let dependency = dir.path.join("dep");
+        init_test_repo(&dependency);
+        fs::write(dependency.join("lib.txt"), "lib\n").expect("failed to write the dependency");
+        run_git_no_output(&dependency, &["add", "-A"]).expect("failed to add");
+        run_git_no_output(&dependency, &["commit", "-m", "dep"]).expect("failed to commit");
+
+        let repo = dir.path.join("repo");
+        init_test_repo(&repo);
+        fs::write(repo.join("a.txt"), "one\n").expect("failed to write the repo file");
+        run_git_no_output(&repo, &["add", "-A"]).expect("failed to add");
+        run_git_no_output(&repo, &["commit", "-m", "first"]).expect("failed to commit");
+        run_git_no_output(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                dependency.to_str().expect("a path"),
+                "vendor",
+            ],
+        )
+        .expect("failed to add the submodule");
+        run_git_no_output(&repo, &["commit", "-m", "add the submodule"])
+            .expect("failed to commit the submodule");
+
+        let checkout = dir.path.join("checkout");
+        super::add_worktree(&repo, &checkout, "task").expect("expected a checkout");
+        fs::write(checkout.join("a.txt"), "work nobody committed\n").expect("failed to write");
+
+        let refused = super::remove_worktree(&repo, &checkout, false)
+            .expect_err("a checkout with work in it should be refused");
+
+        // git makes this check before it reaches the submodule refusal, so this is its own
+        // wording rather than ours — what matters is that the work is still there.
+        assert!(
+            format!("{refused}").contains("modified or untracked files"),
+            "got: {refused}"
+        );
+        assert!(checkout.is_dir(), "the work should still be there");
+        assert_eq!(
+            fs::read_to_string(checkout.join("a.txt")).expect("failed to read the work"),
+            "work nobody committed\n"
+        );
+
+        // And asked for outright, it goes, work and all.
+        super::remove_worktree(&repo, &checkout, true).expect("expected the forced removal");
+        assert!(!checkout.is_dir());
     }
 
     fn test_session(repo_root: PathBuf, active_commit: Option<String>) -> RepoSession {
