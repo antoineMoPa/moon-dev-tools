@@ -34,6 +34,9 @@ pub(crate) enum TerminalPlacement {
     WithOtherShells,
     /// A new full-height column down the right of the workspace.
     RightColumn,
+    /// A frame of its own against one side of a frame, splitting it in two. This is what the
+    /// palette's split commands ask for.
+    Beside { frame: FrameId, side: DropSide },
     /// Another tab in this frame, for a workspace with no room left to split.
     Tab(FrameId),
 }
@@ -460,6 +463,15 @@ impl App {
         self.open_shell_beside(frame);
     }
 
+    /// Split the frame the keyboard is in, and start a shell in the half that opens. A frame
+    /// with nothing in it is dropped on the next frame drawn, so a split arrives with its
+    /// shell rather than empty.
+    pub(crate) fn split_frame(&mut self, side: DropSide) {
+        let frame = self.model.layout.active_frame();
+        let session_id = self.shell_session_for(frame);
+        self.spawn_terminal(session_id, None, TerminalPlacement::Beside { frame, side });
+    }
+
     /// The same, for a shell asked for from a particular frame's tab strip.
     pub(crate) fn open_shell_beside(&mut self, frame: FrameId) {
         let placement = self.room_for_a_column(frame);
@@ -681,6 +693,10 @@ fn place_shell(layout: &mut Layout<Pane>, placement: &TerminalPlacement, pane: P
             }
         }
         TerminalPlacement::RightColumn => column(layout, pane),
+        TerminalPlacement::Beside { frame, side } if layout.frame(*frame).is_some() => {
+            layout.add_pane_beside(*frame, *side, pane);
+        }
+        TerminalPlacement::Beside { .. } => column(layout, pane),
         // The frame is gone if it was closed while the shell was starting.
         TerminalPlacement::Tab(frame) if layout.frame(*frame).is_some() => {
             layout.add_pane(*frame, pane, None);
@@ -742,6 +758,33 @@ mod tests {
         assert!(layout.is_coherent());
     }
 
+    /// What the palette's split commands ask for: the frame in two, the shell in the new half.
+    #[test]
+    fn a_split_puts_the_shell_in_a_frame_of_its_own_beside_the_one_asked_for() {
+        let mut layout = Layout::with_pane(Pane::Review {
+            session_id: "session".to_string(),
+            title: "review".to_string(),
+        });
+        let frame = layout.active_frame();
+
+        place_shell(
+            &mut layout,
+            &TerminalPlacement::Beside {
+                frame,
+                side: DropSide::Bottom,
+            },
+            shell("a"),
+        );
+
+        assert_eq!(layout.frame_count(), 2, "the frame was split in two");
+        assert_eq!(
+            layout.frame(frame).map(|frame| frame.panes().len()),
+            Some(1),
+            "the review kept its half to itself"
+        );
+        assert!(layout.is_coherent());
+    }
+
     /// A shell takes a moment to start, and the frame it was asked from may be gone by then.
     #[test]
     fn a_shell_asked_for_from_a_frame_that_has_since_closed_still_opens() {
@@ -752,8 +795,16 @@ mod tests {
         assert!(layout.frame(gone).is_none(), "the frame went with its shell");
 
         place_shell(&mut layout, &TerminalPlacement::Tab(gone), shell("a"));
+        place_shell(
+            &mut layout,
+            &TerminalPlacement::Beside {
+                frame: gone,
+                side: DropSide::Right,
+            },
+            shell("b"),
+        );
 
-        assert_eq!(layout.pane_count(), 2, "the shell landed somewhere");
+        assert_eq!(layout.pane_count(), 3, "both shells landed somewhere");
         assert!(layout.is_coherent());
     }
 }

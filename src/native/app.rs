@@ -510,6 +510,7 @@ impl App {
             CommandAction::InstallLaunchers => self.install_launchers(),
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
+            CommandAction::Split(side) => self.split_frame(side),
         }
     }
 

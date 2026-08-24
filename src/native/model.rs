@@ -348,6 +348,10 @@ pub(crate) struct PaletteState {
     pub(crate) open: bool,
     pub(crate) query: String,
     pub(crate) highlighted: usize,
+    /// The query the highlight was picked under. A keystroke changes which commands are on
+    /// the list, so a highlight from before it means nothing — Enter should run the first
+    /// match of what is on screen now, not whichever row the old highlight lands on.
+    pub(crate) highlight_query: String,
     /// Where the palette drew last frame. A press outside it puts the palette away, and that
     /// has to be known before this frame draws — the box takes the keyboard when it draws, and
     /// a click meant for a shell would lose it again.
@@ -360,6 +364,7 @@ impl PaletteState {
         self.open = true;
         self.query.clear();
         self.highlighted = 0;
+        self.highlight_query.clear();
         self.rect = None;
     }
 
@@ -377,6 +382,7 @@ impl Default for PaletteState {
             open: false,
             query: String::new(),
             highlighted: 0,
+            highlight_query: String::new(),
             rect: None,
         }
     }

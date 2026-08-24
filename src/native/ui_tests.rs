@@ -2418,6 +2418,71 @@ fn the_command_palette_lists_what_can_be_opened() {
     harness.snapshot("command-palette");
 }
 
+/// `split bottom` from the palette: the frame in two the short way, with a live shell in the
+/// half that opened. `split right` is the same command against the other side.
+#[test]
+fn a_split_command_opens_a_shell_in_the_half_it_makes() {
+    let fixture = seeded_fixture("palette-split");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let asked = Arc::new(AtomicBool::new(false));
+    let asked_in_ui = Arc::clone(&asked);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_in_ui = Arc::clone(&stop);
+    // Frames open, shells running, and whether the split runs the short way — all read after
+    // the window has drawn, because that is when the palette's command is answered.
+    let state = Arc::new(Mutex::new((0usize, 0usize, false)));
+    let state_in_ui = Arc::clone(&state);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Once the review is up, ask for the split the way the palette does.
+            if !asked_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.pending_action = Some(crate::native::palette::CommandAction::Split(
+                    egui_frames::DropSide::Bottom,
+                ));
+                asked_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            if stop_in_ui.load(Ordering::Relaxed) {
+                for terminal in app.terminals.values() {
+                    let _ = terminal.send(b"exit\n");
+                }
+            }
+            *state_in_ui.lock().expect("poisoned") = (
+                app.model.layout.frame_count(),
+                app.running_shells(),
+                matches!(
+                    app.model.layout.root(),
+                    egui_frames::LayoutNode::Split {
+                        direction: egui_frames::SplitDirection::Column,
+                        ..
+                    }
+                ),
+            );
+        });
+
+    let opened = settle(&mut harness, || {
+        let state = state.lock().expect("poisoned");
+        state.0 == 2 && state.1 == 1
+    });
+    let (frames, shells, column) = *state.lock().expect("poisoned");
+    assert!(
+        opened,
+        "the split never arrived: {frames} frames, {shells} shells"
+    );
+    assert!(column, "`split bottom` should split the frame the short way");
+
+    // The shell is this window's to end, the way quitting would end it.
+    stop.store(true, Ordering::Relaxed);
+    let ended = settle(&mut harness, || state.lock().expect("poisoned").1 == 0);
+    assert!(ended, "the shell the split opened never exited");
+}
+
 /// Every glyph the chrome draws, so a missing one cannot ship as a `□` box.
 ///
 /// egui's bundled fonts cover a small icon set and nothing more: sun, moon, arrow and tick
@@ -4139,6 +4204,70 @@ fn raising_a_tab_hands_it_the_keyboard() {
     assert!(
         harness.ctx.memory(|memory| memory.focused()).is_some(),
         "raising the file again should have given its editor the keyboard back"
+    );
+}
+
+/// Typing puts the highlight back on the first match. The list changes under the highlight
+/// with every keystroke, and before this the old row number was kept and pinned to the end of
+/// the shorter list, so Enter ran the last match of what had been typed.
+#[test]
+fn typing_in_the_palette_highlights_the_first_match_again() {
+    let fixture = seeded_fixture("palette-highlight");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // The highlighted row, and the command Enter would run.
+    let highlight = Arc::new(Mutex::new((0usize, String::new())));
+    let highlight_in_ui = Arc::clone(&highlight);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let matches = crate::native::palette::filter(
+                crate::native::palette::commands_for(&app),
+                &app.model.palette.query,
+            );
+            let title = matches
+                .get(app.model.palette.highlighted)
+                .map(|command| command.title.clone())
+                .unwrap_or_default();
+            *highlight_in_ui.lock().expect("poisoned") = (app.model.palette.highlighted, title);
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(
+        &mut harness,
+        egui::Key::P,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    // Down the list a way, as reading it or running the pointer over it does.
+    press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    assert_eq!(
+        highlight.lock().expect("poisoned").0,
+        2,
+        "the arrows should have moved the highlight down the list"
+    );
+
+    type_letter(&mut harness, egui::Key::S, "s");
+    let (row, title) = highlight.lock().expect("poisoned").clone();
+    assert_eq!(row, 0, "typing should put the highlight back at the top");
+    assert_eq!(
+        title, "comment agents",
+        "the first match of what is typed is what Enter runs"
     );
 }
 

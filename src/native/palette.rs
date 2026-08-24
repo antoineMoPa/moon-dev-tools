@@ -4,6 +4,7 @@
 //! same things in both frontends.
 
 use egui::{Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind, vec2};
+use egui_frames::DropSide;
 
 use crate::{
     api::AgentKind,
@@ -36,6 +37,8 @@ pub(crate) enum CommandAction {
     NewWindow(crate::cli::Frame),
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
     OpenFile,
+    /// Split the frame the keyboard is in against this side, with a shell in the new half.
+    Split(DropSide),
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -43,6 +46,22 @@ const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
     (AgentKind::OpenCode, "opencode", "Open OpenCode in a terminal"),
     (AgentKind::Claude, "claude", "Open Claude in a terminal"),
     (AgentKind::Codex, "codex", "Open Codex in a terminal"),
+];
+
+/// The sides the palette can split the active frame against, and the shell each split opens
+/// with — a split has to hold something, and a shell is what the workspace opens beside
+/// anything else.
+const SPLIT_COMMANDS: &[(DropSide, &str, &str)] = &[
+    (
+        DropSide::Right,
+        "split right",
+        "Split this frame and open a shell in the half to the right",
+    ),
+    (
+        DropSide::Bottom,
+        "split bottom",
+        "Split this frame and open a shell in the half below",
+    ),
 ];
 
 pub(crate) fn commands_for(app: &App) -> Vec<Command> {
@@ -85,6 +104,14 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::OpenPane(OpenPaneRequest::Terminal { command: None }),
         shortcut: bindings::chord_of(Action::NewShellTab),
     });
+    for (side, title, description) in SPLIT_COMMANDS {
+        commands.push(Command {
+            title: (*title).to_string(),
+            description: (*description).to_string(),
+            action: CommandAction::Split(*side),
+            shortcut: None,
+        });
+    }
     // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
     // repo that lives on the far side of a `--remote` connection.
     if app.backend().reads_this_machine() {
@@ -250,6 +277,12 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if dismiss {
         app.model.palette.dismiss();
         return;
+    }
+    // Typed since the highlight was picked: the list underneath it is a different list, and
+    // the first match of the new one is what Enter runs.
+    if app.model.palette.highlight_query != app.model.palette.query {
+        app.model.palette.highlighted = 0;
+        app.model.palette.highlight_query = app.model.palette.query.clone();
     }
     if !matches.is_empty() {
         let last = matches.len() - 1;
