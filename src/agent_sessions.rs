@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn claude_keeps_a_repo_s_sessions_under_its_dashed_path() {
         assert_eq!(
-            claude_project_dir_name(Path::new("/Users/jameo/prog/moonreview/crates/egui_tty")),
-            "-Users-jameo-prog-moonreview-crates-egui-tty"
+            claude_project_dir_name(Path::new("/Users/dev/prog/moonreview/crates/egui_tty")),
+            "-Users-dev-prog-moonreview-crates-egui-tty"
         );
     }
 

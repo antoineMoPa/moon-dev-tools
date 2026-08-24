@@ -7,6 +7,8 @@ in the repo straight away.
 
 | | |
 | --- | --- |
+| the box over the columns | filter the board: every column shows the cards whose title or notes hold what you typed, and hides the rest |
+| `⌘F` on the board | put the keyboard in that box; Escape empties it |
 | drag a card by its title | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | drag a column by its heading | move the column, cards and all |
 | double click a heading | rename the column |
@@ -18,6 +20,12 @@ in the repo straight away.
 | a running resource | click its name to bring its terminal back on screen |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
 | `[add notes]` | the same, on a task that has none yet |
+
+A filtered board is still the board: the columns keep their place and their names, a column
+whose cards are all hidden says so rather than reading as an empty one, and a card can be
+dragged from where the filter left it — dropped above a card showing, it lands above that card,
+whatever is hidden between them. Creating a task empties the query, so the new card is on the
+board rather than behind a filter that was typed before it existed.
 
 A card being dragged leaves the place it came from and takes up the one it is being held over,
 which the cards around it move aside for, so the drop changes nothing that was not already on

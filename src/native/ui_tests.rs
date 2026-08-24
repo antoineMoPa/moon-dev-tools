@@ -1394,6 +1394,170 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     );
 }
 
+/// The filter over the columns: what a query leaves showing.
+///
+/// cmd+F is how the box is reached from the board, and a card is found by its title or by the
+/// notes under it — both are on the card, so both are what a query looks through. A column the
+/// query empties still holds its cards, and says so.
+#[test]
+fn a_query_leaves_the_board_showing_the_cards_that_match_it() {
+    let fixture = seeded_fixture("board-filter");
+    for (task_id, title, status, notes) in [
+        (
+            "write-the-parser-1111",
+            "Write the parser",
+            "todo",
+            "the lexer chokes on nested comments",
+        ),
+        ("fix-the-login-page-2222", "Fix the login page", "todo", ""),
+        (
+            "drop-the-old-api-3333",
+            "Drop the old API",
+            "in_progress",
+            "the login page is its last caller",
+        ),
+        ("ship-the-release-4444", "Ship the release", "done", ""),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"{status}\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+        if !notes.is_empty() {
+            fixture.write(&format!(".moontasks/{task_id}/notes.md"), notes);
+        }
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // What the board is filtered by, read out of the model rather than assumed: the box is
+    // typed into, and this is what the typing reached.
+    let query = Arc::new(Mutex::new(String::new()));
+    let query_in_ui = Arc::clone(&query);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            if let Ok(mut query) = query_in_ui.lock() {
+                *query = app.model.board.filter.clone();
+            }
+            ready_in_ui.store(
+                app.model.board.loaded
+                    && app.model.board.tasks.len() == 4
+                    && app
+                        .model
+                        .board
+                        .tasks
+                        .iter()
+                        .any(|task| task.notes.contains("last caller")),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the board never read the four tasks and their notes out of .moontasks"
+    );
+    harness.run_steps(3);
+
+    let showing = |harness: &Harness<'_>, task_id: &str| {
+        harness
+            .ctx
+            .read_response(egui::Id::new(("moontask-card", &task_id.to_string())))
+            .is_some()
+    };
+    assert!(
+        showing(&harness, "ship-the-release-4444"),
+        "every card is on the board before anything is typed"
+    );
+
+    // cmd+F over the board puts the keyboard in the filter box, which is where the query is
+    // then typed.
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::F,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("login".to_string()));
+    harness.run_steps(3);
+    assert_eq!(
+        query.lock().expect("expected the query").as_str(),
+        "login",
+        "cmd+F should have left the keyboard in the filter box"
+    );
+
+    // A caret blinking in the box would make the image differ run to run.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(2);
+    harness.snapshot("moontasks-filtered");
+
+    assert!(
+        showing(&harness, "fix-the-login-page-2222"),
+        "the card whose title the query is in stays"
+    );
+    assert!(
+        showing(&harness, "drop-the-old-api-3333"),
+        "and so does the one whose notes it is in"
+    );
+    assert!(
+        !showing(&harness, "write-the-parser-1111"),
+        "the card the query is nowhere in is left out"
+    );
+    assert!(
+        !showing(&harness, "ship-the-release-4444"),
+        "in every column, not only the ones with a match"
+    );
+
+    // Escape empties the box, and the board is whole again.
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(3);
+    assert!(
+        query.lock().expect("expected the query").is_empty(),
+        "Escape should have emptied the box"
+    );
+    assert!(
+        showing(&harness, "write-the-parser-1111"),
+        "and the cards it was hiding are back"
+    );
+}
+
 /// The attach modal offers the sessions the agents themselves have on this machine, which
 /// is nothing a test can rely on — so the listing is injected, and what is checked is the
 /// modal itself: what it shows, and Escape closing it.

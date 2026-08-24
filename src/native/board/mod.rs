@@ -7,6 +7,7 @@
 pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
+pub(crate) mod filter;
 
 use cards::{
     CARD_SPACING, DraggedTask, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in,
@@ -121,6 +122,10 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         });
         return;
     }
+
+    // Over the columns rather than inside one: the query is asked of the whole board, and
+    // every column answers it.
+    filter::draw(app, ui, palette);
 
     // The columns are as tall as the pane, and the board scrolls sideways to reach the ones
     // that do not fit — measured before the scroll area, which has no height of its own.
@@ -406,7 +411,14 @@ fn draw_column(
         UiLayout::top_down(Align::Min),
         |ui| {
             ui.set_width(COLUMN_WIDTH);
-            columns::draw_heading(app, ui, column, tasks.len(), palette, actions);
+            columns::draw_heading(
+                app,
+                ui,
+                column,
+                cards::column_size(&app.model.board.tasks, &status),
+                palette,
+                actions,
+            );
             ui.add_space(3.0);
 
             // Which end of this column the new-task box is standing at, if it is this column's
@@ -464,11 +476,15 @@ fn draw_column(
                             });
                         }
                         if tasks.is_empty() && composing.is_none() {
-                            ui.label(
-                                RichText::new("nothing here")
-                                    .size(SMALL_SIZE)
-                                    .color(palette.muted),
-                            );
+                            // A column emptied by the filter still holds its cards, so it says
+                            // that rather than "nothing here", which would read as a column
+                            // with nothing in it.
+                            let empty = if filter::Filter::of(&app.model.board.filter).is_on() {
+                                "nothing matching"
+                            } else {
+                                "nothing here"
+                            };
+                            ui.label(RichText::new(empty).size(SMALL_SIZE).color(palette.muted));
                         }
                     });
             }
@@ -514,6 +530,15 @@ fn draw_column(
                         at: ui.input(|input| input.time),
                     });
                     app.model.board.landing = None;
+                    // `at` counts the cards the filter is showing; the place the card is going
+                    // to is a place in the column itself.
+                    let into = cards::column_index_of(
+                        &app.model.board.tasks,
+                        &filter::Filter::of(&app.model.board.filter),
+                        &status,
+                        &dragged.0,
+                        at,
+                    );
                     // The board is redrawn from the server's answer, which is a worker thread and
                     // a poll away: the move is made here as well, and held over every answer
                     // until one of them agrees, so the card stays where it was put rather than
@@ -521,10 +546,10 @@ fn draw_column(
                     app.model.board.pending_place = Some(PendingPlace {
                         task_id: dragged.0.clone(),
                         status: status.clone(),
-                        index: at,
+                        index: into,
                     });
-                    place_in(&mut app.model.board.tasks, &dragged.0, &status, at);
-                    actions.push(BoardAction::Place(dragged.0.clone(), status.clone(), at));
+                    place_in(&mut app.model.board.tasks, &dragged.0, &status, into);
+                    actions.push(BoardAction::Place(dragged.0.clone(), status.clone(), into));
                 }
             }
         },
@@ -656,6 +681,9 @@ fn apply(app: &mut App, action: BoardAction) {
             app.model.board.new_title.clear();
             app.model.board.composer_in = None;
             app.model.board.composer_agent = None;
+            // And the filter goes with it, so the new card is on the board rather than behind
+            // a query that was asked before it existed and says nothing about it.
+            app.model.board.filter.clear();
             act(app, "could not create the task", move |backend| {
                 backend.create_task(&session_id, &request).map(|_| ())
             });

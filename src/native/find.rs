@@ -14,7 +14,8 @@ use crate::native::{app::App, model::ToastKind, panes::PaneKind, theme::SMALL_SI
 
 /// The panes that have something for a find bar to look through. The agent monitor is a list
 /// of what the agents are doing rather than a document, so ⌘F says so instead of opening a
-/// bar that could only ever report nothing.
+/// bar that could only ever report nothing — and the board is not here because it answers
+/// ⌘F with its own filter instead of a bar.
 const SEARCHABLE: &[PaneKind] = &[PaneKind::Review, PaneKind::Terminal, PaneKind::File];
 
 /// The find bar, and the search it is running.
@@ -73,6 +74,12 @@ pub(crate) fn open(app: &mut App) {
     let Some(pane_id) = app.active_pane_id() else {
         return;
     };
+    // The board has a search of its own — a filter over its cards, standing above them — so
+    // cmd+F there puts the keyboard in that box rather than opening a bar over the columns.
+    if app.active_pane_kind() == Some(PaneKind::Tasks) {
+        app.model.board.filter_focus = true;
+        return;
+    }
     if !app
         .active_pane_kind()
         .is_some_and(|kind| SEARCHABLE.contains(&kind))

@@ -14,7 +14,7 @@ use crate::{
         app::App,
         board::{
             Axis, BoardAction, CLOSE_MARK_SIZE, agent_label, available_agents, close_button,
-            running_dot, slide_into_place, stamp_place,
+            filter::Filter, running_dot, slide_into_place, stamp_place,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -46,6 +46,9 @@ const TITLE_ROWS: usize = 3;
 /// A card being dragged is one of them from the moment it is over the column, and no longer
 /// one of the column it came from: the board makes the move as it is being made rather than
 /// once it is over, so nothing jumps when the card is let go of.
+///
+/// The board's filter is applied here, so a column shows the cards that match it and keeps
+/// them in the order it holds them in.
 pub(super) fn column_cards(
     app: &App,
     status: &ColumnId,
@@ -55,13 +58,18 @@ pub(super) fn column_cards(
     // Until the pointer has been over a column there is nowhere for the card to be but where
     // it came from, and taking it out of the board for that first frame reads as a flicker.
     let taken = landing.is_some();
+    let filter = Filter::of(&app.model.board.filter);
 
     let mut tasks: Vec<TaskView> = app
         .model
         .board
         .tasks
         .iter()
-        .filter(|task| task.status == *status && !(taken && Some(task.id.as_str()) == dragged_id))
+        .filter(|task| {
+            task.status == *status
+                && filter.matches(task)
+                && !(taken && Some(task.id.as_str()) == dragged_id)
+        })
         .cloned()
         .collect();
 
@@ -78,6 +86,51 @@ pub(super) fn column_cards(
         tasks.insert(landing.index.min(tasks.len()), dragged);
     }
     tasks
+}
+
+/// Where a card let go of among the cards a filter is showing belongs in the column itself.
+///
+/// A drop is read against what is on screen: let go of above the third card showing means
+/// above that card, whatever the filter is hiding between it and the one before. Let go of
+/// below the last card showing means the end of the column, the same as it does with no filter
+/// on — and with no filter on the two indexes are the same, so nothing is translated at all.
+///
+/// The dragged card is left out of the reckoning, because [`place_in`] takes it out of the
+/// column before it counts places in it.
+pub(super) fn column_index_of(
+    tasks: &[TaskView],
+    filter: &Filter,
+    status: &ColumnId,
+    dragged_id: &str,
+    showing_index: usize,
+) -> usize {
+    if !filter.is_on() {
+        return showing_index;
+    }
+
+    let column: Vec<&TaskView> = tasks
+        .iter()
+        .filter(|task| task.status == *status && task.id != dragged_id)
+        .collect();
+
+    let mut showing = 0;
+    for (at, task) in column.iter().enumerate() {
+        if !filter.matches(task) {
+            continue;
+        }
+        if showing == showing_index {
+            return at;
+        }
+        showing += 1;
+    }
+    column.len()
+}
+
+/// How many cards a column holds, filter or no filter — what the board would show if the query
+/// were emptied. The heading's delete mark goes by this: a column whose cards are only hidden
+/// is still the record of where they are.
+pub(super) fn column_size(tasks: &[TaskView], status: &ColumnId) -> usize {
+    tasks.iter().filter(|task| task.status == *status).count()
 }
 
 /// The id a card is dragged by, which is also the layer its ghost is drawn into.
@@ -596,4 +649,92 @@ fn draw_card_actions(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut 
             widgets::clickable(button);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A column of cards, each named after what a query would find it by.
+    fn column(titles: &[&str]) -> Vec<TaskView> {
+        titles
+            .iter()
+            .map(|title| TaskView {
+                id: format!("{title}-1111"),
+                title: title.to_string(),
+                status: ColumnId::new("todo"),
+                created_at_unix: 1700000000,
+                dir_path: String::new(),
+                repo_path: String::new(),
+                notes: String::new(),
+                resources: Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn with_no_filter_on_a_drop_lands_where_it_was_let_go_of() {
+        let tasks = column(&["one", "two", "three"]);
+        let status = ColumnId::new("todo");
+        let nothing = Filter::of("");
+
+        for at in 0..3 {
+            assert_eq!(
+                column_index_of(&tasks, &nothing, &status, "two-1111", at),
+                at
+            );
+        }
+    }
+
+    /// The cards a filter hides are still in the column, and a drop is read against the ones
+    /// on screen: above the card showing that was dropped above.
+    #[test]
+    fn a_drop_among_filtered_cards_lands_above_the_card_it_was_dropped_above() {
+        // Showing: `sing` at column place 1, and `song` at column place 3.
+        let tasks = column(&["hidden", "sing", "also hidden", "song"]);
+        let status = ColumnId::new("todo");
+        let filter = Filter::of("s\u{69}ng");
+        let dragged = "song-1111";
+
+        assert_eq!(
+            column_index_of(&tasks, &filter, &status, dragged, 0),
+            1,
+            "above the first card showing is above that card, not the top of the column"
+        );
+        assert_eq!(
+            column_index_of(&tasks, &filter, &status, dragged, 1),
+            3,
+            "below the last card showing is the end of the column, hidden cards and all"
+        );
+    }
+
+    /// The card being dragged is not one of the places it can be dropped into: `place_in`
+    /// takes it out of the column before it counts places in it.
+    #[test]
+    fn the_dragged_card_is_left_out_of_the_places_it_could_land_in() {
+        let tasks = column(&["sing", "hidden", "song"]);
+        let status = ColumnId::new("todo");
+        let filter = Filter::of("s");
+
+        // With `sing` in the air, the only card showing is `song`, at place 1 of the two the
+        // column has left — so the first place a drop can take is that one, not `sing`'s.
+        assert_eq!(column_index_of(&tasks, &filter, &status, "sing-1111", 0), 1);
+        assert_eq!(
+            column_index_of(&tasks, &filter, &status, "sing-1111", 1),
+            2,
+            "and past it is the end of what the column has left"
+        );
+    }
+
+    #[test]
+    fn a_columns_size_counts_the_cards_a_filter_is_hiding_too() {
+        let mut tasks = column(&["one", "two"]);
+        tasks.push(TaskView {
+            status: ColumnId::new("done"),
+            ..column(&["three"]).remove(0)
+        });
+
+        assert_eq!(column_size(&tasks, &ColumnId::new("todo")), 2);
+        assert_eq!(column_size(&tasks, &ColumnId::new("done")), 1);
+    }
 }

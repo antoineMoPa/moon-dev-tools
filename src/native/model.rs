@@ -209,6 +209,12 @@ pub(crate) struct BoardState {
     pub(crate) columns: Vec<crate::moontasks::BoardColumn>,
     pub(crate) error: Option<String>,
     pub(crate) loaded: bool,
+    /// What is typed into the filter bar over the columns. Every column shows the cards that
+    /// match it and nothing else; empty is a board showing all of its cards.
+    pub(crate) filter: String,
+    /// Set when the filter box is to take the keyboard next frame, which is how cmd+F over the
+    /// board reaches it.
+    pub(crate) filter_focus: bool,
     /// The column the new-task box is open in, and the title being typed into it.
     pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
     /// Which end of that column the box is standing at, which is the `+` that opened it. The
