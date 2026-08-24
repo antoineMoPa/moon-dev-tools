@@ -284,15 +284,19 @@ export function closePane(layout: WorkspaceLayout, paneId: string): WorkspaceLay
     return layout;
   }
 
+  const closedAt = frame.paneIds.indexOf(paneId);
   const paneIds = frame.paneIds.filter((id) => id !== paneId);
   const panes = { ...layout.panes };
   delete panes[paneId];
 
+  // Focus lands on the tab that slid into the closed one's place, and falls back to the tab
+  // before it when the last one in the strip is what closed.
+  const nextActivePaneId = paneIds[closedAt] ?? paneIds[paneIds.length - 1] ?? null;
+
   const nextFrame: Frame = {
     ...frame,
     paneIds,
-    activePaneId:
-      frame.activePaneId === paneId ? (paneIds[paneIds.length - 1] ?? null) : frame.activePaneId,
+    activePaneId: frame.activePaneId === paneId ? nextActivePaneId : frame.activePaneId,
   };
   const withoutPane: WorkspaceLayout = {
     ...layout,

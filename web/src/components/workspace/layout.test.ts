@@ -86,6 +86,30 @@ describe("workspace layout", () => {
     expect(closed.frames[closed.activeFrameId]).toBeDefined();
   });
 
+  it("focuses the next tab in the strip when the tab in front closes", () => {
+    const layout = defaultLayout("session-root");
+    const frameId = layout.activeFrameId;
+    const withTabs = ["a", "b", "c"].reduce(
+      (open, name) => addPane(open, frameId, { paneId: `pane-${name}`, kind: "agents" }),
+      layout,
+    );
+    const middle = focusPane(withTabs, "pane-b");
+
+    const closed = closePane(middle, "pane-b");
+
+    expect(closed.frames[frameId].activePaneId).toBe("pane-c");
+  });
+
+  it("falls back to the tab before when the last tab of the strip closes", () => {
+    const { layout } = layoutWithReviewAndTerminal();
+    const frameId = layout.activeFrameId;
+    const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
+
+    const closed = closePane(layout, "pane-terminal");
+
+    expect(closed.frames[frameId].activePaneId).toBe(reviewPaneId);
+  });
+
   it("keeps the last frame even with no tabs left", () => {
     const layout = defaultLayout("session-root");
     const reviewPaneId = findPaneOfKind(layout, "review")!.paneId;
