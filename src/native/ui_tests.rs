@@ -335,6 +335,126 @@ fn a_shell_that_exits_closes_its_tab() {
     assert!(closed, "the tab of a shell that exited should have closed");
 }
 
+/// A restart closes the window it was asked in, shells and all: the second instance is
+/// already on its way, so the window has been answered rather than asked.
+#[test]
+fn restarting_closes_the_window_a_shell_is_still_running_in() {
+    let fixture = seeded_fixture("restart-window");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        serves_web: false,
+        frame: crate::cli::Frame::Shell,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    // The window is closed the way a restart closes it, once it is open with its shell
+    // running: starting the second instance is the half a test has no business doing.
+    let restart = Arc::new(AtomicBool::new(false));
+    let restart_in_ui = Arc::clone(&restart);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_in_ui = Arc::clone(&warnings);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .build_ui(move |ui| {
+            if restart_in_ui.swap(false, Ordering::Relaxed) {
+                app.close_window(ui.ctx());
+            }
+            app.draw(ui);
+            // A moonshell window opens a shell of its own beside the attached one, so what
+            // matters is that at least one is running for the quit guard to be about.
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.running_shells() > 0,
+                Ordering::Relaxed,
+            );
+            *warnings_in_ui.lock().expect("poisoned") = app
+                .model
+                .toasts
+                .iter()
+                .map(|toast| toast.text.clone())
+                .collect();
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the window should have opened on the review, with its shell running"
+    );
+
+    restart.store(true, Ordering::Relaxed);
+    harness.step();
+    assert!(
+        asked_to_close(&harness),
+        "a restart should have closed the window"
+    );
+
+    // The close the window sent comes back to it as a close request, the way the windowing
+    // system delivers one. Nothing here answers that with the quit warning: the restarted
+    // instance is already starting, and a window that stayed put would leave two.
+    harness
+        .input_mut()
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .expect("expected the root viewport")
+        .events
+        .push(egui::ViewportEvent::Close);
+    harness.step();
+
+    assert!(
+        !asked_to_stay_open(&harness),
+        "a restart should not have taken its own close back"
+    );
+    assert!(
+        !warnings
+            .lock()
+            .expect("poisoned")
+            .iter()
+            .any(|text| text.contains("still running")),
+        "a restart should not have been answered with the quit warning"
+    );
+
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
 /// Quitting takes every shell in the window with it, so the first ⌘Q says what it is about to
 /// end and the second one goes through.
 #[test]
@@ -3167,6 +3287,16 @@ fn asked_to_close(harness: &Harness<'_>) -> bool {
             .commands
             .iter()
             .any(|command| matches!(command, egui::ViewportCommand::Close))
+    })
+}
+
+/// Whether the window took a close back, which is what the quit warning does while it asks.
+fn asked_to_stay_open(harness: &Harness<'_>) -> bool {
+    harness.output().viewport_output.values().any(|viewport| {
+        viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose))
     })
 }
 

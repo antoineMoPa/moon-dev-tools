@@ -579,11 +579,22 @@ impl App {
             None => Opens::LaunchScreen,
         };
         match self.start_window(frame, &executable, opens) {
-            Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Ok(()) => self.close_window(ctx),
             Err(error) => self
                 .model
                 .error(format!("could not restart this window: {error}")),
         }
+    }
+
+    /// Close this window because the window itself was told to go, rather than because someone
+    /// pressed ⌘Q.
+    ///
+    /// Asking for a restart is already the answer to "a shell is still running": the window
+    /// arms the confirmation on its way out, so the close it sends itself is not questioned
+    /// back and answered with a toast instead of a new window.
+    pub(crate) fn close_window(&mut self, ctx: &egui::Context) {
+        self.quit_armed_until = Some(Instant::now() + QUIT_CONFIRM_WINDOW);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     /// Start another process of `frame`, against the same machine this window reads.
