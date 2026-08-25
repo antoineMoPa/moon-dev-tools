@@ -401,6 +401,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
             pending: find.pending,
         });
     let mut found: Option<usize> = None;
+    let mut bring_into_view: Option<egui::Rect> = None;
     // The editor takes the keyboard it is owed, so a file or a task's notes brought forward
     // can be typed into without clicking into the text first. A file still being fetched, or
     // a markdown file showing its rendered page, has no editor to take it and leaves the
@@ -438,11 +439,25 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                     .id_salt(("file-pane-code", pane_id))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                        // The find bar's matches are drawn into the text itself rather
+                        // than left to the editor's selection: the bar holds the keyboard
+                        // while it is open, and an unfocused editor paints no selection at
+                        // all, so a search would otherwise turn up matches nobody can see.
+                        let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                            let job = match &searching {
+                                Some(searching) => {
+                                    marked_text(ui, text.as_str(), searching, *palette, wrap)
+                                }
+                                None => plain_text(ui, text.as_str(), wrap),
+                            };
+                            ui.fonts_mut(|fonts| fonts.layout_job(job))
+                        };
                         let output = egui::TextEdit::multiline(&mut editor.edited)
                             .font(egui::TextStyle::Monospace)
                             .code_editor()
                             .desired_width(f32::INFINITY)
                             .desired_rows(line_count)
+                            .layouter(&mut layouter)
                             .show(ui);
                         if takes_keyboard {
                             output.response.request_focus();
@@ -478,9 +493,19 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                         }
 
                         if let Some(searching) = &searching {
-                            found = Some(show_match(ui, &editor.edited, searching, output));
+                            let shown = show_match(ui, &editor.edited, searching, output);
+                            found = Some(shown.total);
+                            bring_into_view = shown.current;
                         }
                     });
+
+                // Asked for out here, where the pane's vertical scroll can hear it: the
+                // horizontal area around the code takes both axes' scroll targets so they
+                // cannot leak, and drops the one it has no bar for — so a match below the
+                // fold, asked for from inside it, would never be scrolled to.
+                if let Some(rect) = bring_into_view {
+                    ui.scroll_to_rect(rect, Some(Align::Center));
+                }
             });
         });
 
@@ -498,22 +523,102 @@ struct Searching {
     pending: bool,
 }
 
-/// Select the current match in the laid-out editor and bring it into view. Returns how many
-/// matches there were, for the bar's tally.
+/// The text laid out the way the editor would lay it out on its own.
+fn plain_text(ui: &Ui, text: &str, wrap_width: f32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    job.append(text, 0.0, code_format(ui, None));
+    job
+}
+
+/// The text laid out with every match of the query behind it, and the one the bar has
+/// stepped to marked more strongly than the rest, so stepping is visible without the others
+/// disappearing.
+fn marked_text(
+    ui: &Ui,
+    text: &str,
+    searching: &Searching,
+    palette: Palette,
+    wrap_width: f32,
+) -> egui::text::LayoutJob {
+    let matches = byte_matches_in(text, &searching.query);
+    if matches.is_empty() {
+        return plain_text(ui, text, wrap_width);
+    }
+
+    // The same tint a match gets in a review, which is strong enough to pick one out of the
+    // code without hiding it. The current match is underlined rather than tinted harder: a
+    // background solid enough to stand out from the others would take the text with it.
+    let tint = palette.accent.linear_multiply(0.35);
+
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    let mut cut = 0;
+    for (index, range) in matches.iter().enumerate() {
+        job.append(&text[cut..range.start], 0.0, code_format(ui, None));
+        let mut format = code_format(ui, Some(tint));
+        if index == searching.at {
+            format.underline = egui::Stroke::new(1.0, palette.accent);
+        }
+        job.append(&text[range.clone()], 0.0, format);
+        cut = range.end;
+    }
+    job.append(&text[cut..], 0.0, code_format(ui, None));
+    job
+}
+
+/// One run of the editor's text: the font and colour a plain `TextEdit` would have given it,
+/// over whatever the find bar is marking it with.
+fn code_format(ui: &Ui, background: Option<egui::Color32>) -> egui::TextFormat {
+    let visuals = ui.visuals();
+    egui::TextFormat {
+        font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+        color: visuals
+            .override_text_color
+            .unwrap_or_else(|| visuals.widgets.inactive.text_color()),
+        background: background.unwrap_or(egui::Color32::TRANSPARENT),
+        ..Default::default()
+    }
+}
+
+/// The same matches `matches_in` finds, as byte ranges of the text — which is what a layout
+/// job's runs are cut at, where the editor's cursor counts characters.
+fn byte_matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let starts: Vec<usize> = text
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    matches_in(text, query)
+        .into_iter()
+        .map(|range| starts[range.start]..starts[range.end])
+        .collect()
+}
+
+/// What laying the search over the editor turned up.
+struct Shown {
+    /// How many matches there were, for the bar's tally.
+    total: usize,
+    /// Where the current match ended up on screen, when there is one to be brought into
+    /// view. Scrolled to by the caller rather than here — see `draw_editor`.
+    current: Option<egui::Rect>,
+}
+
+/// Select the current match in the laid-out editor and say where it landed.
 fn show_match(
     ui: &mut Ui,
     text: &str,
     searching: &Searching,
     mut output: egui::text_edit::TextEditOutput,
-) -> usize {
+) -> Shown {
     let matches = matches_in(text, &searching.query);
     // Only when the bar asks: otherwise every frame would drag the caret back to the match
     // and the file could not be edited while the bar is open.
     if !searching.pending {
-        return matches.len();
+        return Shown { total: matches.len(), current: None };
     }
     let Some(range) = matches.get(searching.at) else {
-        return matches.len();
+        return Shown { total: matches.len(), current: None };
     };
 
     let cursors = egui::text::CCursorRange::two(
@@ -524,11 +629,12 @@ fn show_match(
         .galley
         .pos_from_cursor(egui::text::CCursor::new(range.start))
         .translate(output.galley_pos.to_vec2());
-    ui.scroll_to_rect(at, Some(egui::Align::Center));
+    // Sideways from in here, where the code's own scroll can hear it.
+    ui.scroll_to_rect(at, Some(Align::Center));
 
     output.state.cursor.set_char_range(Some(cursors));
     output.state.store(ui.ctx(), output.response.id);
-    matches.len()
+    Shown { total: matches.len(), current: Some(at) }
 }
 
 #[cfg(test)]
@@ -581,6 +687,20 @@ mod tests {
         assert!(matches_in("hello", "").is_empty());
         assert!(matches_in("hello", "absent").is_empty());
         assert!(matches_in("hi", "far too long").is_empty());
+    }
+
+    /// The marks are cut into the text by byte, while the caret counts characters. A line
+    /// with anything but ASCII on it would land the marks somewhere else entirely if the two
+    /// were mixed up.
+    #[test]
+    fn a_mark_is_the_bytes_of_the_text_the_match_covers() {
+        let text = "let caf\u{e9} = \"caf\u{e9}\";\n";
+        let found = byte_matches_in(text, "caf\u{e9}");
+
+        assert_eq!(found.len(), 2);
+        for range in found {
+            assert_eq!(&text[range], "caf\u{e9}");
+        }
     }
 
     #[test]

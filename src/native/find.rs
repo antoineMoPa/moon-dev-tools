@@ -32,6 +32,10 @@ pub(crate) struct Find {
     pub(crate) pending: bool,
     /// Set on the frame the bar opens, so the box takes the keyboard without a click.
     focus: bool,
+    /// Whether the query box held the keyboard when the bar was last drawn. Escape clears
+    /// egui's focus before a frame starts, so the bar cannot ask whether it is being typed
+    /// into on the frame that Escape arrives — it asks what was true the frame before.
+    has_keyboard: bool,
 }
 
 impl Find {
@@ -43,6 +47,7 @@ impl Find {
             total: 0,
             pending: false,
             focus: true,
+            has_keyboard: false,
         }
     }
 
@@ -114,6 +119,8 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     let palette = app.palette_of();
     let mut closed = false;
     let mut stepped: Option<bool> = None;
+    // Whether the query box is the thing being typed into, this frame or the one before.
+    let mut has_keyboard = find.has_keyboard;
 
     egui::Area::new("moonreview-find".into())
         .order(egui::Order::Foreground)
@@ -158,11 +165,21 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                             egui::TextEdit::singleline(&mut find.query)
                                 .hint_text("Find")
                                 .desired_width(f32::INFINITY)
+                                // Enter walks the matches rather than ending the entry, so
+                                // the box keeps the keyboard and the next Enter steps again.
+                                .return_key(None)
                                 .margin(egui::Margin::symmetric(6, 3)),
                         );
-                        if std::mem::take(&mut find.focus) {
+                        // A bar that has just asked for the keyboard counts as having it:
+                        // the request only lands on the next frame, and until then the box
+                        // is where anything typed is going.
+                        find.has_keyboard = if std::mem::take(&mut find.focus) {
                             entry.request_focus();
-                        }
+                            true
+                        } else {
+                            entry.has_focus()
+                        };
+                        has_keyboard |= find.has_keyboard;
                         if find.query != before {
                             // A changed query starts again from the first match.
                             find.at = 0;
@@ -174,7 +191,13 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
     // Enter walks the matches and Escape puts the bar away, both of which belong to the bar
     // rather than to the pane under it, so they are read here instead of in the key table.
+    // Only while the query box holds the keyboard, though: an Enter meant for the shell or
+    // the file under the bar is the pane's, and stepping the search on it would move the
+    // window out from under whoever typed it.
     let (next, previous, dismiss) = ctx.input_mut(|input| {
+        if !has_keyboard {
+            return (false, false, false);
+        }
         (
             input.consume_key(egui::Modifiers::NONE, Key::Enter),
             input.consume_key(egui::Modifiers::SHIFT, Key::Enter),

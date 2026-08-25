@@ -4855,6 +4855,193 @@ fn find_searches_a_whole_review_and_steps_through_the_matches() {
     );
 }
 
+/// A search over an open file marks what it found in the text, and Enter only walks those
+/// matches while the query box is the thing being typed into. It used to step on any Enter
+/// the window saw, so typing into the file — or the shell in the next split — dragged the
+/// search along behind it; and the marks were the editor's own selection, which an unfocused
+/// editor does not paint at all, so a search over a file showed nothing.
+#[test]
+fn find_marks_a_file_and_steps_only_while_the_query_box_has_the_keyboard() {
+    let fixture = Fixture::new("file-find");
+    fixture.write(
+        "src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\npub fn three() {}\n",
+    );
+    fixture.commit("Add the library");
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+
+    /// What the test reads back out of the window each frame.
+    #[derive(Default, Clone)]
+    struct Seen {
+        total: usize,
+        at: usize,
+    }
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            if let Some((pane_id, _)) = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+            {
+                loaded_in_ui.store(
+                    app.model
+                        .file_editors
+                        .get(&pane_id)
+                        .and_then(|editor| editor.content_for_test())
+                        .is_some(),
+                    Ordering::Relaxed,
+                );
+            }
+            *seen_in_ui.lock().expect("poisoned") = Seen {
+                total: app.model.find.as_ref().map(|find| find.total).unwrap_or(0),
+                at: app.model.find.as_ref().map(|find| find.at).unwrap_or(0),
+            };
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the file never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("pub fn".to_string()));
+    harness.step();
+    harness.run_steps(3);
+
+    let after_typing = seen.lock().expect("poisoned").clone();
+    assert_eq!(after_typing.total, 3, "every line of the file matches");
+    assert_eq!(after_typing.at, 0, "and the search starts on the first one");
+
+    // Every match marked in the text, the current one more strongly than the rest.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(2);
+    harness.snapshot("file-find-marks");
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(
+        seen.lock().expect("poisoned").at,
+        1,
+        "Enter in the query box steps to the next match"
+    );
+
+    // The keyboard goes back to the file under the bar — an Enter typed there is a newline,
+    // and none of the search's business.
+    harness.ctx.memory_mut(|memory| memory.stop_text_input());
+    harness.run_steps(2);
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(
+        seen.lock().expect("poisoned").at,
+        1,
+        "an Enter aimed elsewhere should have left the search where it was"
+    );
+}
+
+/// A match below the fold brings the file to it. The scroll was asked for from inside the
+/// code's own sideways scroll area, which takes both axes' targets and drops the one it has
+/// no bar for, so a match off the bottom of the pane was marked where nobody could see it.
+#[test]
+fn find_scrolls_a_file_to_a_match_below_the_fold() {
+    let fixture = Fixture::new("file-find-scroll");
+    let mut lines = vec!["pub fn filler() {}".to_string(); 200];
+    lines.push("pub fn the_needle() {}".to_string());
+    fixture.write("src/lib.rs", &format!("{}\n", lines.join("\n")));
+    fixture.commit("Add the library");
+
+    let app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut app = app;
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let total = Arc::new(Mutex::new(0usize));
+    let total_in_ui = Arc::clone(&total);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            if let Some((pane_id, _)) = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+            {
+                loaded_in_ui.store(
+                    app.model
+                        .file_editors
+                        .get(&pane_id)
+                        .and_then(|editor| editor.content_for_test())
+                        .is_some(),
+                    Ordering::Relaxed,
+                );
+            }
+            *total_in_ui.lock().expect("poisoned") =
+                app.model.find.as_ref().map(|find| find.total).unwrap_or(0);
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the file never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("the_needle".to_string()));
+    harness.step();
+    harness.run_steps(6);
+
+    assert_eq!(
+        *total.lock().expect("poisoned"),
+        1,
+        "the needle is in the file exactly once"
+    );
+    // The one match, on screen rather than two hundred lines below it.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(2);
+    harness.snapshot("file-find-scrolled");
+}
+
 /// Switching the theme to light and back must leave a shell readable. It did not: the colours
 /// the pane paints with came back identical, so every line was text the colour of its own
 /// background.
