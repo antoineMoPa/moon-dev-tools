@@ -139,6 +139,9 @@ enum CliCommand {
     /// The window with no repo: it asks which one to open, the same as a launcher started
     /// from the OS. This is what "New Window" in the menu bar opens.
     PickProject,
+    /// The window on the repo at this path, wherever it was started from. This is what a
+    /// restarted window is given, so it comes back on the repo it was on.
+    OpenRepo(String),
     Review {
         target: ReviewTarget,
         logs: bool,
@@ -198,6 +201,7 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
         }
         CliCommand::InstallLaunchers => install_launchers(),
         CliCommand::PickProject => pick_project(frame),
+        CliCommand::OpenRepo(path) => open_repo(&path, frame),
         CliCommand::Review {
             target,
             logs,
@@ -240,6 +244,30 @@ fn pick_project(frame: Frame) -> Result<()> {
 #[cfg(not(feature = "native"))]
 fn pick_project(_frame: Frame) -> Result<()> {
     bail!("this build has no desktop frontend, so there is no window to pick a repo in")
+}
+
+/// The window on a named repo rather than on the one the shell it was started from is in.
+///
+/// It opens on the whole working tree: a path names the repo here, not a part of it to
+/// narrow the review to.
+#[cfg(feature = "native")]
+fn open_repo(path: &str, frame: Frame) -> Result<()> {
+    let repo_path = canonicalize_repo(Path::new(path))?;
+    let launch = crate::native::launch_local(
+        OpenSessionRequest {
+            repo_path: repo_path.display().to_string(),
+            diff_target: Some(DiffTarget::default()),
+            active_commit: None,
+        },
+        true,
+        frame,
+    )?;
+    crate::native::run(launch)
+}
+
+#[cfg(not(feature = "native"))]
+fn open_repo(_path: &str, _frame: Frame) -> Result<()> {
+    bail!("this build has no desktop frontend, so there is no window to open a repo in")
 }
 
 fn launch_review(
@@ -535,7 +563,7 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     let mut web = false;
     let mut pick = false;
     let mut remote: Option<String> = None;
-    let mut remote_repo: Option<String> = None;
+    let mut repo: Option<String> = None;
     let mut positional = Vec::new();
     let mut args = args.into_iter();
 
@@ -553,16 +581,16 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
                 );
             }
             "--repo" => {
-                remote_repo = Some(
+                repo = Some(
                     args.next()
-                        .ok_or_else(|| anyhow!("--repo needs a path on the remote machine"))?,
+                        .ok_or_else(|| anyhow!("--repo needs the path of a repo"))?,
                 );
             }
             _ if arg.starts_with("--remote=") => {
                 remote = Some(arg["--remote=".len()..].to_string());
             }
             _ if arg.starts_with("--repo=") => {
-                remote_repo = Some(arg["--repo=".len()..].to_string());
+                repo = Some(arg["--repo=".len()..].to_string());
             }
             _ if arg.starts_with('-') => bail!("unknown option: {arg}\n\n{}", help_text_for(frame)),
             _ => positional.push(arg),
@@ -580,15 +608,22 @@ fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     if pick {
         return Ok(CliCommand::PickProject);
     }
-    if remote_repo.is_some() && remote.is_none() {
-        bail!("--repo names a path on a remote machine, so it needs --remote too");
+    // Without --remote, --repo names the repo this window opens on, which is the whole of
+    // what it was asked for: a restarted window passes it and nothing else.
+    if let Some(path) = &repo
+        && remote.is_none()
+    {
+        if web || logs || !positional.is_empty() {
+            bail!("--repo opens the window on that repo, so it takes nothing else");
+        }
+        return Ok(CliCommand::OpenRepo(path.clone()));
     }
 
     let frontend = match (web, remote) {
         (true, _) => Frontend::Web,
         (false, Some(target)) => Frontend::Remote {
             target,
-            repo_path: remote_repo,
+            repo_path: repo,
         },
         (false, None) => Frontend::Native,
     };
@@ -658,6 +693,7 @@ Usage:
   {program} diff <target>
   {program} --web
   {program} --pick
+  {program} --repo <path>
   {program} --remote <host> [--repo <path>]
   {program} serve --logs
   {program} install-launchers
@@ -677,6 +713,8 @@ Examples:
 Run `{program}` inside any git repository you want to work in.
 `--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
+`--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
+what the Window menu's Restart hands the instance it starts.
 Run `{program} .` to limit the review to the current directory.
 Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.
@@ -699,7 +737,7 @@ Frontends:
   opened in a browser.
   `--web` opens a browser tab against a background server instead.
   `--remote <host>` opens the window against a `serve` on another machine, where the repo
-  lives; `--repo <path>` names the path there, and without it the window asks.
+  lives; `--repo <path>` then names the path there, and without it the window asks.
   `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
 
 Moontasks:
@@ -963,6 +1001,50 @@ mod tests {
         .expect_err("expected an argument after install-launchers to be rejected");
 
         assert!(error.to_string().contains("Usage:"));
+    }
+
+    /// `--repo` on its own names the repo the window opens on, which is how a restarted
+    /// window comes back where it was rather than on the launch screen.
+    #[test]
+    fn parse_repo_as_the_window_opening_on_that_repo() {
+        assert_eq!(
+            parse(&["--repo", "/home/you/project"]),
+            CliCommand::OpenRepo("/home/you/project".to_string())
+        );
+        assert_eq!(
+            parse(&["--repo=/home/you/project"]),
+            CliCommand::OpenRepo("/home/you/project".to_string())
+        );
+    }
+
+    /// With `--remote` the path is on the far machine, and it is the remote window that opens
+    /// on it rather than one of this machine.
+    #[test]
+    fn parse_repo_with_remote_as_a_path_on_that_machine() {
+        assert_eq!(
+            parse(&["--remote", "dev-box", "--repo", "/home/you/project"]),
+            CliCommand::Review {
+                target: ReviewTarget::WorkingTree,
+                logs: false,
+                frontend: Frontend::Remote {
+                    target: "dev-box".to_string(),
+                    repo_path: Some("/home/you/project".to_string()),
+                },
+            }
+        );
+    }
+
+    /// A repo to open is the whole of what that window was asked for, so a review target
+    /// beside it is a mistake rather than something to narrow it to.
+    #[test]
+    fn a_repo_to_open_takes_nothing_else() {
+        let error = parse_cli_args(
+            vec!["--repo".to_string(), "/repo".to_string(), "src".to_string()],
+            Frame::Review,
+        )
+        .expect_err("expected a review target beside --repo to be rejected");
+
+        assert!(error.to_string().contains("takes nothing else"));
     }
 
     #[test]

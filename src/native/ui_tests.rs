@@ -386,6 +386,8 @@ fn quitting_with_a_shell_still_running_asks_first() {
     // otherwise what is on screen afterwards says nothing about which quit put it there.
     let wipe = Arc::new(AtomicBool::new(false));
     let wipe_in_ui = Arc::clone(&wipe);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1300.0, 820.0))
         .build_ui(move |ui| {
@@ -393,6 +395,13 @@ fn quitting_with_a_shell_still_running_asks_first() {
                 app.model.toasts.clear();
             }
             app.draw(ui);
+            // Both halves of what the warning needs: an open window to draw it, and a shell
+            // that is still running for it to be about.
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.running_shells() == 1,
+                Ordering::Relaxed,
+            );
             *warnings_in_ui.lock().expect("poisoned") = app
                 .model
                 .toasts
@@ -400,6 +409,18 @@ fn quitting_with_a_shell_still_running_asks_first() {
                 .map(|toast| toast.text.clone())
                 .collect();
         });
+
+    // The session opens on a worker thread, and a window still on its opening screen draws
+    // nothing that could answer a quit: the warning is the open window's.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the window should have opened on the review, with its shell running"
+    );
     harness.run_steps(3);
 
     let close_requested = |harness: &mut Harness<'_>| {

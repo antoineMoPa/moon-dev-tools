@@ -35,6 +35,8 @@ pub(crate) enum CommandAction {
     InstallLaunchers,
     /// Another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
+    /// Start this program again on the repo this window is on, and close this window.
+    RestartWindow,
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
     OpenFile,
     /// Split the frame the keyboard is in against this side, with a shell in the new half.
@@ -138,6 +140,18 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: (*frame == app.frame()).then(|| bindings::chord_of(Action::NewWindow)).flatten(),
         });
     }
+
+    // Starting again is how a window picks up a rebuilt executable: the one it is running is
+    // the one it started with. On macOS this is the Window menu's Restart.
+    commands.push(Command {
+        title: "restart window".to_string(),
+        description: format!(
+            "Start {} again on this repo, and close this window",
+            app.frame().program()
+        ),
+        action: CommandAction::RestartWindow,
+        shortcut: None,
+    });
 
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.

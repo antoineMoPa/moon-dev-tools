@@ -17,6 +17,8 @@ pub(crate) enum MenuAction {
     CloseTab,
     /// Open another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
+    /// Start this program again on the repo this window is on, and close this window.
+    RestartWindow,
     InstallLaunchers,
 }
 
@@ -44,6 +46,7 @@ mod platform {
         close_tab: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
+        restart_window: MenuId,
         install_launchers: MenuId,
     }
 
@@ -162,12 +165,19 @@ mod platform {
                 })
                 .collect();
 
+            // A window is a process, so the executable it is running is the one it started
+            // with: a rebuilt one is only picked up by starting again. Restart does that
+            // without a trip to the terminal — the new instance opens on this window's repo.
+            let restart_window = MenuItem::new("Restart", true, None);
+
             let window_menu = Submenu::new("Window", true);
             for (item, _) in &new_windows {
                 window_menu.append(item).ok()?;
             }
             window_menu
                 .append_items(&[
+                    &PredefinedMenuItem::separator(),
+                    &restart_window,
                     &PredefinedMenuItem::separator(),
                     &new_tab,
                     &close_tab,
@@ -193,6 +203,7 @@ mod platform {
                     .iter()
                     .map(|(item, frame)| (item.id().clone(), *frame))
                     .collect(),
+                restart_window: restart_window.id().clone(),
                 install_launchers: install_launchers.id().clone(),
             })
         }
@@ -213,6 +224,8 @@ mod platform {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
+                } else if event.id == self.restart_window {
+                    MenuAction::RestartWindow
                 } else if event.id == self.install_launchers {
                     MenuAction::InstallLaunchers
                 } else if let Some((_, frame)) = self

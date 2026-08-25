@@ -21,6 +21,7 @@ use crate::{
         model::{Model, Stage, ToastKind, hash_of},
         palette::{self, CommandAction},
         panes::{OpenPaneRequest, Pane, PaneKind},
+        programs::Opens,
         review::diff::{DiffLine, build_diff_lines},
         tasks::Tasks,
         theme::{self, Palette, SMALL_SIZE, ThemeMode},
@@ -509,6 +510,7 @@ impl App {
             CommandAction::OpenInBrowser => self.open_in_browser(),
             CommandAction::InstallLaunchers => self.install_launchers(),
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
+            CommandAction::RestartWindow => self.restart_window(ctx),
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
             CommandAction::Split(side) => self.split_frame(side),
         }
@@ -529,20 +531,62 @@ impl App {
             return;
         };
 
-        let target = self.backend().connect_target();
-        let launcher = crate::native::launchers::installed_launcher(frame);
-        let spawned = crate::native::programs::new_window_command(
-            &executable,
-            launcher.as_deref(),
-            target.as_deref(),
-        )
-        .spawn();
-        if let Err(error) = spawned {
+        if let Err(error) = self.start_window(frame, &executable, Opens::LaunchScreen) {
             self.model.error(format!(
                 "could not open a {} window: {error}",
                 frame.display_name()
             ));
         }
+    }
+
+    /// Start this program again on the repo this window is on, and close this window once the
+    /// new one is on its way.
+    ///
+    /// A window runs the executable it was started with, so a rebuilt one only reaches the
+    /// screen through a second process. The new instance is started first: a window that
+    /// closed on a failed spawn would leave the user with nothing.
+    fn restart_window(&mut self, ctx: &egui::Context) {
+        let frame = self.frame;
+        let Some(executable) = crate::native::programs::executable_for(frame) else {
+            self.model.error(format!(
+                "{} is no longer installed beside this window",
+                frame.program()
+            ));
+            return;
+        };
+
+        // Without a project the window is on its launch screen, and that is where it comes
+        // back to.
+        let project_path = self.model.project_path.clone();
+        let opens = match &project_path {
+            Some(path) => Opens::Repo(path),
+            None => Opens::LaunchScreen,
+        };
+        match self.start_window(frame, &executable, opens) {
+            Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Err(error) => self
+                .model
+                .error(format!("could not restart this window: {error}")),
+        }
+    }
+
+    /// Start another process of `frame`, against the same machine this window reads.
+    fn start_window(
+        &self,
+        frame: crate::cli::Frame,
+        executable: &std::path::Path,
+        opens: Opens<'_>,
+    ) -> std::io::Result<()> {
+        let target = self.backend().connect_target();
+        let launcher = crate::native::launchers::installed_launcher(frame);
+        crate::native::programs::window_command(
+            executable,
+            launcher.as_deref(),
+            target.as_deref(),
+            opens,
+        )
+        .spawn()
+        .map(|_| ())
     }
 
     /// Write the launchers the OS lists, and say what landed where.
@@ -1208,6 +1252,7 @@ impl App {
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
                 MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
+                MenuAction::RestartWindow => CommandAction::RestartWindow,
                 MenuAction::OpenFile => CommandAction::OpenFile,
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
