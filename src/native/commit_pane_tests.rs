@@ -27,7 +27,7 @@ fn the_commit_button_opens_a_pane_beside_the_review() {
     let app = app_for(&fixture.root, ThemeMode::Dark);
     let mut harness = harness_with_loaded_review(app, ThemeMode::Dark);
 
-    harness.get_by_label("commit…").click();
+    harness.get_by_label("[commit]").click();
     harness.run_steps(5);
 
     // The commit button is the pane's own, and unlike push it is there from the first frame:
@@ -110,7 +110,7 @@ fn committing_from_the_pane_commits_what_is_staged() {
     step_until(&mut harness, &review_open);
     harness.run_steps(3);
 
-    harness.get_by_label("commit…").click();
+    harness.get_by_label("[commit]").click();
     let commit_pane_open = {
         let panes = Arc::clone(&panes_open);
         move || panes.lock().expect("expected the lock").contains(&PaneKind::Commit)
@@ -227,8 +227,8 @@ fn the_commit_pane_draws_what_it_would_commit() {
     let mut opened = false;
     while Instant::now() < deadline {
         harness.step();
-        if !opened && harness.query_by_label("commit…").is_some() {
-            harness.get_by_label("commit…").click();
+        if !opened && harness.query_by_label("[commit]").is_some() {
+            harness.get_by_label("[commit]").click();
             opened = true;
         }
         if staged_count
