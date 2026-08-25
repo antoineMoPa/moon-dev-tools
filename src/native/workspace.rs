@@ -502,9 +502,9 @@ impl App {
         self.spawn_terminal(session_id, None, placement);
     }
 
-    /// The review a shell asked for from this frame starts in: the review (or reviewed file)
-    /// in front of the frame, else wherever the last shell was started, else the review the
-    /// window was launched on.
+    /// The review a shell asked for from this frame starts in: the review the pane in front of
+    /// the frame belongs to — a review, a file of it, or its commit pane — else wherever the
+    /// last shell was started, else the review the window was launched on.
     pub(crate) fn shell_session_for(&self, frame: FrameId) -> String {
         let showing = self
             .model
@@ -512,7 +512,12 @@ impl App {
             .frame(frame)
             .and_then(egui_frames::Frame::active_pane)
             .and_then(|pane| self.model.layout.pane(pane));
-        if let Some(Pane::Review { session_id, .. } | Pane::File { session_id, .. }) = showing {
+        if let Some(
+            Pane::Review { session_id, .. }
+            | Pane::File { session_id, .. }
+            | Pane::Commit { session_id },
+        ) = showing
+        {
             return session_id.clone();
         }
         self.model
@@ -693,12 +698,22 @@ impl App {
     /// How many shells are still going, which is what quitting would take down with it. A
     /// commit or a push in flight counts: a passphrase half typed is work in progress like any
     /// other, and it is the same warning that is owed for it.
+    ///
+    /// A commit pane's shell stays on after its command is done, to carry on working in — so it
+    /// counts while its command is going rather than for as long as it is open.
     pub(crate) fn running_shells(&self) -> usize {
-        self.terminals
+        let workspace_shells = self
+            .terminals
             .values()
-            .chain(self.commit_terminals.values())
             .filter(|terminal| !terminal.has_exited())
-            .count()
+            .count();
+        let running_commands = self
+            .model
+            .commit_panes
+            .values()
+            .filter(|pane| pane.is_running())
+            .count();
+        workspace_shells + running_commands
     }
 }
 

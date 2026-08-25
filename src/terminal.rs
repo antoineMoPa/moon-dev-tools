@@ -43,9 +43,6 @@ const TYPE_AHEAD_POLL: std::time::Duration = std::time::Duration::from_millis(20
 /// How much shell output we keep so a reopened tab can replay what it missed.
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 const BROADCAST_CAPACITY: usize = 256;
-/// Stands in for the exit code of a command whose ending could not be read at all — the pty
-/// was reaped by something else. Treated as a failure, which is what not knowing means here.
-const EXIT_CODE_UNKNOWN: i32 = -1;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -71,16 +68,14 @@ pub(crate) struct TerminalList {
     terminal_ids: Vec<String>,
 }
 
-/// What runs in a pty: the user's login shell, one of the agents, or a program moonreview
-/// starts on the user's behalf — `git`, so that a signed commit's pinentry has a terminal to
-/// ask on.
+/// What runs in a pty: the user's login shell, or one of the agents.
+///
+/// A commit run is a login shell too, with the command typed into it — see
+/// [`crate::committing::start_commit_run`] for why it is a shell rather than `git` itself.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum TerminalProgram {
     LoginShell,
     Agent(AgentKind),
-    /// Started by name with [`TerminalSpec::args`] as its argv. There is no shell in between,
-    /// so nothing here is quoted or word-split.
-    Command(String),
 }
 
 impl TerminalProgram {
@@ -113,12 +108,15 @@ pub(crate) struct TerminalSpec {
     /// The task this shell belongs to, if any. An owned shell is the task's to list and to
     /// close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
-    /// Text typed into the shell once the program has come up, as if the user had typed it.
+    /// Text typed into the shell once the program has come up, as if the user had typed it —
+    /// exactly as given, down to whether it ends in a return.
     ///
-    /// Never ends in a newline, and nothing here sends one: what this does is leave something
-    /// written in an agent's box for the person to send. A write that lands too early — while
-    /// the agent is still asking whether it trusts the folder — is lost rather than acted on,
-    /// which is what makes typing at a program that has not said it is ready acceptable.
+    /// An agent's opening line ends without one: what that does is leave something written in
+    /// the agent's box for the person to send. A commit run's line ends with `\r`, because
+    /// there is nobody to press return on a command the pane was asked to run. A write that
+    /// lands too early — while the agent is still asking whether it trusts the folder — is
+    /// lost rather than acted on, which is what makes typing at a program that has not said it
+    /// is ready acceptable.
     pub(crate) type_ahead: Option<String>,
 }
 
@@ -250,9 +248,6 @@ pub(crate) struct OwnedShell {
 
 pub(crate) struct TerminalRegistry {
     sessions: Mutex<HashMap<String, Arc<TerminalSession>>>,
-    /// How a [`TerminalProgram::Command`] run ended, kept after its session is gone: whoever
-    /// started it asks once the pty closes, which is after the session has been reaped.
-    outcomes: Mutex<HashMap<String, i32>>,
     /// Tells this run of the server's shells from a previous one's. A task writes down the
     /// shell its agent is in, and that record outlives the process, so a counter starting
     /// over at zero would let a new shell answer to an old task's name.
@@ -265,7 +260,6 @@ impl TerminalRegistry {
     pub(crate) fn new(last_activity: Arc<Mutex<Instant>>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
-            outcomes: Mutex::new(HashMap::new()),
             run: crate::moontasks::store::new_uuid()[..8].to_string(),
             next_id: AtomicU64::new(0),
             last_activity,
@@ -328,13 +322,6 @@ impl TerminalRegistry {
         ids
     }
 
-    /// The exit code of a command run that has ended, taken rather than read: it is asked for
-    /// once, by the pane that started it, and answering twice would have it act on the same
-    /// ending again. `None` means the command is still going.
-    pub(crate) fn take_outcome(&self, terminal_id: &str) -> Option<i32> {
-        self.outcomes.lock().unwrap().remove(terminal_id)
-    }
-
     /// Whether this shell is still one the server has, which is what tells a task's recorded
     /// agent run from one that ended — or that died with a previous run of the server.
     pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
@@ -377,7 +364,6 @@ impl TerminalRegistry {
             .collect();
         for terminal_id in owned {
             self.remove(&terminal_id);
-            self.outcomes.lock().unwrap().remove(&terminal_id);
         }
     }
 
@@ -411,7 +397,6 @@ impl TerminalRegistry {
             TerminalProgram::Agent(AgentKind::Claude) => CommandBuilder::new("claude"),
             TerminalProgram::Agent(AgentKind::Codex) => CommandBuilder::new("codex"),
             TerminalProgram::Agent(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
-            TerminalProgram::Command(program) => CommandBuilder::new(program),
         };
         for argument in &spec.args {
             command.arg(argument);
@@ -492,21 +477,6 @@ impl TerminalRegistry {
             // frontends close the tab of a shell marked exited. So its session is kept, with a
             // notice saying how it ended, until the user closes it themselves. A shell taken
             // out of the registry already was ended on purpose, and has nothing to explain.
-            // A command moonreview ran on the user's behalf is answered for, because the pane
-            // that started it acts on how it ended rather than only on what it printed.
-            if let TerminalProgram::Command(_) = session.program {
-                let code = session
-                    .child
-                    .lock()
-                    .unwrap()
-                    .wait()
-                    .map_or(EXIT_CODE_UNKNOWN, |status| status.exit_code() as i32);
-                registry
-                    .outcomes
-                    .lock()
-                    .unwrap()
-                    .insert(reaped_id.clone(), code);
-            }
             match failure_notice(&session) {
                 Some(notice) if registry.is_live(&reaped_id) => {
                     session.child_ended.store(true, Ordering::Relaxed);

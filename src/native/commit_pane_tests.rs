@@ -157,6 +157,22 @@ fn committing_from_the_pane_commits_what_is_staged() {
     };
     step_until(&mut harness, &cleared);
     assert!(cleared(), "the message should have been cleared");
+
+    // The fixture staged the whole working tree, so the commit took all of it: the review has
+    // nothing left to show and closes itself, leaving the commit pane to push from.
+    let review_closed = {
+        let panes = Arc::clone(&panes_open);
+        move || {
+            let panes = panes.lock().expect("expected the lock");
+            !panes.contains(&PaneKind::Review) && panes.contains(&PaneKind::Commit)
+        }
+    };
+    step_until(&mut harness, &review_closed);
+    assert!(
+        review_closed(),
+        "the review should have closed once its whole diff was committed, panes are {:?}",
+        panes_open.lock().expect("expected the lock")
+    );
 }
 
 /// What the pane looks like with something staged and a message written: the whole point is

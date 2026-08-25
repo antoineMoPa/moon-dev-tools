@@ -7,47 +7,36 @@ use super::*;
 /// A commit is signed, gpg asks for the passphrase on a terminal, and this is the one it
 /// is told to ask on. Without it the commit fails rather than prompting.
 #[test]
-fn a_command_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
+fn a_commit_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
     let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
     let terminal_id = registry
         .spawn(TerminalSpec {
             cwd: std::env::temp_dir(),
-            program: TerminalProgram::Command("sh".to_string()),
-            args: vec!["-c".to_string(), "printf %s \"$GPG_TTY\"".to_string()],
+            program: TerminalProgram::LoginShell,
+            args: Vec::new(),
             env: Vec::new(),
             owner: Some("commit:test".to_string()),
-            type_ahead: None,
+            type_ahead: Some("printf %s \"[$GPG_TTY]\"\r".to_string()),
         })
-        .expect("expected the command to start");
+        .expect("expected the shell to start");
     let session = registry.get(&terminal_id).expect("expected the session");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut printed = String::new();
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
-        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
-            .trim()
-            .to_string();
-        if !printed.is_empty() {
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+        if printed.contains("[/dev/") {
             break;
         }
     }
 
     assert!(
-        printed.starts_with("/dev/"),
-        "the command should have been told its own tty, printed {printed:?}"
+        printed.contains("[/dev/"),
+        "the shell should have been told its own tty, printed {printed:?}"
     );
-    // A run moonreview started on the user's behalf is answered for once it ends, and is
-    // none of the workspace's shells.
-    let ending = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < ending && registry.is_live(&terminal_id) {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert_eq!(
-        registry.take_outcome(&terminal_id),
-        Some(0),
-        "the command ended well and should have said so"
-    );
+    // A run moonreview started on the user's behalf belongs to the review that started it,
+    // and is none of the workspace's shells.
     assert!(
         !registry.terminal_ids().contains(&terminal_id),
         "a commit's own pty is not one of the workspace's shells"

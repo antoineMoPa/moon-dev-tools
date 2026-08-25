@@ -29,19 +29,27 @@ const RUN_TERMINAL_RANGE: std::ops::RangeInclusive<f32> = 90.0..=640.0;
 /// How many lines of message the box shows before it scrolls: a subject, a blank line, and a
 /// couple of lines of body.
 const MESSAGE_ROWS: usize = 5;
-/// How many times the pane asks how a run ended before giving up on being told.
+/// How often the pane asks how the run is going.
 ///
-/// The answer is recorded before the pty closes, so the first ask finds it. This is only a
-/// stop for the case where it cannot be answered at all — a server that went away mid-run —
-/// so that the pane says the run is over rather than waiting on it forever.
-const OUTCOME_ASKS: u8 = 30;
+/// The shell a run goes in outlives the command it was given — that is the point of it — so
+/// there is no pty closing to be woken by. The command writes down how it went, and this is
+/// how often that is looked for.
+const OUTCOME_ASK_INTERVAL: Duration = Duration::from_millis(300);
 /// How often an open commit pane rereads what is staged. Staging happens in the review pane
 /// beside it, which has no way to tell this one, so it looks again on the review's own poll
 /// cadence rather than being told.
 const STATE_POLL_INTERVAL: Duration = Duration::from_millis(1000);
 
-/// What the pane says about a run, decided where the run starts rather than read off the
-/// action later.
+/// Which of the three things a run is. What the pane does when one ends differs by this, and
+/// only by this: what it says, what it clears, and what it offers next.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Commit,
+    Push,
+    OpenPr,
+}
+
+/// What the pane says about a run.
 #[derive(Clone, Copy)]
 struct RunWords {
     running: &'static str,
@@ -49,17 +57,52 @@ struct RunWords {
     failed: &'static str,
 }
 
-const COMMIT_WORDS: RunWords = RunWords {
-    running: "committing…",
-    worked: "committed",
-    failed: "git would not commit — see below",
-};
+/// Stands in for the status of a run the server could not be asked about at all. Reads as a
+/// failure, which is what not being able to find out means here.
+const OUTCOME_UNREAD: i32 = -1;
 
-const PUSH_WORDS: RunWords = RunWords {
-    running: "pushing…",
-    worked: "pushed",
-    failed: "git would not push — see below",
-};
+const MAP_RUN_KIND_TO_WORDS: [(RunKind, RunWords); 3] = [
+    (
+        RunKind::Commit,
+        RunWords {
+            running: "committing…",
+            worked: "committed",
+            failed: "git would not commit — see below",
+        },
+    ),
+    (
+        RunKind::Push,
+        RunWords {
+            running: "pushing…",
+            worked: "pushed",
+            failed: "git would not push — see below",
+        },
+    ),
+    (
+        RunKind::OpenPr,
+        RunWords {
+            running: "opening the pull request…",
+            worked: "pull request opened in the browser",
+            failed: "gh would not open a pull request — see below",
+        },
+    ),
+];
+
+fn words_for(kind: RunKind) -> RunWords {
+    MAP_RUN_KIND_TO_WORDS
+        .iter()
+        .find(|(known, _)| *known == kind)
+        .map(|(_, words)| *words)
+        .expect("every run kind has words")
+}
+
+fn kind_of(action: &CommitAction) -> RunKind {
+    match action {
+        CommitAction::Commit { .. } => RunKind::Commit,
+        CommitAction::Push => RunKind::Push,
+        CommitAction::OpenPr => RunKind::OpenPr,
+    }
+}
 
 /// One review's commit pane. Kept per review rather than per pane, so closing the tab does not
 /// throw away a message that was half written.
@@ -76,6 +119,9 @@ pub(crate) struct CommitPane {
     /// The last run, kept after it ends so its output stays on screen until the next one.
     run: Option<CommitRun>,
     error: Option<String>,
+    /// Set when a commit has just worked, and answered by the next reading of the repo: it is
+    /// that reading which knows whether the review beside this pane has anything left to show.
+    closes_review: bool,
 }
 
 impl CommitPane {
@@ -87,6 +133,7 @@ impl CommitPane {
             last_read: None,
             run: None,
             error: None,
+            closes_review: false,
         }
     }
 
@@ -97,24 +144,20 @@ impl CommitPane {
         self.state.as_ref().map(|state| state.staged_files.len())
     }
 
-    /// Whether git is going right now, which is when the buttons are off.
-    fn is_running(&self) -> bool {
-        self.run
-            .as_ref()
-            .is_some_and(|run| run.exit_code.is_none() && run.asks < OUTCOME_ASKS)
+    /// Whether the command is going right now, which is when the buttons are off — and what
+    /// makes this pane's shell work in progress for the warning quitting owes.
+    pub(crate) fn is_running(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| run.exit_code.is_none())
     }
 }
 
 struct CommitRun {
     terminal_id: String,
-    words: RunWords,
-    /// Whether a run that worked leaves the message behind. A commit's message has been used
-    /// up; a push never had one.
-    clears_message: bool,
-    /// `None` while git is going, the exit code once it is over.
+    kind: RunKind,
+    /// `None` while the command is going, the status it ended on once it is over.
     exit_code: Option<i32>,
-    /// How many times the ending has been asked for — see [`OUTCOME_ASKS`].
-    asks: u8,
+    /// When the pane last asked how it went — see [`OUTCOME_ASK_INTERVAL`].
+    last_ask: Option<Instant>,
 }
 
 impl CommitRun {
@@ -147,6 +190,12 @@ impl App {
     /// Read what git would commit and where a push would go, when what the pane is showing is
     /// out of date.
     fn refresh_commit_state(&mut self, session_id: &str) {
+        // A read is already on its way. Letting this one past would mark the pane read and
+        // wait out the poll interval for an answer that is never spawned.
+        let key = format!("commit-state:{session_id}");
+        if self.tasks.is_busy(&key) {
+            return;
+        }
         let pane = self.commit_pane(session_id);
         let due = pane
             .last_read
@@ -156,22 +205,38 @@ impl App {
         }
         pane.stale = false;
         pane.last_read = Some(Instant::now());
+        // Read now rather than in the apply below, so only a reading that started after the
+        // commit gets to answer for it. One that was already in flight predates the commit and
+        // cannot say what it left behind.
+        let answers_a_commit = pane.closes_review;
 
         let for_call = session_id.to_string();
         let for_apply = session_id.to_string();
         self.tasks.spawn_keyed(
-            Some(format!("commit-state:{session_id}")),
+            Some(key),
             move |backend| backend.commit_state(&for_call),
             move |model, result| {
                 let Some(pane) = model.commit_panes.get_mut(&for_apply) else {
                     return;
                 };
+                let mut review_is_over = false;
                 match result {
                     Ok(state) => {
+                        // A commit that took the whole of the working tree leaves nothing to
+                        // review; one that left changes behind leaves them to be reviewed.
+                        review_is_over = answers_a_commit
+                            && state.staged_files.is_empty()
+                            && state.unstaged_count == 0;
                         pane.state = Some(state);
                         pane.error = None;
                     }
                     Err(error) => pane.error = Some(format!("{error}")),
+                }
+                if answers_a_commit {
+                    pane.closes_review = false;
+                }
+                if review_is_over {
+                    model.close_review_panes(&for_apply);
                 }
             },
         );
@@ -199,9 +264,9 @@ impl App {
         );
     }
 
-    /// Start `git` on one action, and attach the pane to the pty it runs in.
-    fn start_commit_run(&mut self, session_id: &str, action: CommitAction, words: RunWords) {
-        let clears_message = matches!(action, CommitAction::Commit { .. });
+    /// Start one action's program, and attach the pane to the pty it runs in.
+    fn start_commit_run(&mut self, session_id: &str, action: CommitAction) {
+        let kind = kind_of(&action);
         // The run before this one has had its say; its pty goes with its pane's next run.
         if let Some(previous) = self.commit_pane(session_id).run.take() {
             self.commit_terminals.remove(&previous.terminal_id);
@@ -227,10 +292,9 @@ impl App {
                     Ok((terminal_id, attachment)) => {
                         pane.run = Some(CommitRun {
                             terminal_id: terminal_id.clone(),
-                            words,
-                            clears_message,
+                            kind,
                             exit_code: None,
-                            asks: 0,
+                            last_ask: None,
                         });
                         if let Ok(mut inbox) = inbox.lock() {
                             inbox.push(AttachedTerminal {
@@ -246,30 +310,28 @@ impl App {
         );
     }
 
-    /// Notice a run that has ended, and ask how it went. What git printed stays on screen
-    /// either way; what changes is what the pane does next.
+    /// Ask how the run is going. What the command printed stays on the shell either way; what
+    /// changes is what the pane does next.
     fn poll_commit_run(&mut self, session_id: &str) {
-        let Some(pane) = self.model.commit_panes.get(session_id) else {
-            return;
-        };
-        let Some(run) = &pane.run else {
-            return;
-        };
-        if run.exit_code.is_some() || run.asks >= OUTCOME_ASKS {
-            return;
-        }
-        let ended = self
-            .commit_terminals
-            .get(&run.terminal_id)
-            .is_some_and(egui_tty::Terminal::has_exited);
-        if !ended {
-            return;
-        }
-
         let key = format!("commit-outcome:{session_id}");
         if self.tasks.is_busy(&key) {
             return;
         }
+        let Some(pane) = self.model.commit_panes.get_mut(session_id) else {
+            return;
+        };
+        let Some(run) = &mut pane.run else {
+            return;
+        };
+        if run.exit_code.is_some()
+            || run
+                .last_ask
+                .is_some_and(|last| last.elapsed() < OUTCOME_ASK_INTERVAL)
+        {
+            return;
+        }
+        run.last_ask = Some(Instant::now());
+
         let for_call = session_id.to_string();
         let for_apply = session_id.to_string();
         let terminal_id = run.terminal_id.clone();
@@ -284,20 +346,22 @@ impl App {
                 let Some(run) = &mut pane.run else {
                     return;
                 };
-                run.asks = run.asks.saturating_add(1);
                 match result {
                     Ok(None) => return,
                     Ok(Some(exit_code)) => run.exit_code = Some(exit_code),
                     Err(error) => {
+                        // Nothing more is going to answer for this run, and a pane that waited
+                        // on it forever would never let the buttons back on.
                         pane.error = Some(format!("{error}"));
-                        run.asks = OUTCOME_ASKS;
+                        run.exit_code = Some(OUTCOME_UNREAD);
                     }
                 }
 
                 // A run that worked says so beside the buttons, and the staged listing
                 // emptying says it louder; a toast on top of both would be a third telling.
-                if run.worked() && run.clears_message {
+                if run.worked() && run.kind == RunKind::Commit {
                     pane.message.clear();
+                    pane.closes_review = true;
                 }
                 // Either way the repo has moved on: a refused commit may still have run a
                 // hook that changed the tree.
@@ -344,11 +408,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     let pane = &app.model.commit_panes[session_id];
     let running = starting || pane.is_running();
     let run_terminal = pane.run.as_ref().map(|run| run.terminal_id.clone());
-    let run_note = pane.run.as_ref().map(|run| match run.exit_code {
-        None => (run.words.running, palette.muted),
-        Some(0) => (run.words.worked, palette.added),
-        Some(_) => (run.words.failed, palette.warn),
+    let run_note = pane.run.as_ref().map(|run| {
+        let words = words_for(run.kind);
+        match run.exit_code {
+            None => (words.running, palette.muted),
+            Some(0) => (words.worked, palette.added),
+            Some(_) => (words.failed, palette.warn),
+        }
     });
+    // Once the branch is sent the pane has done what it is for, and the review it was
+    // committing has already closed itself. Offering the way out here saves a trip to the tab.
+    let sent = pane
+        .run
+        .as_ref()
+        .is_some_and(|run| run.worked() && matches!(run.kind, RunKind::Push | RunKind::OpenPr));
     let error = pane.error.clone();
     let state = pane.state.clone();
     let mut message = pane.message.clone();
@@ -417,7 +490,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                         CommitAction::Commit {
                             message: message.clone(),
                         },
-                        COMMIT_WORDS,
                     );
                 }
                 if !can_commit && !running {
@@ -426,7 +498,26 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
 
                 if widgets::clickable(ui.add_enabled(!running, egui::Button::new("push"))).clicked()
                 {
-                    app.start_commit_run(session_id, CommitAction::Push, PUSH_WORDS);
+                    app.start_commit_run(session_id, CommitAction::Push);
+                }
+
+                // Only where `gh` is installed: without it there is no pull request to open,
+                // and a button that could never work is worse than no button.
+                let gh_installed = state.as_ref().is_some_and(|state| state.gh_installed);
+                if gh_installed
+                    && widgets::clickable(ui.add_enabled(!running, egui::Button::new("open PR")))
+                        .on_hover_text("gh pr create -w — fills the form in the browser")
+                        .clicked()
+                {
+                    app.start_commit_run(session_id, CommitAction::OpenPr);
+                }
+
+                if sent
+                    && widgets::clickable(ui.button("close"))
+                        .on_hover_text("close this commit pane")
+                        .clicked()
+                {
+                    app.pending_close = Some(pane_id);
                 }
 
                 if let Some((note, color)) = run_note {

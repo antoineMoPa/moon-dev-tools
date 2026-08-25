@@ -459,6 +459,21 @@ impl Model {
         self.reviews.get(session_id)
     }
 
+    /// Close every pane reviewing this session, which is what a commit that took the whole of
+    /// the working tree leaves behind: a diff with nothing in it. The review's own state stays,
+    /// so opening it again picks up where it left off.
+    pub(crate) fn close_review_panes(&mut self, session_id: &str) {
+        let reviewing: Vec<_> = self
+            .layout
+            .panes()
+            .filter(|(_, pane)| pane.reviews(session_id))
+            .map(|(pane_id, _)| pane_id)
+            .collect();
+        for pane_id in reviewing {
+            self.layout.close_pane(pane_id);
+        }
+    }
+
     pub(crate) fn toast(&mut self, kind: ToastKind, text: impl Into<String>) {
         let text = text.into();
         // A repeated message means the same thing; refresh it instead of stacking copies.

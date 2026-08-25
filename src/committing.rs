@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{api::FileChangeKind, git};
@@ -43,15 +43,56 @@ pub(crate) struct CommitState {
     /// How many files have changes that are not staged, untracked ones included. What "stage
     /// all" would take in.
     pub(crate) unstaged_count: usize,
+    /// Whether `gh` is installed on this machine, which is what the pull request button needs:
+    /// without it there is nothing to offer.
+    pub(crate) gh_installed: bool,
 }
 
-/// What the pane can ask for. The message is carried here rather than written to a file: it
-/// goes to git as one argument, so a multi-line message arrives as it was written.
+/// What the pane can ask for.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub(crate) enum CommitAction {
     Commit { message: String },
     Push,
+    /// Open the pull request for the pushed branch, in the browser, through `gh`.
+    OpenPr,
+}
+
+/// The environment the run's shell is given: where to read the commit message from, and where
+/// to write down how the command went. Both are named rather than spelled out in the line that
+/// is typed, so what the user reads on that line is the command they would have typed.
+const MESSAGE_VARIABLE: &str = "MOONREVIEW_RUN_MESSAGE";
+const STATUS_VARIABLE: &str = "MOONREVIEW_RUN_STATUS";
+
+/// The two files one review's run uses. They live in the temp dir rather than in the repo, so
+/// nothing a run needs can end up staged by the next one; a review runs one command at a time,
+/// so its own id is enough to name them apart from every other review's.
+fn run_message_path(session_id: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("moonreview-run-{session_id}.message"))
+}
+
+fn run_status_path(session_id: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("moonreview-run-{session_id}.status"))
+}
+
+/// What the pane is told when the shell a run was going in disappeared before the command said
+/// how it went — the user closed it, or it was killed.
+const SHELL_WENT_AWAY: i32 = -1;
+
+/// One word of a shell line, quoted so the shell reads it as the one word it is.
+///
+/// Only the branch name needs this: git allows `$`, quotes and semicolons in a branch name,
+/// and this line is read by a shell. The commit message never comes near it — it goes in a
+/// file that `MESSAGE_VARIABLE` names.
+fn quoted_for_shell(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|letter| letter.is_ascii_alphanumeric() || "-_./=+@".contains(letter));
+    if plain {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', r"'\''"))
 }
 
 /// `pathspec` is what the review is pointed at, when it is pointed at part of the repo: the
@@ -72,37 +113,44 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
         behind,
         staged_files,
         unstaged_count,
+        gh_installed: git::command_exists("gh"),
     })
 }
 
-/// The argv one action runs as, or why it cannot be run at all.
-pub(crate) fn command_for(action: &CommitAction, state: &CommitState) -> Result<Vec<String>> {
+/// The line one action is run as, or why it cannot be run at all.
+///
+/// A line for a shell rather than an argv, because the shell is the point: it is still there
+/// when the command is done, with the output above it, for whoever wants to carry on in the
+/// repo from where the run left off.
+pub(crate) fn command_for(action: &CommitAction, state: &CommitState) -> Result<String> {
     match action {
-        CommitAction::Commit { message } => {
-            if state.staged_files.is_empty() {
-                bail!("nothing is staged to commit");
-            }
-            if message.trim().is_empty() {
-                bail!("a commit needs a message");
-            }
-            Ok(vec![
-                "commit".to_string(),
-                "-m".to_string(),
-                message.clone(),
-            ])
+        CommitAction::Commit { .. } if state.staged_files.is_empty() => {
+            bail!("nothing is staged to commit")
         }
+        CommitAction::Commit { message } if message.trim().is_empty() => {
+            bail!("a commit needs a message")
+        }
+        // The message goes in a file rather than on the line: it is the one thing a person
+        // writes here, it runs to several lines, and a shell would have to be told to leave
+        // every character of it alone.
+        CommitAction::Commit { .. } => Ok(format!("git commit -F \"${MESSAGE_VARIABLE}\"")),
         // A branch with no upstream gets one from the push that first sends it, which is the
         // only thing the two pushes differ by.
         CommitAction::Push => match (&state.upstream_ref, &state.branch_name) {
-            (Some(_), _) => Ok(vec!["push".to_string()]),
-            (None, Some(branch)) => Ok(vec![
-                "push".to_string(),
-                "-u".to_string(),
-                "origin".to_string(),
-                branch.clone(),
-            ]),
+            (Some(_), _) => Ok("git push".to_string()),
+            (None, Some(branch)) => {
+                Ok(format!("git push -u origin {}", quoted_for_shell(branch)))
+            }
             (None, None) => bail!("HEAD is detached, so there is no branch to push"),
         },
+        // `-w` hands the filled-in form to the browser rather than asking for a title and a
+        // body in the pty: the description is written where the pull request is read.
+        CommitAction::OpenPr => {
+            if !state.gh_installed {
+                bail!("gh is not installed, so there is nothing to open a pull request with");
+            }
+            Ok("gh pr create -w".to_string())
+        }
     }
 }
 
@@ -198,11 +246,17 @@ fn repo_of(
     })
 }
 
-/// Start `git` on one action in a pty, and answer with the terminal it runs in.
+/// Start one action in a login shell in the repo, and answer with the terminal it runs in.
 ///
 /// A pty rather than a captured process because of signing: `gpg` asks for the passphrase
 /// through pinentry, and a terminal pinentry has nowhere to ask without one. The same goes for
 /// anything a hook, or a push over ssh, wants typed.
+///
+/// A login shell rather than the program itself because of what happens after: the shell is
+/// still there when the command is done, in the repo, with the output above it, so the pane's
+/// terminal is one to work in rather than a transcript to read. The shell has no exit code to
+/// report for the command it ran — it outlives it — so the line it is given writes that status
+/// down where [`commit_run_outcome`] reads it.
 pub(crate) fn start_commit_run(
     state: &crate::api::AppState,
     session_id: &str,
@@ -212,30 +266,75 @@ pub(crate) fn start_commit_run(
     let (repo_path, pathspec) = repo_of(state, session_id)?;
     let command = command_for(action, &read_commit_state(&repo_path, pathspec.as_deref())?)?;
 
-    // One run at a time per review: the pane shows one, and the last one's pty has nothing
+    // Whatever the last run left behind is not this run's answer, and a message left from a
+    // commit that is over must not be what the next one takes.
+    let message_path = run_message_path(session_id);
+    let status_path = run_status_path(session_id);
+    let _ = std::fs::remove_file(&status_path);
+    match action {
+        CommitAction::Commit { message } => std::fs::write(&message_path, message)
+            .with_context(|| format!("failed to write the commit message to {message_path:?}"))?,
+        _ => {
+            let _ = std::fs::remove_file(&message_path);
+        }
+    }
+
+    // One run at a time per review: the pane shows one, and the last one's shell has nothing
     // left to say once the next starts.
     let owner = run_owner(session_id);
     state.terminals.remove_owned_by(&owner);
 
     state.terminals.spawn(crate::terminal::TerminalSpec {
         cwd: repo_path,
-        program: crate::terminal::TerminalProgram::Command("git".to_string()),
-        args: command,
-        env: Vec::new(),
+        program: crate::terminal::TerminalProgram::LoginShell,
+        args: Vec::new(),
+        env: vec![
+            (
+                MESSAGE_VARIABLE.to_string(),
+                message_path.display().to_string(),
+            ),
+            (
+                STATUS_VARIABLE.to_string(),
+                status_path.display().to_string(),
+            ),
+        ],
         owner: Some(owner),
-        type_ahead: None,
+        type_ahead: Some(format!(
+            "{command} ; echo $? > \"${STATUS_VARIABLE}\"\r"
+        )),
     })
 }
 
-/// How a run ended: `None` while it is still going, the exit code once it is over. Asked for
-/// once — see [`crate::terminal::TerminalRegistry::take_outcome`].
+/// How a run ended: `None` while it is still going, the status the shell wrote down once it is
+/// over. Read once — the answer is taken away with it, so a pane that asks again is asking
+/// about the next run rather than being told about this one twice.
 pub(crate) fn commit_run_outcome(
     state: &crate::api::AppState,
     session_id: &str,
     terminal_id: &str,
 ) -> Result<Option<i32>> {
     crate::api::with_session(state, session_id, |_| Ok(()))?;
-    Ok(state.terminals.take_outcome(terminal_id))
+
+    let status_path = run_status_path(session_id);
+    // An empty file is `echo` caught halfway through writing it, which is still going.
+    let written = std::fs::read_to_string(&status_path).ok();
+    let Some(status) = written
+        .as_deref()
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+    else {
+        // A shell that is gone said all it is going to say. The command may well have worked,
+        // but nothing wrote that down, and the pane is owed an ending either way.
+        if written.is_none() && !state.terminals.is_live(terminal_id) {
+            return Ok(Some(SHELL_WENT_AWAY));
+        }
+        return Ok(None);
+    };
+
+    let exit_code = status.parse().unwrap_or(SHELL_WENT_AWAY);
+    let _ = std::fs::remove_file(&status_path);
+    let _ = std::fs::remove_file(run_message_path(session_id));
+    Ok(Some(exit_code))
 }
 
 #[cfg(test)]
@@ -249,6 +348,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             unstaged_count: 0,
+            gh_installed: true,
             staged_files: (0..staged)
                 .map(|index| StagedFile {
                     file_path: format!("file{index}.rs"),
@@ -259,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_hands_the_whole_message_over_as_one_argument() {
+    fn a_commit_reads_its_message_from_the_file_the_run_wrote_it_to() {
         let message = "subject\n\nand a body that mentions a \"quote\"";
         let command = command_for(
             &CommitAction::Commit {
@@ -269,7 +369,7 @@ mod tests {
         )
         .expect("expected a command");
 
-        assert_eq!(command, vec!["commit", "-m", message]);
+        assert_eq!(command, "git commit -F \"$MOONREVIEW_RUN_MESSAGE\"");
     }
 
     #[test]
@@ -304,7 +404,7 @@ mod tests {
         )
         .expect("expected a command");
 
-        assert_eq!(command, vec!["push"]);
+        assert_eq!(command, "git push");
     }
 
     #[test]
@@ -312,7 +412,7 @@ mod tests {
         let command = command_for(&CommitAction::Push, &state_with(None, Some("work"), 0))
             .expect("expected a command");
 
-        assert_eq!(command, vec!["push", "-u", "origin", "work"]);
+        assert_eq!(command, "git push -u origin work");
     }
 
     #[test]
@@ -320,6 +420,35 @@ mod tests {
         let refused = command_for(&CommitAction::Push, &state_with(None, None, 0));
 
         assert!(refused.is_err(), "there was no branch");
+    }
+
+    #[test]
+    fn a_branch_name_a_shell_would_read_as_more_than_a_word_is_quoted() {
+        let command = command_for(&CommitAction::Push, &state_with(None, Some("fix/$HOME'x"), 0))
+            .expect("expected a command");
+
+        assert_eq!(command, r"git push -u origin 'fix/$HOME'\''x'");
+    }
+
+    #[test]
+    fn the_pull_request_is_opened_in_the_browser_by_gh() {
+        let command = command_for(
+            &CommitAction::OpenPr,
+            &state_with(Some("origin/work"), Some("work"), 0),
+        )
+        .expect("expected a command");
+
+        assert_eq!(command, "gh pr create -w");
+    }
+
+    #[test]
+    fn a_pull_request_is_refused_where_gh_is_not_installed() {
+        let mut state = state_with(Some("origin/work"), Some("work"), 0);
+        state.gh_installed = false;
+
+        let refused = command_for(&CommitAction::OpenPr, &state);
+
+        assert!(refused.is_err(), "gh was not installed");
     }
 
     #[test]
