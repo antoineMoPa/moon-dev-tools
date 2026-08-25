@@ -294,18 +294,14 @@ impl App {
                     }
                 }
 
-                let worked = run.worked();
-                let clears_message = run.clears_message;
-                let note = run.words.worked;
-                if worked && clears_message {
+                // A run that worked says so beside the buttons, and the staged listing
+                // emptying says it louder; a toast on top of both would be a third telling.
+                if run.worked() && run.clears_message {
                     pane.message.clear();
                 }
                 // Either way the repo has moved on: a refused commit may still have run a
                 // hook that changed the tree.
                 pane.stale = true;
-                if worked {
-                    model.info(note.to_string());
-                }
                 model.review(&for_apply).refresh_requested = true;
             },
         );
