@@ -164,6 +164,13 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/tasks/{task_id}/notes/open",
             post(open_task_notes),
         )
+        .route("/api/session/{session_id}/commit-state", get(commit_state))
+        .route("/api/session/{session_id}/stage-all", post(stage_all))
+        .route("/api/session/{session_id}/commit-run", post(start_commit_run))
+        .route(
+            "/api/session/{session_id}/commit-run/{terminal_id}/outcome",
+            get(commit_run_outcome),
+        )
         .route(
             "/api/session/{session_id}/terminals",
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
@@ -462,6 +469,44 @@ async fn agent_dispatch_log_request(
         &session_id,
         &query.dispatch_key,
     )?))
+}
+
+async fn commit_state(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::committing::commit_state(&state, &session_id)?))
+}
+
+/// Start `git` on one action. The server only ever spawns git with argv it built itself —
+/// what arrives here is which action, not a command line.
+async fn start_commit_run(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(action): Json<crate::committing::CommitAction>,
+) -> Result<impl IntoResponse, AppError> {
+    mark_activity(&state);
+    let terminal_id = crate::committing::start_commit_run(&state, &session_id, &action)?;
+    Ok(Json(crate::api::CommitRunStarted { terminal_id }))
+}
+
+async fn commit_run_outcome(
+    AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    mark_activity(&state);
+    let exit_code = crate::committing::commit_run_outcome(&state, &session_id, &terminal_id)?;
+    Ok(Json(crate::api::CommitRunOutcome { exit_code }))
+}
+
+async fn stage_all(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::stage_all(&state, &session_id)?;
+    Ok("ok")
 }
 
 async fn stage_hunk(

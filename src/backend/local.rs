@@ -269,6 +269,26 @@ impl Backend for LocalBackend {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }
 
+    fn stage_all(&self, session_id: &str) -> Result<()> {
+        crate::service::stage_all(&self.state, session_id)
+    }
+
+    fn commit_state(&self, session_id: &str) -> Result<crate::committing::CommitState> {
+        crate::committing::commit_state(&self.state, session_id)
+    }
+
+    fn start_commit_run(
+        &self,
+        session_id: &str,
+        action: &crate::committing::CommitAction,
+    ) -> Result<String> {
+        crate::committing::start_commit_run(&self.state, session_id, action)
+    }
+
+    fn commit_run_outcome(&self, session_id: &str, terminal_id: &str) -> Result<Option<i32>> {
+        crate::committing::commit_run_outcome(&self.state, session_id, terminal_id)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         let repo_path = crate::api::with_session(&self.state, session_id, |session| {
             Ok(session.repo_path.clone())

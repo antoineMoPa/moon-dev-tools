@@ -13,7 +13,7 @@ use crate::{
     api::{AgentKind, OpenSessionRequest},
     cli::Frame,
     native::{
-        app::{App, AttachedTerminal},
+        app::{App, AttachedTerminal, TerminalHolder},
         bindings,
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
@@ -222,6 +222,19 @@ impl App {
                 );
                 self.attach_terminal(&terminal_id);
             }
+            OpenPaneRequest::Commit { session_id } => {
+                // One commit pane a review: opening it again brings it forward, with whatever
+                // message was already written still in it.
+                if let Some((pane, _)) = self.model.layout.find_pane(
+                    |pane| matches!(pane, Pane::Commit { session_id: open } if *open == session_id),
+                ) {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                // Down the right of the workspace, so the review it is committing stays on
+                // screen beside it.
+                add_right_column(&mut self.model.layout, Pane::Commit { session_id });
+            }
             OpenPaneRequest::Tasks => {
                 if let Some((pane, _)) = self
                     .model
@@ -279,6 +292,7 @@ impl App {
                         inbox.push(AttachedTerminal {
                             terminal_id,
                             attachment,
+                            held_by: TerminalHolder::Workspace,
                         });
                     }
                 }
@@ -308,6 +322,7 @@ impl App {
                     inbox.push(AttachedTerminal {
                         terminal_id: for_inbox,
                         attachment,
+                        held_by: TerminalHolder::Workspace,
                     });
                 }
             },
@@ -328,6 +343,7 @@ impl App {
             let AttachedTerminal {
                 terminal_id,
                 attachment,
+                held_by,
             } = attached;
             let opened = attachment.and_then(|stream| {
                 egui_tty::Terminal::new(stream)
@@ -341,7 +357,14 @@ impl App {
                 // front tab is the one with the keyboard. See `follow_front_tab`.
                 Ok(terminal) => {
                     self.terminal_errors.remove(&terminal_id);
-                    self.terminals.insert(terminal_id, terminal);
+                    match held_by {
+                        TerminalHolder::Workspace => {
+                            self.terminals.insert(terminal_id, terminal);
+                        }
+                        TerminalHolder::CommitPane => {
+                            self.commit_terminals.insert(terminal_id, terminal);
+                        }
+                    }
                 }
                 Err(error) => {
                     let message = format!("{error}");
@@ -667,20 +690,26 @@ impl App {
         self.running_shells() > 0
     }
 
-    /// How many shells are still going, which is what quitting would take down with it.
+    /// How many shells are still going, which is what quitting would take down with it. A
+    /// commit or a push in flight counts: a passphrase half typed is work in progress like any
+    /// other, and it is the same warning that is owed for it.
     pub(crate) fn running_shells(&self) -> usize {
         self.terminals
             .values()
+            .chain(self.commit_terminals.values())
             .filter(|terminal| !terminal.has_exited())
             .count()
     }
 }
 
+/// Put a pane in a column of its own down the right of the workspace.
+fn add_right_column(layout: &mut Layout<Pane>, pane: Pane) {
+    layout.add_pane_against_edge(DropSide::Right, egui_frames::DEFAULT_EDGE_SHARE, pane);
+}
+
 /// Put a shell's pane where the placement says, falling back to a column of its own.
 fn place_shell(layout: &mut Layout<Pane>, placement: &TerminalPlacement, pane: Pane) {
-    let column = |layout: &mut Layout<Pane>, pane| {
-        layout.add_pane_against_edge(DropSide::Right, egui_frames::DEFAULT_EDGE_SHARE, pane);
-    };
+    let column = add_right_column;
 
     match placement {
         TerminalPlacement::WithOtherShells => {

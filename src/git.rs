@@ -330,7 +330,7 @@ fn origin_head_ref(repo_path: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn current_branch_upstream_ref(repo_path: &Path) -> Result<Option<String>> {
+pub(crate) fn current_branch_upstream_ref(repo_path: &Path) -> Result<Option<String>> {
     let upstream = run_git_allow_status(
         repo_path,
         &[
@@ -442,7 +442,7 @@ fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Resu
     run_git(repo_path, &args)
 }
 
-fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {
+pub(crate) fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {
     if let Some(pathspec) = pathspec.filter(|value| !value.is_empty()) {
         args.push("--");
         args.push(pathspec);
@@ -725,7 +725,11 @@ fn parse_submodule_status_path(line: &str) -> Option<&str> {
     if path.is_empty() { None } else { Some(path) }
 }
 
-fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Result<String> {
+pub(crate) fn run_git_allow_status(
+    repo_path: &Path,
+    args: &[&str],
+    allowed: &[i32],
+) -> Result<String> {
     let output = Command::new("git")
         .current_dir(repo_path)
         .args(args)
@@ -740,7 +744,7 @@ fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Res
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> {
+pub(crate) fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .current_dir(repo_path)
         .args(args)

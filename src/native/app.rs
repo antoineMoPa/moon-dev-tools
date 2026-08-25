@@ -66,12 +66,26 @@ pub(crate) type AttachInbox = Arc<Mutex<Vec<AttachedTerminal>>>;
 pub(crate) struct AttachedTerminal {
     pub(crate) terminal_id: String,
     pub(crate) attachment: Result<egui_tty::TtyStream>,
+    pub(crate) held_by: TerminalHolder,
+}
+
+/// Which of the window's two sets of emulators a shell belongs to.
+///
+/// They are held apart because they end differently: a workspace shell that exits takes its
+/// tab with it, while a commit run's emulator is kept after `git` is gone — what it printed is
+/// the account of how the commit went, and the pane goes on showing it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalHolder {
+    Workspace,
+    CommitPane,
 }
 
 pub(crate) struct App {
     pub(crate) model: Model,
     pub(crate) tasks: Tasks,
     pub(crate) terminals: HashMap<String, egui_tty::Terminal>,
+    /// The pty of each commit pane's last run, kept until that pane runs something else.
+    pub(crate) commit_terminals: HashMap<String, egui_tty::Terminal>,
     /// The workspace widget: the tab strips, the splits, and a drag in flight.
     pub(crate) frames: Frames,
     pub(crate) attaching: AttachInbox,
@@ -174,6 +188,7 @@ impl App {
                 board: Default::default(),
                 agent_log: None,
                 connection,
+                commit_panes: HashMap::new(),
                 file_editors: HashMap::new(),
                 markdown_cache: Default::default(),
                 find: None,
@@ -189,6 +204,7 @@ impl App {
             },
             tasks,
             terminals: HashMap::new(),
+            commit_terminals: HashMap::new(),
             frames: Frames::new(),
             attaching: Arc::new(Mutex::new(Vec::new())),
             terminal_errors: HashMap::new(),

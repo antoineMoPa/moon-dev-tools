@@ -43,6 +43,9 @@ const TYPE_AHEAD_POLL: std::time::Duration = std::time::Duration::from_millis(20
 /// How much shell output we keep so a reopened tab can replay what it missed.
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 const BROADCAST_CAPACITY: usize = 256;
+/// Stands in for the exit code of a command whose ending could not be read at all — the pty
+/// was reaped by something else. Treated as a failure, which is what not knowing means here.
+const EXIT_CODE_UNKNOWN: i32 = -1;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -68,13 +71,43 @@ pub(crate) struct TerminalList {
     terminal_ids: Vec<String>,
 }
 
+/// What runs in a pty: the user's login shell, one of the agents, or a program moonreview
+/// starts on the user's behalf — `git`, so that a signed commit's pinentry has a terminal to
+/// ask on.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum TerminalProgram {
+    LoginShell,
+    Agent(AgentKind),
+    /// Started by name with [`TerminalSpec::args`] as its argv. There is no shell in between,
+    /// so nothing here is quoted or word-split.
+    Command(String),
+}
+
+impl TerminalProgram {
+    /// The login shell either way: [`AgentKind::None`] is "no agent picked" rather than a
+    /// program to start.
+    pub(crate) fn of_agent(agent: Option<AgentKind>) -> Self {
+        match agent {
+            None | Some(AgentKind::None) => Self::LoginShell,
+            Some(agent) => Self::Agent(agent),
+        }
+    }
+
+    /// The agent this is one of, for the callers that only deal in agents.
+    fn agent(&self) -> Option<AgentKind> {
+        match self {
+            Self::Agent(agent) => Some(*agent),
+            _ => None,
+        }
+    }
+}
+
 /// What to start a shell as. The plain case is a login shell in the reviewed repo; a task's
 /// agent adds the program, its arguments, and the environment that tells it which task it is
 /// working in.
 pub(crate) struct TerminalSpec {
     pub(crate) cwd: std::path::PathBuf,
-    /// The program to run. `None` is the login shell.
-    pub(crate) program: Option<AgentKind>,
+    pub(crate) program: TerminalProgram,
     pub(crate) args: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
     /// The task this shell belongs to, if any. An owned shell is the task's to list and to
@@ -91,10 +124,10 @@ pub(crate) struct TerminalSpec {
 
 impl TerminalSpec {
     /// A shell of the workspace's own: no program, no task.
-    pub(crate) fn shell(cwd: std::path::PathBuf, program: Option<AgentKind>) -> Self {
+    pub(crate) fn shell(cwd: std::path::PathBuf, agent: Option<AgentKind>) -> Self {
         Self {
             cwd,
-            program,
+            program: TerminalProgram::of_agent(agent),
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
@@ -107,9 +140,9 @@ impl TerminalSpec {
 /// the websocket while the pty keeps running, so reopening it resumes the same shell.
 pub(crate) struct TerminalSession {
     owner: Option<String>,
-    /// What it was started as: `None` for the login shell, an agent otherwise. A task's plain
-    /// shells are listed from here, because they are not written down anywhere else.
-    program: Option<AgentKind>,
+    /// What it was started as. A task's plain shells are listed from here, because they are
+    /// not written down anywhere else.
+    program: TerminalProgram,
     /// When it was started, and the order it was started in. A second is coarse enough that
     /// two shells opened together tie, so the order is what actually sorts them.
     started_at_unix: u64,
@@ -217,6 +250,9 @@ pub(crate) struct OwnedShell {
 
 pub(crate) struct TerminalRegistry {
     sessions: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    /// How a [`TerminalProgram::Command`] run ended, kept after its session is gone: whoever
+    /// started it asks once the pty closes, which is after the session has been reaped.
+    outcomes: Mutex<HashMap<String, i32>>,
     /// Tells this run of the server's shells from a previous one's. A task writes down the
     /// shell its agent is in, and that record outlives the process, so a counter starting
     /// over at zero would let a new shell answer to an old task's name.
@@ -229,6 +265,7 @@ impl TerminalRegistry {
     pub(crate) fn new(last_activity: Arc<Mutex<Instant>>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            outcomes: Mutex::new(HashMap::new()),
             run: crate::moontasks::store::new_uuid()[..8].to_string(),
             next_id: AtomicU64::new(0),
             last_activity,
@@ -291,6 +328,13 @@ impl TerminalRegistry {
         ids
     }
 
+    /// The exit code of a command run that has ended, taken rather than read: it is asked for
+    /// once, by the pane that started it, and answering twice would have it act on the same
+    /// ending again. `None` means the command is still going.
+    pub(crate) fn take_outcome(&self, terminal_id: &str) -> Option<i32> {
+        self.outcomes.lock().unwrap().remove(terminal_id)
+    }
+
     /// Whether this shell is still one the server has, which is what tells a task's recorded
     /// agent run from one that ended — or that died with a previous run of the server.
     pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
@@ -309,7 +353,7 @@ impl TerminalRegistry {
             .iter()
             .filter(|(_, session)| {
                 session.owner.as_deref() == Some(owner)
-                    && matches!(session.program, None | Some(AgentKind::None))
+                    && session.program == TerminalProgram::LoginShell
             })
             .map(|(terminal_id, session)| OwnedShell {
                 terminal_id: terminal_id.clone(),
@@ -333,6 +377,7 @@ impl TerminalRegistry {
             .collect();
         for terminal_id in owned {
             self.remove(&terminal_id);
+            self.outcomes.lock().unwrap().remove(&terminal_id);
         }
     }
 
@@ -354,21 +399,32 @@ impl TerminalRegistry {
             pixel_height: 0,
         })?;
 
-        let mut command = match spec.program {
-            None | Some(AgentKind::None) => {
+        let mut command = match &spec.program {
+            TerminalProgram::LoginShell => {
                 let mut command = CommandBuilder::new(crate::shell_path::login_shell());
                 command.arg("-l");
                 command
             }
-            Some(AgentKind::Claude) => CommandBuilder::new("claude"),
-            Some(AgentKind::Codex) => CommandBuilder::new("codex"),
-            Some(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
+            TerminalProgram::Agent(AgentKind::None) => {
+                unreachable!("no agent picked is the login shell, see TerminalProgram::of_agent")
+            }
+            TerminalProgram::Agent(AgentKind::Claude) => CommandBuilder::new("claude"),
+            TerminalProgram::Agent(AgentKind::Codex) => CommandBuilder::new("codex"),
+            TerminalProgram::Agent(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
+            TerminalProgram::Command(program) => CommandBuilder::new(program),
         };
         for argument in &spec.args {
             command.arg(argument);
         }
         command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
+        // Which terminal a passphrase can be asked on. gpg launches pinentry and then fails
+        // with "Inappropriate ioctl for device" when this is unset, which is what a signed
+        // commit started from a window rather than a shell would otherwise hit: the window
+        // inherits no GPG_TTY, and the pty it just opened is the terminal to name.
+        if let Some(tty_name) = pty.master.tty_name() {
+            command.env("GPG_TTY", tty_name);
+        }
         // The agent is started by name, so it has to be looked up on the PATH the user's shell
         // has rather than the one a desktop launcher hands this process.
         command.env("PATH", crate::shell_path::agent_path());
@@ -388,7 +444,7 @@ impl TerminalRegistry {
         let terminal_id = format!("terminal-{}-{order}", self.run);
         let session = Arc::new(TerminalSession {
             owner: spec.owner,
-            program: spec.program,
+            program: spec.program.clone(),
             started_at_unix: crate::moontasks::store::now_unix(),
             order,
             writer: Mutex::new(writer),
@@ -436,6 +492,21 @@ impl TerminalRegistry {
             // frontends close the tab of a shell marked exited. So its session is kept, with a
             // notice saying how it ended, until the user closes it themselves. A shell taken
             // out of the registry already was ended on purpose, and has nothing to explain.
+            // A command moonreview ran on the user's behalf is answered for, because the pane
+            // that started it acts on how it ended rather than only on what it printed.
+            if let TerminalProgram::Command(_) = session.program {
+                let code = session
+                    .child
+                    .lock()
+                    .unwrap()
+                    .wait()
+                    .map_or(EXIT_CODE_UNKNOWN, |status| status.exit_code() as i32);
+                registry
+                    .outcomes
+                    .lock()
+                    .unwrap()
+                    .insert(reaped_id.clone(), code);
+            }
             match failure_notice(&session) {
                 Some(notice) if registry.is_live(&reaped_id) => {
                     session.child_ended.store(true, Ordering::Relaxed);
@@ -462,8 +533,8 @@ impl TerminalRegistry {
 /// A plain login shell is never kept: it exits with whatever its last command returned, so a
 /// nonzero status there is everyday use rather than the program falling over.
 fn failure_notice(session: &TerminalSession) -> Option<String> {
-    let program = match session.program {
-        None | Some(AgentKind::None) => return None,
+    let program = match session.program.agent() {
+        None => return None,
         Some(agent) => agent.label().to_lowercase(),
     };
     let status = session.child.lock().unwrap().wait().ok()?;
@@ -639,279 +710,5 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-
-    /// Type-ahead reaches the program as keystrokes, and reaches it whole.
-    ///
-    /// A login shell stands in for an agent here: it echoes what is typed at it, which is the
-    /// same evidence an agent's input box gives — and unlike an agent it is on every machine
-    /// this runs on. What it must not do is run anything, so nothing here sends a newline.
-    #[test]
-    fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = registry
-            .spawn(TerminalSpec {
-                cwd: std::env::temp_dir(),
-                program: None,
-                args: Vec::new(),
-                env: Vec::new(),
-                owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
-            })
-            .expect("expected a shell");
-        let session = registry.get(&terminal_id).expect("expected the shell");
-
-        // The wait before it is typed is the point of it, so this waits out that wait.
-        let started = Instant::now();
-        let deadline = started + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
-        let mut printed = String::new();
-        while Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
-            // The pty is 80 columns wide and a prompt takes some of them, so what was typed
-            // comes back wrapped: the line break the shell inserted is dropped rather than
-            // matched against.
-            printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
-                .chars()
-                .filter(|character| !character.is_whitespace())
-                .collect();
-            if printed.contains("moonreview-typed-this") {
-                break;
-            }
-        }
-        let took = started.elapsed();
-        registry.remove(&terminal_id);
-
-        assert!(
-            printed.contains("moonreview-typed-this"),
-            "the shell never echoed what was typed at it, printed: {printed:?}"
-        );
-        // A prompt is drawn and then nothing more, so the text goes in on that silence rather
-        // than on the deadline — which is the difference between it being there when you look
-        // at the tab and it landing over what you had started typing.
-        assert!(
-            took < TYPE_AHEAD_DEADLINE,
-            "type-ahead waited out its deadline rather than the shell going quiet: {took:?}"
-        );
-        // Left at the prompt, not run: a shell that had been sent the line would have gone
-        // looking for a command by that name.
-        assert!(
-            !printed.contains("notfound"),
-            "type-ahead must not be sent, printed: {printed:?}"
-        );
-    }
-
-    /// A terminal answers the program's own questions the moment it attaches, and those
-    /// answers travel the same way keystrokes do — but they are not somebody typing, and a
-    /// tab being open must not be what stops the title going in.
-    #[cfg(feature = "native")]
-    #[test]
-    fn a_reply_to_the_program_is_not_somebody_typing() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = registry
-            .spawn(TerminalSpec {
-                cwd: std::env::temp_dir(),
-                program: None,
-                args: Vec::new(),
-                env: Vec::new(),
-                owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
-            })
-            .expect("expected a shell");
-        let session = registry.get(&terminal_id).expect("expected the shell");
-
-        // A device status report, which is what a terminal sends back unasked.
-        session
-            .write_reply(b"\x1b[0n")
-            .expect("failed to answer the program");
-
-        let deadline = Instant::now() + TYPE_AHEAD_DEADLINE + Duration::from_secs(7);
-        let mut printed = String::new();
-        while Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
-            printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
-                .chars()
-                .filter(|character| !character.is_whitespace())
-                .collect();
-            if printed.contains("moonreview-typed-this") {
-                break;
-            }
-        }
-        registry.remove(&terminal_id);
-
-        assert!(
-            printed.contains("moonreview-typed-this"),
-            "the title should still have been typed, printed: {printed:?}"
-        );
-    }
-
-    /// A folder holding a fake `claude` for the PATH, so an agent shell can be spawned
-    /// without the real agent — the spec's own env wins over the PATH the spawn sets.
-    #[cfg(unix)]
-    fn fake_claude(script: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = std::env::temp_dir().join(format!(
-            "moonreview-fake-agent-{}",
-            crate::moontasks::store::new_uuid()
-        ));
-        std::fs::create_dir_all(&dir).expect("failed to create the fake agent's folder");
-        let path = dir.join("claude");
-        std::fs::write(&path, script).expect("failed to write the fake agent");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("failed to make the fake agent executable");
-        dir
-    }
-
-    #[cfg(unix)]
-    fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
-        let path = fake_claude(script);
-        registry
-            .spawn(TerminalSpec {
-                cwd: std::env::temp_dir(),
-                program: Some(AgentKind::Claude),
-                args: Vec::new(),
-                env: vec![("PATH".to_string(), path.display().to_string())],
-                owner: None,
-                type_ahead: None,
-            })
-            .expect("expected a shell")
-    }
-
-    /// An agent that falls over — `claude --resume` on a session id that no longer exists,
-    /// say — has printed the only account of what went wrong. Its shell is kept, unexited, so
-    /// the tabs showing the error stay open, and a notice says how it ended.
-    #[cfg(unix)]
-    #[test]
-    fn a_failed_agent_keeps_its_shell_open_with_a_notice() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = spawn_fake_claude(
-            &registry,
-            "#!/bin/sh\necho 'No conversation found with session ID'\nexit 1\n",
-        );
-        let session = registry.get(&terminal_id).expect("expected the shell");
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut printed = String::new();
-        while Instant::now() < deadline {
-            printed =
-                String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
-            if printed.contains("[claude exited with code 1]") {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-
-        assert!(
-            printed.contains("No conversation found with session ID"),
-            "the error itself should still be there, printed: {printed:?}"
-        );
-        assert!(
-            printed.contains("[claude exited with code 1]"),
-            "the notice should say how it ended, printed: {printed:?}"
-        );
-        assert!(
-            registry.is_live(&terminal_id),
-            "the failed shell should be kept rather than reaped"
-        );
-        assert!(
-            !*session.exited.borrow(),
-            "kept means not exited, so attached tabs stay open"
-        );
-        // Nothing reads the pty any more, so typing at the kept shell is discarded rather
-        // than left to fill the pty's buffer and block.
-        assert!(session.child_ended.load(Ordering::Relaxed));
-        session
-            .write_to_child(b"typed at a dead shell")
-            .expect("input at a kept shell is discarded, not an error");
-        registry.remove(&terminal_id);
-    }
-
-    /// An agent that ends cleanly is done with: reaped like any shell, tab and all.
-    #[cfg(unix)]
-    #[test]
-    fn an_agent_that_ends_cleanly_is_reaped() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = spawn_fake_claude(&registry, "#!/bin/sh\nexit 0\n");
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline && registry.is_live(&terminal_id) {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-
-        assert!(
-            !registry.is_live(&terminal_id),
-            "a clean ending has nothing to keep"
-        );
-    }
-
-    /// A login shell exits with whatever its last command returned, so a nonzero status there
-    /// is everyday use — reaped, never kept.
-    #[cfg(unix)]
-    #[test]
-    fn a_plain_shell_that_exits_nonzero_is_still_reaped() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = registry
-            .spawn(TerminalSpec {
-                cwd: std::env::temp_dir(),
-                program: None,
-                args: Vec::new(),
-                env: Vec::new(),
-                owner: None,
-                type_ahead: None,
-            })
-            .expect("expected a shell");
-        let session = registry.get(&terminal_id).expect("expected the shell");
-
-        session
-            .writer
-            .lock()
-            .unwrap()
-            .write_all(b"exit 1\n")
-            .expect("failed to type into the shell");
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline && registry.is_live(&terminal_id) {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-
-        assert!(
-            !registry.is_live(&terminal_id),
-            "a plain shell's exit status is its last command's, not a failure to keep"
-        );
-    }
-
-    /// The one thing type-ahead must never do is write into a sentence someone else started.
-    #[test]
-    fn a_shell_someone_has_typed_into_is_left_alone() {
-        let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
-        let terminal_id = registry
-            .spawn(TerminalSpec {
-                cwd: std::env::temp_dir(),
-                program: None,
-                args: Vec::new(),
-                env: Vec::new(),
-                owner: None,
-                type_ahead: Some("moonreview-typed-this".to_string()),
-            })
-            .expect("expected a shell");
-        let session = registry.get(&terminal_id).expect("expected the shell");
-
-        // Someone gets there first, before the shell has even finished coming up.
-        session.typed_into.store(true, Ordering::Relaxed);
-
-        std::thread::sleep(TYPE_AHEAD_DEADLINE + Duration::from_secs(1));
-        let printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>();
-        registry.remove(&terminal_id);
-
-        assert!(
-            !printed.contains("moonreview-typed-this"),
-            "the title was typed over what was being written, printed: {printed:?}"
-        );
-    }
-}
+#[path = "terminal_tests.rs"]
+mod tests;

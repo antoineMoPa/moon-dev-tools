@@ -99,6 +99,17 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
             {
                 app.open_file_pane(session_id, path);
             }
+
+            // A read-only review has nothing staged to commit, so it is not offered. The
+            // ellipsis is the difference between this and the pane's own button: this one
+            // opens the pane, that one commits.
+            if !read_only
+                && widgets::quiet_button(ui, "commit…")
+                    .on_hover_text("commit what is staged, and push it")
+                    .clicked()
+            {
+                app.open_commit_pane(session_id);
+            }
         });
     });
 }

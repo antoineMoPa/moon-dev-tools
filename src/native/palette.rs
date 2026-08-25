@@ -100,6 +100,18 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         "Bring the task board forward",
         CommandAction::OpenPane(OpenPaneRequest::Tasks),
     ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Commit)
+            .is_some(),
+        "commit",
+        "Commit what is staged, and push it",
+        "Bring the commit pane forward",
+        CommandAction::OpenPane(OpenPaneRequest::Commit {
+            session_id: root.clone(),
+        }),
+    ));
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),

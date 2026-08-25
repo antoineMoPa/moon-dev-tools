@@ -615,6 +615,32 @@ pub(crate) fn stage_file(state: &AppState, session_id: &str, file_path: &str) ->
     Ok(())
 }
 
+/// Stage the whole working tree, untracked files included — the one sweep the commit pane
+/// offers. Marks what it staged as reviewed, the way staging a file does.
+pub(crate) fn stage_all(state: &AppState, session_id: &str) -> Result<()> {
+    crate::api::ensure_session_is_writable(state, session_id)?;
+    let (repo_path, pathspec, patches) = crate::api::with_session(state, session_id, |session| {
+        let patches = collect_session_hunks(session)?
+            .into_iter()
+            .filter(|hunk| !hunk.staged)
+            .map(|hunk| hunk.patch)
+            .collect::<Vec<_>>();
+        Ok((
+            session.repo_path.clone(),
+            session.diff_target.pathspec.clone(),
+            patches,
+        ))
+    })?;
+    // Only what the review is pointed at, when it is pointed at part of the repo.
+    let mut args = vec!["add", "-A"];
+    crate::git::append_pathspec(&mut args, pathspec.as_deref());
+    run_git_no_output(&repo_path, &args)?;
+    for patch in patches {
+        mark_hunk_patch_reviewed(&repo_path, &patch)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn unstage_file(state: &AppState, session_id: &str, file_path: &str) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;
     let repo_path =

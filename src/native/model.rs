@@ -428,6 +428,9 @@ pub(crate) struct Model {
     pub(crate) restored_layout: Option<Layout<Pane>>,
     /// The agent the last run ended on, applied to the session once the review opens.
     pub(crate) restored_agent: Option<AgentKind>,
+    /// What each review's commit pane is holding: the message being written, and the last
+    /// run. Keyed by review rather than by pane, so closing the tab keeps the message.
+    pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
     /// What the markdown renderer keeps between frames — loaded images above all — shared by

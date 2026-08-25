@@ -12,14 +12,14 @@ use crate::{
     api::AgentKind,
     native::{
         app::App,
-        review,
+        commit_pane, review,
         theme::{self, Palette, ThemeMode},
         widgets,
     },
 };
 
-/// Which of the four a pane is, for the questions that only care about the kind: where a new
-/// one belongs, and whether ⌘F has anything to search.
+/// Which kind a pane is, for the questions that only care about the kind: where a new one
+/// belongs, and whether ⌘F has anything to search.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PaneKind {
     Review,
@@ -27,6 +27,7 @@ pub(crate) enum PaneKind {
     Terminal,
     File,
     Tasks,
+    Commit,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +53,8 @@ pub(crate) enum Pane {
     },
     /// The moontasks board of the repo being reviewed.
     Tasks,
+    /// Committing what one review has staged, and pushing it.
+    Commit { session_id: String },
 }
 
 impl Pane {
@@ -62,6 +65,7 @@ impl Pane {
             Self::Terminal { .. } => PaneKind::Terminal,
             Self::File { .. } => PaneKind::File,
             Self::Tasks => PaneKind::Tasks,
+            Self::Commit { .. } => PaneKind::Commit,
         }
     }
 
@@ -82,6 +86,7 @@ impl Pane {
                 .unwrap_or(file_path)
                 .to_string(),
             Self::Tasks => "moontasks".to_string(),
+            Self::Commit { .. } => "commit".to_string(),
         }
     }
 
@@ -120,6 +125,10 @@ pub(crate) enum OpenPaneRequest {
         file_path: String,
     },
     Tasks,
+    /// Committing what one review has staged.
+    Commit {
+        session_id: String,
+    },
 }
 
 impl PaneView<Pane> for App {
@@ -169,6 +178,10 @@ impl PaneView<Pane> for App {
                 self.draw_file_pane(ui, pane_id, &session_id, &file_path);
             }
             Pane::Tasks => crate::native::board::draw(self, ui),
+            Pane::Commit { session_id } => {
+                let session_id = session_id.clone();
+                commit_pane::draw(self, ui, pane_id, &session_id);
+            }
         }
     }
 

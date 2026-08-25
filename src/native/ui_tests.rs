@@ -50,8 +50,8 @@ fn tab_rects(app: &App) -> Vec<egui::Rect> {
 
 /// A throwaway git repo with a commit and some uncommitted work, which is the situation
 /// moonreview exists for.
-struct Fixture {
-    root: PathBuf,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
 }
 
 /// A fixed point in time, so a fixture commit always hashes to the same sha.
@@ -61,7 +61,7 @@ struct Fixture {
 const FIXTURE_DATE: &str = "2024-01-02T03:04:05+00:00";
 
 impl Fixture {
-    fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         // The repo's directory name is what the header shows, so it is fixed; only the
         // enclosing directory carries what makes this run unique.
         let enclosing =
@@ -87,7 +87,7 @@ impl Fixture {
         self.root.parent().unwrap_or(&self.root)
     }
 
-    fn write(&self, relative: &str, contents: &str) {
+    pub(crate) fn write(&self, relative: &str, contents: &str) {
         let path = self.root.join(relative);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("failed to create the fixture subdirectory");
@@ -107,7 +107,7 @@ impl Fixture {
             .expect("failed to write the fixture image");
     }
 
-    fn commit(&self, message: &str) {
+    pub(crate) fn commit(&self, message: &str) {
         run_git_no_output(&self.root, &["add", "-A"]).expect("failed to stage the fixture");
 
         // Committed with a fixed identity and date, so the short sha in the snapshot is the
@@ -136,7 +136,7 @@ impl Drop for Fixture {
 }
 
 /// Build the window over a local backend, with no web server: the tests are about the UI.
-fn app_for(repo_path: &Path, theme: ThemeMode) -> App {
+pub(crate) fn app_for(repo_path: &Path, theme: ThemeMode) -> App {
     app_for_frame(repo_path, theme, crate::cli::Frame::Review)
 }
 
@@ -163,7 +163,7 @@ fn app_for_frame(repo_path: &Path, theme: ThemeMode, frame: crate::cli::Frame) -
 ///
 /// The review is fetched on a worker thread, so a fixed number of frames would be a race:
 /// the harness has to keep stepping until the data is actually in the model.
-fn harness_with_loaded_review(app: App, theme: ThemeMode) -> Harness<'static> {
+pub(crate) fn harness_with_loaded_review(app: App, theme: ThemeMode) -> Harness<'static> {
     let ready = Arc::new(AtomicBool::new(false));
     let ready_in_ui = Arc::clone(&ready);
     let mut app = app;
@@ -202,7 +202,7 @@ fn harness_with_loaded_review(app: App, theme: ThemeMode) -> Harness<'static> {
     harness
 }
 
-fn seeded_fixture(name: &str) -> Fixture {
+pub(crate) fn seeded_fixture(name: &str) -> Fixture {
     let fixture = Fixture::new(name);
     fixture.write(
         "src/lib.rs",

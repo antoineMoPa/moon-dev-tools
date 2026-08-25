@@ -4,6 +4,7 @@
 pub(crate) mod app;
 pub(crate) mod bindings;
 pub(crate) mod board;
+pub(crate) mod commit_pane;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
@@ -17,6 +18,8 @@ mod programs;
 pub(crate) mod review;
 pub(crate) mod tasks;
 pub(crate) mod theme;
+#[cfg(test)]
+mod commit_pane_tests;
 #[cfg(test)]
 mod ui_tests;
 pub(crate) mod widgets;

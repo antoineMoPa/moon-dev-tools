@@ -17,7 +17,7 @@ use crate::{
             self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
     },
-    terminal::TerminalSpec,
+    terminal::{TerminalProgram, TerminalSpec},
 };
 
 /// The repo a session's board belongs to.
@@ -411,7 +411,7 @@ pub(crate) fn start_resource(
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: (agent != AgentKind::None).then_some(agent),
+        program: TerminalProgram::of_agent(Some(agent)),
         args,
         env,
         owner: Some(task_id.to_string()),
@@ -480,7 +480,7 @@ pub(crate) fn resume_resource(
     };
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: Some(resource.agent),
+        program: TerminalProgram::Agent(resource.agent),
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
@@ -524,7 +524,7 @@ pub(crate) fn attach_resource(
         write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: Some(request.agent),
+        program: TerminalProgram::Agent(request.agent),
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),

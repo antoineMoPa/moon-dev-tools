@@ -508,6 +508,31 @@ impl Backend for RemoteBackend {
         Ok(notes.file_path)
     }
 
+    fn stage_all(&self, session_id: &str) -> Result<()> {
+        self.post(&format!("/api/session/{session_id}/stage-all"), &json!({}))
+    }
+
+    fn commit_state(&self, session_id: &str) -> Result<crate::committing::CommitState> {
+        self.get(&format!("/api/session/{session_id}/commit-state"))
+    }
+
+    fn start_commit_run(
+        &self,
+        session_id: &str,
+        action: &crate::committing::CommitAction,
+    ) -> Result<String> {
+        let started: crate::api::CommitRunStarted =
+            self.post_json(&format!("/api/session/{session_id}/commit-run"), action)?;
+        Ok(started.terminal_id)
+    }
+
+    fn commit_run_outcome(&self, session_id: &str, terminal_id: &str) -> Result<Option<i32>> {
+        let outcome: crate::api::CommitRunOutcome = self.get(&format!(
+            "/api/session/{session_id}/commit-run/{terminal_id}/outcome"
+        ))?;
+        Ok(outcome.exit_code)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         #[derive(serde::Deserialize)]
         struct Created {

@@ -11,6 +11,7 @@ mod api;
 mod backend;
 mod cli;
 mod comments;
+mod committing;
 mod git;
 mod moontasks;
 mod moved_hunks;

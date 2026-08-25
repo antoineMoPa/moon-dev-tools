@@ -17,6 +17,7 @@ use crate::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
     },
+    committing::{CommitAction, CommitState},
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
         TaskView,
@@ -72,6 +73,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn unstage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn stage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
+    /// Stage the whole working tree at once, which is the commit pane's one staging action.
+    fn stage_all(&self, session_id: &str) -> Result<()>;
     fn unstage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
     fn discard_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn discard_hunks(&self, session_id: &str, hunk_ids: &[String]) -> Result<()>;
@@ -138,6 +141,15 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Put a column at a place among the others, which is what dragging its heading does. Its
     /// cards go with it, because a card names its column rather than its place on screen.
     fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()>;
+
+    /// What the commit pane draws: what is staged, and where a push would send it.
+    fn commit_state(&self, session_id: &str) -> Result<CommitState>;
+    /// Start `git` on one action in a pty, and answer with the shell it runs in. Attached with
+    /// [`Backend::attach_terminal`], like any other.
+    fn start_commit_run(&self, session_id: &str, action: &CommitAction) -> Result<String>;
+    /// The exit code of a run that has ended, `None` while it is still going. Answered once:
+    /// the pane asks when the pty closes, and acts on what it gets.
+    fn commit_run_outcome(&self, session_id: &str, terminal_id: &str) -> Result<Option<i32>>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;

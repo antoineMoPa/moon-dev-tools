@@ -285,6 +285,17 @@ pub(crate) struct OpenSessionRequest {
     pub(crate) active_commit: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CommitRunStarted {
+    pub(crate) terminal_id: String,
+}
+
+/// How a commit run ended. `None` while it is still going.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CommitRunOutcome {
+    pub(crate) exit_code: Option<i32>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct HunkRequest {
     pub(crate) hunk_id: String,
