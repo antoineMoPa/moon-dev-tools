@@ -30,10 +30,15 @@ fn the_commit_button_opens_a_pane_beside_the_review() {
     harness.get_by_label("commit…").click();
     harness.run_steps(5);
 
+    // The commit button is the pane's own, and unlike push it is there from the first frame:
+    // push waits for something to have been committed.
     assert!(
-        harness.query_by_label("nothing staged — stage what to commit in the review").is_some()
-            || harness.query_by_label("push").is_some(),
+        harness.query_by_label("commit").is_some(),
         "the commit pane should have opened"
+    );
+    assert!(
+        harness.query_by_label("push").is_none(),
+        "nothing has been committed, so there is nothing to push yet"
     );
 }
 
@@ -167,6 +172,13 @@ fn committing_from_the_pane_commits_what_is_staged() {
             !panes.contains(&PaneKind::Review) && panes.contains(&PaneKind::Commit)
         }
     };
+    // And the commit is what there is to push, so the button for it is there now.
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("push").is_some(),
+        "the push button should have appeared once there was a commit to push"
+    );
+
     step_until(&mut harness, &review_closed);
     assert!(
         review_closed(),

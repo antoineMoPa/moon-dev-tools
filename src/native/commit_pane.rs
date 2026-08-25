@@ -57,6 +57,17 @@ struct RunWords {
     failed: &'static str,
 }
 
+/// How far this review has got, which is what decides the buttons the pane shows: a commit is
+/// what there is to push, and a push is what there is to open a pull request on. Only runs that
+/// worked move it, and a fresh commit takes it back to having something to push.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Reached {
+    #[default]
+    Nothing,
+    Committed,
+    Pushed,
+}
+
 /// Stands in for the status of a run the server could not be asked about at all. Reads as a
 /// failure, which is what not being able to find out means here.
 const OUTCOME_UNREAD: i32 = -1;
@@ -122,6 +133,7 @@ pub(crate) struct CommitPane {
     /// Set when a commit has just worked, and answered by the next reading of the repo: it is
     /// that reading which knows whether the review beside this pane has anything left to show.
     closes_review: bool,
+    reached: Reached,
 }
 
 impl CommitPane {
@@ -134,6 +146,7 @@ impl CommitPane {
             run: None,
             error: None,
             closes_review: false,
+            reached: Reached::Nothing,
         }
     }
 
@@ -363,6 +376,14 @@ impl App {
                     pane.message.clear();
                     pane.closes_review = true;
                 }
+                if run.worked() {
+                    pane.reached = match run.kind {
+                        RunKind::Commit => Reached::Committed,
+                        RunKind::Push => Reached::Pushed,
+                        // The pull request was opened on what the push sent; nothing moved.
+                        RunKind::OpenPr => pane.reached,
+                    };
+                }
                 // Either way the repo has moved on: a refused commit may still have run a
                 // hook that changed the tree.
                 pane.stale = true;
@@ -416,12 +437,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
             Some(_) => (words.failed, palette.warn),
         }
     });
-    // Once the branch is sent the pane has done what it is for, and the review it was
-    // committing has already closed itself. Offering the way out here saves a trip to the tab.
-    let sent = pane
-        .run
-        .as_ref()
-        .is_some_and(|run| run.worked() && matches!(run.kind, RunKind::Push | RunKind::OpenPr));
+    let reached = pane.reached;
     let error = pane.error.clone();
     let state = pane.state.clone();
     let mut message = pane.message.clone();
@@ -496,15 +512,23 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     commit.on_disabled_hover_text("a commit takes a staged change and a message");
                 }
 
-                if widgets::clickable(ui.add_enabled(!running, egui::Button::new("push"))).clicked()
+                // Each button waits for the thing it acts on to exist: something committed
+                // to push, something pushed to open a pull request on. A branch that arrived
+                // with commits its upstream has not got is already past the first of those.
+                let ahead = state.as_ref().map_or(0, |state| state.ahead);
+                let has_something_to_push = ahead > 0 || reached != Reached::Nothing;
+                if has_something_to_push
+                    && widgets::clickable(ui.add_enabled(!running, egui::Button::new("push")))
+                        .clicked()
                 {
                     app.start_commit_run(session_id, CommitAction::Push);
                 }
 
-                // Only where `gh` is installed: without it there is no pull request to open,
-                // and a button that could never work is worse than no button.
+                // And only where `gh` is installed: without it there is no pull request to
+                // open, and a button that could never work is worse than no button.
                 let gh_installed = state.as_ref().is_some_and(|state| state.gh_installed);
                 if gh_installed
+                    && reached == Reached::Pushed
                     && widgets::clickable(ui.add_enabled(!running, egui::Button::new("open PR")))
                         .on_hover_text("gh pr create -w — fills the form in the browser")
                         .clicked()
@@ -512,7 +536,10 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     app.start_commit_run(session_id, CommitAction::OpenPr);
                 }
 
-                if sent
+                // Once the branch is sent the pane has done what it is for, and the review it
+                // was committing has already closed itself. Offering the way out here saves a
+                // trip to the tab strip.
+                if reached == Reached::Pushed
                     && widgets::clickable(ui.button("close"))
                         .on_hover_text("close this commit pane")
                         .clicked()
