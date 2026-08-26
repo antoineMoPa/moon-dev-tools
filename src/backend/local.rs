@@ -285,6 +285,13 @@ impl Backend for LocalBackend {
         crate::committing::commit_state(&self.state, session_id)
     }
 
+    fn suggest_commit_message(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::commit_suggestion::CommitSuggestion> {
+        crate::commit_suggestion::suggest_commit_message(&self.state, session_id)
+    }
+
     fn start_commit_run(
         &self,
         session_id: &str,

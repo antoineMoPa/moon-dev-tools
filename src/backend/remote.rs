@@ -527,6 +527,16 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/commit-state"))
     }
 
+    fn suggest_commit_message(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::commit_suggestion::CommitSuggestion> {
+        self.post_json(
+            &format!("/api/session/{session_id}/commit-message"),
+            &json!({}),
+        )
+    }
+
     fn start_commit_run(
         &self,
         session_id: &str,

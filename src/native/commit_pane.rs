@@ -12,6 +12,7 @@ use egui_frames::PaneId;
 
 use crate::{
     api::FileChangeKind,
+    commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
     native::{
         app::{App, AttachedTerminal, TerminalHolder},
@@ -130,6 +131,14 @@ pub(crate) struct CommitPane {
     /// The last run, kept after it ends so its output stays on screen until the next one.
     run: Option<CommitRun>,
     error: Option<String>,
+    /// The message an agent wrote for what is staged, waiting under the box for `[use]`.
+    suggestion: Option<CommitSuggestion>,
+    /// Why there is no suggestion, when asking for one did not work out.
+    suggestion_error: Option<String>,
+    /// Whether one has been asked for since the pane last had nothing to commit. It is asked
+    /// for once and no more — staging happens a hunk at a time next door, and an agent run for
+    /// every one of those would be a run for a commit that is still being put together.
+    suggestion_asked: bool,
     /// Set when a commit has just worked, and answered by the next reading of the repo: it is
     /// that reading which knows whether the review beside this pane has anything left to show.
     closes_review: bool,
@@ -145,9 +154,20 @@ impl CommitPane {
             last_read: None,
             run: None,
             error: None,
+            suggestion: None,
+            suggestion_error: None,
+            suggestion_asked: false,
             closes_review: false,
             reached: Reached::Nothing,
         }
+    }
+
+    /// Put a written message under the box, the way an answer from the agent does. What the
+    /// test drives `[use]` with, without an agent run.
+    #[cfg(test)]
+    pub(crate) fn set_suggestion_for_test(&mut self, suggestion: CommitSuggestion) {
+        self.suggestion = Some(suggestion);
+        self.suggestion_asked = true;
     }
 
     /// How many files a commit would take in, once git has been asked. `None` until then —
@@ -277,6 +297,78 @@ impl App {
         );
     }
 
+    /// The key one review's message-writing run goes under, which is also how the pane knows
+    /// one is in flight.
+    fn suggestion_key(session_id: &str) -> String {
+        format!("commit-message:{session_id}")
+    }
+
+    /// Ask the agent for a message for what is staged.
+    fn ask_for_commit_message(&mut self, session_id: &str) {
+        let key = Self::suggestion_key(session_id);
+        if self.tasks.is_busy(&key) {
+            return;
+        }
+        let pane = self.commit_pane(session_id);
+        pane.suggestion_asked = true;
+        pane.suggestion_error = None;
+
+        let for_call = session_id.to_string();
+        let for_apply = session_id.to_string();
+        self.tasks.spawn_keyed(
+            Some(key),
+            move |backend| backend.suggest_commit_message(&for_call),
+            move |model, result| {
+                let Some(pane) = model.commit_panes.get_mut(&for_apply) else {
+                    return;
+                };
+                match result {
+                    Ok(suggestion) => {
+                        pane.suggestion = Some(suggestion);
+                        pane.suggestion_error = None;
+                    }
+                    // Its own line under the box rather than the pane's error line: a message
+                    // that could not be written stops nothing, and the commit button is still
+                    // there for the message the user writes instead.
+                    Err(error) => {
+                        pane.suggestion = None;
+                        pane.suggestion_error = Some(format!("{error}"));
+                    }
+                }
+            },
+        );
+    }
+
+    /// The one time the pane asks on its own: something is staged, nothing has been written in
+    /// the box, and no message has been asked for since there was last nothing to commit.
+    fn auto_ask_for_commit_message(&mut self, session_id: &str) {
+        // The window asks the moment something is staged. A test stages a fixture, so under
+        // test it would start a real agent on it — there the pane asks only when pressed.
+        if cfg!(test) {
+            return;
+        }
+        let pane = self.commit_pane(session_id);
+        let Some(state) = &pane.state else {
+            return;
+        };
+        if state.staged_files.is_empty() {
+            // Nothing staged is a different commit from whatever was staged before it, so the
+            // message written for that one goes with it.
+            pane.suggestion = None;
+            pane.suggestion_error = None;
+            pane.suggestion_asked = false;
+            return;
+        }
+        if pane.suggestion_asked
+            || !state.opencode_installed
+            || !pane.message.trim().is_empty()
+            || pane.is_running()
+        {
+            return;
+        }
+        self.ask_for_commit_message(session_id);
+    }
+
     /// Start one action's program, and attach the pane to the pty it runs in.
     fn start_commit_run(&mut self, session_id: &str, action: CommitAction) {
         let kind = kind_of(&action);
@@ -374,6 +466,11 @@ impl App {
                 // emptying says it louder; a toast on top of both would be a third telling.
                 if run.worked() && run.kind == RunKind::Commit {
                     pane.message.clear();
+                    // The message it wrote is in the commit that was just made; whatever is
+                    // staged next is a different commit, and gets a message of its own.
+                    pane.suggestion = None;
+                    pane.suggestion_error = None;
+                    pane.suggestion_asked = false;
                     pane.closes_review = true;
                 }
                 if run.worked() {
@@ -415,6 +512,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     app.commit_pane(session_id);
     app.refresh_commit_state(session_id);
     app.poll_commit_run(session_id);
+    app.auto_ask_for_commit_message(session_id);
 
     // While git is going, the keyboard belongs to the pty: that is where pinentry asks for
     // the passphrase. At rest it belongs to the message.
@@ -440,7 +538,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     let reached = pane.reached;
     let error = pane.error.clone();
     let state = pane.state.clone();
+    let suggestion = pane.suggestion.clone();
+    let suggestion_error = pane.suggestion_error.clone();
     let mut message = pane.message.clone();
+    // Set when `[use]` was pressed, and answered once the pane is drawn.
+    let mut used_suggestion = false;
+    let writing_message = app.tasks.is_busy(&App::suggestion_key(session_id));
 
     egui::Panel::top(egui::Id::new(("commit-header", session_id)))
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(2, 4)))
@@ -474,6 +577,21 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 .show(ui);
             if takes_keyboard && !running {
                 output.response.request_focus();
+            }
+
+            // Under the box, where a message written by the agent reads as an offer of what to
+            // put in it rather than as something already in it.
+            ui.add_space(4.0);
+            if draw_suggested_message(
+                ui,
+                &palette,
+                suggestion.as_ref(),
+                suggestion_error.as_deref(),
+                writing_message,
+            ) && let Some(suggestion) = &suggestion
+            {
+                message = suggestion.as_message();
+                used_suggestion = true;
             }
             ui.add_space(6.0);
 
@@ -562,6 +680,65 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     if pane.message != message {
         pane.message = message;
     }
+    if used_suggestion {
+        // It is in the box now, and the box is where it is edited from here.
+        pane.suggestion = None;
+    }
+}
+
+/// The message the agent wrote, under the box it would go in: a line while it is being
+/// written, the message itself with `[use]` beside it once it is, and why it did not come when
+/// it did not. Answers whether `[use]` was pressed, which is read after the pane is drawn —
+/// the row is inside a closure that has the pane borrowed.
+pub(super) fn draw_suggested_message(
+    ui: &mut Ui,
+    palette: &Palette,
+    suggestion: Option<&CommitSuggestion>,
+    error: Option<&str>,
+    writing: bool,
+) -> bool {
+    if writing {
+        ui.horizontal(|ui| {
+            widgets::small_spinner(ui, palette.muted);
+            ui.label(
+                RichText::new("writing a commit message…")
+                    .color(palette.muted)
+                    .size(SMALL_SIZE),
+            );
+        });
+        return false;
+    }
+
+    if let Some(suggestion) = suggestion {
+        let mut used = false;
+        ui.horizontal(|ui| {
+            used = widgets::clickable(ui.button("use"))
+                .on_hover_text("put this message in the box")
+                .clicked();
+            ui.add(
+                egui::Label::new(RichText::new(&suggestion.subject).color(palette.ink)).truncate(),
+            )
+            .on_hover_text(&suggestion.subject);
+        });
+        if !suggestion.paragraph.trim().is_empty() {
+            ui.label(
+                RichText::new(&suggestion.paragraph)
+                    .color(palette.muted)
+                    .size(SMALL_SIZE),
+            );
+        }
+        return used;
+    }
+
+    // A message that would not come is said once and left at that: writing the commit is the
+    // pane's job with or without one, and there is nothing here to press.
+    if let Some(error) = error {
+        ui.add(
+            egui::Label::new(RichText::new(error).color(palette.warn).size(SMALL_SIZE)).truncate(),
+        )
+        .on_hover_text(error);
+    }
+    false
 }
 
 fn draw_branch_line(ui: &mut Ui, state: Option<&CommitState>, palette: &Palette) {

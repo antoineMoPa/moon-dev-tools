@@ -23,7 +23,9 @@ beside the board and move cards through your own workflow as work progresses.
 **Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage
 them individually, then commit and push what you staged from a pane beside the review — signed
 commits included, since git runs in a real terminal there and pinentry can ask for your
-passphrase in it. Send comments to your local Claude, Codex or OpenCode using your signed-in
+passphrase in it. The message writes itself if you let it: with `opencode` installed, a
+subject and a paragraph for what you staged appear under the message box, and `[use]` puts
+them in it. Send comments to your local Claude, Codex or OpenCode using your signed-in
 account, or collect one review to paste into another AI tool. **Moonshell** opens the same
 workspace directly on a shell.
 

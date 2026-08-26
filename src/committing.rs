@@ -46,6 +46,9 @@ pub(crate) struct CommitState {
     /// Whether `gh` is installed on this machine, which is what the pull request button needs:
     /// without it there is nothing to offer.
     pub(crate) gh_installed: bool,
+    /// Whether `opencode` is installed, which is what writes the suggested message. Without it
+    /// the pane never asks for one, rather than asking and showing what went wrong.
+    pub(crate) opencode_installed: bool,
 }
 
 /// What the pane can ask for.
@@ -114,6 +117,7 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
         staged_files,
         unstaged_count,
         gh_installed: git::command_exists("gh"),
+        opencode_installed: git::command_exists("opencode"),
     })
 }
 
@@ -349,6 +353,7 @@ mod tests {
             behind: 0,
             unstaged_count: 0,
             gh_installed: true,
+            opencode_installed: true,
             staged_files: (0..staged)
                 .map(|index| StagedFile {
                     file_path: format!("file{index}.rs"),

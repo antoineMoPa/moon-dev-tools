@@ -11,6 +11,7 @@ mod api;
 mod backend;
 mod cli;
 mod comments;
+mod commit_suggestion;
 mod committing;
 mod git;
 mod moontasks;

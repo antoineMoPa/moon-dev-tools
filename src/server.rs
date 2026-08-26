@@ -172,6 +172,10 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/api/session/{session_id}/commit-state", get(commit_state))
         .route("/api/session/{session_id}/stage-all", post(stage_all))
+        .route(
+            "/api/session/{session_id}/commit-message",
+            post(suggest_commit_message),
+        )
         .route("/api/session/{session_id}/commit-run", post(start_commit_run))
         .route(
             "/api/session/{session_id}/commit-run/{terminal_id}/outcome",
@@ -509,6 +513,19 @@ async fn commit_state(
 ) -> Result<impl IntoResponse, AppError> {
     mark_activity(&state);
     Ok(Json(crate::committing::commit_state(&state, &session_id)?))
+}
+
+/// Write a commit message from what is staged. A POST rather than a GET: it starts an agent
+/// rather than reading something that is already there.
+async fn suggest_commit_message(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::commit_suggestion::suggest_commit_message(
+        &state,
+        &session_id,
+    )?))
 }
 
 /// Start `git` on one action. The server only ever spawns git with argv it built itself —

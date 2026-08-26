@@ -26,6 +26,46 @@ pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32, background: Color32) -
     response
 }
 
+/// How wide the small spinner is, which is about half of egui's own: it sits beside a line of
+/// [`SMALL_SIZE`] text, and the stock one is sized to stand next to a button.
+const SMALL_SPINNER_SIZE: f32 = 10.0;
+/// How much faster than egui's it goes round. The stock speed reads as a stall at this size.
+const SMALL_SPINNER_SPEED: f64 = 1.7;
+/// How thick its arc is, in proportion to the size.
+const SMALL_SPINNER_STROKE: f32 = 1.5;
+
+/// A spinner for a line of small text: egui's own arc, half the size and going round faster.
+pub(crate) fn small_spinner(ui: &mut Ui, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(SMALL_SPINNER_SIZE, SMALL_SPINNER_SIZE),
+        Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    // It is a drawing that moves, so the frame after this one has to be asked for.
+    ui.ctx().request_repaint();
+
+    let radius = SMALL_SPINNER_SIZE / 2.0 - SMALL_SPINNER_STROKE;
+    let corners = 24;
+    let time = ui.input(|input| input.time) * SMALL_SPINNER_SPEED;
+    // The arc turns, and its length breathes as it goes, which is what egui's does.
+    let start_angle = time * std::f64::consts::TAU;
+    let end_angle = start_angle + 240f64.to_radians() * time.sin();
+    let points = (0..corners)
+        .map(|corner| {
+            let angle = egui::emath::lerp(start_angle..=end_angle, corner as f64 / corners as f64);
+            let (sin, cos) = angle.sin_cos();
+            rect.center() + radius * vec2(cos as f32, sin as f32)
+        })
+        .collect();
+    ui.painter().add(egui::Shape::line(
+        points,
+        Stroke::new(SMALL_SPINNER_STROKE, color),
+    ));
+    response
+}
+
 /// The cursor anything clickable shows, the way the web frontend's `cursor: pointer` does.
 /// Everything the pointer can act on goes through here, so the two frontends feel the same.
 pub(crate) fn clickable(response: Response) -> Response {

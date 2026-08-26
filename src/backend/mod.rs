@@ -18,6 +18,7 @@ use crate::{
         ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
         SubmoduleView,
     },
+    commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
@@ -149,6 +150,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     /// What the commit pane draws: what is staged, and where a push would send it.
     fn commit_state(&self, session_id: &str) -> Result<CommitState>;
+    /// A commit message written from what is staged, by the agent that writes them. Blocks for
+    /// as long as that takes, which is seconds rather than milliseconds.
+    fn suggest_commit_message(&self, session_id: &str) -> Result<CommitSuggestion>;
     /// Start `git` on one action in a pty, and answer with the shell it runs in. Attached with
     /// [`Backend::attach_terminal`], like any other.
     fn start_commit_run(&self, session_id: &str, action: &CommitAction) -> Result<String>;

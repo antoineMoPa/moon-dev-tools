@@ -8,10 +8,11 @@ use std::{
 use egui_kittest::{Harness, kittest::Queryable};
 
 use crate::{
+    commit_suggestion::CommitSuggestion,
     git::run_git_no_output,
     native::{
         panes::{Pane, PaneKind},
-        theme::ThemeMode,
+        theme::{Palette, ThemeMode},
         ui_tests::{app_for, harness_with_loaded_review, seeded_fixture},
     },
 };
@@ -208,12 +209,19 @@ fn the_commit_pane_draws_what_it_would_commit() {
         .wgpu()
         .build_ui(move |ui| {
             let session_id = app.model.root_session_id.clone();
-            // Written once the pane exists, and left alone after that.
+            // Written once the pane exists, and left alone after that. The written message
+            // under the box is put there rather than asked for: what the agent would answer is
+            // the same on every machine, and asking it is not.
             if app.model.commit_panes.contains_key(&session_id)
                 && let Some(message) = typing_in_ui.lock().expect("expected the lock").take()
                 && let Some(pane) = app.model.commit_panes.get_mut(&session_id)
             {
                 pane.message = message;
+                pane.set_suggestion_for_test(CommitSuggestion {
+                    subject: "feat: count the values".to_string(),
+                    paragraph: "Add the module that counts them, and call it from main."
+                        .to_string(),
+                });
             }
             app.draw(ui);
             *staged_in_ui.lock().expect("expected the lock") = app
@@ -320,3 +328,129 @@ fn a_commit_pane_names_its_tab() {
     assert_eq!(pane.kind(), PaneKind::Commit);
     assert_eq!(pane.tab_title(), "commit");
 }
+
+/// The message the agent writes shows up under the box, and `[use]` is what moves it in: the
+/// box is left alone until it is pressed, and the row is done with once it has been.
+#[test]
+fn a_written_message_goes_in_the_box_when_use_is_pressed() {
+    let fixture = seeded_fixture("commit-message-use");
+    run_git_no_output(&fixture.root, &["add", "-A"]).expect("failed to stage the fixture");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    // What the agent would have answered with, put where its answer lands.
+    let to_write = Arc::new(Mutex::new(None::<CommitSuggestion>));
+    let writing = Arc::clone(&to_write);
+    let panes_open = Arc::new(Mutex::new(Vec::<PaneKind>::new()));
+    let panes_in_ui = Arc::clone(&panes_open);
+    let message_left = Arc::new(Mutex::new(None::<String>));
+    let message_in_ui = Arc::clone(&message_left);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .build_ui(move |ui| {
+            let session_id = app.model.root_session_id.clone();
+            if let Some(suggestion) = writing.lock().expect("expected the lock").take()
+                && let Some(pane) = app.model.commit_panes.get_mut(&session_id)
+            {
+                pane.set_suggestion_for_test(suggestion);
+            }
+            app.draw(ui);
+            *panes_in_ui.lock().expect("expected the lock") = app
+                .model
+                .layout
+                .panes()
+                .map(|(_, pane)| pane.kind())
+                .collect();
+            *message_in_ui.lock().expect("expected the lock") = app
+                .model
+                .commit_panes
+                .get(&session_id)
+                .map(|pane| pane.message.clone());
+        });
+
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline
+        && !panes_open
+            .lock()
+            .expect("expected the lock")
+            .contains(&PaneKind::Commit)
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+        if harness.query_by_label("[commit]").is_some() {
+            harness.get_by_label("[commit]").click();
+        }
+    }
+    harness.run_steps(3);
+
+    *to_write.lock().expect("expected the lock") = Some(CommitSuggestion {
+        subject: "feat: add the extra module".to_string(),
+        paragraph: "The fixture gains a module the review is of.".to_string(),
+    });
+    harness.run_steps(3);
+
+    assert_eq!(
+        message_left.lock().expect("expected the lock").as_deref(),
+        Some(""),
+        "a written message stays out of the box until it is used"
+    );
+
+    harness.get_by_label("use").click();
+    harness.run_steps(3);
+
+    assert_eq!(
+        message_left.lock().expect("expected the lock").as_deref(),
+        Some("feat: add the extra module\n\nThe fixture gains a module the review is of."),
+        "pressing use should put the whole written message in the box"
+    );
+    assert!(
+        harness.query_by_label("use").is_none(),
+        "the message is in the box now, so there is nothing left to use"
+    );
+}
+
+/// The row with no message to show — on a machine without `opencode`, or before one has been
+/// written — is not a row at all: nothing to read and nothing to press.
+#[test]
+fn nothing_is_drawn_where_there_is_no_message_to_show() {
+    let mut harness = Harness::new_ui(|ui| {
+        crate::native::commit_pane::draw_suggested_message(
+            ui,
+            &Palette::of(ThemeMode::Dark),
+            None,
+            None,
+            false,
+        );
+    });
+    harness.run();
+
+    assert!(harness.query_by_label("use").is_none());
+}
+
+/// A message that would not come is said once, in its own words, with nothing to press: the
+/// commit is written in the box either way.
+#[test]
+fn a_message_that_would_not_come_says_why() {
+    let mut harness = Harness::new_ui(|ui| {
+        crate::native::commit_pane::draw_suggested_message(
+            ui,
+            &Palette::of(ThemeMode::Dark),
+            None,
+            Some("opencode failed (status 1): Error: UnknownError"),
+            false,
+        );
+    });
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("opencode failed (status 1): Error: UnknownError")
+            .is_some(),
+        "the pane should say why no message came"
+    );
+    assert!(
+        harness.query_by_label("use").is_none(),
+        "there is no message to use"
+    );
+}
+
