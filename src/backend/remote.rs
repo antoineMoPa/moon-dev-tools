@@ -18,7 +18,7 @@ use serde_json::json;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-        FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
         SubmoduleView,
     },
     backend::Backend,
@@ -277,6 +277,11 @@ impl Backend for RemoteBackend {
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {
         let encoded = urlencode(query);
         self.get(&format!("/api/session/{session_id}/files?query={encoded}"))
+    }
+
+    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload> {
+        let encoded = urlencode(query);
+        self.get(&format!("/api/session/{session_id}/content?query={encoded}"))
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {

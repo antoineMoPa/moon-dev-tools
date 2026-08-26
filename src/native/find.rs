@@ -102,6 +102,24 @@ pub(crate) fn open(app: &mut App) {
     }
 }
 
+/// Open the bar over a file that was opened at one of the lines a content search found: the
+/// query is what was searched for, and the current match is the one on that line.
+///
+/// The box is left without the keyboard, unlike cmd+F: the file was opened to be read, so
+/// the text under the bar is what arrow keys and typing belong to. cmd+F puts the keyboard
+/// in the box, which is also the way to close the bar with Escape.
+pub(crate) fn show_match(app: &mut App, pane_id: PaneId, query: String, at: usize) {
+    app.model.find = Some(Find {
+        pane_id,
+        query,
+        at,
+        total: 0,
+        pending: true,
+        focus: false,
+        has_keyboard: false,
+    });
+}
+
 /// Draw the bar in the top right of the pane it belongs to.
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     let Some(find) = &app.model.find else {

@@ -8,7 +8,7 @@ use anyhow::Result;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
-        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        FileContentPayload, ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
         SessionPayload, SubmoduleView, server_url,
     },
     backend::Backend,
@@ -117,6 +117,10 @@ impl Backend for LocalBackend {
 
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {
         service::find_session_files(&self.state, session_id, query)
+    }
+
+    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload> {
+        service::search_session_contents(&self.state, session_id, query)
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {

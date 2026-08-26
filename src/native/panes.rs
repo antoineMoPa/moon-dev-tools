@@ -123,12 +123,23 @@ pub(crate) enum OpenPaneRequest {
     File {
         session_id: String,
         file_path: String,
+        /// Where to open the file, for one opened from a content search rather than by name.
+        at: Option<OpenAt>,
     },
     Tasks,
     /// Committing what one review has staged.
     Commit {
         session_id: String,
     },
+}
+
+/// The match a file is opened at: the line to bring on screen, and the text that was
+/// searched for, which the pane marks the way the find bar does.
+#[derive(Clone)]
+pub(crate) struct OpenAt {
+    /// Counted from one, as the number in the fringe is.
+    pub(crate) line: usize,
+    pub(crate) query: String,
 }
 
 impl PaneView<Pane> for App {

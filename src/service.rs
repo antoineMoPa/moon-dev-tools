@@ -13,9 +13,10 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitReviewStatus, CommitView,
-        DiffHunk, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView, OpenSessionRequest,
-        PatchPayload, RepoSession, SessionOpened, SessionPayload, SubmoduleView,
+        AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitReviewStatus,
+        CommitView, ContentMatchesPayload, DiffHunk, DiffTarget, FileContentPayload,
+        FileMatchesPayload, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
+        SessionOpened, SessionPayload, SubmoduleView,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -390,7 +391,19 @@ pub(crate) fn find_session_files(
     query: &str,
 ) -> Result<FileMatchesPayload> {
     crate::api::with_session(state, session_id, |session| {
-        crate::file_search::matching_paths(&session.repo_path, query)
+        crate::search::file_names::matching_paths(&session.repo_path, query)
+    })
+}
+
+/// The lines of the repo that hold what was searched for. Runs where the repo is, the same
+/// as the file-name search beside it.
+pub(crate) fn search_session_contents(
+    state: &AppState,
+    session_id: &str,
+    query: &str,
+) -> Result<ContentMatchesPayload> {
+    crate::api::with_session(state, session_id, |session| {
+        crate::search::file_contents::matching_lines(&session.repo_path, query)
     })
 }
 

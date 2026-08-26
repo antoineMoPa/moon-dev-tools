@@ -349,7 +349,9 @@ pub(crate) struct PaletteState {
     /// Whether the query is picking a command or naming a file of the repo.
     pub(crate) mode: crate::native::palette::PaletteMode,
     /// What the file finder has found for the query it last searched for.
-    pub(crate) files: crate::native::palette::FileSearch,
+    pub(crate) files: crate::native::palette::Search<String>,
+    /// The same for the content search: the lines of the repo that hold what was typed.
+    pub(crate) contents: crate::native::palette::Search<crate::api::ContentMatch>,
     pub(crate) query: String,
     pub(crate) highlighted: usize,
     /// The query the highlight was picked under. A keystroke changes which commands are on
@@ -367,8 +369,9 @@ impl PaletteState {
     pub(crate) fn show(&mut self) {
         self.open = true;
         self.mode = crate::native::palette::PaletteMode::Commands;
-        // Whatever the last file search found belongs to the query that is being cleared.
-        self.files = crate::native::palette::FileSearch::default();
+        // Whatever the last search found belongs to the query that is being cleared.
+        self.files = crate::native::palette::Search::default();
+        self.contents = crate::native::palette::Search::default();
         self.query.clear();
         self.highlighted = 0;
         self.highlight_query.clear();
@@ -380,6 +383,12 @@ impl PaletteState {
     pub(crate) fn show_files(&mut self) {
         self.show();
         self.mode = crate::native::palette::PaletteMode::Files;
+    }
+
+    /// The same, on the content search: what is typed is looked for in the text of the files.
+    pub(crate) fn show_contents(&mut self) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::Contents;
     }
 
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
@@ -395,7 +404,8 @@ impl Default for PaletteState {
         Self {
             open: false,
             mode: crate::native::palette::PaletteMode::Commands,
-            files: crate::native::palette::FileSearch::default(),
+            files: crate::native::palette::Search::default(),
+            contents: crate::native::palette::Search::default(),
             query: String::new(),
             highlighted: 0,
             highlight_query: String::new(),

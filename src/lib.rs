@@ -12,13 +12,13 @@ mod backend;
 mod cli;
 mod comments;
 mod committing;
-mod file_search;
 mod git;
 mod moontasks;
 mod moved_hunks;
 #[cfg(feature = "native")]
 mod native;
 mod reviewed_cache;
+mod search;
 mod server;
 #[cfg(test)]
 mod server_tests;

@@ -529,6 +529,7 @@ impl App {
             CommandAction::RestartWindow => self.restart_window(ctx),
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
             CommandAction::FindFile => self.model.palette.show_files(),
+            CommandAction::SearchContent => self.model.palette.show_contents(),
             CommandAction::Split(side) => self.split_frame(side),
         }
     }
@@ -760,6 +761,7 @@ impl App {
             Action::FocusNextFrame => self.focus_next_frame(),
             Action::Find => find::open(self),
             Action::FindFile => self.model.palette.show_files(),
+            Action::SearchContent => self.model.palette.show_contents(),
         }
     }
 

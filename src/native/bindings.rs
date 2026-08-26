@@ -34,6 +34,9 @@ pub(crate) enum Action {
     Find,
     /// Open the palette on its file finder, where what is typed names a file of the repo.
     FindFile,
+    /// Open the palette on its content search, where what is typed is looked for in the text
+    /// of the files.
+    SearchContent,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -155,6 +158,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::FindFile,
         chord: &[press(Modifiers::COMMAND, Key::P)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::SearchContent,
+        chord: &[press(COMMAND_SHIFT, Key::F)],
         reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.

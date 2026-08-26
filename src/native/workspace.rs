@@ -177,23 +177,31 @@ impl App {
             OpenPaneRequest::File {
                 session_id,
                 file_path,
+                at,
             } => {
                 // The same file twice is the same tab: opening it again brings it forward.
-                if let Some((pane, _)) = self.model.layout.find_pane(|pane| {
+                let pane_id = match self.model.layout.find_pane(|pane| {
                     matches!(pane, Pane::File { file_path: open, .. } if *open == file_path)
                 }) {
-                    self.model.layout.focus_pane(pane);
-                    return;
+                    Some((pane, _)) => {
+                        self.model.layout.focus_pane(pane);
+                        pane
+                    }
+                    None => {
+                        let frame = self.frame_for(PaneKind::File, active_frame);
+                        self.model.layout.add_pane(
+                            frame,
+                            Pane::File {
+                                session_id: session_id.clone(),
+                                file_path: file_path.clone(),
+                            },
+                            None,
+                        )
+                    }
+                };
+                if let Some(at) = at {
+                    self.reveal_file_match(pane_id, &session_id, &file_path, at);
                 }
-                let frame = self.frame_for(PaneKind::File, active_frame);
-                self.model.layout.add_pane(
-                    frame,
-                    Pane::File {
-                        session_id,
-                        file_path,
-                    },
-                    None,
-                );
             }
             OpenPaneRequest::Terminal { command } => {
                 let session_id = self.shell_session_for(active_frame);

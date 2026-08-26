@@ -37,6 +37,9 @@ pub(crate) struct FileEditor {
     /// Set when a close was asked for while there were unsaved edits: the second press goes
     /// through, the way discarding a hunk does.
     pub(crate) close_confirmed: bool,
+    /// The match a content search opened this file at, if it did. Cleared once the text is
+    /// there, has been scrolled to, and has been handed to the find bar to mark.
+    reveal: Option<crate::native::panes::OpenAt>,
 }
 
 impl FileEditor {
@@ -50,6 +53,7 @@ impl FileEditor {
             saving: false,
             preview,
             close_confirmed: false,
+            reveal: None,
         }
     }
 
@@ -97,6 +101,7 @@ impl App {
             crate::native::panes::OpenPaneRequest::File {
                 session_id: session_id.to_string(),
                 file_path: file_path.to_string(),
+                at: None,
             },
         ));
     }
@@ -140,6 +145,26 @@ impl App {
         if let Some(editor) = self.model.file_editors.get_mut(&pane_id) {
             editor.preview = false;
         }
+    }
+
+    /// Put the match a content search found on screen, for a file opened at one of them. The
+    /// text may not have arrived yet, so the match is left with the editor and the scroll
+    /// happens on the frame that can measure where its line ended up.
+    pub(crate) fn reveal_file_match(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        file_path: &str,
+        at: crate::native::panes::OpenAt,
+    ) {
+        self.ensure_file_editor(pane_id, session_id, file_path);
+        let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
+            return;
+        };
+        editor.reveal = Some(at);
+        // A match is in the text of the file, so the text is what the pane shows — a markdown
+        // file opens rendered otherwise, where the line does not exist.
+        editor.preview = false;
     }
 
     /// The file a pane is showing, fetched on first sight.
@@ -405,6 +430,11 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
         });
     let mut found: Option<usize> = None;
     let mut bring_into_view: Option<egui::Rect> = None;
+    // Where the line a content search opened the file at was laid out, once the text is on
+    // screen to measure.
+    let mut reveal_at: Option<egui::Rect> = None;
+    // The query to hand the find bar, and which of its matches this file was opened at.
+    let mut mark_match: Option<(String, usize)> = None;
     // The editor takes the keyboard it is owed, so a file or a task's notes brought forward
     // can be typed into without clicking into the text first. A file still being fetched, or
     // a markdown file showing its rendered page, has no editor to take it and leaves the
@@ -423,6 +453,11 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                     return;
                 };
                 let line_count = editor.edited.lines().count().max(1);
+                // The match a content search asked for, once the text it is in has arrived.
+                let reveal = editor
+                    .reveal
+                    .clone()
+                    .filter(|_| editor.saved.is_some());
                 // A short file still gets an editor down to the bottom of the pane, so the
                 // text sits on a page rather than in a box the size of what it holds.
                 let rows_on_screen = (ui.available_height() / row_height).floor() as usize;
@@ -497,6 +532,12 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             }
                             line += 1;
                             let y = output.galley_pos.y + placed.pos.y;
+                            if Some(line) == reveal.as_ref().map(|at| at.line) {
+                                reveal_at = Some(egui::Rect::from_min_size(
+                                    egui::pos2(output.galley_pos.x, y),
+                                    vec2(1.0, row_height),
+                                ));
+                            }
                             if !visible.contains(y) {
                                 continue;
                             }
@@ -513,6 +554,16 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             let shown = show_match(ui, &editor.edited, searching, output);
                             found = Some(shown.total);
                             bring_into_view = shown.current;
+                        }
+                        // Only ever the once: the line is where the file was opened, not
+                        // where it is held, and scrolling away from it has to stick. The
+                        // find bar takes it from here, marking every match of the query the
+                        // way it does for one typed into it.
+                        if let Some(at) = reveal.filter(|_| reveal_at.is_some()) {
+                            bring_into_view = reveal_at;
+                            editor.reveal = None;
+                            mark_match = match_index_on_line(&editor.edited, &at.query, at.line)
+                                .map(|index| (at.query, index));
                         }
                     });
 
@@ -531,6 +582,23 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
     {
         find.found(total);
     }
+    if let Some((query, at)) = mark_match {
+        crate::native::find::show_match(app, pane_id, query, at);
+    }
+}
+
+/// Which match of the file the one on `line` is, counting from zero, which is what the find
+/// bar calls the current match. A line holding more than one is stepped to at its first.
+fn match_index_on_line(text: &str, query: &str, line: usize) -> Option<usize> {
+    let mut before = 0;
+    for (index, text_of_line) in text.split_inclusive('\n').enumerate() {
+        let on_this_line = matches_in(text_of_line, query).len();
+        if index + 1 == line {
+            return (on_this_line > 0).then_some(before);
+        }
+        before += on_this_line;
+    }
+    None
 }
 
 /// What the find bar is asking of a file pane this frame.
@@ -667,7 +735,26 @@ mod tests {
             saving: false,
             preview: false,
             close_confirmed: false,
+            reveal: None,
         }
+    }
+
+    #[test]
+    fn the_match_on_a_line_is_counted_from_the_ones_above_it() {
+        let text = "one needle\nnothing\nneedle needle\nneedle\n";
+
+        assert_eq!(match_index_on_line(text, "needle", 1), Some(0));
+        // The line above holds two of them, so the one below is the fourth.
+        assert_eq!(match_index_on_line(text, "needle", 3), Some(1));
+        assert_eq!(match_index_on_line(text, "needle", 4), Some(3));
+    }
+
+    #[test]
+    fn a_line_without_the_query_on_it_has_no_match_to_step_to() {
+        let text = "one needle\nnothing\n";
+
+        assert_eq!(match_index_on_line(text, "needle", 2), None);
+        assert_eq!(match_index_on_line(text, "needle", 9), None);
     }
 
     #[test]

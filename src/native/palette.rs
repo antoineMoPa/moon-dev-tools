@@ -23,19 +23,31 @@ pub(crate) enum PaletteMode {
     Commands,
     /// A file of the repo, by name, found with `ag` wherever the repo lives.
     Files,
+    /// A line of the repo, by the text on it, found the same way.
+    Contents,
 }
 
-/// What the file finder has found. One search at a time, for whatever was typed when it
-/// started — `searched` says which query the matches belong to, and a query that has moved
-/// on since starts another search.
-#[derive(Default)]
-pub(crate) struct FileSearch {
+/// What one of the palette's two searches has found. One search at a time, for whatever was
+/// typed when it started — `searched` says which query the matches belong to, and a query
+/// that has moved on since starts another search.
+pub(crate) struct Search<T> {
     pub(crate) searched: Option<String>,
-    pub(crate) matches: Vec<String>,
+    pub(crate) matches: Vec<T>,
     /// Set when the repo had more matches than the search hands back, so the palette can say
-    /// that narrowing the query would show different files rather than only fewer.
+    /// that narrowing the query would show different rows rather than only fewer.
     pub(crate) truncated: bool,
     pub(crate) error: Option<String>,
+}
+
+impl<T> Default for Search<T> {
+    fn default() -> Self {
+        Self {
+            searched: None,
+            matches: Vec::new(),
+            truncated: false,
+            error: None,
+        }
+    }
 }
 
 pub(crate) struct Command {
@@ -63,6 +75,9 @@ pub(crate) enum CommandAction {
     OpenFile,
     /// Turn the palette into the file finder, where what is typed is a file name.
     FindFile,
+    /// Turn the palette into the content search, where what is typed is looked for in the
+    /// text of every file of the repo.
+    SearchContent,
     /// Split the frame the keyboard is in against this side, with a shell in the new half.
     Split(DropSide),
 }
@@ -155,6 +170,13 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         description: "Open a file of the repo by name, from any directory under it".to_string(),
         action: CommandAction::FindFile,
         shortcut: bindings::chord_of(Action::FindFile),
+    });
+    commands.push(Command {
+        title: "search content".to_string(),
+        description: "Find text in the files of the repo, wherever under it they are"
+            .to_string(),
+        action: CommandAction::SearchContent,
+        shortcut: bindings::chord_of(Action::SearchContent),
     });
     // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
     // repo that lives on the far side of a `--remote` connection.
@@ -311,6 +333,7 @@ fn rows_for(app: &App) -> Vec<Command> {
     match app.model.palette.mode {
         PaletteMode::Commands => filter(commands_for(app), &app.model.palette.query),
         PaletteMode::Files => file_rows(app),
+        PaletteMode::Contents => content_rows(app),
     }
 }
 
@@ -327,10 +350,53 @@ fn file_rows(app: &App) -> Vec<Command> {
             action: CommandAction::OpenPane(OpenPaneRequest::File {
                 session_id: app.model.root_session_id.clone(),
                 file_path: file_path.clone(),
+                at: None,
             }),
             shortcut: None,
         })
         .collect()
+}
+
+/// One row per matching line: the line itself to read the match by, and where in the repo it
+/// is. Running it opens the file at that line, with the text that was searched for marked.
+fn content_rows(app: &App) -> Vec<Command> {
+    // What the rows on screen were found for, which is not what is typed while a search
+    // started by the last keystroke is still out.
+    let searched = app
+        .model
+        .palette
+        .contents
+        .searched
+        .clone()
+        .unwrap_or_default();
+    app.model
+        .palette
+        .contents
+        .matches
+        .iter()
+        .map(|found| Command {
+            title: found.line.clone(),
+            description: format!("{}:{}", found.file_path, found.line_number),
+            action: CommandAction::OpenPane(OpenPaneRequest::File {
+                session_id: app.model.root_session_id.clone(),
+                file_path: found.file_path.clone(),
+                at: Some(crate::native::panes::OpenAt {
+                    line: found.line_number,
+                    query: searched.clone(),
+                }),
+            }),
+            shortcut: None,
+        })
+        .collect()
+}
+
+/// Whether the list on screen is only the start of what the repo matched.
+fn truncated_of(app: &App) -> bool {
+    match app.model.palette.mode {
+        PaletteMode::Commands => false,
+        PaletteMode::Files => app.model.palette.files.truncated,
+        PaletteMode::Contents => app.model.palette.contents.truncated,
+    }
 }
 
 fn file_name_of(file_path: &str) -> &str {
@@ -341,65 +407,118 @@ fn hint_of(mode: PaletteMode) -> &'static str {
     match mode {
         PaletteMode::Commands => "Execute a command…",
         PaletteMode::Files => "Open a file by name…",
+        PaletteMode::Contents => "Find text in the files…",
     }
 }
 
 /// What the palette says when it has no rows to show.
 fn empty_message(app: &App) -> String {
-    let files = &app.model.palette.files;
+    let query = app.model.palette.query.as_str();
     match app.model.palette.mode {
         PaletteMode::Commands => "nothing matches".to_string(),
-        PaletteMode::Files => match &files.error {
-            Some(error) => error.clone(),
-            // A search that has not answered for this query yet is still running: what was
-            // found for the query before it is gone, and saying "no matches" would be a lie.
-            None if files.searched.as_deref() != Some(app.model.palette.query.as_str()) => {
-                "searching…".to_string()
+        PaletteMode::Files => {
+            let files = &app.model.palette.files;
+            searching_message(files.error.as_deref(), files.searched.as_deref(), query)
+                .unwrap_or_else(|| "no file of the repo has that name".to_string())
+        }
+        PaletteMode::Contents => {
+            let contents = &app.model.palette.contents;
+            if query.is_empty() {
+                return "type what to look for in the files".to_string();
             }
-            None => "no file of the repo has that name".to_string(),
-        },
+            searching_message(contents.error.as_deref(), contents.searched.as_deref(), query)
+                .unwrap_or_else(|| "no file of the repo holds that text".to_string())
+        }
+    }
+}
+
+/// What a search has to say for itself before it has an answer to the query on screen, if
+/// anything: a search that has not answered for this query yet is still running — what was
+/// found for the query before it is gone, and saying "no matches" would be a lie.
+fn searching_message(error: Option<&str>, searched: Option<&str>, query: &str) -> Option<String> {
+    match error {
+        Some(error) => Some(error.to_string()),
+        None if searched != Some(query) => Some("searching…".to_string()),
+        None => None,
     }
 }
 
 /// Keep the file list on the query that is typed.
+fn refresh_file_matches(app: &mut App) {
+    refresh_search(
+        app,
+        PaletteMode::Files,
+        "palette-files",
+        |backend, session_id, query| {
+            let payload = backend.find_files(session_id, query)?;
+            Ok((payload.files, payload.truncated))
+        },
+        |model| &mut model.palette.files,
+    );
+}
+
+/// The same for the lines the content search found.
+fn refresh_content_matches(app: &mut App) {
+    refresh_search(
+        app,
+        PaletteMode::Contents,
+        "palette-content",
+        |backend, session_id, query| {
+            let payload = backend.search_contents(session_id, query)?;
+            Ok((payload.matches, payload.truncated))
+        },
+        |model| &mut model.palette.contents,
+    );
+}
+
+/// Keep one of the searches on the query that is typed.
 ///
 /// The repo can be on another machine, so this is a backend call on a worker thread like
 /// reading a file is. One search runs at a time; anything typed while it is out is searched
 /// for on the frame after it lands, which is what keeps a held key from starting a search a
 /// frame.
-fn refresh_file_matches(app: &mut App) {
+fn refresh_search<T: Send + 'static>(
+    app: &mut App,
+    mode: PaletteMode,
+    key: &str,
+    find: fn(&dyn crate::backend::Backend, &str, &str) -> anyhow::Result<(Vec<T>, bool)>,
+    search_of: fn(&mut crate::native::model::Model) -> &mut Search<T>,
+) {
     let query = app.model.palette.query.clone();
-    if app.model.palette.files.searched.as_deref() == Some(query.as_str()) {
+    let search = search_of(&mut app.model);
+    if search.searched.as_deref() == Some(query.as_str()) {
         return;
     }
     if app.model.root_session_id.is_empty() {
-        app.model.palette.files.searched = Some(query);
-        app.model.palette.files.error = Some("no repo is open in this window yet".to_string());
+        let search = search_of(&mut app.model);
+        search.searched = Some(query);
+        search.error = Some("no repo is open in this window yet".to_string());
         return;
     }
 
     let session_id = app.model.root_session_id.clone();
     let for_call = query.clone();
     app.tasks.spawn_keyed(
-        Some("palette-files".to_string()),
-        move |backend| backend.find_files(&session_id, &for_call),
+        Some(key.to_string()),
+        move |backend| find(backend, &session_id, &for_call),
         move |model, result| {
-            // The palette may have been put away, or turned back into the command list, while
+            // The palette may have been put away, or turned to another of its lists, while
             // the search was out. Its answer belongs to neither.
-            if !model.palette.open || model.palette.mode != PaletteMode::Files {
+            if !model.palette.open || model.palette.mode != mode {
                 return;
             }
-            model.palette.files.searched = Some(query);
+            let search = search_of(model);
+            search.searched = Some(query);
             match result {
-                Ok(payload) => {
-                    model.palette.files.matches = payload.files;
-                    model.palette.files.truncated = payload.truncated;
-                    model.palette.files.error = None;
+                Ok((matches, truncated)) => {
+                    search.matches = matches;
+                    search.truncated = truncated;
+                    search.error = None;
                 }
                 Err(error) => {
-                    model.palette.files.matches.clear();
-                    model.palette.files.truncated = false;
-                    model.palette.files.error = Some(format!("{error}"));
+                    search.matches.clear();
+                    search.truncated = false;
+                    search.error = Some(format!("{error}"));
                 }
             }
         },
@@ -418,8 +537,10 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         app.model.palette.dismiss();
         return;
     }
-    if app.model.palette.mode == PaletteMode::Files {
-        refresh_file_matches(app);
+    match app.model.palette.mode {
+        PaletteMode::Commands => {}
+        PaletteMode::Files => refresh_file_matches(app),
+        PaletteMode::Contents => refresh_content_matches(app),
     }
     let palette = app.palette_of();
     let matches = rows_for(app);
@@ -504,10 +625,10 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     }
                     // A cut-short list is not the whole answer, and the rows alone cannot say
                     // so: the files left out could be the one being looked for.
-                    if app.model.palette.files.truncated {
+                    if truncated_of(app) {
                         ui.label(
                             RichText::new(format!(
-                                "the first {} matches — narrow the name for the rest",
+                                "the first {} matches — narrow the search for the rest",
                                 matches.len()
                             ))
                             .size(SMALL_SIZE - 1.0)

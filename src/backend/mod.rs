@@ -15,7 +15,7 @@ use crate::{
     agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-        FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
         SubmoduleView,
     },
     committing::{CommitAction, CommitState},
@@ -62,6 +62,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload>;
     /// The files of the repo whose names match a search, for the palette's file finder.
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload>;
+    /// The lines of the repo that hold what was typed, for the palette's content search.
+    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload>;
     fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;

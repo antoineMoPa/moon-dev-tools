@@ -669,6 +669,64 @@ fn a_file_opens_in_a_tab_of_its_own() {
     harness.snapshot("file-pane");
 }
 
+/// A file opened at one of the lines a content search found is scrolled to that line rather
+/// than left at the top with the match far below the fold, and the text that was searched
+/// for is marked there the way the find bar marks it.
+#[test]
+fn a_file_opened_at_a_match_is_scrolled_to_it_and_marks_it() {
+    let fixture = Fixture::new("file-pane-at-a-line");
+    let mut text = String::new();
+    for line in 1..=200 {
+        text.push_str(&format!("pub const LINE_{line}: u32 = {line};\n"));
+    }
+    fixture.write("src/lines.rs", &text);
+    fixture.commit("Add the lines");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_pane(crate::native::panes::OpenPaneRequest::File {
+                    session_id,
+                    file_path: "src/lines.rs".to_string(),
+                    at: Some(crate::native::panes::OpenAt {
+                        line: 150,
+                        query: "LINE_150".to_string(),
+                    }),
+                });
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model
+                    .file_editors
+                    .values()
+                    .any(|editor| editor.content_for_test().is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the file tab never opened"
+    );
+
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(3);
+    harness.snapshot("file-pane-at-a-match");
+}
+
 /// A markdown file opens on the rendered page, and `[edit]` is the way back to the text.
 #[test]
 fn a_markdown_file_opens_rendered() {
@@ -4502,6 +4560,110 @@ fn the_palette_finds_a_file_by_name_and_opens_it() {
             .expect("poisoned")
             .contains(&"src/extra.rs".to_string())),
         "enter should have opened the highlighted file in a tab"
+    );
+}
+
+/// The palette's content search finds the lines that hold what is typed, and running one
+/// opens the file it is in.
+#[test]
+fn the_palette_searches_the_files_for_text_and_opens_a_match() {
+    let fixture = seeded_fixture("palette-content");
+    fixture.write(".gitignore", "build/\n");
+    fixture.write("build/extra.rs", "pub const ANSWER: u32 = 0;\n");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // What the search is showing — the query it answered for, and the lines it found.
+    let found = Arc::new(Mutex::new((None::<String>, Vec::<(String, usize, String)>::new())));
+    let found_in_ui = Arc::clone(&found);
+    let open_files = Arc::new(Mutex::new(Vec::<String>::new()));
+    let open_in_ui = Arc::clone(&open_files);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *found_in_ui.lock().expect("poisoned") = (
+                app.model.palette.contents.searched.clone(),
+                app.model
+                    .palette
+                    .contents
+                    .matches
+                    .iter()
+                    .map(|found| {
+                        (
+                            found.file_path.clone(),
+                            found.line_number,
+                            found.line.clone(),
+                        )
+                    })
+                    .collect(),
+            );
+            *open_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    crate::native::panes::Pane::File { file_path, .. } => Some(file_path.clone()),
+                    _ => None,
+                })
+                .collect();
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(
+        &mut harness,
+        egui::Key::F,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    for (key, letter) in [
+        (egui::Key::A, "a"),
+        (egui::Key::N, "n"),
+        (egui::Key::S, "s"),
+        (egui::Key::W, "w"),
+        (egui::Key::E, "e"),
+        (egui::Key::R, "r"),
+    ] {
+        type_letter(&mut harness, key, letter);
+    }
+
+    assert!(
+        settle(&mut harness, || {
+            found.lock().expect("poisoned").0.as_deref() == Some("answer")
+        }),
+        "the search never answered for what was typed — is ag installed?"
+    );
+    assert_eq!(
+        found.lock().expect("poisoned").1,
+        vec![(
+            "src/extra.rs".to_string(),
+            1,
+            "pub const ANSWER: u32 = 42;".to_string()
+        )],
+        "the line of the file below src should be the only match; the ignored file is not part \
+         of the repo, and the text is matched without regard for case"
+    );
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(
+        settle(&mut harness, || open_files
+            .lock()
+            .expect("poisoned")
+            .contains(&"src/extra.rs".to_string())),
+        "enter should have opened the file the match is in"
     );
 }
 

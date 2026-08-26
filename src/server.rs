@@ -17,7 +17,7 @@ use axum::{
 use crate::{
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
-        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, FileMatchesPayload,
+        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, ContentMatchesPayload, FileMatchesPayload,
         FileQuery, FileReviewedRequest, FileSearchQuery, OpenSessionRequest, PatchPayload,
         ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
         SubmoduleView, bind_host, port, server_url,
@@ -78,6 +78,10 @@ pub(crate) fn router(state: AppState) -> Router {
             get(session_file).post(write_session_file),
         )
         .route("/api/session/{session_id}/files", get(find_session_files))
+        .route(
+            "/api/session/{session_id}/content",
+            get(search_session_contents),
+        )
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route(
             "/api/session/{session_id}/reviewed-file",
@@ -395,6 +399,19 @@ async fn find_session_files(
 ) -> Result<Json<FileMatchesPayload>, AppError> {
     mark_activity(&state);
     Ok(Json(service::find_session_files(
+        &state,
+        &session_id,
+        &query.query,
+    )?))
+}
+
+async fn search_session_contents(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileSearchQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<ContentMatchesPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(service::search_session_contents(
         &state,
         &session_id,
         &query.query,

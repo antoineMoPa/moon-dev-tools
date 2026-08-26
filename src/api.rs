@@ -335,6 +335,24 @@ pub(crate) struct FileMatchesPayload {
     pub(crate) truncated: bool,
 }
 
+/// One line of the repo that a content search found.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ContentMatch {
+    pub(crate) file_path: String,
+    /// Counted from one, the way the number in an editor's fringe is.
+    pub(crate) line_number: usize,
+    /// The line itself, trimmed of its indentation and cut short if it was a long one.
+    pub(crate) line: String,
+}
+
+/// The lines of the repo that hold what was searched for, and whether there were more of
+/// them than the search hands back.
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct ContentMatchesPayload {
+    pub(crate) matches: Vec<ContentMatch>,
+    pub(crate) truncated: bool,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CommitHistoryQuery {
     pub(crate) offset: Option<usize>,
