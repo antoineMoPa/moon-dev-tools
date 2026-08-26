@@ -1,6 +1,6 @@
 //! The review's left column: the files that changed, then the commits they belong to.
 //!
-//! Mirrors `web/src/components/LeftSidebar.tsx`, minus its comments list — comments have a
+//! Mirrors `web/src/components/LeftSidebar.tsx`, minus its comments list - comments have a
 //! window of their own.
 
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
@@ -111,7 +111,7 @@ fn stage_status_color(status: FileStageStatus, palette: &Palette) -> Color32 {
     }
 }
 
-/// Staged goes back to unstaged; anything else — unstaged or half-staged — is staged whole.
+/// Staged goes back to unstaged; anything else - unstaged or half-staged - is staged whole.
 /// The same rule the web sidebar's status badge follows.
 fn toggle_file_stage(app: &mut App, session_id: &str, file: &SidebarFile) {
     let path = file.file_path.clone();

@@ -1,7 +1,7 @@
 //! The three executables, as things a window can find and start another of.
 //!
 //! `moonreview`, `moontasks` and `moonshell` ship together and are installed side by side, so
-//! a window that wants to open one of the others looks beside itself rather than on `PATH` —
+//! a window that wants to open one of the others looks beside itself rather than on `PATH` -
 //! the one next to it is the one it was installed with.
 
 use std::{env, path::PathBuf, process::Command};
@@ -21,8 +21,8 @@ pub(crate) fn install_dir() -> Result<PathBuf> {
 
 /// The executable that opens on this frame, as installed beside the running one.
 ///
-/// The three ship together but only some of them may be installed — an archive from before
-/// the split holds one — so a missing sibling is an answer of `None` rather than an error.
+/// The three ship together but only some of them may be installed - an archive from before
+/// the split holds one - so a missing sibling is an answer of `None` rather than an error.
 pub(crate) fn executable_for(frame: Frame) -> Option<PathBuf> {
     beside(&install_dir().ok()?, frame)
 }
@@ -50,7 +50,7 @@ pub(crate) enum Opens<'a> {
 /// `launcher` is the frame's `.app` bundle, when one is installed. Going through it is what
 /// makes the new window arrive in front, under its own icon: `open` hands the request to
 /// LaunchServices, which starts and activates the application, while a plain executable
-/// started from another window is left wherever the window server puts it — which is behind
+/// started from another window is left wherever the window server puts it - which is behind
 /// the window it was asked for from. Without a bundle, the executable is all there is.
 pub(crate) fn window_command(
     executable: &std::path::Path,
@@ -64,8 +64,8 @@ pub(crate) fn window_command(
     }
     match opens {
         Opens::Repo(path) => arguments.extend(["--repo", path]),
-        // A remote window is already asking which repo to open, so `--pick` — which takes
-        // nothing else — is only for a window of this machine.
+        // A remote window is already asking which repo to open, so `--pick` - which takes
+        // nothing else - is only for a window of this machine.
         Opens::LaunchScreen if connect_target.is_none() => arguments.push("--pick"),
         Opens::LaunchScreen => {}
     }
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(command.get_current_dir(), None);
     }
 
-    /// A window reading another machine is given that server, and no repo — which is the
+    /// A window reading another machine is given that server, and no repo - which is the
     /// launch screen over there, asking which of its repos to open.
     #[test]
     fn a_remote_window_is_given_the_server_and_no_repo() {
@@ -143,7 +143,7 @@ mod tests {
     }
 
     /// With a launcher installed the request goes through the OS, which is what brings the
-    /// new window to the front — a second instance of it, carrying the same arguments.
+    /// new window to the front - a second instance of it, carrying the same arguments.
     #[test]
     fn a_window_with_a_launcher_is_opened_through_it() {
         let command = window_command(

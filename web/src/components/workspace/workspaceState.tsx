@@ -51,7 +51,7 @@ function initialLayout(): WorkspaceLayout {
     : defaultLayout(getRootSessionId());
 }
 
-/// Every submodule with changes gets a review tab beside the main review, on every load —
+/// Every submodule with changes gets a review tab beside the main review, on every load -
 /// they are not offered anywhere else. Closing one hides it until the page is loaded again.
 /// The main review stays in front.
 function withSubmoduleReviewTabs(

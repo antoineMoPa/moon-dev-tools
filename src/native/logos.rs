@@ -1,7 +1,7 @@
 //! The three apps' logos, embedded as pixels.
 //!
 //! The sources are the `logo-*.svg` files at the repo root. They are rasterized once, by
-//! `scripts/render-logos.sh`, into the PNGs under `assets/logos/` that are embedded here —
+//! `scripts/render-logos.sh`, into the PNGs under `assets/logos/` that are embedded here -
 //! rather than at build or run time, because the shell logo sets its text in Futura, and only
 //! a machine that has the font renders it right.
 
@@ -9,8 +9,8 @@ use crate::cli::Frame;
 
 /// The logo of one executable at one of the rendered sizes, as PNG bytes.
 ///
-/// The sizes are the ones the icons actually need — the `.icns` entries, the Linux launcher
-/// icon and the window icon — and asking for any other size is a bug, not a fallback.
+/// The sizes are the ones the icons actually need - the `.icns` entries, the Linux launcher
+/// icon and the window icon - and asking for any other size is a bug, not a fallback.
 pub(crate) fn logo_png(frame: Frame, size: usize) -> &'static [u8] {
     match (frame, size) {
         (Frame::Review, 32) => include_bytes!("../../assets/logos/moonreview-32.png"),
@@ -34,7 +34,7 @@ pub(crate) fn logo_png(frame: Frame, size: usize) -> &'static [u8] {
 
 /// The logo as the window icon: the dock, the task switcher and the title bar all take it
 /// from here. 256 pixels because the Dock on a Retina display draws the icon at up to
-/// 128 points, and eframe hands these exact pixels to `setApplicationIconImage` — a smaller
+/// 128 points, and eframe hands these exact pixels to `setApplicationIconImage` - a smaller
 /// bitmap is stretched there and arrives blurry.
 pub(crate) fn window_icon(frame: Frame) -> egui::IconData {
     let image = image::load_from_memory(logo_png(frame, 256))

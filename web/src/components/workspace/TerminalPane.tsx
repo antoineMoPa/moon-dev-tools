@@ -91,7 +91,7 @@ export function TerminalPane({
         .then(({ terminal_ids }) => {
           if (terminal_ids.includes(terminalId)) {
             terminal.write(
-              `\r\n\x1b[2m[disconnected — press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
+              `\r\n\x1b[2m[disconnected - press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
             );
             setShellExited(true);
             return;
@@ -100,7 +100,7 @@ export function TerminalPane({
         })
         .catch(() => {
           terminal.write(
-            `\r\n\x1b[2m[disconnected — press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
+            `\r\n\x1b[2m[disconnected - press enter for a new ${command ?? "shell"}]\x1b[0m\r\n`,
           );
           setShellExited(true);
         });

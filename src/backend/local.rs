@@ -40,7 +40,7 @@ impl egui_tty::Tty for LocalShell {
         self.session.write_input(data).map_err(egui_tty::Error::msg)
     }
 
-    /// The terminal answering the program's own questions, which is not somebody typing —
+    /// The terminal answering the program's own questions, which is not somebody typing -
     /// and a shell waiting to type a task's title into must not mistake it for one.
     fn reply(&self, data: &[u8]) -> egui_tty::Result<()> {
         self.session.write_reply(data).map_err(egui_tty::Error::msg)

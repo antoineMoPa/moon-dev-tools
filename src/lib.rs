@@ -1,6 +1,6 @@
 //! moonreview, as one library behind three executables.
 //!
-//! The three differ only in what the window opens on — a review, the task board, or a shell —
+//! The three differ only in what the window opens on - a review, the task board, or a shell -
 //! so they are three [`Frame`]s over the same everything else. `src/bin` holds one file per
 //! executable, and each is a single call to [`run`].
 

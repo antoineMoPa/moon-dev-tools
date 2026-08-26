@@ -136,7 +136,7 @@ export function Frame({ frameId }: { frameId: string }) {
       </div>
       <div className="frame-body" ref={bodyRef}>
         {frame.paneIds.length === 0 ? (
-          <div className="frame-empty muted">empty frame — drop a tab here or open one with [+]</div>
+          <div className="frame-empty muted">empty frame - drop a tab here or open one with [+]</div>
         ) : null}
         {draggedPaneId ? (
           <div

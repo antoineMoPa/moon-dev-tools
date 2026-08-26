@@ -3,7 +3,7 @@
 //! A review's session is new on every launch, and the arrangement of panes belongs to the
 //! window, so neither is the right place for something like which agent to hand comments to.
 //! That is a preference, it outlives both, and it is kept somewhere a person can open and
-//! edit — one file, in the obvious place, in a format they can read.
+//! edit - one file, in the obvious place, in a format they can read.
 
 use std::path::PathBuf;
 

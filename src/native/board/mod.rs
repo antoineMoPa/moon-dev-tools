@@ -8,6 +8,10 @@ pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
 pub(crate) mod filter;
+mod actions;
+
+pub(super) use actions::BoardAction;
+use actions::apply;
 
 use cards::{
     CARD_SPACING, DraggedTask, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in,
@@ -17,12 +21,11 @@ use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, ve
 
 use crate::{
     api::AgentKind,
-    moontasks::{BoardColumn, ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId},
     native::{
         app::App,
-        model::{OpenedShell, PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
-        palette::CommandAction,
-        panes::{OpenPaneRequest, PaneKind},
+        model::{PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
+        panes::PaneKind,
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -33,59 +36,6 @@ use crate::{
 const COLUMN_WIDTH: f32 = 286.0;
 
 pub(super) use crate::native::widgets::CLOSE_MARK_SIZE;
-
-/// What a click on the board asked for. Collected while drawing and acted on afterwards, so
-/// nothing changes the pane tree or the task list while either is being read.
-pub(super) enum BoardAction {
-    /// Open the new-task box at one end of this column — the end whose `+` was pressed.
-    OpenComposer(ColumnId, ColumnEnd),
-    CloseComposer,
-    /// Create the typed task at the end of this column the composer is standing at, and start
-    /// the picked agent on it.
-    Create(ColumnId, ColumnEnd, AgentKind),
-    /// A card let go of in a column, at the place among its cards it was dropped.
-    Place(String, ColumnId, usize),
-    /// A column let go of on the board, at the place among the others it was dropped.
-    PlaceColumn(ColumnId, usize),
-    AddColumn(String),
-    RenameColumn(ColumnId, String),
-    CancelColumnRename,
-    DeleteColumn(ColumnId),
-    CloseColumnComposer,
-    Delete(String),
-    Rename(String, String),
-    CancelRename,
-    /// Open the task's `notes.md` in a pane down the right, making the file first if the
-    /// task has none yet.
-    OpenNotes(String),
-    Start(String, StartResourceRequest),
-    Resume(String, String),
-    /// Open the modal that lists the agents' own sessions, for this task.
-    OpenAttachPicker {
-        task_id: String,
-        task_title: String,
-    },
-    CloseAttachPicker,
-    /// Put the picked session on the task and open a shell resumed on it.
-    Attach {
-        task_id: String,
-        agent: AgentKind,
-        agent_session_id: String,
-    },
-    Stop(String, String),
-    /// Take a run off the task for good, rather than leaving it to be resumed.
-    DeleteResource(String, String),
-    ArmResourceDelete(String),
-    CancelResourceDelete,
-    /// Bring a task's shell on screen, in a tab of its own.
-    OpenShell {
-        terminal_id: String,
-        command: Option<AgentKind>,
-        task_id: String,
-    },
-    /// Open the review of what the task has changed.
-    OpenReview(String, String),
-}
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
     let palette = app.palette_of();
@@ -128,7 +78,7 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     filter::draw(app, ui, palette);
 
     // The columns are as tall as the pane, and the board scrolls sideways to reach the ones
-    // that do not fit — measured before the scroll area, which has no height of its own.
+    // that do not fit - measured before the scroll area, which has no height of its own.
     let height = ui.available_height();
     ScrollArea::horizontal()
         .id_salt("moontasks-columns")
@@ -170,7 +120,7 @@ fn draw_column_row(
         ui.add_space(6.0);
     }
 
-    // At the right-hand end, where a new column would go — and out of the way while one is
+    // At the right-hand end, where a new column would go - and out of the way while one is
     // being dragged, so it is never the thing a column is dropped onto.
     if dragged.is_none() {
         ui.allocate_ui_with_layout(
@@ -312,7 +262,7 @@ const CARD_SLIDE: f32 = 0.12;
 /// Which way a run of things is laid out, and so which way one of them slides to a new place.
 ///
 /// Cards stack down a column and columns run across the board, and both make room for one
-/// being dragged in exactly the same way — so the animation is written once and told which
+/// being dragged in exactly the same way - so the animation is written once and told which
 /// axis it is on.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Axis {
@@ -343,7 +293,7 @@ pub(super) use crate::native::widgets::{close_button, close_mark};
 
 /// Whether a resource is still going: a filled dot for running, a hollow one for ended.
 ///
-/// Drawn rather than typeset, because the bundled fonts have no circle glyph — the system
+/// Drawn rather than typeset, because the bundled fonts have no circle glyph - the system
 /// font that a shell's output borrows is not there to fall back on in a snapshot.
 pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
     const DIAMETER: f32 = 7.0;
@@ -368,7 +318,7 @@ pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
 /// A `+` on a filled disc, the same button the tab strips carry for a new tab.
 ///
 /// It is drawn rather than taken from `egui_frames`, which only offers it as part of a tab
-/// strip — but it is the same shape, because it means the same thing.
+/// strip - but it is the same shape, because it means the same thing.
 pub(super) fn plus_button(ui: &mut Ui, palette: &Palette) -> egui::Response {
     const DIAMETER: f32 = 15.0;
 
@@ -426,7 +376,7 @@ fn draw_column(
             let composing = (app.model.board.composer_in.as_ref() == Some(&column.id))
                 .then_some(app.model.board.composer_at);
 
-            // Where a drop would land, counted against the cards it would be put among — so the
+            // Where a drop would land, counted against the cards it would be put among - so the
             // slot the dragged card is standing in is taken back out of the reckoning, and moving
             // the pointer over a card cannot bounce between two answers.
             let mut cards: Vec<egui::Rect> = Vec::new();
@@ -559,7 +509,7 @@ fn draw_column(
 }
 
 /// Whether the pointer is inside a column with nothing but the dragged card's own ghost over
-/// it — that one follows the cursor, so it is over every column the cursor could be over and
+/// it - that one follows the cursor, so it is over every column the cursor could be over and
 /// would otherwise be the answer to every question about what is under the pointer.
 fn pointer_over(ui: &Ui, zone: &egui::Response, ghost: Option<egui::LayerId>) -> bool {
     let Some(pointer) = ui.ctx().input(|input| input.pointer.interact_pos()) else {
@@ -580,8 +530,8 @@ fn pointer_over(ui: &Ui, zone: &egui::Response, ghost: Option<egui::LayerId>) ->
 /// [`CARD_SLIDE`]. One that has not moved is drawn where it is with no work done, and one
 /// drawn for the first time starts where it belongs rather than sliding in from the edge.
 ///
-/// `origin` is what the place is measured from — the top of the column's contents for a card,
-/// the left of the row for a column — so that scrolling, which moves everything at once, is
+/// `origin` is what the place is measured from - the top of the column's contents for a card,
+/// the left of the row for a column - so that scrolling, which moves everything at once, is
 /// not read as everything having moved.
 pub(super) fn slide_into_place(
     ui: &mut Ui,
@@ -599,7 +549,7 @@ pub(super) fn slide_into_place(
         return draw(ui);
     }
 
-    // Drawn into a layer of its own so the shapes can be moved once they are made — the same
+    // Drawn into a layer of its own so the shapes can be moved once they are made - the same
     // way the dragged card is. Its clip is moved the other way first, so one on its way between
     // two places is still cut off at the pane it is in rather than drawn over what is beside it.
     let layer_id = egui::LayerId::new(egui::Order::Middle, id.with("sliding"));
@@ -617,7 +567,7 @@ pub(super) fn slide_into_place(
 
 /// Say that something is at the place the layout gives it right now, without walking there.
 ///
-/// One that is somewhere for a reason of its own — carried by the cursor — is still at a
+/// One that is somewhere for a reason of its own - carried by the cursor - is still at a
 /// place, and the next thing to draw it has to know that place is where it already is.
 pub(super) fn stamp_place(ui: &Ui, axis: Axis, id: egui::Id, origin: f32) {
     ui.ctx()
@@ -649,273 +599,6 @@ pub(super) fn agent_label(agent: AgentKind) -> String {
         AgentKind::None => "no agent".to_string(),
         other => other.label().to_lowercase(),
     }
-}
-
-fn apply(app: &mut App, action: BoardAction) {
-    let session_id = app.model.root_session_id.clone();
-
-    match action {
-        BoardAction::OpenComposer(column_id, joins) => {
-            app.model.board.composer_in = Some(column_id);
-            app.model.board.composer_at = joins;
-            app.model.board.composer_focus = true;
-            // Each column's box starts from that column's own remembered agent.
-            app.model.board.composer_agent = None;
-        }
-        BoardAction::CloseComposer => {
-            app.model.board.composer_in = None;
-            app.model.board.new_title.clear();
-            app.model.board.composer_agent = None;
-        }
-        BoardAction::Create(column_id, joins, agent) => {
-            let request = CreateTaskRequest {
-                title: app.model.board.new_title.trim().to_string(),
-                agent,
-                status: column_id,
-                joins,
-            };
-            if request.title.is_empty() {
-                return;
-            }
-            // The box closes on the way out: the card it was standing in for is on its way.
-            app.model.board.new_title.clear();
-            app.model.board.composer_in = None;
-            app.model.board.composer_agent = None;
-            // And the filter goes with it, so the new card is on the board rather than behind
-            // a query that was asked before it existed and says nothing about it.
-            app.model.board.filter.clear();
-            act(app, "could not create the task", move |backend| {
-                backend.create_task(&session_id, &request).map(|_| ())
-            });
-        }
-        BoardAction::Place(task_id, status, position) => {
-            app.tasks.spawn(
-                move |backend| backend.place_task(&session_id, &task_id, status, position),
-                |model, result| {
-                    // A move the server would not make is not one to keep drawing.
-                    if result.is_err() {
-                        model.board.pending_place = None;
-                    }
-                    model.report(result, "could not move the task");
-                    model.board.refresh_requested = true;
-                },
-            );
-        }
-        BoardAction::Delete(task_id) => {
-            app.model.board.pending_delete = None;
-            act(app, "could not delete the task", move |backend| {
-                backend.delete_task(&session_id, &task_id)
-            });
-        }
-        BoardAction::Start(task_id, request) => {
-            // The shell it starts in is what the user wants to look at, so it opens with it.
-            let for_pane = task_id.clone();
-            let command = (request.agent != AgentKind::None).then_some(request.agent);
-            app.tasks.spawn(
-                move |backend| backend.start_task_resource(&session_id, &task_id, request),
-                move |model, result| {
-                    model.board.refresh_requested = true;
-                    match result {
-                        Ok(terminal_id) => {
-                            model.board.opened_shell = Some(OpenedShell {
-                                terminal_id,
-                                command,
-                                task_id: for_pane,
-                            })
-                        }
-                        Err(error) => model.error(format!("could not start it: {error}")),
-                    }
-                },
-            );
-        }
-        BoardAction::Resume(task_id, resource_id) => {
-            let for_pane = task_id.clone();
-            let command = app
-                .model
-                .board
-                .tasks
-                .iter()
-                .find(|task| task.id == task_id)
-                .and_then(|task| {
-                    task.resources
-                        .iter()
-                        .find(|resource| resource.id == resource_id)
-                })
-                .map(|resource| resource.agent);
-            app.tasks.spawn(
-                move |backend| backend.resume_task_resource(&session_id, &task_id, &resource_id),
-                move |model, result| {
-                    model.board.refresh_requested = true;
-                    match result {
-                        Ok(terminal_id) => {
-                            model.board.opened_shell = Some(OpenedShell {
-                                terminal_id,
-                                command,
-                                task_id: for_pane,
-                            })
-                        }
-                        Err(error) => model.error(format!("could not resume it: {error}")),
-                    }
-                },
-            );
-        }
-        BoardAction::OpenAttachPicker {
-            task_id,
-            task_title,
-        } => {
-            app.model.board.attach_picker = Some(crate::native::model::AttachPicker {
-                task_id,
-                task_title,
-                sessions: None,
-                error: None,
-                manual_id: String::new(),
-                manual_agent: None,
-            });
-            // Keyed, so holding the menu item down cannot queue a listing per frame. The
-            // listing is the repo's rather than the task's, so whichever picker is open when
-            // it lands is the one it answers — including one reopened on another card while
-            // an earlier read was still on its way, whose own read the key swallowed.
-            app.tasks.spawn_keyed(
-                Some("agent-sessions".to_string()),
-                move |backend| backend.list_agent_sessions(&session_id),
-                move |model, result| {
-                    let Some(picker) = model.board.attach_picker.as_mut() else {
-                        return;
-                    };
-                    match result {
-                        Ok(sessions) => picker.sessions = Some(sessions),
-                        Err(error) => picker.error = Some(error.to_string()),
-                    }
-                },
-            );
-        }
-        BoardAction::CloseAttachPicker => app.model.board.attach_picker = None,
-        BoardAction::Attach {
-            task_id,
-            agent,
-            agent_session_id,
-        } => {
-            app.model.board.attach_picker = None;
-            let for_pane = task_id.clone();
-            let request = crate::moontasks::AttachResourceRequest {
-                agent,
-                agent_session_id,
-            };
-            app.tasks.spawn(
-                move |backend| backend.attach_task_resource(&session_id, &task_id, &request),
-                move |model, result| {
-                    model.board.refresh_requested = true;
-                    match result {
-                        Ok(terminal_id) => {
-                            model.board.opened_shell = Some(OpenedShell {
-                                terminal_id,
-                                command: Some(agent),
-                                task_id: for_pane,
-                            })
-                        }
-                        Err(error) => model.error(format!("could not attach it: {error}")),
-                    }
-                },
-            );
-        }
-        BoardAction::Stop(task_id, resource_id) => {
-            act(app, "could not stop it", move |backend| {
-                backend.stop_task_resource(&session_id, &task_id, &resource_id)
-            });
-        }
-        BoardAction::ArmResourceDelete(resource_id) => {
-            app.model.board.pending_resource_delete = Some(resource_id);
-        }
-        BoardAction::CancelResourceDelete => app.model.board.pending_resource_delete = None,
-        BoardAction::DeleteResource(task_id, resource_id) => {
-            app.model.board.pending_resource_delete = None;
-            act(app, "could not remove it", move |backend| {
-                backend.delete_task_resource(&session_id, &task_id, &resource_id)
-            });
-        }
-        BoardAction::Rename(task_id, title) => {
-            app.model.board.renaming = None;
-            act(app, "could not rename the task", move |backend| {
-                backend.rename_task(&session_id, &task_id, &title)
-            });
-        }
-        BoardAction::CancelRename => app.model.board.renaming = None,
-        BoardAction::OpenNotes(task_id) => {
-            app.tasks.spawn(
-                move |backend| backend.open_task_notes(&session_id, &task_id),
-                |model, result| match result {
-                    Ok(file_path) => model.board.opened_notes = Some(file_path),
-                    Err(error) => model.error(format!("could not open the notes: {error}")),
-                },
-            );
-        }
-        BoardAction::AddColumn(label) => {
-            // The box closes on the way out: the column it was standing in for is on its way.
-            app.model.board.new_column_label.clear();
-            app.model.board.column_composer_open = false;
-            act(app, "could not add the column", move |backend| {
-                backend.add_column(&session_id, &label).map(|_| ())
-            });
-        }
-        BoardAction::CloseColumnComposer => {
-            app.model.board.column_composer_open = false;
-            app.model.board.new_column_label.clear();
-        }
-        BoardAction::RenameColumn(column_id, label) => {
-            app.model.board.renaming_column = None;
-            act(app, "could not rename the column", move |backend| {
-                backend.rename_column(&session_id, &column_id, &label)
-            });
-        }
-        BoardAction::CancelColumnRename => app.model.board.renaming_column = None,
-        BoardAction::DeleteColumn(column_id) => {
-            app.model.board.pending_column_delete = None;
-            act(app, "could not remove the column", move |backend| {
-                backend.delete_column(&session_id, &column_id)
-            });
-        }
-        BoardAction::PlaceColumn(column_id, position) => {
-            app.tasks.spawn(
-                move |backend| backend.place_column(&session_id, &column_id, position),
-                |model, result| {
-                    // A move the server would not make is not one to keep drawing.
-                    if result.is_err() {
-                        model.board.pending_column_place = None;
-                    }
-                    model.report(result, "could not move the column");
-                    model.board.refresh_requested = true;
-                },
-            );
-        }
-        BoardAction::OpenShell {
-            terminal_id,
-            command,
-            task_id,
-        } => {
-            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::AttachTerminal {
-                terminal_id,
-                command,
-                task_id: Some(task_id),
-            }));
-        }
-        BoardAction::OpenReview(repo_path, title) => {
-            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
-                repo_path,
-                title,
-            }));
-        }
-    }
-}
-
-/// Run a board action, and read the board again once it is done.
-fn act<W>(app: &App, context: &'static str, work: W)
-where
-    W: FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<()> + Send + 'static,
-{
-    app.tasks.spawn(work, move |model, result| {
-        model.report(result, context);
-        model.board.refresh_requested = true;
-    });
 }
 
 /// Whether the board is open, which is what decides if it is worth polling.

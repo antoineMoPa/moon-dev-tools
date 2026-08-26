@@ -223,7 +223,7 @@ fn codex_sessions(repo_path: &Path, home: &Path) -> Result<Vec<AgentSessionView>
     Ok(sessions)
 }
 
-/// Every `.jsonl` under `dir`, however deep — codex files sessions by date, `YYYY/MM/DD/`.
+/// Every `.jsonl` under `dir`, however deep - codex files sessions by date, `YYYY/MM/DD/`.
 fn collect_jsonl_files(dir: &Path, into: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -276,8 +276,8 @@ fn codex_session_title(lines: impl Iterator<Item = String>) -> Option<String> {
             }
             _ => None,
         };
-        // Codex wraps its own context notes — `<user_instructions>`,
-        // `<environment_context>` — as user turns; what the user typed does not start
+        // Codex wraps its own context notes - `<user_instructions>`,
+        // `<environment_context>` - as user turns; what the user typed does not start
         // with a tag.
         if let Some(text) = text.filter(|text| !text.starts_with('<')) {
             return Some(tidy_title(text));
@@ -301,7 +301,7 @@ struct OpenCodeSessionRow {
 fn opencode_sessions(repo_path: &Path) -> Result<Vec<AgentSessionView>> {
     let output = Command::new("opencode")
         .args(["session", "list", "--format", "json"])
-        // The PATH the availability check found opencode on — see [`crate::shell_path`].
+        // The PATH the availability check found opencode on - see [`crate::shell_path`].
         .env("PATH", crate::shell_path::installed_tools_path())
         .output()
         .context("failed to run opencode session list")?;

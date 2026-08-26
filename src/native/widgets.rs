@@ -88,7 +88,7 @@ pub(crate) fn close_button(ui: &mut Ui, palette: &Palette) -> Response {
     close_mark(ui, palette, true)
 }
 
-/// The same, for a mark that is there to be found and explained rather than pressed — a
+/// The same, for a mark that is there to be found and explained rather than pressed - a
 /// column that still holds cards has one, because a mark that vanishes is a mark nobody
 /// learns about, but it must not light up as though the press would do something.
 pub(crate) fn close_mark(ui: &mut Ui, palette: &Palette, enabled: bool) -> Response {
@@ -164,7 +164,7 @@ pub(crate) enum Confirmed {
 /// The second half of a destructive action: what it is about to do, and the way out.
 ///
 /// Drawn in place of the control that armed it, so the question is asked where the click was
-/// rather than over the whole window — nothing is nailed down behind it, and reading the
+/// rather than over the whole window - nothing is nailed down behind it, and reading the
 /// answer is one `match`. Discarding a hunk, discarding a file and deleting a task are all
 /// this same two-press shape.
 ///
@@ -230,7 +230,7 @@ pub(crate) fn elide_path(path: &str, max_chars: usize) -> String {
     format!("{start}…{end}")
 }
 
-/// `1,234` — thousands separated, so large diff counts stay readable.
+/// `1,234` - thousands separated, so large diff counts stay readable.
 pub(crate) fn grouped(value: usize) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);

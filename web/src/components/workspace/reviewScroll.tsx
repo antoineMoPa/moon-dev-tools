@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 /// scrolls inside its own element, and the parts that used to talk to `window` talk to this.
 export type ReviewScrollValue = {
   scrollToTop: () => void;
-  /// The element the review scrolls in — what `window` used to be for scroll events and
+  /// The element the review scrolls in - what `window` used to be for scroll events and
   /// for deciding which hunk is on screen.
   scrollElement: () => HTMLElement | null;
 };

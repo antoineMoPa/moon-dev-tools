@@ -115,7 +115,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
 }
 
 /// The picker for where comments go. It lives in the comment composer, beside the button
-/// that sends the comment — and more than one composer can be open, so each brings a salt
+/// that sends the comment - and more than one composer can be open, so each brings a salt
 /// of its own to keep the drop-downs apart.
 pub(crate) fn draw_agent_select(
     app: &mut App,

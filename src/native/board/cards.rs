@@ -101,7 +101,7 @@ pub(super) fn column_cards(
 /// A drop is read against what is on screen: let go of above the third card showing means
 /// above that card, whatever the filter is hiding between it and the one before. Let go of
 /// below the last card showing means the end of the column, the same as it does with no filter
-/// on — and with no filter on the two indexes are the same, so nothing is translated at all.
+/// on - and with no filter on the two indexes are the same, so nothing is translated at all.
 ///
 /// The dragged card is left out of the reckoning, because [`place_in`] takes it out of the
 /// column before it counts places in it.
@@ -134,7 +134,7 @@ pub(super) fn column_index_of(
     column.len()
 }
 
-/// How many cards a column holds, filter or no filter — what the board would show if the query
+/// How many cards a column holds, filter or no filter - what the board would show if the query
 /// were emptied. The heading's delete mark goes by this: a column whose cards are only hidden
 /// is still the record of where they are.
 pub(super) fn column_size(tasks: &[TaskView], status: &ColumnId) -> usize {
@@ -149,7 +149,7 @@ pub(super) fn card_drag_id(task_id: &str) -> egui::Id {
 /// Take a board the server has answered with, with a drop that it may not have seen yet.
 ///
 /// A read that was already on its way when a card was dropped answers with the card where it
-/// was, so the drop is made again on top of it — until an answer comes back with the card
+/// was, so the drop is made again on top of it - until an answer comes back with the card
 /// where it was put, which is the server having caught up.
 pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
     if let Some(pending) = &model.board.pending_place {
@@ -179,7 +179,7 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
 ///
 /// What the board draws is the last answer the server gave, and the next one is a worker
 /// thread and a poll away. Without this the dropped card springs back to where it came from
-/// for those few frames and then moves again — which reads as the drop having failed.
+/// for those few frames and then moves again - which reads as the drop having failed.
 pub(super) fn place_in(tasks: &mut Vec<TaskView>, task_id: &str, status: &ColumnId, index: usize) {
     let Some(at) = tasks.iter().position(|task| task.id == task_id) else {
         return;
@@ -218,7 +218,7 @@ pub(super) fn draw_empty_slot(ui: &Ui, slot: egui::Rect, palette: &Palette) {
 /// The card is picked up by its title, but what moves is the whole box: while a drag is in
 /// flight the card is drawn into a layer of its own and that layer is moved to the cursor,
 /// which is how `egui`'s own drag sources work. Sensing the drag on the title alone is what
-/// leaves the buttons underneath clickable — anything sensing a drag claims everything under
+/// leaves the buttons underneath clickable - anything sensing a drag claims everything under
 /// it.
 ///
 /// Answers with the place the card was laid out in, which is what a drop is measured against:
@@ -241,7 +241,7 @@ pub(super) fn draw_card(
     egui::DragAndDrop::set_payload(ui.ctx(), DraggedTask(task.id.clone()));
 
     // A card being carried is at the slot it is being held over, as far as anything that
-    // remembers where cards are is concerned — the drawing is at the cursor, but the place is
+    // remembers where cards are is concerned - the drawing is at the cursor, but the place is
     // the slot. Kept up to date rather than left at the slot the card was picked up from,
     // which is where the card would otherwise be seen to slide back from when it is let go of.
     stamp_place(ui, Axis::Vertical, drag_id, origin);
@@ -308,7 +308,7 @@ fn draw_card_body(
             // What a card offers to start is only drawn while the pointer is on the card,
             // and comes up and goes over [`OFFER_FADE`] rather than at once. Read from the
             // card's own background, which the buttons drawn over it do not take the pointer
-            // away from, so pointing at one of them still counts as being on the card — and
+            // away from, so pointing at one of them still counts as being on the card - and
             // so does having its menu up, which hangs below the card and would otherwise
             // fade the card out from under the hand reaching into it. That one is read from
             // the frame before, because whether the menu is up is only known once the row
@@ -340,7 +340,7 @@ fn draw_card_body(
         .rect
 }
 
-/// The card's title — the handle it is dragged by, the box it is renamed in, and the mark
+/// The card's title - the handle it is dragged by, the box it is renamed in, and the mark
 /// that deletes it, which sits up here the way a tab's close mark does.
 fn draw_card_title(
     app: &mut App,
@@ -367,7 +367,7 @@ fn draw_card_title(
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            // The folder and everything an agent left in it goes, so the cross asks first —
+            // The folder and everything an agent left in it goes, so the cross asks first -
             // the same two-press shape discarding a hunk has.
             if pending_delete {
                 match widgets::confirm(
@@ -471,17 +471,17 @@ fn draw_title_editor(
 }
 
 /// How many lines of a task's notes the card shows before the rest is cut. The card is the
-/// description at a glance, not the whole file — that is what the notes pane is for.
+/// description at a glance, not the whole file - that is what the notes pane is for.
 const NOTES_ROWS: usize = 3;
 
-/// The first lines of the task's `notes.md` under the title — its description. A task with
+/// The first lines of the task's `notes.md` under the title - its description. A task with
 /// none offers the link that starts them. Either way a click opens the file in a column down
 /// the right, straight into the editor.
 ///
 /// The offer is worth its row only while the pointer is on the card, but a card that dropped
 /// the row when it is not would change height under the pointer as it crossed the column. So
 /// the button keeps its place either way, and what fades over [`OFFER_FADE`] is how much of
-/// it is drawn — `showing` is 0 on a card at rest and 1 on the one under the pointer.
+/// it is drawn - `showing` is 0 on a card at rest and 1 on the one under the pointer.
 fn draw_notes_box(
     ui: &mut Ui,
     task: &TaskView,
@@ -564,7 +564,7 @@ fn draw_resource(
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
             // Furthest right, so the two that keep the run are never the one you mean to
             // press and miss. Removing a run is not undoable either, so it asks first.
-            // A shell has nothing to keep — closing it is the end of it — so it is offered the
+            // A shell has nothing to keep - closing it is the end of it - so it is offered the
             // close mark alone, while an agent run can be stopped and come back to.
             let is_shell = resource.kind == TaskResourceKind::Shell;
 
@@ -622,7 +622,7 @@ fn draw_resource(
 ///
 /// It comes up with the notes offer above it and goes the same way, so a card at rest is its
 /// title and its description and nothing else. It sits at the bottom right, out of the way of
-/// the description the card is read by, and under the mark that deletes the card — the two
+/// the description the card is read by, and under the mark that deletes the card - the two
 /// ends of the card are what it is acted on from.
 fn draw_card_actions(
     app: &mut App,
@@ -777,7 +777,7 @@ mod tests {
         let filter = Filter::of("s");
 
         // With `sing` in the air, the only card showing is `song`, at place 1 of the two the
-        // column has left — so the first place a drop can take is that one, not `sing`'s.
+        // column has left - so the first place a drop can take is that one, not `sing`'s.
         assert_eq!(column_index_of(&tasks, &filter, &status, "sing-1111", 0), 1);
         assert_eq!(
             column_index_of(&tasks, &filter, &status, "sing-1111", 1),

@@ -1,6 +1,6 @@
 //! Every keyboard shortcut the window answers to, in one table.
 //!
-//! The table is data — an action, the keys that fire it, and how far it reaches — so adding a
+//! The table is data - an action, the keys that fire it, and how far it reaches - so adding a
 //! shortcut is one row rather than another branch inside the key handler, and so the whole
 //! set can be shown to the user or read out of a config file later without the handler
 //! changing at all.
@@ -167,7 +167,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
     // A program in that shell still gets it: `C-x` is only held while it is going somewhere,
-    // and `C-x C-s` — which nothing here claims — arrives whole.
+    // and `C-x C-s` - which nothing here claims - arrives whole.
     Binding {
         action: Action::FocusNextFrame,
         chord: &[press(Modifiers::CTRL, Key::X), press(Modifiers::NONE, Key::O)],
@@ -195,7 +195,7 @@ enum Step {
     /// Nothing here wants it, and here are the presses an armed prefix had been holding on to.
     ///
     /// They are handed back rather than dropped: `C-x C-s` is emacs saving a file, and a
-    /// window that keeps the `C-x` for itself sends emacs a bare `C-s` — which searches
+    /// window that keeps the `C-x` for itself sends emacs a bare `C-s` - which searches
     /// instead. A prefix is only the window's while it is still going somewhere.
     Passed(Vec<Press>),
 }
@@ -203,7 +203,7 @@ enum Step {
 /// The keyboard's running state: which prefix, if any, is waiting for its next press.
 #[derive(Default)]
 pub(crate) struct Keymap {
-    /// The presses of a chord that has begun but not finished — the `C-x` of `C-x o`.
+    /// The presses of a chord that has begun but not finished - the `C-x` of `C-x o`.
     armed: Vec<Press>,
 }
 
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(fired, vec![Action::CloseTab]);
     }
 
-    /// cmd+1 raises the first tab and cmd+9 the ninth, and both work from inside a shell —
+    /// cmd+1 raises the first tab and cmd+9 the ninth, and both work from inside a shell -
     /// switching tabs is exactly the moment the keyboard is somewhere else.
     #[test]
     fn command_digits_pick_tabs_by_place() {

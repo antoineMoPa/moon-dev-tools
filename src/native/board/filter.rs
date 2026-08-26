@@ -6,7 +6,7 @@
 //! from there while the filter is on.
 //!
 //! The query lives on the board rather than in the window's find bar. The find bar steps
-//! through matches inside one document, which is not what is wanted here — the board's answer
+//! through matches inside one document, which is not what is wanted here - the board's answer
 //! is the cards themselves, drawn where they belong.
 
 use egui::{Key, Modifiers, RichText, Ui};
@@ -42,7 +42,7 @@ impl Filter {
     ///
     /// A card shows a title and the first lines of its `notes.md`, so those are what is looked
     /// through: what a card says is what it can be found by. Everything matches an empty
-    /// query — a board nobody has typed into shows all of its cards.
+    /// query - a board nobody has typed into shows all of its cards.
     pub(crate) fn matches(&self, task: &TaskView) -> bool {
         !self.is_on()
             || task.title.to_lowercase().contains(&self.0)
@@ -67,7 +67,7 @@ pub(super) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
 
         // Escape empties the box rather than leaving a filter on that the board has stopped
         // being asked about. egui takes the keyboard off whatever had it when Escape is
-        // pressed, which is what `lost_focus` is here — and it leaves the key itself alone, so
+        // pressed, which is what `lost_focus` is here - and it leaves the key itself alone, so
         // it is taken here, before an open new-task box further down the board reads it and
         // closes along with the query.
         if entry.lost_focus()
@@ -100,7 +100,7 @@ pub(super) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
     ui.add_space(6.0);
 }
 
-/// What the query is showing, out of what the board holds — so a board that has gone quiet is
+/// What the query is showing, out of what the board holds - so a board that has gone quiet is
 /// a filter that matched little rather than a repo that lost its tasks.
 fn tally(tasks: &[TaskView], filter: &Filter) -> String {
     let showing = tasks.iter().filter(|task| filter.matches(task)).count();

@@ -5,7 +5,7 @@
 //! commit pane instead, under the message box, for the `[use]` button beside them to put in it.
 //!
 //! Only the staged changes go in the prompt. The commit the pane is about to make is what is
-//! staged, so that is what the message is written from — unstaged work belongs to the commit
+//! staged, so that is what the message is written from - unstaged work belongs to the commit
 //! after this one.
 
 use std::{
@@ -23,12 +23,12 @@ use crate::git;
 
 /// How much of the staged diff the prompt carries. A commit of a whole vendored directory runs
 /// to megabytes, which is a slow read for an answer no better than the one the first pages give
-/// — so the diff is cut here, and the prompt says it was cut.
+/// - so the diff is cut here, and the prompt says it was cut.
 const DIFF_LIMIT: usize = 60_000;
 
 /// How long the run is given before it is taken to have got stuck. A model reading a diff
 /// answers in seconds; a run still going after this is one waiting for something that is never
-/// going to come — a provider that never answers, a prompt for a login — and the pane behind it
+/// going to come - a provider that never answers, a prompt for a login - and the pane behind it
 /// would spin for as long as the window is open.
 const ANSWER_LIMIT: Duration = Duration::from_secs(180);
 /// How often the run is asked whether it is done, while it is inside that limit.
@@ -53,7 +53,7 @@ pub(crate) struct CommitSuggestion {
 }
 
 impl CommitSuggestion {
-    /// The two of them as one commit message: subject, blank line, paragraph — which is what
+    /// The two of them as one commit message: subject, blank line, paragraph - which is what
     /// `[use]` puts in the message box.
     pub(crate) fn as_message(&self) -> String {
         format!("{}\n\n{}", self.subject, self.paragraph)
@@ -207,8 +207,8 @@ fn run_opencode(repo_root: &Path, prompt: &str) -> Result<String> {
         .join()
         .expect("the thread reading opencode's errors did not panic");
     if !status.success() {
-        // An `opencode` that cannot reach the model — no login for the provider, a model it
-        // does not know — says so on stderr and ends on a status.
+        // An `opencode` that cannot reach the model - no login for the provider, a model it
+        // does not know - says so on stderr and ends on a status.
         let detail = if complained.trim().is_empty() {
             &printed
         } else {
@@ -253,7 +253,7 @@ fn without_ansi_escapes(line: &str) -> String {
             plain.push(letter);
             continue;
         }
-        // An escape runs to the letter that ends it — `m` for a colour, and the same shape for
+        // An escape runs to the letter that ends it - `m` for a colour, and the same shape for
         // the rest of them.
         for letter in letters.by_ref() {
             if letter.is_ascii_alphabetic() {
@@ -264,8 +264,8 @@ fn without_ansi_escapes(line: &str) -> String {
     plain
 }
 
-/// Read the two labelled lines back out of what the agent printed. Anything else it printed —
-/// a banner, a blank line, a stray sentence — is not part of the message and is passed over.
+/// Read the two labelled lines back out of what the agent printed. Anything else it printed -
+/// a banner, a blank line, a stray sentence - is not part of the message and is passed over.
 fn parse_suggestion(raw: &str) -> Result<CommitSuggestion> {
     let mut subject = None;
     let mut paragraph = None;
@@ -283,7 +283,7 @@ fn parse_suggestion(raw: &str) -> Result<CommitSuggestion> {
     }
 
     let (Some(subject), Some(paragraph)) = (subject, paragraph) else {
-        // Which is also where an `opencode` that ended well without running the model lands —
+        // Which is also where an `opencode` that ended well without running the model lands -
         // one that printed its own help over an argument it did not know, say.
         bail!(
             "opencode did not answer with a `{SUBJECT_LABEL}` and a `{PARAGRAPH_LABEL}` line: {}",

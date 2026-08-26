@@ -103,7 +103,7 @@ pub(super) fn draw(
 }
 
 /// A session id typed or pasted by hand, with the agent it belongs to: the way in for a
-/// session the listing does not show — too old to make the newest few, or one nobody ever
+/// session the listing does not show - too old to make the newest few, or one nobody ever
 /// spoke in. The id is passed through as given; an id the agent does not know is refused by
 /// the agent itself, in the shell that opens.
 fn draw_manual_entry(

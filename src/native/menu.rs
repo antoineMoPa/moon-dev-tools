@@ -2,7 +2,7 @@
 //!
 //! On macOS the menu bar belongs to the system, not to the window, so it is built with the
 //! platform API. Everywhere else there is no system-wide bar to put these in, and the same
-//! actions are reached from the command palette — which is also where macOS users can find
+//! actions are reached from the command palette - which is also where macOS users can find
 //! them, so nothing lives only in the menu.
 
 /// Something the menu asked for.
@@ -54,7 +54,7 @@ mod platform {
         /// Install the menu bar. `serves_web` decides whether the browser item is offered at
         /// all, since a window with no server behind it has nothing to open; `picks_files`
         /// the same for Open File, which needs the repo to be on this machine for the OS
-        /// picker to reach it. `frame` is which of the three programs this window is — the
+        /// picker to reach it. `frame` is which of the three programs this window is - the
         /// one whose new window takes ⌘N.
         pub(crate) fn install(serves_web: bool, picks_files: bool, frame: Frame) -> Option<Self> {
             let menu = Menu::new();
@@ -81,7 +81,7 @@ mod platform {
 
             // A File menu with the one thing this window opens files for: reading and editing
             // one in a tab. ⌘O is what the chord means everywhere else, and the review's own
-            // way to a file — clicking it in the sidebar — opens the same tab.
+            // way to a file - clicking it in the sidebar - opens the same tab.
             let open_file = MenuItem::new(
                 "Open File…",
                 picks_files,
@@ -124,7 +124,7 @@ mod platform {
             // The predefined Copy, Paste and Select All items carry ⌘C, ⌘V and ⌘A as their key
             // equivalents, and macOS hands a chord to the menu bar before the window ever sees
             // it. Those items act on the `copy:` and `paste:` selectors, which nothing in a
-            // winit window implements, so the chord was swallowed and nothing happened —
+            // winit window implements, so the chord was swallowed and nothing happened -
             // while ⌘⇧C, which no menu item claims, fell through to the window and worked.
             //
             // Without them the chords reach egui, which turns them into `Event::Copy` and
@@ -167,7 +167,7 @@ mod platform {
 
             // A window is a process, so the executable it is running is the one it started
             // with: a rebuilt one is only picked up by starting again. Restart does that
-            // without a trip to the terminal — the new instance opens on this window's repo.
+            // without a trip to the terminal - the new instance opens on this window's repo.
             let restart_window = MenuItem::new("Restart", true, None);
 
             let window_menu = Submenu::new("Window", true);

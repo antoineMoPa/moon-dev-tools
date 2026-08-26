@@ -22,7 +22,7 @@ use crate::{
         ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
         SubmoduleView, bind_host, port, server_url,
     },
-    git::detect_agent_availability,
+    agent::detect_agent_availability,
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
@@ -528,7 +528,7 @@ async fn suggest_commit_message(
     )?))
 }
 
-/// Start `git` on one action. The server only ever spawns git with argv it built itself —
+/// Start `git` on one action. The server only ever spawns git with argv it built itself -
 /// what arrives here is which action, not a command line.
 async fn start_commit_run(
     AxumPath(session_id): AxumPath<String>,

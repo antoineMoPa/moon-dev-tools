@@ -1,8 +1,8 @@
-//! The PATH the tools the user installed are looked for and started on — the coding agents,
+//! The PATH the tools the user installed are looked for and started on - the coding agents,
 //! and `ag` for finding files by name.
 //!
 //! A window opened from a desktop launcher is started by the OS, not by a shell, so it inherits
-//! a bare PATH — on macOS `/usr/bin:/bin:/usr/sbin:/sbin`. What the user installed lives in
+//! a bare PATH - on macOS `/usr/bin:/bin:/usr/sbin:/sbin`. What the user installed lives in
 //! `~/.local/bin`, `/opt/homebrew/bin` and the like, which only their shell profile puts on
 //! PATH, so from a launcher every agent reads as missing and the board offers none.
 //!
@@ -25,7 +25,7 @@ pub(crate) fn installed_tools_path() -> &'static str {
 }
 
 /// Run the login shell for its PATH. `None` when it cannot be run or says nothing, which is
-/// the case for a shell whose profile is broken — the process PATH is the answer then.
+/// the case for a shell whose profile is broken - the process PATH is the answer then.
 fn login_shell_path() -> Option<String> {
     let output = Command::new(login_shell())
         .args(["-lc", "printf %s \"$PATH\""])

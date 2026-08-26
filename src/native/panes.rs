@@ -1,6 +1,6 @@
 //! What a pane of the workspace is, and how the window draws one.
 //!
-//! The arrangement itself — frames, tabs, splits, drags — belongs to `egui_frames`. This is
+//! The arrangement itself - frames, tabs, splits, drags - belongs to `egui_frames`. This is
 //! moonreview's side of it: the four kinds of pane the window has, and the
 //! [`egui_frames::PaneView`] that names their tabs and draws their bodies.
 
@@ -42,7 +42,7 @@ pub(crate) enum Pane {
         #[serde(default)]
         command: Option<AgentKind>,
         /// The moontasks task this shell belongs to, if it is one of a task's. A task's shell
-        /// outlives its tab — closing the tab lets go of it rather than ending it.
+        /// outlives its tab - closing the tab lets go of it rather than ending it.
         #[serde(default)]
         task_id: Option<String>,
     },
@@ -161,7 +161,7 @@ impl PaneView<Pane> for App {
         };
 
         let mut tab = Tab::new(title).with_marker(unsaved).with_hover(hover);
-        // The chord that raises this tab, for tabs cmd+1..cmd+9 can reach — worked out in
+        // The chord that raises this tab, for tabs cmd+1..cmd+9 can reach - worked out in
         // `stamp_tab_shortcuts` before the strips are drawn.
         if let Some(shortcut) = self.tab_shortcuts.get(&pane_id) {
             tab = tab.with_indicator(shortcut.clone());
@@ -213,7 +213,7 @@ impl PaneView<Pane> for App {
             return;
         }
         // The bundled fonts have no sun or moon glyph, so the switch is drawn rather than
-        // typeset — see the glyph test in `ui_tests`.
+        // typeset - see the glyph test in `ui_tests`.
         let palette = self.palette_of();
         let next = self.model.theme.toggled();
         if theme_switch(ui, self.model.theme, &palette)

@@ -1,4 +1,5 @@
 use std::{
+    env,
     io::Read,
     process::{Child, Command, Stdio},
     sync::{
@@ -325,6 +326,53 @@ fn stream_reader<R: Read>(mut reader: R, prefix: &'static str, log: AgentLog) ->
     }
 
     Ok(collected)
+}
+
+pub(crate) fn command_exists(command: &str) -> bool {
+    env::split_paths(crate::shell_path::installed_tools_path()).any(|dir| {
+        let candidate = dir.join(command);
+        std::fs::metadata(candidate)
+            .map(|meta| meta.is_file())
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn detect_agent_availability() -> crate::api::AgentAvailability {
+    crate::api::AgentAvailability {
+        claude: command_exists("claude"),
+        codex: command_exists("codex"),
+        opencode: command_exists("opencode"),
+    }
+}
+
+pub(crate) fn agent_is_available(
+    availability: crate::api::AgentAvailability,
+    agent: crate::api::AgentKind,
+) -> bool {
+    match agent {
+        crate::api::AgentKind::None => true,
+        crate::api::AgentKind::Claude => availability.claude,
+        crate::api::AgentKind::Codex => availability.codex,
+        crate::api::AgentKind::OpenCode => availability.opencode,
+    }
+}
+
+pub(crate) fn agent_options(
+    availability: crate::api::AgentAvailability,
+) -> Vec<crate::api::AgentOption> {
+    [
+        (crate::api::AgentKind::None, "No agent"),
+        (crate::api::AgentKind::Claude, "Claude"),
+        (crate::api::AgentKind::Codex, "Codex"),
+        (crate::api::AgentKind::OpenCode, "OpenCode"),
+    ]
+    .into_iter()
+    .map(|(kind, label)| crate::api::AgentOption {
+        kind,
+        label: label.to_string(),
+        available: agent_is_available(availability, kind),
+    })
+    .collect()
 }
 
 #[cfg(test)]

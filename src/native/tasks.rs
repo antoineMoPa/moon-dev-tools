@@ -103,7 +103,7 @@ impl Tasks {
 
     /// The same, but says so when it worked.
     ///
-    /// Most actions show their own result — a staged hunk moves, a comment appears. Handing
+    /// Most actions show their own result - a staged hunk moves, a comment appears. Handing
     /// work to an agent does not, so it has to be acknowledged.
     pub(crate) fn act_and_say<W>(
         &self,

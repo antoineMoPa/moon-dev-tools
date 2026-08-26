@@ -54,7 +54,7 @@ pub(crate) struct StartResourceRequest {
 
 /// A session an agent already has, being put on a task as a new resource.
 ///
-/// This is the way back when a task's recorded session id stopped pointing anywhere — the
+/// This is the way back when a task's recorded session id stopped pointing anywhere - the
 /// user switched sessions inside the agent, or the agent never persisted the one it was
 /// started on. The id here is one read off the agent's own records, so it is known to exist.
 #[derive(Clone, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ pub(crate) struct CreateTaskRequest {
     /// The agent to start on the task straight away. `None` leaves the task sitting in its
     /// column with nothing running.
     pub(crate) agent: AgentKind,
-    /// The column the new card joins — the one whose `+` opened the composer.
+    /// The column the new card joins - the one whose `+` opened the composer.
     pub(crate) status: ColumnId,
     /// Which end of that column it joins, which is the `+` that was pressed: the one on the
     /// heading puts the card on top, the one under the last card puts it at the bottom.
@@ -127,8 +127,8 @@ pub(crate) struct ColumnPlacementRequest {
 /// about it. `brief.md` in the task folder is the same text, for an agent with no system
 /// prompt to be given it in.
 ///
-/// The card's title is typed into its box a moment after it starts — see
-/// [`crate::terminal::TerminalSpec::type_ahead`] — so the conversation opens with something
+/// The card's title is typed into its box a moment after it starts - see
+/// [`crate::terminal::TerminalSpec::type_ahead`] - so the conversation opens with something
 /// written and nothing sent. That is a keystroke short of firing the job off, and the
 /// keystroke is the person's.
 ///
@@ -142,7 +142,7 @@ pub(crate) struct AgentLaunch {
     /// itself reckons the run was. No brief and no prompt: the session being resumed
     /// already has both.
     pub(crate) resume: &'static [&'static str],
-    /// Args that open the exact session `{session}` names. Used whenever the id is known —
+    /// Args that open the exact session `{session}` names. Used whenever the id is known -
     /// resuming a run that recorded one, and attaching a session picked off the agent's own
     /// records.
     pub(crate) attach: &'static [&'static str],
@@ -180,7 +180,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
 ///
 /// A run fills in the ones it has a value for; an argument naming one it does not is dropped.
 /// Which placeholders exist has to be written down, because a filled-in value can contain
-/// braces of its own — the brief is free text — and so cannot be told apart from an unfilled
+/// braces of its own - the brief is free text - and so cannot be told apart from an unfilled
 /// placeholder by looking at the result.
 pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}"];
 
@@ -215,7 +215,7 @@ pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {
 }
 
 /// The environment every process moontasks starts for a task is given, so anything running
-/// there — an agent, a shell the user opens, anything either of them starts — knows which
+/// there - an agent, a shell the user opens, anything either of them starts - knows which
 /// task it is in and which server owns it.
 pub(crate) const TASK_ID_ENV_VAR: &str = "MOONREVIEW_TASK_ID";
 pub(crate) const TASK_DIR_ENV_VAR: &str = "MOONREVIEW_TASK_DIR";

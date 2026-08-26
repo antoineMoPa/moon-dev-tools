@@ -22,7 +22,7 @@ use egui::{FontData, FontFamily};
 /// keeps its terminal fonts in (Menlo, PT Mono) load without yielding a single glyph.
 #[cfg(target_os = "macos")]
 const SYSTEM_FONTS: &[(&str, &str)] = &[
-    // Braille — which is what most command line spinners are made of — and a good deal of
+    // Braille - which is what most command line spinners are made of - and a good deal of
     // the miscellaneous symbols tools reach for.
     ("apple-symbols", "/System/Library/Fonts/Apple Symbols.ttf"),
 ];

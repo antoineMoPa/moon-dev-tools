@@ -1,6 +1,6 @@
 //! ⌘F: a find bar over whichever pane has the keyboard.
 //!
-//! One bar, belonging to one pane at a time — the pane that had the keyboard when it opened.
+//! One bar, belonging to one pane at a time - the pane that had the keyboard when it opened.
 //! What "search" means is the pane's own business: a shell looks through its screen and its
 //! scrollback, a review looks through every hunk it is showing rather than only the ones on
 //! screen. All this file owns is the query, which match of them is the current one, and the
@@ -14,7 +14,7 @@ use crate::native::{app::App, model::ToastKind, panes::PaneKind, theme::SMALL_SI
 
 /// The panes that have something for a find bar to look through. The agent monitor is a list
 /// of what the agents are doing rather than a document, so ⌘F says so instead of opening a
-/// bar that could only ever report nothing — and the board is not here because it answers
+/// bar that could only ever report nothing - and the board is not here because it answers
 /// ⌘F with its own filter instead of a bar.
 const SEARCHABLE: &[PaneKind] = &[PaneKind::Review, PaneKind::Terminal, PaneKind::File];
 
@@ -34,7 +34,7 @@ pub(crate) struct Find {
     focus: bool,
     /// Whether the query box held the keyboard when the bar was last drawn. Escape clears
     /// egui's focus before a frame starts, so the bar cannot ask whether it is being typed
-    /// into on the frame that Escape arrives — it asks what was true the frame before.
+    /// into on the frame that Escape arrives - it asks what was true the frame before.
     has_keyboard: bool,
 }
 
@@ -79,7 +79,7 @@ pub(crate) fn open(app: &mut App) {
     let Some(pane_id) = app.active_pane_id() else {
         return;
     };
-    // The board has a search of its own — a filter over its cards, standing above them — so
+    // The board has a search of its own - a filter over its cards, standing above them - so
     // cmd+F there puts the keyboard in that box rather than opening a bar over the columns.
     if app.active_pane_kind() == Some(PaneKind::Tasks) {
         app.model.board.filter_focus = true;
@@ -240,7 +240,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 /// takes whatever the controls leave, so nothing here is padding.
 const BAR_WIDTH: f32 = 300.0;
 const BAR_MARGIN: f32 = 8.0;
-/// What the bar occupies on screen, which is what it has to be placed by — the margin sits
+/// What the bar occupies on screen, which is what it has to be placed by - the margin sits
 /// outside the width the contents were given.
 const OUTER_WIDTH: f32 = BAR_WIDTH + BAR_MARGIN * 2.0;
 /// How far the bar sits from the corner of the pane it belongs to.

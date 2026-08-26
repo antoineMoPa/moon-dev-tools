@@ -28,7 +28,7 @@ pub(crate) enum PaletteMode {
 }
 
 /// What one of the palette's two searches has found. One search at a time, for whatever was
-/// typed when it started — `searched` says which query the matches belong to, and a query
+/// typed when it started - `searched` says which query the matches belong to, and a query
 /// that has moved on since starts another search.
 pub(crate) struct Search<T> {
     pub(crate) searched: Option<String>,
@@ -90,7 +90,7 @@ const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
 ];
 
 /// The sides the palette can split the active frame against, and the shell each split opens
-/// with — a split has to hold something, and a shell is what the workspace opens beside
+/// with - a split has to hold something, and a shell is what the workspace opens beside
 /// anything else.
 const SPLIT_COMMANDS: &[(DropSide, &str, &str)] = &[
     (
@@ -288,8 +288,8 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     commands
 }
 
-/// A pane the workspace keeps one of. It stays on the list once it is open — searching for
-/// "review" and finding nothing reads as the review being gone — and running it then brings
+/// A pane the workspace keeps one of. It stays on the list once it is open - searching for
+/// "review" and finding nothing reads as the review being gone - and running it then brings
 /// the open one forward, which `Workspace::open_pane` already does for every one of these.
 fn single_pane_command(
     already_open: bool,
@@ -433,7 +433,7 @@ fn empty_message(app: &App) -> String {
 }
 
 /// What a search has to say for itself before it has an answer to the query on screen, if
-/// anything: a search that has not answered for this query yet is still running — what was
+/// anything: a search that has not answered for this query yet is still running - what was
 /// found for the query before it is gone, and saying "no matches" would be a lie.
 fn searching_message(error: Option<&str>, searched: Option<&str>, query: &str) -> Option<String> {
     match error {
@@ -529,7 +529,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if !app.model.palette.open {
         return;
     }
-    // A press anywhere else — a shell, a tab, a pane in the next frame over — puts the palette
+    // A press anywhere else - a shell, a tab, a pane in the next frame over - puts the palette
     // away and belongs to whatever was pressed. It is answered before anything is drawn: the
     // search box asks for the keyboard every frame it exists, so a palette still on screen
     // would take it straight back off the shell that was just clicked.
@@ -628,7 +628,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     if truncated_of(app) {
                         ui.label(
                             RichText::new(format!(
-                                "the first {} matches — narrow the search for the rest",
+                                "the first {} matches - narrow the search for the rest",
                                 matches.len()
                             ))
                             .size(SMALL_SIZE - 1.0)

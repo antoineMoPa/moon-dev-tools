@@ -44,7 +44,7 @@ fn the_commit_button_opens_a_pane_beside_the_review() {
 }
 
 /// The whole of it: what the review staged, committed with a message written in the pane, by
-/// a real `git` in a real pty — which is what a signed commit needs.
+/// a real `git` in a real pty - which is what a signed commit needs.
 #[test]
 fn committing_from_the_pane_commits_what_is_staged() {
     let fixture = seeded_fixture("commit-run");
@@ -257,7 +257,7 @@ fn the_commit_pane_draws_what_it_would_commit() {
     harness.snapshot("commit-pane");
 }
 
-/// Pushing goes through the same pty as committing — an ssh remote asks for things too — and
+/// Pushing goes through the same pty as committing - an ssh remote asks for things too - and
 /// a branch that tracks nothing gets its upstream from the push that first sends it.
 #[test]
 fn pushing_a_branch_that_tracks_nothing_sets_its_upstream() {
@@ -409,8 +409,8 @@ fn a_written_message_goes_in_the_box_when_use_is_pressed() {
     );
 }
 
-/// The row with no message to show — on a machine without `opencode`, or before one has been
-/// written — is not a row at all: nothing to read and nothing to press.
+/// The row with no message to show - on a machine without `opencode`, or before one has been
+/// written - is not a row at all: nothing to read and nothing to press.
 #[test]
 fn nothing_is_drawn_where_there_is_no_message_to_show() {
     let mut harness = Harness::new_ui(|ui| {

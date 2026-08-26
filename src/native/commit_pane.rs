@@ -3,7 +3,7 @@
 //! Both actions run as `git` in a pty rather than as a captured process, and the pane shows
 //! that pty. That is what makes a signed commit work: gpg asks for the passphrase through
 //! pinentry, a terminal pinentry needs a terminal to ask on, and this is it. Anything else
-//! git wants typed — a hook's question, a push over ssh — lands in the same place.
+//! git wants typed - a hook's question, a push over ssh - lands in the same place.
 
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// How tall the run's terminal starts out. A terminal pinentry draws a box some twenty rows
-/// tall, and the passphrase has to be readable without dragging anything — so the run takes
+/// tall, and the passphrase has to be readable without dragging anything - so the run takes
 /// real room while it is there, and is dragged smaller by anyone who wants it smaller.
 const RUN_TERMINAL_HEIGHT: f32 = 320.0;
 /// What dragging that divider can leave it at.
@@ -32,7 +32,7 @@ const RUN_TERMINAL_RANGE: std::ops::RangeInclusive<f32> = 90.0..=640.0;
 const MESSAGE_ROWS: usize = 5;
 /// How often the pane asks how the run is going.
 ///
-/// The shell a run goes in outlives the command it was given — that is the point of it — so
+/// The shell a run goes in outlives the command it was given - that is the point of it - so
 /// there is no pty closing to be woken by. The command writes down how it went, and this is
 /// how often that is looked for.
 const OUTCOME_ASK_INTERVAL: Duration = Duration::from_millis(300);
@@ -79,7 +79,7 @@ const MAP_RUN_KIND_TO_WORDS: [(RunKind, RunWords); 3] = [
         RunWords {
             running: "committing…",
             worked: "committed",
-            failed: "git would not commit — see below",
+            failed: "git would not commit - see below",
         },
     ),
     (
@@ -87,7 +87,7 @@ const MAP_RUN_KIND_TO_WORDS: [(RunKind, RunWords); 3] = [
         RunWords {
             running: "pushing…",
             worked: "pushed",
-            failed: "git would not push — see below",
+            failed: "git would not push - see below",
         },
     ),
     (
@@ -95,7 +95,7 @@ const MAP_RUN_KIND_TO_WORDS: [(RunKind, RunWords); 3] = [
         RunWords {
             running: "opening the pull request…",
             worked: "pull request opened in the browser",
-            failed: "gh would not open a pull request — see below",
+            failed: "gh would not open a pull request - see below",
         },
     ),
 ];
@@ -122,7 +122,7 @@ pub(crate) struct CommitPane {
     pub(crate) message: String,
     /// What git says the repo looks like, once it has been read.
     state: Option<CommitState>,
-    /// Set when that reading is known to be out of date — after a run ends — which reads it
+    /// Set when that reading is known to be out of date - after a run ends - which reads it
     /// again at once rather than on the next poll.
     stale: bool,
     /// When it was last read, so an open pane keeps up with staging done next door without
@@ -136,7 +136,7 @@ pub(crate) struct CommitPane {
     /// Why there is no suggestion, when asking for one did not work out.
     suggestion_error: Option<String>,
     /// Whether one has been asked for since the pane last had nothing to commit. It is asked
-    /// for once and no more — staging happens a hunk at a time next door, and an agent run for
+    /// for once and no more - staging happens a hunk at a time next door, and an agent run for
     /// every one of those would be a run for a commit that is still being put together.
     suggestion_asked: bool,
     /// Set when a commit has just worked, and answered by the next reading of the repo: it is
@@ -170,14 +170,14 @@ impl CommitPane {
         self.suggestion_asked = true;
     }
 
-    /// How many files a commit would take in, once git has been asked. `None` until then —
+    /// How many files a commit would take in, once git has been asked. `None` until then -
     /// which is also when the commit button is still off.
     #[cfg(test)]
     pub(crate) fn staged_count_for_test(&self) -> Option<usize> {
         self.state.as_ref().map(|state| state.staged_files.len())
     }
 
-    /// Whether the command is going right now, which is when the buttons are off — and what
+    /// Whether the command is going right now, which is when the buttons are off - and what
     /// makes this pane's shell work in progress for the warning quitting owes.
     pub(crate) fn is_running(&self) -> bool {
         self.run.as_ref().is_some_and(|run| run.exit_code.is_none())
@@ -189,7 +189,7 @@ struct CommitRun {
     kind: RunKind,
     /// `None` while the command is going, the status it ended on once it is over.
     exit_code: Option<i32>,
-    /// When the pane last asked how it went — see [`OUTCOME_ASK_INTERVAL`].
+    /// When the pane last asked how it went - see [`OUTCOME_ASK_INTERVAL`].
     last_ask: Option<Instant>,
 }
 
@@ -343,7 +343,7 @@ impl App {
     /// the box, and no message has been asked for since there was last nothing to commit.
     fn auto_ask_for_commit_message(&mut self, session_id: &str) {
         // The window asks the moment something is staged. A test stages a fixture, so under
-        // test it would start a real agent on it — there the pane asks only when pressed.
+        // test it would start a real agent on it - there the pane asks only when pressed.
         if cfg!(test) {
             return;
         }
@@ -648,7 +648,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 if gh_installed
                     && reached == Reached::Pushed
                     && widgets::clickable(ui.add_enabled(!running, egui::Button::new("open PR")))
-                        .on_hover_text("gh pr create -w — fills the form in the browser")
+                        .on_hover_text("gh pr create -w - fills the form in the browser")
                         .clicked()
                 {
                     app.start_commit_run(session_id, CommitAction::OpenPr);
@@ -688,7 +688,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
 
 /// The message the agent wrote, under the box it would go in: a line while it is being
 /// written, the message itself with `[use]` beside it once it is, and why it did not come when
-/// it did not. Answers whether `[use]` was pressed, which is read after the pane is drawn —
+/// it did not. Answers whether `[use]` was pressed, which is read after the pane is drawn -
 /// the row is inside a closure that has the pane borrowed.
 pub(super) fn draw_suggested_message(
     ui: &mut Ui,
@@ -794,7 +794,7 @@ fn draw_staged_files(
     };
     if state.staged_files.is_empty() {
         ui.label(
-            RichText::new("nothing staged — stage what to commit in the review")
+            RichText::new("nothing staged - stage what to commit in the review")
                 .color(palette.muted)
                 .size(SMALL_SIZE),
         );

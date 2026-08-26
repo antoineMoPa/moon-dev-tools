@@ -28,14 +28,14 @@ const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
 /// typed.
 ///
 /// An agent's input box only takes keys once its interface has been drawn, and nothing it
-/// prints says when that is — but it stops printing once it has drawn one and is waiting.
+/// prints says when that is - but it stops printing once it has drawn one and is waiting.
 /// Coming up takes each of the three under a second of drawing, and a quarter of a second of
 /// silence after it is the box being ready, rather than a flat wait long enough for the
 /// slowest machine.
 const TYPE_AHEAD_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
 /// How long it waits for that silence before typing anyway.
 ///
-/// An agent that is still drawing at this point — an animated banner, a slow machine — has a
+/// An agent that is still drawing at this point - an animated banner, a slow machine - has a
 /// box that has been taking keys for a while, so the wait is over.
 const TYPE_AHEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
 /// How often the wait looks at whether the shell has gone quiet.
@@ -70,7 +70,7 @@ pub(crate) struct TerminalList {
 
 /// What runs in a pty: the user's login shell, or one of the agents.
 ///
-/// A commit run is a login shell too, with the command typed into it — see
+/// A commit run is a login shell too, with the command typed into it - see
 /// [`crate::committing::start_commit_run`] for why it is a shell rather than `git` itself.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum TerminalProgram {
@@ -108,13 +108,13 @@ pub(crate) struct TerminalSpec {
     /// The task this shell belongs to, if any. An owned shell is the task's to list and to
     /// close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
-    /// Text typed into the shell once the program has come up, as if the user had typed it —
+    /// Text typed into the shell once the program has come up, as if the user had typed it -
     /// exactly as given, down to whether it ends in a return.
     ///
     /// An agent's opening line ends without one: what that does is leave something written in
     /// the agent's box for the person to send. A commit run's line ends with `\r`, because
     /// there is nobody to press return on a command the pane was asked to run. A write that
-    /// lands too early — while the agent is still asking whether it trusts the folder — is
+    /// lands too early - while the agent is still asking whether it trusts the folder - is
     /// lost rather than acted on, which is what makes typing at a program that has not said it
     /// is ready acceptable.
     pub(crate) type_ahead: Option<String>,
@@ -154,7 +154,7 @@ pub(crate) struct TerminalSession {
     ///
     /// An agent that fell over on its own is the exception: its flag stays false and its
     /// session stays in the registry, so the tabs showing the error stay open rather than
-    /// closing over the only account of what went wrong — see the reader thread in
+    /// closing over the only account of what went wrong - see the reader thread in
     /// [`TerminalRegistry::spawn`].
     exited: watch::Sender<bool>,
     scrollback: Mutex<Scrollback>,
@@ -164,7 +164,7 @@ pub(crate) struct TerminalSession {
     /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
     /// text arriving after someone has started writing lands in the middle of their sentence.
     typed_into: std::sync::atomic::AtomicBool,
-    /// Whether the program is gone while the session is kept — a failed agent held open for
+    /// Whether the program is gone while the session is kept - a failed agent held open for
     /// its error to be read. Input is discarded then: nothing reads the pty any more, and a
     /// write once its buffer fills would block whoever is typing.
     child_ended: std::sync::atomic::AtomicBool,
@@ -308,7 +308,7 @@ impl TerminalRegistry {
         Ok((receiver, session))
     }
 
-    /// The shells the workspace has of its own — a task's shells are the task's to show.
+    /// The shells the workspace has of its own - a task's shells are the task's to show.
     pub(crate) fn terminal_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self
             .sessions
@@ -323,7 +323,7 @@ impl TerminalRegistry {
     }
 
     /// Whether this shell is still one the server has, which is what tells a task's recorded
-    /// agent run from one that ended — or that died with a previous run of the server.
+    /// agent run from one that ended - or that died with a previous run of the server.
     pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
         self.sessions.lock().unwrap().contains_key(terminal_id)
     }
@@ -472,8 +472,8 @@ impl TerminalRegistry {
                     }
                 }
             }
-            // An agent that fell over on its own — `claude --resume` on a session id that no
-            // longer exists, say — has printed the only account of what went wrong, and both
+            // An agent that fell over on its own - `claude --resume` on a session id that no
+            // longer exists, say - has printed the only account of what went wrong, and both
             // frontends close the tab of a shell marked exited. So its session is kept, with a
             // notice saying how it ended, until the user closes it themselves. A shell taken
             // out of the registry already was ended on purpose, and has nothing to explain.
@@ -522,8 +522,8 @@ fn failure_notice(session: &TerminalSession) -> Option<String> {
 /// Type text into a shell once the program in it has a box to take it, as if a person had.
 ///
 /// The wait is what makes this work at all: keys written at an agent that has not drawn its
-/// input box yet are dropped by it, so the text has to arrive after that and — this is the
-/// point — before the person starts writing over it. So it waits for the program to stop
+/// input box yet are dropped by it, so the text has to arrive after that and - this is the
+/// point - before the person starts writing over it. So it waits for the program to stop
 /// drawing rather than for a fixed span, and if the person got there first it types nothing:
 /// a title landing in the middle of a sentence someone is writing is worse than no title.
 fn type_ahead(session: &TerminalSession, text: &str) {

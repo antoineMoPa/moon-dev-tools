@@ -44,7 +44,7 @@ pub(crate) enum TerminalPlacement {
 /// The arrangement a run starts from: the shape the last one left behind, with this run's
 /// review in the frame whose tab strip is the app header.
 ///
-/// A stored arrangement is worth keeping for its shape — where the user put their columns and
+/// A stored arrangement is worth keeping for its shape - where the user put their columns and
 /// rows. Its panes are not: a review pane names a session that no longer exists, and a shell
 /// pane names a process that died with the last run. Whatever the review and the adopted shells
 /// do not fill is dropped on the first frame drawn.
@@ -82,7 +82,7 @@ pub(crate) fn arrangement_for(
 impl App {
     /// One frame of the arrangement: drawn, dragged, and whatever the user asked of it done.
     pub(crate) fn draw_workspace(&mut self, ui: &mut Ui) {
-        // An empty frame is a leftover — whatever emptied it should have taken it with it — and
+        // An empty frame is a leftover - whatever emptied it should have taken it with it - and
         // the only way to see one is the hint its body draws. Dropping them here means no path
         // can leave one on screen, whatever it forgot. A workspace with nothing open at all
         // keeps its single frame: that is a state rather than a leftover.
@@ -309,7 +309,7 @@ impl App {
         );
     }
 
-    /// Reattach a shell whose pane is on screen but whose emulator is not — which happens when
+    /// Reattach a shell whose pane is on screen but whose emulator is not - which happens when
     /// a restored arrangement mentions a terminal this window has not attached yet.
     pub(crate) fn attach_terminal(&mut self, terminal_id: &str) {
         let key = format!("attach:{terminal_id}");
@@ -361,7 +361,7 @@ impl App {
 
             match opened {
                 // A shell the user just opened starts with the keyboard, so they can type into
-                // it without clicking first — its tab comes to the front as it opens, and the
+                // it without clicking first - its tab comes to the front as it opens, and the
                 // front tab is the one with the keyboard. See `follow_front_tab`.
                 Ok(terminal) => {
                     self.terminal_errors.remove(&terminal_id);
@@ -426,11 +426,11 @@ impl App {
     }
 
     /// A shell that has ended takes its tab with it, and the frame too when it was the last tab
-    /// there — logging out of a terminal or an agent finishing should leave the workspace as it
+    /// there - logging out of a terminal or an agent finishing should leave the workspace as it
     /// was before the shell was opened.
     ///
     /// An agent that fell over is never among them: the server keeps its shell and does not
-    /// mark it exited, so the tab stays open on the error — see `failure_notice` in
+    /// mark it exited, so the tab stays open on the error - see `failure_notice` in
     /// `crate::terminal`.
     ///
     /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
@@ -511,7 +511,7 @@ impl App {
     }
 
     /// The review a shell asked for from this frame starts in: the review the pane in front of
-    /// the frame belongs to — a review, a file of it, or its commit pane — else wherever the
+    /// the frame belongs to - a review, a file of it, or its commit pane - else wherever the
     /// last shell was started, else the review the window was launched on.
     pub(crate) fn shell_session_for(&self, frame: FrameId) -> String {
         let showing = self
@@ -535,7 +535,7 @@ impl App {
     }
 
     /// A new shell goes in its own column down the right of the workspace, unless that would
-    /// squeeze that column — or whatever it takes the room from — below a usable width, in
+    /// squeeze that column - or whatever it takes the room from - below a usable width, in
     /// which case it becomes another tab in the frame it was asked for.
     pub(crate) fn room_for_a_column(&self, frame: FrameId) -> TerminalPlacement {
         // A shell takes a column of its own only in a workspace that is still one frame wide.
@@ -566,7 +566,7 @@ impl App {
     }
 
     /// Where a pane was drawn this frame: the body of the frame holding it, below the tabs.
-    /// Anything that floats over a pane — the find bar — is placed against this.
+    /// Anything that floats over a pane - the find bar - is placed against this.
     pub(crate) fn pane_rect(&self, pane_id: PaneId) -> Option<egui::Rect> {
         self.frames.pane_rect(pane_id)
     }
@@ -622,13 +622,13 @@ impl App {
     }
 
     /// The tab in front of the active frame is the one being worked in, so it is the one with
-    /// the keyboard — whatever put it there: a click on its tab or in its frame, cmd+1, `C-x o`,
+    /// the keyboard - whatever put it there: a click on its tab or in its frame, cmd+1, `C-x o`,
     /// a tab dragged across, a pane opened or closed. Watching the arrangement rather than
     /// each of those means none of them can be the one that forgets.
     ///
     /// The keyboard itself moves in two steps, because egui's focus can only be taken by the
     /// widget that would hold it: the pane left behind lets go here, and the pane arriving takes
-    /// it while it draws — in [`App::draw_terminal`] for a shell, and in `file_pane::draw_editor`
+    /// it while it draws - in [`App::draw_terminal`] for a shell, and in `file_pane::draw_editor`
     /// for a file or a task's notes.
     fn follow_front_tab(&mut self, ctx: &egui::Context) {
         let front = self.active_pane_id();
@@ -685,7 +685,7 @@ impl App {
 
         let response = terminal.ui(ui, &palette.terminal_style());
         // Remembered so the review's copy chord can tell "the keyboard is in a shell" from
-        // any other focus — see `review::hunks::copy_selected_lines`.
+        // any other focus - see `review::hunks::copy_selected_lines`.
         if response.has_focus() {
             self.model.terminal_with_keyboard = Some(response.id);
         }
@@ -707,7 +707,7 @@ impl App {
     /// commit or a push in flight counts: a passphrase half typed is work in progress like any
     /// other, and it is the same warning that is owed for it.
     ///
-    /// A commit pane's shell stays on after its command is done, to carry on working in — so it
+    /// A commit pane's shell stays on after its command is done, to carry on working in - so it
     /// counts while its command is going rather than for as long as it is open.
     pub(crate) fn running_shells(&self) -> usize {
         let workspace_shells = self

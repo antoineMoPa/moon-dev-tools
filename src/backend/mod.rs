@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// Every review operation the native frontend performs. Calls block, so the UI runs them
-/// on worker threads — a remote backend is a network round-trip.
+/// on worker threads - a remote backend is a network round-trip.
 pub(crate) trait Backend: Send + Sync + 'static {
     /// How this connection reads in the UI, e.g. `local` or `dev-box:42000`.
     fn describe(&self) -> String;
@@ -111,7 +111,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
         task_id: &str,
         resource_id: &str,
     ) -> Result<String>;
-    /// The sessions the installed agents already have for this repo, newest first — what the
+    /// The sessions the installed agents already have for this repo, newest first - what the
     /// attach modal lists.
     fn list_agent_sessions(&self, session_id: &str) -> Result<Vec<AgentSessionView>>;
     /// Put one of those sessions on a task as a new resource, and answer with the shell it
@@ -164,6 +164,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
     /// Attach to a shell: everything it has printed, and a handle to type into it. This is
-    /// what a terminal pane is built from — see [`egui_tty::TtyStream`].
+    /// what a terminal pane is built from - see [`egui_tty::TtyStream`].
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream>;
 }

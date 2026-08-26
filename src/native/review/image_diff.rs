@@ -2,7 +2,7 @@
 //!
 //! The server hands both sides over as `data:` URIs, which is what the web frontend puts in an
 //! `<img>` tag. egui has no loader for that scheme, so each side is decoded here once and given
-//! to egui as bytes under a `bytes://` URI derived from the image's own content — which is also
+//! to egui as bytes under a `bytes://` URI derived from the image's own content - which is also
 //! what makes egui drop the old texture when the picture changes.
 
 use std::sync::Arc;
@@ -25,8 +25,8 @@ use crate::{
 const TALLEST_IMAGE_FRACTION: f32 = 0.7;
 /// Between the before and the after.
 const IMAGE_GAP: f32 = 12.0;
-/// Around the whole comparison. The hunk card has no inner margin of its own — a diff's lines
-/// run edge to edge — so the pictures bring their own.
+/// Around the whole comparison. The hunk card has no inner margin of its own - a diff's lines
+/// run edge to edge - so the pictures bring their own.
 const IMAGE_PADDING: i8 = 10;
 /// Between a side's label and its picture.
 const LABEL_GAP: f32 = 4.0;
@@ -44,7 +44,7 @@ pub(crate) fn draw_image_diff(
             draw_file_link(app, ui, file_path, palette);
             ui.add_space(8.0);
 
-            // Each side takes half of what is going, scaled up to fill it — a favicon is
+            // Each side takes half of what is going, scaled up to fill it - a favicon is
             // otherwise drawn at its own 16 points and is impossible to compare.
             let half = ((ui.available_width() - IMAGE_GAP) / 2.0).max(80.0);
             let tallest = ui.ctx().viewport_rect().height() * TALLEST_IMAGE_FRACTION;
@@ -87,7 +87,7 @@ pub(crate) fn draw_image_diff(
         });
 }
 
-/// The image's name, and beside it a way to open the file itself — the pane can only show it
+/// The image's name, and beside it a way to open the file itself - the pane can only show it
 /// at the size it fits, and comparing pixels needs a real viewer.
 ///
 /// The name is a label rather than a button so it can be selected and copied. One widget

@@ -1,8 +1,8 @@
 //! Finding text across every hunk of a review.
 //!
 //! The diff pane only lays out the hunks that are on screen, so a search cannot be a matter
-//! of looking at what was drawn. It goes through the parsed lines of every hunk instead —
-//! the same parse the pane draws from, taken out of the app's cache — which is what makes a
+//! of looking at what was drawn. It goes through the parsed lines of every hunk instead -
+//! the same parse the pane draws from, taken out of the app's cache - which is what makes a
 //! match in a file scrolled far out of sight findable at all.
 
 use crate::native::{app::App, review::diff::DiffLine};

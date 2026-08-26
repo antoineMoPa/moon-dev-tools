@@ -1,4 +1,4 @@
-//! The desktop frontend: one window, and — when it is reviewing the machine it runs on —
+//! The desktop frontend: one window, and - when it is reviewing the machine it runs on -
 //! the review server in the same process and the same executable.
 
 pub(crate) mod app;

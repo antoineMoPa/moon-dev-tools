@@ -21,7 +21,7 @@ function reviewLabelForSession(session?: SessionState | null): string | null {
   return commit ? `${commit.short_sha} ${commit.subject}` : session.active_commit.slice(0, 7);
 }
 
-/// The app name, shown at the head of the top-left frame's tab strip — the app has a single
+/// The app name, shown at the head of the top-left frame's tab strip - the app has a single
 /// header, and that strip is it.
 export function HeaderBrand() {
   return (

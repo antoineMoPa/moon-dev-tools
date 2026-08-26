@@ -89,7 +89,7 @@ impl LineSelection {
     }
 
     /// The lines the selection actually covers. A selection that merely touches the start of
-    /// its last line — the pointer a pixel over the row boundary — has not selected anything
+    /// its last line - the pointer a pixel over the row boundary - has not selected anything
     /// on it, so that line is left out. This is what makes selecting a single line by
     /// dragging possible at all: the row is 15px tall and a drag begins after 6px.
     pub(crate) fn line_range(&self) -> std::ops::RangeInclusive<usize> {
@@ -200,7 +200,7 @@ impl ReviewState {
 /// The moontasks board: the tasks the server last reported, and what is being typed into it.
 ///
 /// The board is the repo's `.moontasks` folder, which anything may write to, so nothing here
-/// is authoritative — it is the last answer, redrawn until the next one arrives.
+/// is authoritative - it is the last answer, redrawn until the next one arrives.
 #[derive(Default)]
 pub(crate) struct BoardState {
     pub(crate) tasks: Vec<crate::moontasks::TaskView>,
@@ -238,7 +238,7 @@ pub(crate) struct BoardState {
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
     /// A notes file a board action just made sure exists, as the repo-relative path a file
-    /// pane opens it by — waiting for the window the same way an opened shell does.
+    /// pane opens it by - waiting for the window the same way an opened shell does.
     pub(crate) opened_notes: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
@@ -275,7 +275,7 @@ pub(crate) struct BoardState {
 /// The modal that attaches one of an agent's own sessions to a task.
 ///
 /// A task's recorded session id stops pointing anywhere when the user switches sessions
-/// inside the agent, or the agent never persisted it — this is where a real one is picked
+/// inside the agent, or the agent never persisted it - this is where a real one is picked
 /// off the agents' own records instead.
 pub(crate) struct AttachPicker {
     pub(crate) task_id: String,
@@ -284,7 +284,7 @@ pub(crate) struct AttachPicker {
     /// What the agents' records had. `None` while they are still being read.
     pub(crate) sessions: Option<Vec<crate::agent_sessions::AgentSessionView>>,
     pub(crate) error: Option<String>,
-    /// A session id typed or pasted by hand, for one the listing does not show — too old to
+    /// A session id typed or pasted by hand, for one the listing does not show - too old to
     /// make the newest few, or one nobody ever spoke in.
     pub(crate) manual_id: String,
     /// The agent the typed id belongs to. `None` until the user picks one.
@@ -355,11 +355,11 @@ pub(crate) struct PaletteState {
     pub(crate) query: String,
     pub(crate) highlighted: usize,
     /// The query the highlight was picked under. A keystroke changes which commands are on
-    /// the list, so a highlight from before it means nothing — Enter should run the first
+    /// the list, so a highlight from before it means nothing - Enter should run the first
     /// match of what is on screen now, not whichever row the old highlight lands on.
     pub(crate) highlight_query: String,
     /// Where the palette drew last frame. A press outside it puts the palette away, and that
-    /// has to be known before this frame draws — the box takes the keyboard when it draws, and
+    /// has to be known before this frame draws - the box takes the keyboard when it draws, and
     /// a click meant for a shell would lose it again.
     pub(crate) rect: Option<egui::Rect>,
 }
@@ -436,7 +436,7 @@ pub(crate) struct Model {
     /// The review the window was launched on. Submodule reviews are opened beside it.
     pub(crate) root_session_id: String,
     /// The review the last shell was started in. A new shell asked for from a frame that
-    /// names no review — a frame of shells, say — opens where the previous one did.
+    /// names no review - a frame of shells, say - opens where the previous one did.
     pub(crate) last_shell_session_id: Option<String>,
     pub(crate) reviews: HashMap<String, ReviewState>,
     pub(crate) submodules: Vec<SubmoduleView>,
@@ -459,7 +459,7 @@ pub(crate) struct Model {
     pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
-    /// What the markdown renderer keeps between frames — loaded images above all — shared by
+    /// What the markdown renderer keeps between frames - loaded images above all - shared by
     /// every file pane that is previewing.
     pub(crate) markdown_cache: egui_commonmark::CommonMarkCache,
     /// The find bar, when one is open, and the pane it is searching.
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn a_sweep_that_only_touches_the_next_line_s_start_leaves_it_out() {
-        // The pointer crossed the row boundary but selected nothing on the lower line — the
+        // The pointer crossed the row boundary but selected nothing on the lower line - the
         // jitter at the end of a one-line drag.
         assert_eq!(selection((4, 2), (5, 0)).line_range(), 4..=4);
         // The moment it covers a character, the line is in.

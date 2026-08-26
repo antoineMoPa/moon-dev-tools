@@ -1,0 +1,502 @@
+/* The workspace fills everything under the header: a tree of splits whose leaves are
+   frames of tabs, with the tab contents drawn on top of them, and the panes those tabs
+   open: a review, a terminal, or the agent monitor. */
+
+.workspace {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+body.workspace-resizing {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.workspace-split {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-split-row {
+  flex-direction: row;
+}
+
+.workspace-split-column {
+  flex-direction: column;
+}
+
+.workspace-split-child {
+  position: relative;
+  flex-basis: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-divider {
+  position: absolute;
+  z-index: 5;
+  background: var(--line);
+  touch-action: none;
+}
+
+.workspace-divider-row {
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+}
+
+.workspace-divider-column {
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.workspace-divider:hover {
+  background: var(--accent);
+}
+
+/* Same for a frame: its header strip drops the optional labels when the frame is narrow. */
+.frame {
+  container: frame / inline-size;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.frame-active {
+  border-color: var(--accent);
+}
+
+.frame-tabs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  min-height: var(--header-height);
+  border-bottom: 1px solid var(--line);
+  background: var(--header-bg);
+  padding: 0 0.5rem;
+  user-select: none;
+}
+
+/* Equal side zones with the centre between them: what is being reviewed sits on the middle
+   of the strip whatever the tabs do, and neither side can grow into it. */
+.frame-tabs-start {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.frame-tabs-end {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.frame-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.frame-tab-list::-webkit-scrollbar {
+  display: none;
+}
+
+.frame-tabs-primary {
+  padding-left: 0.35rem;
+}
+
+.header-center {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0 1rem;
+  white-space: nowrap;
+}
+
+.frame-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex: 0 0 auto;
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  color: var(--muted);
+  cursor: grab;
+  white-space: nowrap;
+}
+
+/* A long repo or branch name shortens rather than pushing the other tabs out of reach. */
+.frame-tab > button:first-child {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frame-tab-active {
+  background: var(--control-active-bg);
+  color: var(--ink);
+}
+
+/* The tab being dragged: it slides along the strip rather than floating over the page. */
+.frame-tab-dragged {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--ink);
+  cursor: grabbing;
+}
+
+.frame-tab button,
+.frame-add-tab {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.frame-add-tab {
+  flex: 0 0 auto;
+  color: var(--muted);
+  padding: 0 0.3rem;
+}
+
+.frame-tab button:hover,
+.frame-tab-close:hover,
+.frame-add-tab:hover {
+  color: var(--accent);
+}
+
+.frame-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.frame-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 0.8rem;
+}
+
+/* Only visible while a tab is being dragged: the edges split this frame, the middle
+   moves the tab into it. */
+.frame-drop-zones {
+  position: absolute;
+  z-index: 60;
+  inset: 0;
+}
+
+.frame-drop-zone {
+  position: absolute;
+}
+
+/* Top and bottom span the whole width; left and right take the band between them. */
+.frame-drop-zone-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 25%;
+}
+
+.frame-drop-zone-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 25%;
+}
+
+.frame-drop-zone-left {
+  top: 25%;
+  bottom: 25%;
+  left: 0;
+  width: 22%;
+}
+
+.frame-drop-zone-right {
+  top: 25%;
+  right: 0;
+  bottom: 25%;
+  width: 22%;
+}
+
+.frame-drop-zone-center {
+  top: 25%;
+  right: 22%;
+  bottom: 25%;
+  left: 22%;
+}
+
+/* Shows where the tab would land: the half of the frame it would take, or the whole
+   frame when it would just become another tab here. */
+.frame-drop-preview {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+.frame-drop-preview-top {
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 50%;
+}
+
+.frame-drop-preview-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 50%;
+}
+
+.frame-drop-preview-left {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
+}
+
+.frame-drop-preview-right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+.frame-drop-preview-tabs {
+  inset: 0;
+}
+
+.pane-host {
+  position: absolute;
+  overflow: hidden;
+  /* A pane's contents lay themselves out against the pane, not the window. */
+  container: pane / inline-size;
+}
+
+.pane-host[data-visible="false"] {
+  /* Kept in the DOM but out of sight so shells and scroll positions survive. */
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.review-pane {
+  display: grid;
+  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+  width: 100%;
+  height: 100%;
+  /* Keeps the diff and the sidebar off the frame's border. */
+  padding: 0 5px;
+}
+
+.review-pane-opening {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 0.8rem;
+}
+
+.review-pane-scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 1rem 0;
+}
+
+@container pane (max-width: 720px) {
+  .review-pane {
+    /* Let the lone narrow-pane column shrink below its contents' min width to avoid horizontal overflow. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .left-sidebar {
+    display: none;
+  }
+}
+
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #0d121a;
+  padding: 0.3rem 0.5rem;
+}
+
+.terminal-pane-restart {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  padding-bottom: 0.3rem;
+  font-size: 0.75rem;
+}
+
+.terminal-pane-restart button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #ee8d68;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.terminal-pane-restart .muted {
+  color: #8b949e;
+}
+
+.terminal-pane-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.terminal-pane-surface .xterm {
+  height: 100%;
+}
+
+.agent-monitor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  height: 100%;
+  overflow: auto;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+/* Nothing to show yet: keep the message on the same left edge as the runs. */
+.agent-monitor-empty {
+  padding: 0.75rem 0.6rem;
+}
+
+.agent-monitor-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.agent-monitor-stage-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.agent-run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--panel);
+  padding: 0.4rem 0.5rem;
+}
+
+.agent-run-topline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.agent-run-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0 0.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+.agent-run-status-running,
+.agent-run-status-queued {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.agent-run-status-failed {
+  border-color: #b3261e;
+  color: #b3261e;
+}
+
+.agent-run-agent,
+.agent-run-file {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-run-actions {
+  display: flex;
+  flex: 1 0 auto;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.agent-run-actions button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.agent-run-actions button:hover {
+  color: var(--accent);
+}
+
+.agent-run-comment,
+.agent-run-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-run-detail {
+  font-size: 0.72rem;
+}
+
+.agent-run-log {
+  margin: 0.2rem 0 0;
+  max-height: 18rem;
+  overflow: auto;
+  border-radius: 0.3rem;
+  background: #0d121a;
+  padding: 0.4rem 0.5rem;
+  color: #edf3fb;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

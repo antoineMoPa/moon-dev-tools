@@ -2,7 +2,7 @@
 //! [`RemoteBackend`] exactly as the window drives it.
 //!
 //! This is the mode where the repo is on another machine, so nothing here may reach into the
-//! server's state directly — every assertion goes over HTTP or the terminal websocket.
+//! server's state directly - every assertion goes over HTTP or the terminal websocket.
 
 use std::{
     fs,

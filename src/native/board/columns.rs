@@ -2,7 +2,7 @@
 //! changes it.
 //!
 //! A column is a name cards are in rather than a place on screen, so moving one moves nothing
-//! about any card — the cards are simply drawn wherever their column ends up. That is why
+//! about any card - the cards are simply drawn wherever their column ends up. That is why
 //! dragging a heading takes its whole column with it and costs one line in the board's file.
 
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
@@ -35,7 +35,7 @@ pub(super) fn column_drag_id(column_id: &ColumnId) -> egui::Id {
     egui::Id::new(("moontask-column", column_id.as_str()))
 }
 
-/// The columns of the board, in the order they are drawn — with the one being dragged already
+/// The columns of the board, in the order they are drawn - with the one being dragged already
 /// moved to where it is being held.
 ///
 /// The move is made as it is being made rather than once it is over, so the columns around it
@@ -57,7 +57,7 @@ pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnId>) -> Vec<Boar
     columns
 }
 
-/// Move a column on the board being drawn, ahead of the server being told about it — the same
+/// Move a column on the board being drawn, ahead of the server being told about it - the same
 /// reasoning [`super::place_in`] has for cards.
 pub(crate) fn place_column_in(columns: &mut Vec<BoardColumn>, column_id: &ColumnId, index: usize) {
     let Some(at) = columns.iter().position(|column| column.id == *column_id) else {
@@ -91,7 +91,7 @@ pub(crate) fn accept_columns(
 /// be done to the column itself.
 ///
 /// The name is the handle the column is dragged by, the way a card's title is the handle the
-/// card is dragged by — and for the same reason, so the marks beside it stay clickable.
+/// card is dragged by - and for the same reason, so the marks beside it stay clickable.
 pub(super) fn draw_heading(
     app: &mut App,
     ui: &mut Ui,
@@ -197,7 +197,7 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
     }
 }
 
-/// The heading being renamed. Enter and clicking away keep it, Escape throws it away — the
+/// The heading being renamed. Enter and clicking away keep it, Escape throws it away - the
 /// same shape a card's title has.
 fn draw_heading_editor(
     app: &mut App,
@@ -230,7 +230,7 @@ fn draw_heading_editor(
 /// Draw a column where the layout puts it, sliding there when the order has changed, and carry
 /// it to the cursor while it is the one being dragged.
 ///
-/// The whole column goes with the heading — the cards are drawn inside it — so a column moves
+/// The whole column goes with the heading - the cards are drawn inside it - so a column moves
 /// as the thing it is rather than as a heading that leaves its cards behind.
 pub(super) fn with_column_drag(
     app: &mut App,
@@ -261,7 +261,7 @@ pub(super) fn with_column_drag(
     // it was being moved along it.
     //
     // Carried by the cursor rather than by how far the cursor has come, which is what a card
-    // does too — and for a reason beyond matching. The columns reorder underneath the drag as
+    // does too - and for a reason beyond matching. The columns reorder underneath the drag as
     // it goes, so where this one was laid out changes while it is in the air; a ghost placed
     // relative to that would chase its own tail, and one placed on the cursor cannot.
     if let Some(pointer) = ui.ctx().pointer_interact_pos() {
@@ -275,7 +275,7 @@ pub(super) fn with_column_drag(
 
 /// Where a dragged column would land: how many of the others it has been carried past.
 ///
-/// The dragged column is carried on the cursor, so the cursor is its middle — and this is
+/// The dragged column is carried on the cursor, so the cursor is its middle - and this is
 /// middle against middle, against the columns as they are drawn now with the dragged one
 /// already out of the reckoning, so carrying it over a column cannot bounce between two
 /// answers.

@@ -46,7 +46,7 @@ fn a_commit_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
 /// Type-ahead reaches the program as keystrokes, and reaches it whole.
 ///
 /// A login shell stands in for an agent here: it echoes what is typed at it, which is the
-/// same evidence an agent's input box gives — and unlike an agent it is on every machine
+/// same evidence an agent's input box gives - and unlike an agent it is on every machine
 /// this runs on. What it must not do is run anything, so nothing here sends a newline.
 #[test]
 fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
@@ -88,7 +88,7 @@ fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
         "the shell never echoed what was typed at it, printed: {printed:?}"
     );
     // A prompt is drawn and then nothing more, so the text goes in on that silence rather
-    // than on the deadline — which is the difference between it being there when you look
+    // than on the deadline - which is the difference between it being there when you look
     // at the tab and it landing over what you had started typing.
     assert!(
         took < TYPE_AHEAD_DEADLINE,
@@ -103,7 +103,7 @@ fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
 }
 
 /// A terminal answers the program's own questions the moment it attaches, and those
-/// answers travel the same way keystrokes do — but they are not somebody typing, and a
+/// answers travel the same way keystrokes do - but they are not somebody typing, and a
 /// tab being open must not be what stops the title going in.
 #[cfg(feature = "native")]
 #[test]
@@ -147,7 +147,7 @@ fn a_reply_to_the_program_is_not_somebody_typing() {
 }
 
 /// A folder holding a fake `claude` for the PATH, so an agent shell can be spawned
-/// without the real agent — the spec's own env wins over the PATH the spawn sets.
+/// without the real agent - the spec's own env wins over the PATH the spawn sets.
 #[cfg(unix)]
 fn fake_claude(script: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -179,8 +179,8 @@ fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
         .expect("expected a shell")
 }
 
-/// An agent that falls over — `claude --resume` on a session id that no longer exists,
-/// say — has printed the only account of what went wrong. Its shell is kept, unexited, so
+/// An agent that falls over - `claude --resume` on a session id that no longer exists,
+/// say - has printed the only account of what went wrong. Its shell is kept, unexited, so
 /// the tabs showing the error stay open, and a notice says how it ended.
 #[cfg(unix)]
 #[test]
@@ -247,7 +247,7 @@ fn an_agent_that_ends_cleanly_is_reaped() {
 }
 
 /// A login shell exits with whatever its last command returned, so a nonzero status there
-/// is everyday use — reaped, never kept.
+/// is everyday use - reaped, never kept.
 #[cfg(unix)]
 #[test]
 fn a_plain_shell_that_exits_nonzero_is_still_reaped() {

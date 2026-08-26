@@ -5,8 +5,8 @@
 //! macOS an application is a `.app` bundle, and on Linux a `.desktop` file. Both are written
 //! here, out of the executables that are already installed beside this one.
 //!
-//! Each launcher runs the real executable from where it is installed, so upgrading in place —
-//! `cargo install`, or rerunning the install script — needs no new launcher.
+//! Each launcher runs the real executable from where it is installed, so upgrading in place -
+//! `cargo install`, or rerunning the install script - needs no new launcher.
 
 use std::{env, path::PathBuf};
 
@@ -57,7 +57,7 @@ pub(crate) fn installed_launcher(frame: Frame) -> Option<PathBuf> {
     platform::installed_launcher(frame)
 }
 
-/// Where the launchers go, said in one line — the tail of what the CLI and the window report.
+/// Where the launchers go, said in one line - the tail of what the CLI and the window report.
 pub(crate) fn destination_hint() -> String {
     platform::destination_hint()
 }
@@ -76,7 +76,7 @@ mod platform {
     use crate::cli::Frame;
 
     /// Where the bundles go, in the order they are wanted: the shared folder every Finder
-    /// window and Launchpad shows first, and the per-user one when that cannot be written —
+    /// window and Launchpad shows first, and the per-user one when that cannot be written -
     /// which is the case for an account that is not an administrator.
     const APPLICATIONS_DIRS: &[&str] = &["/Applications", "~/Applications"];
 
@@ -186,7 +186,7 @@ mod platform {
         // `cargo install` over the executable is also an upgrade of what the launcher opens.
         //
         // A shell script that runs it would be the other way to avoid the copy, and macOS
-        // refuses to launch one as a bundle executable — `LSOpenURLsWithCompletionHandler()
+        // refuses to launch one as a bundle executable - `LSOpenURLsWithCompletionHandler()
         // failed with error -10669`. Launch Services follows the link and still reads the
         // bundle around it, so the icon, the name and the bundle id all still come from here.
         let link = macos_dir.join(frame.program());
@@ -197,7 +197,7 @@ mod platform {
         symlink(executable, &link).with_context(|| format!("failed to link {}", link.display()))?;
 
         // Finder and the Dock cache a bundle's icon against the bundle's own mtime, and
-        // rewriting the files inside it leaves that untouched — so a launcher whose icon
+        // rewriting the files inside it leaves that untouched - so a launcher whose icon
         // changed kept showing the old one until the cache was flushed by hand.
         let _ = std::process::Command::new("touch").arg(&bundle).status();
 
@@ -216,7 +216,7 @@ mod platform {
 
     /// A bundle an earlier run left in one of the other folders would be a second copy of the
     /// same application, in Spotlight and in Launchpad both, so it goes. Only a bundle carrying
-    /// this identifier is touched, and only a failure to delete one is passed over — there is a
+    /// this identifier is touched, and only a failure to delete one is passed over - there is a
     /// working launcher either way.
     fn remove_bundles_elsewhere(bundle_name: &str, written: &Path, identifier: &str) {
         for candidate in APPLICATIONS_DIRS {

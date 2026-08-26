@@ -12,7 +12,7 @@ type FrameRectsValue = {
 const FrameRectsContext = createContext<FrameRectsValue | null>(null);
 
 /// Panes are laid out over the frames rather than inside them: a tab dragged to another
-/// frame only changes coordinates, so its DOM — a live terminal, a scrolled diff — survives
+/// frame only changes coordinates, so its DOM - a live terminal, a scrolled diff - survives
 /// the move untouched.
 export function WorkspaceSurface({ children }: { children: ReactNode }) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);

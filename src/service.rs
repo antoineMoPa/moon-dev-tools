@@ -24,8 +24,9 @@ use crate::{
         cancel_comment_dispatch, comment_dispatch_view, parse_anchored_comments,
         plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
+    agent::{agent_is_available, agent_options},
     git::{
-        agent_is_available, agent_options, apply_patch, branch_commits_since_default,
+        apply_patch, branch_commits_since_default,
         build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
         commit_history_page, commit_view, current_branch_name, list_changed_submodule_repos,
         local_change_summary_from_status, preview_patch, read_repo_file, run_git, run_git_no_output,
@@ -640,7 +641,7 @@ pub(crate) fn stage_file(state: &AppState, session_id: &str, file_path: &str) ->
     Ok(())
 }
 
-/// Stage the whole working tree, untracked files included — the one sweep the commit pane
+/// Stage the whole working tree, untracked files included - the one sweep the commit pane
 /// offers. Marks what it staged as reviewed, the way staging a file does.
 pub(crate) fn stage_all(state: &AppState, session_id: &str) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;

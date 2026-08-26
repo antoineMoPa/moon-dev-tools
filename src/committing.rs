@@ -79,13 +79,13 @@ fn run_status_path(session_id: &str) -> std::path::PathBuf {
 }
 
 /// What the pane is told when the shell a run was going in disappeared before the command said
-/// how it went — the user closed it, or it was killed.
+/// how it went - the user closed it, or it was killed.
 const SHELL_WENT_AWAY: i32 = -1;
 
 /// One word of a shell line, quoted so the shell reads it as the one word it is.
 ///
 /// Only the branch name needs this: git allows `$`, quotes and semicolons in a branch name,
-/// and this line is read by a shell. The commit message never comes near it — it goes in a
+/// and this line is read by a shell. The commit message never comes near it - it goes in a
 /// file that `MESSAGE_VARIABLE` names.
 fn quoted_for_shell(word: &str) -> String {
     let plain = !word.is_empty()
@@ -116,8 +116,8 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
         behind,
         staged_files,
         unstaged_count,
-        gh_installed: git::command_exists("gh"),
-        opencode_installed: git::command_exists("opencode"),
+        gh_installed: crate::agent::command_exists("gh"),
+        opencode_installed: crate::agent::command_exists("opencode"),
     })
 }
 
@@ -225,7 +225,7 @@ fn parse_status(output: &str) -> (Vec<StagedFile>, usize) {
 }
 
 /// The shells one review's commit runs belong to. Owned rather than free-standing, so the
-/// workspace does not list a commit as one of its shells — and so the one before it is reaped
+/// workspace does not list a commit as one of its shells - and so the one before it is reaped
 /// when the next starts.
 fn run_owner(session_id: &str) -> String {
     format!("commit:{session_id}")
@@ -259,7 +259,7 @@ fn repo_of(
 /// A login shell rather than the program itself because of what happens after: the shell is
 /// still there when the command is done, in the repo, with the output above it, so the pane's
 /// terminal is one to work in rather than a transcript to read. The shell has no exit code to
-/// report for the command it ran — it outlives it — so the line it is given writes that status
+/// report for the command it ran - it outlives it - so the line it is given writes that status
 /// down where [`commit_run_outcome`] reads it.
 pub(crate) fn start_commit_run(
     state: &crate::api::AppState,
@@ -310,7 +310,7 @@ pub(crate) fn start_commit_run(
 }
 
 /// How a run ended: `None` while it is still going, the status the shell wrote down once it is
-/// over. Read once — the answer is taken away with it, so a pane that asks again is asking
+/// over. Read once - the answer is taken away with it, so a pane that asks again is asking
 /// about the next run rather than being told about this one twice.
 pub(crate) fn commit_run_outcome(
     state: &crate::api::AppState,

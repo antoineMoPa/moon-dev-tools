@@ -1,7 +1,7 @@
 //! The `.moontasks` folder: one directory per task, and the `metadata.json` inside it.
 //!
 //! The folder is the task. moonreview writes it, but nothing here assumes moonreview is the
-//! only writer — a task can be created, renamed or moved between columns with a text editor,
+//! only writer - a task can be created, renamed or moved between columns with a text editor,
 //! and the board picks the change up on its next poll.
 
 use std::{
@@ -66,7 +66,7 @@ pub(crate) struct BoardColumn {
 /// Which end of a column a new card joins.
 ///
 /// A card is made because of what it says, so the top is where one usually wants to be
-/// looking — but a column read as a queue is worked from the top down, and a card added to
+/// looking - but a column read as a queue is worked from the top down, and a card added to
 /// the back of that queue belongs at the bottom. The board asks for the one it means.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -139,7 +139,7 @@ pub(crate) enum TaskResourceKind {
 
 /// Something the task has running, or had running: a shell, or a run of an agent.
 ///
-/// Whether it is running right now is not written down — the shells the server has are what
+/// Whether it is running right now is not written down - the shells the server has are what
 /// answers that, and they are gone once the server is.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskResource {
@@ -171,7 +171,7 @@ pub(crate) struct TaskMetadata {
     /// in a file somebody may well edit by hand.
     ///
     /// A board written before cards could be reordered has none of these, which reads as a
-    /// column of zeroes — and cards that tie fall back on the order they were created in,
+    /// column of zeroes - and cards that tie fall back on the order they were created in,
     /// which is the order that board was already drawn in.
     #[serde(default)]
     pub(crate) position: u32,
@@ -185,8 +185,8 @@ pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
 
 /// What the board's own `.gitignore` says.
 ///
-/// A board is working state — running agents, scratch files, whatever an agent leaves in a
-/// task folder — and none of that belongs in someone's `git status` by default. The file
+/// A board is working state - running agents, scratch files, whatever an agent leaves in a
+/// task folder - and none of that belongs in someone's `git status` by default. The file
 /// ignores the whole folder including itself, so a repo where moonreview has been opened
 /// looks exactly like one where it has not.
 ///
@@ -195,7 +195,7 @@ pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
 const TASKS_GITIGNORE: &str = "\
 # Written by moonreview when it created this board.
 #
-# A task folder holds running state — shells, agent sessions, scratch files — so by default
+# A task folder holds running state - shells, agent sessions, scratch files - so by default
 # none of it is committed and none of it shows up in `git status`.
 #
 # Delete this file to share the board with the rest of the team.
@@ -219,7 +219,7 @@ fn ensure_tasks_root(repo_path: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-/// The board's columns, as its file has them — or the defaults, for a board that has never
+/// The board's columns, as its file has them - or the defaults, for a board that has never
 /// had them changed.
 ///
 /// A file that cannot be read or makes no sense is the defaults too, with the same reasoning
@@ -343,7 +343,7 @@ pub(crate) fn create_task(
 }
 
 /// The whole of a task's notes file. A task without one has nothing written yet, which reads
-/// as the empty string it is — the card draws its box either way.
+/// as the empty string it is - the card draws its box either way.
 pub(crate) fn read_notes(repo_path: &Path, task_id: &str) -> String {
     task_dir(repo_path, task_id)
         .and_then(|dir| {

@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::{
     api::{AgentKind, AppState},
-    git::agent_is_available,
+    agent::agent_is_available,
     moontasks::{
         AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView,
         TaskView, agent_launch,
@@ -53,8 +53,8 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
     Ok(tasks.into_iter().map(|(_, task)| task).collect())
 }
 
-/// What a card is sorted by inside its column: where it was put, and — for cards off a board
-/// written before they had a place, which all read as zero — the order they were created in.
+/// What a card is sorted by inside its column: where it was put, and - for cards off a board
+/// written before they had a place, which all read as zero - the order they were created in.
 fn place_of(metadata: &TaskMetadata) -> (u32, u64) {
     (metadata.position, metadata.created_at_unix)
 }
@@ -94,7 +94,7 @@ pub(crate) fn place_task(
 
     for (index, (id, mut metadata)) in column.into_iter().enumerate() {
         let position = index as u32;
-        // The card that moved is written whatever its number came out as — it is the one
+        // The card that moved is written whatever its number came out as - it is the one
         // whose column may have changed.
         if metadata.position == position && id != task_id {
             continue;
@@ -132,7 +132,7 @@ pub(crate) fn list_columns(state: &AppState, session_id: &str) -> Result<Vec<Boa
 /// Add a column at the right-hand end of the board.
 ///
 /// Its id is made from its name the same way a task folder's is, so the board file stays
-/// readable — and made unique, because two columns sharing an id would be one column with two
+/// readable - and made unique, because two columns sharing an id would be one column with two
 /// headings and every card in either would be in both.
 pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Result<BoardColumn> {
     let label = label.trim();
@@ -213,7 +213,7 @@ pub(crate) fn delete_column(
         .count();
     if holding > 0 {
         bail!(
-            "there {} still {holding} card{} in this column — move {} out first",
+            "there {} still {holding} card{} in this column - move {} out first",
             if holding == 1 { "is" } else { "are" },
             if holding == 1 { "" } else { "s" },
             if holding == 1 { "it" } else { "them" }
@@ -321,7 +321,7 @@ pub(crate) fn create_task(
     let repo_path = repo_of(state, session_id)?;
     let task_id = store::create_task(&repo_path, &request.title, &request.status, request.joins)?;
 
-    // The column remembers the agent this task was created with — including "none" — so the
+    // The column remembers the agent this task was created with - including "none" - so the
     // next task created in it starts from the same choice.
     let mut board = store::read_board(&repo_path);
     if let Some(column) = board
@@ -416,8 +416,8 @@ pub(crate) fn start_resource(
         env,
         owner: Some(task_id.to_string()),
         // An agent comes up with the card's title already written in its box, waiting on the
-        // Enter that sends it. It is still the person who starts the work — the title is a
-        // card's name and rarely the whole of what is wanted — but the common case, where it
+        // Enter that sends it. It is still the person who starts the work - the title is a
+        // card's name and rarely the whole of what is wanted - but the common case, where it
         // is, is one keystroke away. A task's plain shell gets nothing typed at it.
         type_ahead: (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone()),
     })?;
@@ -464,7 +464,7 @@ pub(crate) fn resume_resource(
         return Ok(terminal_id.clone());
     }
     let Some(launch) = agent_launch(resource.agent) else {
-        bail!("a shell cannot be resumed — open a new one");
+        bail!("a shell cannot be resumed - open a new one");
     };
     if !agent_is_available(state.agent_availability, resource.agent) {
         bail!("{} is not installed here", resource.agent.label());
@@ -498,7 +498,7 @@ pub(crate) fn resume_resource(
 /// Put a session an agent already has on a task, and open a shell resumed on it.
 ///
 /// This is how a task is pointed back at real work when its recorded session id stopped
-/// meaning anything — the id here was read off the agent's own records, so opening it is
+/// meaning anything - the id here was read off the agent's own records, so opening it is
 /// the same as resuming a run the task had recorded itself.
 pub(crate) fn attach_resource(
     state: &AppState,
@@ -591,7 +591,7 @@ pub(crate) fn delete_resource(
 }
 
 /// Give a task a different title. The folder keeps the name it was created with, because it
-/// is what everything else — shells, agent sessions, whatever an agent wrote — points at.
+/// is what everything else - shells, agent sessions, whatever an agent wrote - points at.
 pub(crate) fn rename_task(
     state: &AppState,
     session_id: &str,
@@ -671,7 +671,7 @@ impl Fillings {
         Some(filled)
     }
 
-    /// Fill an argument list in, dropping any argument that cannot be filled — along with the
+    /// Fill an argument list in, dropping any argument that cannot be filled - along with the
     /// flag in front of it, which would otherwise be left dangling.
     fn fill_all<'a>(&self, template: impl Iterator<Item = &'a &'static str>) -> Vec<String> {
         let mut args: Vec<String> = Vec::new();
@@ -723,7 +723,7 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
         .with_context(|| format!("failed to write {}", path.display()))?;
 
     // The brief points the agent at notes.md, so by the time one reads it the file is there.
-    // Only made, never rewritten — it is the task's own record, unlike the brief.
+    // Only made, never rewritten - it is the task's own record, unlike the brief.
     store::ensure_notes_file(repo_path, task_id)?;
 
     Ok(Fillings {
@@ -742,7 +742,7 @@ mod tests {
         }
     }
 
-    /// Claude is given the session id and the brief — and no prompt, so it comes up knowing
+    /// Claude is given the session id and the brief - and no prompt, so it comes up knowing
     /// the task and waits to be told what to do about it.
     #[test]
     fn an_agent_is_told_the_task_but_not_set_to_work() {

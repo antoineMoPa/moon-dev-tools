@@ -102,7 +102,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                 return;
             }
 
-            // The list fills the pane, so an open log has to be given its share up front —
+            // The list fills the pane, so an open log has to be given its share up front -
             // drawn after a list that had taken every pixel, it landed below the bottom edge
             // and was never seen.
             let log_height = app
@@ -244,7 +244,7 @@ fn draw_log(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 app.model.info("agent output copied");
             }
             if widgets::quiet_button(ui, "refresh").clicked() {
-                // A running agent keeps writing, so the log is pulled again on demand — from
+                // A running agent keeps writing, so the log is pulled again on demand - from
                 // the review the dispatch belongs to, which is not always the only one open.
                 load_log(app, &session_id, &key);
             }

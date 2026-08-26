@@ -310,7 +310,7 @@ pub(crate) fn apply(ctx: &egui::Context, mode: ThemeMode) {
     style.spacing.scroll.floating = true;
 
     // moonreview picks its own palette, so the same style applies whichever theme the
-    // desktop reports — the app's light/dark switch is the only thing that changes it.
+    // desktop reports - the app's light/dark switch is the only thing that changes it.
     ctx.all_styles_mut(|target| *target = style.clone());
     apply_window_theme(ctx, mode);
 }
@@ -318,7 +318,7 @@ pub(crate) fn apply(ctx: &egui::Context, mode: ThemeMode) {
 /// Tell the OS which side of the switch the window is on: it draws the title bar, and
 /// without this a dark window sits under a light mac header.
 ///
-/// Called on every theme switch, and again over the first few frames — a command sent while
+/// Called on every theme switch, and again over the first few frames - a command sent while
 /// the window is still being set up is lost on macOS, which left the header on the desktop's
 /// theme until the next switch.
 pub(crate) fn apply_window_theme(ctx: &egui::Context, mode: ThemeMode) {

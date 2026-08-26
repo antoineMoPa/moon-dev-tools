@@ -2,7 +2,7 @@
 //!
 //! `ag` leaves out whatever the repo ignores, which is the whole reason it is here rather
 //! than a directory walk of our own: honouring `.gitignore` is its job and it already does
-//! it. The searches run where the repo is — beside the server on a `--remote` connection —
+//! it. The searches run where the repo is - beside the server on a `--remote` connection -
 //! so this sits with the rest of the service.
 
 pub(crate) mod file_contents;
@@ -12,7 +12,7 @@ use std::{path::Path, process::Command};
 
 use anyhow::{Context, Result, bail};
 
-/// The searcher. Required to be installed — it is what makes the searches ignore-aware.
+/// The searcher. Required to be installed - it is what makes the searches ignore-aware.
 const SEARCHER: &str = "ag";
 
 /// The arguments both searches are run with: dotfiles are files of the repo and
@@ -25,7 +25,7 @@ fn search(repo_path: &Path, args: &[&str]) -> Result<Option<String>> {
     let output = Command::new(SEARCHER)
         .current_dir(repo_path)
         // A window opened from a launcher has a bare PATH, without the `/opt/homebrew/bin`
-        // the user installed `ag` into — see [`crate::shell_path`].
+        // the user installed `ag` into - see [`crate::shell_path`].
         .env("PATH", crate::shell_path::installed_tools_path())
         .args(REPO_ARGS)
         .args(args)

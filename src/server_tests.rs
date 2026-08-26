@@ -1,7 +1,7 @@
 //! The web frontend's contract: the page, its assets, and the API it calls.
 //!
 //! The native window is the default frontend now, so these exist to make sure the browser
-//! one keeps working — a change that only breaks the web client would otherwise go unnoticed.
+//! one keeps working - a change that only breaks the web client would otherwise go unnoticed.
 
 use std::{
     fs,
@@ -361,7 +361,7 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
 }
 
 /// The column a task is created in remembers the agent it was created with, in the board's
-/// own file — so the next task created there starts from the same choice, on any machine
+/// own file - so the next task created there starts from the same choice, on any machine
 /// that opens this repo.
 #[test]
 fn creating_a_task_teaches_its_column_the_agent() {
@@ -552,7 +552,7 @@ fn the_columns_are_the_boards_to_change() {
     };
 
     // A board that has never been changed has no file of its own and the columns it started
-    // with — which is what every board written before this existed looks like.
+    // with - which is what every board written before this existed looks like.
     assert!(
         !served.root.join(".moontasks").join("board.json").exists(),
         "an untouched board should not have written a file yet"

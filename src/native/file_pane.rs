@@ -107,7 +107,7 @@ impl App {
     }
 
     /// Open a task's notes beside the board: in the frame the other file tabs are in, or a
-    /// new column down the right — the way a shell opens. It lands in the text editor rather
+    /// new column down the right - the way a shell opens. It lands in the text editor rather
     /// than the rendered page, because notes are opened to be written.
     pub(crate) fn open_notes_pane(&mut self, session_id: String, file_path: String) {
         use crate::native::panes::{Pane, PaneKind};
@@ -162,7 +162,7 @@ impl App {
             return;
         };
         editor.reveal = Some(at);
-        // A match is in the text of the file, so the text is what the pane shows — a markdown
+        // A match is in the text of the file, so the text is what the pane shows - a markdown
         // file opens rendered otherwise, where the line does not exist.
         editor.preview = false;
     }
@@ -282,7 +282,7 @@ impl App {
             .inner_margin(egui::Margin::symmetric(PANE_PADDING, 6))
             .show(ui, |ui| {
                 // The actions are laid out first and the path takes what is left, cut with
-                // an ellipsis — a task's notes path is long, and a path that runs under the
+                // an ellipsis - a task's notes path is long, and a path that runs under the
                 // buttons is worse than one that ends in a "…".
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -346,7 +346,7 @@ impl App {
 }
 
 /// The fringe and the code, scrolling together down the page and apart across it.
-/// Every place the query appears in the text, as character ranges — which is what egui's
+/// Every place the query appears in the text, as character ranges - which is what egui's
 /// text cursor counts in, so a match can be handed straight to the editor as a selection.
 ///
 /// Matched without regard for case, the way the find bar does everywhere else.
@@ -376,7 +376,7 @@ pub(crate) fn matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>>
 /// About the measure GitHub lays a readme out at. Prose in a full-width pane puts a whole
 /// paragraph on one line, which is more head-turning than reading.
 const PREVIEW_MAX_WIDTH: f32 = 900.0;
-/// What the rendered page keeps clear on either side even in a narrow pane — text against
+/// What the rendered page keeps clear on either side even in a narrow pane - text against
 /// the pane's edge reads like a mistake.
 const PREVIEW_SIDE_PADDING: f32 = 100.0;
 
@@ -438,7 +438,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
     // The editor takes the keyboard it is owed, so a file or a task's notes brought forward
     // can be typed into without clicking into the text first. A file still being fetched, or
     // a markdown file showing its rendered page, has no editor to take it and leaves the
-    // offer standing — see `App::follow_front_tab`.
+    // offer standing - see `App::follow_front_tab`.
     let takes_keyboard = app.pane_taking_keyboard == Some(pane_id);
     if takes_keyboard {
         app.pane_taking_keyboard = None;
@@ -464,7 +464,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
 
                 // The fringe is outside the horizontal scroll area, so scrolling the code
                 // sideways slides it under numbers that stay where they are. Its height is
-                // only an estimate for layout — the numbers are painted where the laid-out
+                // only an estimate for layout - the numbers are painted where the laid-out
                 // text really put each line.
                 let fringe_height = row_height * line_count as f32;
                 let (fringe, _) = ui.allocate_exact_size(
@@ -495,7 +495,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                         };
                         // A frame of its own, in place of the boxed-in one a `TextEdit`
                         // draws: no rounded corners, no border, and no accent-coloured ring
-                        // when it holds the keyboard — the pane's frame already shows that,
+                        // when it holds the keyboard - the pane's frame already shows that,
                         // and the text of a file should read as the page of an editor
                         // rather than as a form field on it.
                         // Nothing painted behind the text either: the pane's own background
@@ -515,7 +515,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             output.response.request_focus();
                         }
 
-                        // Each number at the height the galley actually gave its line —
+                        // Each number at the height the galley actually gave its line -
                         // counting multiples of the font's row height drifts away from the
                         // text within a screen, because the editor lays its rows out with
                         // spacing of its own. A row only starts a line when the row before
@@ -569,7 +569,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
 
                 // Asked for out here, where the pane's vertical scroll can hear it: the
                 // horizontal area around the code takes both axes' scroll targets so they
-                // cannot leak, and drops the one it has no bar for — so a match below the
+                // cannot leak, and drops the one it has no bar for - so a match below the
                 // fold, asked for from inside it, would never be scrolled to.
                 if let Some(rect) = bring_into_view {
                     ui.scroll_to_rect(rect, Some(Align::Center));
@@ -666,7 +666,7 @@ fn code_format(ui: &Ui, background: Option<egui::Color32>) -> egui::TextFormat {
     }
 }
 
-/// The same matches `matches_in` finds, as byte ranges of the text — which is what a layout
+/// The same matches `matches_in` finds, as byte ranges of the text - which is what a layout
 /// job's runs are cut at, where the editor's cursor counts characters.
 fn byte_matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
     let starts: Vec<usize> = text
@@ -685,7 +685,7 @@ struct Shown {
     /// How many matches there were, for the bar's tally.
     total: usize,
     /// Where the current match ended up on screen, when there is one to be brought into
-    /// view. Scrolled to by the caller rather than here — see `draw_editor`.
+    /// view. Scrolled to by the caller rather than here - see `draw_editor`.
     current: Option<egui::Rect>,
 }
 
