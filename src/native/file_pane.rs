@@ -463,9 +463,10 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                         // when it holds the keyboard — the pane's frame already shows that,
                         // and the text of a file should read as the page of an editor
                         // rather than as a form field on it.
-                        let frame = egui::Frame::new()
-                            .inner_margin(TEXT_MARGIN)
-                            .fill(ui.visuals().text_edit_bg_color());
+                        // Nothing painted behind the text either: the pane's own background
+                        // carries through, so the code and the fringe of numbers beside it
+                        // sit on one surface instead of the text being a panel on top.
+                        let frame = egui::Frame::new().inner_margin(TEXT_MARGIN);
                         let output = egui::TextEdit::multiline(&mut editor.edited)
                             .font(egui::TextStyle::Monospace)
                             .code_editor()
