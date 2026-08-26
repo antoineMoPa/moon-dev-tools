@@ -186,28 +186,14 @@ pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}"];
 
 /// What an agent working in a task is told, beyond the work itself.
 ///
-/// It names the task, says where to put anything that belongs to it, and says how the work
-/// being finished is reported — which is by saying so, since the person reading this shell is
-/// the one who moves the card.
+/// It names the task and says where anything belonging to it goes; the person who opened the
+/// shell says the rest.
 pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
     format!(
         "You are working on a task from moonreview's moontasks board.\n\
          \n\
          Task: {title}\n\
-         Task folder: {task_dir}\n\
-         \n\
-         Say plainly when the work is finished and ready to be looked at, and say just as \
-         plainly if you have to stop before it is — you are blocked, or you need a decision. \
-         The person who created this task is the one who moves its card, and what you say is \
-         how they know to.\n\
-         \n\
-         Notes, plans and scratch files that belong to this task go in the task folder rather \
-         than in the repo. Start with notes.md there: it is the task's description and shared \
-         notes, shown on the board's card, read and written by you and the person running the \
-         task alike.\n\
-         \n\
-         The title above is the name on a card, not the brief. Wait for the person who opened \
-         this session to explain what they actually want before starting on anything."
+         Task folder: {task_dir}"
     )
 }
 

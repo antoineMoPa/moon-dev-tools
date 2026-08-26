@@ -18,6 +18,20 @@ use crate::{
 
 const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
 
+/// A git command that will not write the index just to read from the repo.
+///
+/// The review window re-reads the diff every second or so, and a plain `git status` or
+/// `git diff` refreshes the on-disk index as it goes, which means taking `.git/index.lock`.
+/// A person running `git commit` in the same repo at that moment gets "Unable to create
+/// index.lock" from their own command. `GIT_OPTIONAL_LOCKS=0` drops only the locks git takes
+/// for its own bookkeeping — the ones `git add` or `git commit` need to do their work are
+/// still taken — so every git call here goes through this.
+fn git_command(repo_path: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(repo_path).env("GIT_OPTIONAL_LOCKS", "0");
+    command
+}
+
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     let original_path = path.as_ref().to_path_buf();
     match find_repo_root(&original_path)? {
@@ -730,8 +744,7 @@ pub(crate) fn run_git_allow_status(
     args: &[&str],
     allowed: &[i32],
 ) -> Result<String> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
+    let output = git_command(repo_path)
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -745,8 +758,7 @@ pub(crate) fn run_git_allow_status(
 }
 
 pub(crate) fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
+    let output = git_command(repo_path)
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -880,8 +892,8 @@ pub(crate) fn apply_patch(
     cached: bool,
     reverse: bool,
 ) -> Result<()> {
-    let mut command = Command::new("git");
-    command.current_dir(repo_path).arg("apply");
+    let mut command = git_command(repo_path);
+    command.arg("apply");
     if cached {
         command.arg("--cached");
     }
@@ -905,8 +917,7 @@ pub(crate) fn apply_patch(
 }
 
 pub(crate) fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
+    let output = git_command(repo_path)
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -919,8 +930,7 @@ pub(crate) fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
 }
 
 pub(crate) fn run_git_no_output(repo_path: &Path, args: &[&str]) -> Result<()> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
+    let output = git_command(repo_path)
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
