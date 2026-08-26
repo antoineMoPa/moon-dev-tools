@@ -1,12 +1,13 @@
-//! The PATH agents are looked for and started on.
+//! The PATH the tools the user installed are looked for and started on — the coding agents,
+//! and `ag` for finding files by name.
 //!
 //! A window opened from a desktop launcher is started by the OS, not by a shell, so it inherits
-//! a bare PATH — on macOS `/usr/bin:/bin:/usr/sbin:/sbin`. The agents the user installed live
-//! in `~/.local/bin`, `/opt/homebrew/bin` and the like, which only their shell profile puts on
+//! a bare PATH — on macOS `/usr/bin:/bin:/usr/sbin:/sbin`. What the user installed lives in
+//! `~/.local/bin`, `/opt/homebrew/bin` and the like, which only their shell profile puts on
 //! PATH, so from a launcher every agent reads as missing and the board offers none.
 //!
 //! Their login shell is what knows where those are, so it is asked once for its PATH and that
-//! is the PATH both the availability check and the agent processes use.
+//! is the PATH both the availability checks and the processes use.
 
 use std::{env, process::Command, sync::OnceLock};
 
@@ -16,7 +17,7 @@ pub(crate) fn login_shell() -> String {
 }
 
 /// The PATH a login shell of this user has, resolved once for the life of the process.
-pub(crate) fn agent_path() -> &'static str {
+pub(crate) fn installed_tools_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
         login_shell_path().unwrap_or_else(|| env::var("PATH").unwrap_or_default())

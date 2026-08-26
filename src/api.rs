@@ -323,6 +323,19 @@ pub(crate) struct FileQuery {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct FileSearchQuery {
+    pub(crate) query: String,
+}
+
+/// The paths of the repo whose names match a search, and whether there were more of them
+/// than the search hands back.
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct FileMatchesPayload {
+    pub(crate) files: Vec<String>,
+    pub(crate) truncated: bool,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct CommitHistoryQuery {
     pub(crate) offset: Option<usize>,
     pub(crate) limit: Option<usize>,

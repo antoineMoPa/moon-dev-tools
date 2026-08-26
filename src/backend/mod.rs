@@ -15,7 +15,8 @@ use crate::{
     agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleView,
+        FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        SubmoduleView,
     },
     committing::{CommitAction, CommitState},
     moontasks::{
@@ -59,6 +60,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn hunk_patch(&self, session_id: &str, hunk_id: &str) -> Result<PatchPayload>;
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload>;
+    /// The files of the repo whose names match a search, for the palette's file finder.
+    fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload>;
     fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;

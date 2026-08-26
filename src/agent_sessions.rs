@@ -302,7 +302,7 @@ fn opencode_sessions(repo_path: &Path) -> Result<Vec<AgentSessionView>> {
     let output = Command::new("opencode")
         .args(["session", "list", "--format", "json"])
         // The PATH the availability check found opencode on — see [`crate::shell_path`].
-        .env("PATH", crate::shell_path::agent_path())
+        .env("PATH", crate::shell_path::installed_tools_path())
         .output()
         .context("failed to run opencode session list")?;
     if !output.status.success() {

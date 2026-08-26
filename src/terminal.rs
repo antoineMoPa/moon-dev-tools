@@ -412,7 +412,7 @@ impl TerminalRegistry {
         }
         // The agent is started by name, so it has to be looked up on the PATH the user's shell
         // has rather than the one a desktop launcher hands this process.
-        command.env("PATH", crate::shell_path::agent_path());
+        command.env("PATH", crate::shell_path::installed_tools_path());
         for (name, value) in &spec.env {
             command.env(name, value);
         }

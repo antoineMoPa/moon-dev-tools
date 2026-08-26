@@ -12,6 +12,7 @@ mod backend;
 mod cli;
 mod comments;
 mod committing;
+mod file_search;
 mod git;
 mod moontasks;
 mod moved_hunks;

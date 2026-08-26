@@ -18,6 +18,9 @@ use crate::native::{
 const FRINGE_WIDTH: f32 = 46.0;
 /// Between the pane's border and what it is showing.
 const PANE_PADDING: i8 = 10;
+/// Between the edge of the editor and the text in it, which is what a `TextEdit` keeps clear
+/// by default and is kept here because the frame around the text is ours.
+const TEXT_MARGIN: egui::Margin = egui::Margin::symmetric(4, 2);
 
 /// A file being read or edited, and what has happened to it since it was opened.
 pub(crate) struct FileEditor {
@@ -420,6 +423,9 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                     return;
                 };
                 let line_count = editor.edited.lines().count().max(1);
+                // A short file still gets an editor down to the bottom of the pane, so the
+                // text sits on a page rather than in a box the size of what it holds.
+                let rows_on_screen = (ui.available_height() / row_height).floor() as usize;
 
                 // The fringe is outside the horizontal scroll area, so scrolling the code
                 // sideways slides it under numbers that stay where they are. Its height is
@@ -452,11 +458,21 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
                             };
                             ui.fonts_mut(|fonts| fonts.layout_job(job))
                         };
+                        // A frame of its own, in place of the boxed-in one a `TextEdit`
+                        // draws: no rounded corners, no border, and no accent-coloured ring
+                        // when it holds the keyboard — the pane's frame already shows that,
+                        // and the text of a file should read as the page of an editor
+                        // rather than as a form field on it.
+                        let frame = egui::Frame::new()
+                            .inner_margin(TEXT_MARGIN)
+                            .fill(ui.visuals().text_edit_bg_color());
                         let output = egui::TextEdit::multiline(&mut editor.edited)
                             .font(egui::TextStyle::Monospace)
                             .code_editor()
+                            .frame(frame)
+                            .margin(TEXT_MARGIN)
                             .desired_width(f32::INFINITY)
-                            .desired_rows(line_count)
+                            .desired_rows(line_count.max(rows_on_screen))
                             .layouter(&mut layouter)
                             .show(ui);
                         if takes_keyboard {

@@ -14,8 +14,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitReviewStatus, CommitView,
-        DiffHunk, DiffTarget, FileContentPayload, HunkView, OpenSessionRequest, PatchPayload,
-        RepoSession, SessionOpened, SessionPayload, SubmoduleView,
+        DiffHunk, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView, OpenSessionRequest,
+        PatchPayload, RepoSession, SessionOpened, SessionPayload, SubmoduleView,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -379,6 +379,18 @@ pub(crate) fn session_file(
             file_path: file_path.to_string(),
             content: read_repo_file(&session.repo_path, file_path)?,
         })
+    })
+}
+
+/// The files of the repo whose names match a search. Runs where the repo is, which is what
+/// makes it work on a `--remote` connection as well as a repo on this machine.
+pub(crate) fn find_session_files(
+    state: &AppState,
+    session_id: &str,
+    query: &str,
+) -> Result<FileMatchesPayload> {
+    crate::api::with_session(state, session_id, |session| {
+        crate::file_search::matching_paths(&session.repo_path, query)
     })
 }
 

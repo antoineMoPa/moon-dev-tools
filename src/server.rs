@@ -17,9 +17,10 @@ use axum::{
 use crate::{
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
-        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, FileQuery,
-        FileReviewedRequest, OpenSessionRequest, PatchPayload, ReviewedRequest, SelectionRequest,
-        ServerState, SessionOpened, SessionPayload, SubmoduleView, bind_host, port, server_url,
+        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, FileMatchesPayload,
+        FileQuery, FileReviewedRequest, FileSearchQuery, OpenSessionRequest, PatchPayload,
+        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
+        SubmoduleView, bind_host, port, server_url,
     },
     git::detect_agent_availability,
     moontasks::{
@@ -76,6 +77,7 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/file",
             get(session_file).post(write_session_file),
         )
+        .route("/api/session/{session_id}/files", get(find_session_files))
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route(
             "/api/session/{session_id}/reviewed-file",
@@ -383,6 +385,19 @@ async fn session_file(
         &state,
         &session_id,
         &query.file_path,
+    )?))
+}
+
+async fn find_session_files(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileSearchQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<FileMatchesPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(service::find_session_files(
+        &state,
+        &session_id,
+        &query.query,
     )?))
 }
 

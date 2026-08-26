@@ -346,6 +346,10 @@ pub(crate) struct OpenedShell {
 /// The command palette, and the query typed into it.
 pub(crate) struct PaletteState {
     pub(crate) open: bool,
+    /// Whether the query is picking a command or naming a file of the repo.
+    pub(crate) mode: crate::native::palette::PaletteMode,
+    /// What the file finder has found for the query it last searched for.
+    pub(crate) files: crate::native::palette::FileSearch,
     pub(crate) query: String,
     pub(crate) highlighted: usize,
     /// The query the highlight was picked under. A keystroke changes which commands are on
@@ -362,10 +366,20 @@ impl PaletteState {
     /// Open it on an empty query, at the top of the list, and drawn nowhere yet.
     pub(crate) fn show(&mut self) {
         self.open = true;
+        self.mode = crate::native::palette::PaletteMode::Commands;
+        // Whatever the last file search found belongs to the query that is being cleared.
+        self.files = crate::native::palette::FileSearch::default();
         self.query.clear();
         self.highlighted = 0;
         self.highlight_query.clear();
         self.rect = None;
+    }
+
+    /// The same, on the file finder: what is typed names a file of the repo rather than a
+    /// command.
+    pub(crate) fn show_files(&mut self) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::Files;
     }
 
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
@@ -380,6 +394,8 @@ impl Default for PaletteState {
     fn default() -> Self {
         Self {
             open: false,
+            mode: crate::native::palette::PaletteMode::Commands,
+            files: crate::native::palette::FileSearch::default(),
             query: String::new(),
             highlighted: 0,
             highlight_query: String::new(),

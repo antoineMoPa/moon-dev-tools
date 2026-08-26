@@ -8,8 +8,8 @@ use anyhow::Result;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
-        FileContentPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleView, server_url,
+        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        SessionPayload, SubmoduleView, server_url,
     },
     backend::Backend,
     moontasks::{
@@ -113,6 +113,10 @@ impl Backend for LocalBackend {
 
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         service::session_file(&self.state, session_id, file_path)
+    }
+
+    fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {
+        service::find_session_files(&self.state, session_id, query)
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {

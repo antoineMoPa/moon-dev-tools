@@ -4422,6 +4422,89 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
     );
 }
 
+/// cmd+P finds a file of the repo by name, wherever under the root it sits, and Enter opens
+/// it in a tab. What the repo ignores is not a file of the repo: a build directory with the
+/// same name in it stays off the list.
+#[test]
+fn the_palette_finds_a_file_by_name_and_opens_it() {
+    let fixture = seeded_fixture("palette-files");
+    fixture.write(".gitignore", "build/\n");
+    fixture.write("build/extra.rs", "pub const GENERATED: u32 = 0;\n");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // What the finder is showing, and which files are open in tabs.
+    let listed = Arc::new(Mutex::new((None::<String>, Vec::<String>::new())));
+    let listed_in_ui = Arc::clone(&listed);
+    let open_files = Arc::new(Mutex::new(Vec::<String>::new()));
+    let open_in_ui = Arc::clone(&open_files);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *listed_in_ui.lock().expect("poisoned") = (
+                app.model.palette.files.searched.clone(),
+                app.model.palette.files.matches.clone(),
+            );
+            *open_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    crate::native::panes::Pane::File { file_path, .. } => Some(file_path.clone()),
+                    _ => None,
+                })
+                .collect();
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(&mut harness, egui::Key::P, egui::Modifiers::COMMAND);
+    for (key, letter) in [
+        (egui::Key::E, "e"),
+        (egui::Key::X, "x"),
+        (egui::Key::T, "t"),
+        (egui::Key::R, "r"),
+        (egui::Key::A, "a"),
+    ] {
+        type_letter(&mut harness, key, letter);
+    }
+
+    assert!(
+        settle(&mut harness, || {
+            listed.lock().expect("poisoned").0.as_deref() == Some("extra")
+        }),
+        "the finder never searched for what was typed — is ag installed?"
+    );
+    assert_eq!(
+        listed.lock().expect("poisoned").1,
+        vec!["src/extra.rs".to_string()],
+        "the file below src should be the only match; the ignored one is not a file of the repo"
+    );
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(
+        settle(&mut harness, || open_files
+            .lock()
+            .expect("poisoned")
+            .contains(&"src/extra.rs".to_string())),
+        "enter should have opened the highlighted file in a tab"
+    );
+}
+
 /// A letter typed into the palette's box is a letter, even one the review binds bare — and it
 /// stays one after the cmd key has been tapped on its own, which the platform sends as a key
 /// press like any other.

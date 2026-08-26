@@ -16,6 +16,28 @@ use crate::{
     },
 };
 
+/// What the palette's query is picking.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaletteMode {
+    /// Something the window can do, out of the list below.
+    Commands,
+    /// A file of the repo, by name, found with `ag` wherever the repo lives.
+    Files,
+}
+
+/// What the file finder has found. One search at a time, for whatever was typed when it
+/// started — `searched` says which query the matches belong to, and a query that has moved
+/// on since starts another search.
+#[derive(Default)]
+pub(crate) struct FileSearch {
+    pub(crate) searched: Option<String>,
+    pub(crate) matches: Vec<String>,
+    /// Set when the repo had more matches than the search hands back, so the palette can say
+    /// that narrowing the query would show different files rather than only fewer.
+    pub(crate) truncated: bool,
+    pub(crate) error: Option<String>,
+}
+
 pub(crate) struct Command {
     pub(crate) title: String,
     pub(crate) description: String,
@@ -39,6 +61,8 @@ pub(crate) enum CommandAction {
     RestartWindow,
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
     OpenFile,
+    /// Turn the palette into the file finder, where what is typed is a file name.
+    FindFile,
     /// Split the frame the keyboard is in against this side, with a shell in the new half.
     Split(DropSide),
 }
@@ -126,6 +150,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: None,
         });
     }
+    commands.push(Command {
+        title: "find file".to_string(),
+        description: "Open a file of the repo by name, from any directory under it".to_string(),
+        action: CommandAction::FindFile,
+        shortcut: bindings::chord_of(Action::FindFile),
+    });
     // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
     // repo that lives on the far side of a `--remote` connection.
     if app.backend().reads_this_machine() {
@@ -276,6 +306,106 @@ pub(crate) fn filter(commands: Vec<Command>, query: &str) -> Vec<Command> {
         .collect()
 }
 
+/// What the palette is offering under the query: the commands that match it, or the files.
+fn rows_for(app: &App) -> Vec<Command> {
+    match app.model.palette.mode {
+        PaletteMode::Commands => filter(commands_for(app), &app.model.palette.query),
+        PaletteMode::Files => file_rows(app),
+    }
+}
+
+/// One row per file the search found: the name to read it by, and the path it is at.
+fn file_rows(app: &App) -> Vec<Command> {
+    app.model
+        .palette
+        .files
+        .matches
+        .iter()
+        .map(|file_path| Command {
+            title: file_name_of(file_path).to_string(),
+            description: file_path.clone(),
+            action: CommandAction::OpenPane(OpenPaneRequest::File {
+                session_id: app.model.root_session_id.clone(),
+                file_path: file_path.clone(),
+            }),
+            shortcut: None,
+        })
+        .collect()
+}
+
+fn file_name_of(file_path: &str) -> &str {
+    file_path.rsplit('/').next().unwrap_or(file_path)
+}
+
+fn hint_of(mode: PaletteMode) -> &'static str {
+    match mode {
+        PaletteMode::Commands => "Execute a command…",
+        PaletteMode::Files => "Open a file by name…",
+    }
+}
+
+/// What the palette says when it has no rows to show.
+fn empty_message(app: &App) -> String {
+    let files = &app.model.palette.files;
+    match app.model.palette.mode {
+        PaletteMode::Commands => "nothing matches".to_string(),
+        PaletteMode::Files => match &files.error {
+            Some(error) => error.clone(),
+            // A search that has not answered for this query yet is still running: what was
+            // found for the query before it is gone, and saying "no matches" would be a lie.
+            None if files.searched.as_deref() != Some(app.model.palette.query.as_str()) => {
+                "searching…".to_string()
+            }
+            None => "no file of the repo has that name".to_string(),
+        },
+    }
+}
+
+/// Keep the file list on the query that is typed.
+///
+/// The repo can be on another machine, so this is a backend call on a worker thread like
+/// reading a file is. One search runs at a time; anything typed while it is out is searched
+/// for on the frame after it lands, which is what keeps a held key from starting a search a
+/// frame.
+fn refresh_file_matches(app: &mut App) {
+    let query = app.model.palette.query.clone();
+    if app.model.palette.files.searched.as_deref() == Some(query.as_str()) {
+        return;
+    }
+    if app.model.root_session_id.is_empty() {
+        app.model.palette.files.searched = Some(query);
+        app.model.palette.files.error = Some("no repo is open in this window yet".to_string());
+        return;
+    }
+
+    let session_id = app.model.root_session_id.clone();
+    let for_call = query.clone();
+    app.tasks.spawn_keyed(
+        Some("palette-files".to_string()),
+        move |backend| backend.find_files(&session_id, &for_call),
+        move |model, result| {
+            // The palette may have been put away, or turned back into the command list, while
+            // the search was out. Its answer belongs to neither.
+            if !model.palette.open || model.palette.mode != PaletteMode::Files {
+                return;
+            }
+            model.palette.files.searched = Some(query);
+            match result {
+                Ok(payload) => {
+                    model.palette.files.matches = payload.files;
+                    model.palette.files.truncated = payload.truncated;
+                    model.palette.files.error = None;
+                }
+                Err(error) => {
+                    model.palette.files.matches.clear();
+                    model.palette.files.truncated = false;
+                    model.palette.files.error = Some(format!("{error}"));
+                }
+            }
+        },
+    );
+}
+
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if !app.model.palette.open {
         return;
@@ -288,8 +418,11 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         app.model.palette.dismiss();
         return;
     }
+    if app.model.palette.mode == PaletteMode::Files {
+        refresh_file_matches(app);
+    }
     let palette = app.palette_of();
-    let matches = filter(commands_for(app), &app.model.palette.query);
+    let matches = rows_for(app);
 
     let (dismiss, move_down, move_up, accept) = ctx.input_mut(|input| {
         (
@@ -347,7 +480,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
                     let entry = ui.add(
                         egui::TextEdit::singleline(&mut app.model.palette.query)
-                            .hint_text("Execute a command…")
+                            .hint_text(hint_of(app.model.palette.mode))
                             .desired_width(f32::INFINITY)
                             .margin(egui::Margin::symmetric(7, 5)),
                     );
@@ -355,7 +488,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
                     ui.add_space(6.0);
                     if matches.is_empty() {
-                        ui.label(RichText::new("nothing matches").color(palette.muted));
+                        ui.label(RichText::new(empty_message(app)).color(palette.muted));
                         return;
                     }
 
@@ -368,6 +501,18 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                         if row.hovered() {
                             app.model.palette.highlighted = index;
                         }
+                    }
+                    // A cut-short list is not the whole answer, and the rows alone cannot say
+                    // so: the files left out could be the one being looked for.
+                    if app.model.palette.files.truncated {
+                        ui.label(
+                            RichText::new(format!(
+                                "the first {} matches — narrow the name for the rest",
+                                matches.len()
+                            ))
+                            .size(SMALL_SIZE - 1.0)
+                            .color(palette.muted),
+                        );
                     }
                 });
         });

@@ -53,6 +53,8 @@ Requirements:
 - [Rust](https://www.rust-lang.org/tools/install)
 - Node.js with npm
 - [Zig](https://ziglang.org/) 0.15.x, for the native window's terminal
+- [the silver searcher](https://github.com/ggreer/the_silver_searcher) (`ag`), which is what
+  finds files by name for `⌘P`
 
 ```bash
 ./scripts/setup-dev.sh           # Rust update, npm packages, Zig and submodules
@@ -152,6 +154,7 @@ Inside the window:
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
 | `⌘⇧P` | command palette — open a review, a shell, the task board, or the agent monitor |
+| `⌘P` | find a file of the repo by name, from any directory under it, and open it |
 | `⌘N` | another window of this same program, on its launch screen |
 | `⌘J` | switch light and dark |
 | `?` | the shortcut list |

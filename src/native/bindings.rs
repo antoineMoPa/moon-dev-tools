@@ -32,6 +32,8 @@ pub(crate) enum Action {
     FocusNextFrame,
     /// Open the find bar over whichever pane has the keyboard.
     Find,
+    /// Open the palette on its file finder, where what is typed names a file of the repo.
+    FindFile,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -148,6 +150,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::Find,
         chord: &[press(Modifiers::COMMAND, Key::F)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::FindFile,
+        chord: &[press(Modifiers::COMMAND, Key::P)],
         reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.

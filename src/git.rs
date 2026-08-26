@@ -1644,7 +1644,7 @@ mod tests {
 }
 
 pub(crate) fn command_exists(command: &str) -> bool {
-    env::split_paths(crate::shell_path::agent_path()).any(|dir| {
+    env::split_paths(crate::shell_path::installed_tools_path()).any(|dir| {
         let candidate = dir.join(command);
         std::fs::metadata(candidate)
             .map(|meta| meta.is_file())
