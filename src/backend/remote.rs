@@ -24,8 +24,8 @@ use crate::{
     backend::Backend,
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
-        TerminalOpened,
+        CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
+        TaskPlacementRequest, TaskView, TerminalOpened,
     },
 };
 
@@ -517,6 +517,15 @@ impl Backend for RemoteBackend {
             &json!({}),
         )?;
         Ok(notes.file_path)
+    }
+
+    fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/files"),
+            &LinkFileRequest {
+                file_path: file_path.to_string(),
+            },
+        )
     }
 
     fn stage_all(&self, session_id: &str) -> Result<()> {

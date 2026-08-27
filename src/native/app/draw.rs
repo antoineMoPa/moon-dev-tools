@@ -286,7 +286,7 @@ impl App {
         self.poll_submodules();
         self.poll_board();
         self.open_shell_the_board_started();
-        self.open_notes_the_board_readied();
+        self.open_file_the_board_readied();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }

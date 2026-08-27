@@ -35,6 +35,10 @@ pub(crate) enum BoardAction {
     /// Open the task's `notes.md` in a pane down the right, making the file first if the
     /// task has none yet.
     OpenNotes(String),
+    /// Turn the palette into the file finder, picking a file to put on this task's card.
+    PickFile(String),
+    /// Open a file linked to a card, in a pane down the right.
+    OpenFile(String),
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -257,11 +261,13 @@ pub(super) fn apply(app: &mut App, action: BoardAction) {
             app.tasks.spawn(
                 move |backend| backend.open_task_notes(&session_id, &task_id),
                 |model, result| match result {
-                    Ok(file_path) => model.board.opened_notes = Some(file_path),
+                    Ok(file_path) => model.board.opened_file = Some(file_path),
                     Err(error) => model.error(format!("could not open the notes: {error}")),
                 },
             );
         }
+        BoardAction::PickFile(task_id) => app.model.palette.show_files_for_task(task_id),
+        BoardAction::OpenFile(file_path) => app.model.board.opened_file = Some(file_path),
         BoardAction::AddColumn(label) => {
             // The box closes on the way out: the column it was standing in for is on its way.
             app.model.board.new_column_label.clear();

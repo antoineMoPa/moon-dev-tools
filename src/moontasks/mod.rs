@@ -28,13 +28,17 @@ pub(crate) struct TaskView {
     pub(crate) resources: Vec<TaskResourceView>,
 }
 
-/// A shell or an agent run belonging to a task.
+/// A shell, an agent run or a linked file belonging to a task.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskResourceView {
     pub(crate) id: String,
     pub(crate) kind: TaskResourceKind,
     pub(crate) agent: AgentKind,
     pub(crate) label: String,
+    /// The file a linked file opens, relative to the repo root. `Some` for a file and nothing
+    /// else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) file_path: Option<String>,
     /// The shell it is attached to, while it is still running.
     pub(crate) terminal_id: Option<String>,
     pub(crate) running: bool,
@@ -79,6 +83,13 @@ pub(crate) struct CreateTaskRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskTitleRequest {
     pub(crate) title: String,
+}
+
+/// A file of the repo being put on a task's card, by the path the file pane opens it with:
+/// relative to the repo root.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LinkFileRequest {
+    pub(crate) file_path: String,
 }
 
 /// The answer to opening a task's notes: where the file pane finds the file, relative to the

@@ -277,6 +277,10 @@ impl Backend for LocalBackend {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }
 
+    fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {
+        moontasks::service::link_file(&self.state, session_id, task_id, file_path)
+    }
+
     fn stage_all(&self, session_id: &str) -> Result<()> {
         crate::service::stage_all(&self.state, session_id)
     }

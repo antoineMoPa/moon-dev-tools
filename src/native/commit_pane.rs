@@ -753,7 +753,13 @@ fn draw_branch_line(ui: &mut Ui, state: Option<&CommitState>, palette: &Palette)
         match &state.upstream_ref {
             Some(upstream) => {
                 ui.label(RichText::new("→").color(palette.line));
-                ui.label(RichText::new(upstream).color(palette.accent));
+                let label = ui.label(RichText::new(upstream).color(palette.accent));
+                // An upstream git would not push to as it stands: the branch tracks one
+                // named differently, the state starting a branch from `origin/dev` leaves it
+                // in. The push goes under the branch's own name, and the label says so.
+                if state.push_ref.is_none() {
+                    label.on_hover_text("pushing sends it to origin under its own name and tracks it there");
+                }
             }
             None => {
                 ui.label(

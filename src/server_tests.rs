@@ -666,3 +666,114 @@ fn an_unknown_session_is_refused_rather_than_panicking() {
             .contains("unknown session")
     );
 }
+
+/// A file of the repo goes on a card by the path the file pane opens it with, and comes off
+/// again the way a run does. Only a file that is there right now is taken: the card is a way
+/// back to the file, and a link to nothing is worse than none.
+#[test]
+fn a_file_can_be_linked_to_a_task_over_http() {
+    let served = serve("task-files");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+    fs::create_dir_all(served.root.join("src")).expect("failed to make the fixture folder");
+    fs::write(served.root.join("src/lib.rs"), "pub fn one() {}\n")
+        .expect("failed to write the fixture file");
+
+    let created: serde_json::Value = served
+        .client
+        .post(&tasks_url)
+        .json(&serde_json::json!({ "title": "Fix the login page", "agent": "none", "status": "todo", "joins": "top" }))
+        .send()
+        .expect("failed to create a task")
+        .error_for_status()
+        .expect("the server refused to create a task")
+        .json()
+        .expect("failed to decode the task");
+    let task_id = created["id"]
+        .as_str()
+        .expect("expected a task id")
+        .to_string();
+    let files_url = format!("{tasks_url}/{task_id}/files");
+    let link = |file_path: &str| -> reqwest::blocking::Response {
+        served
+            .client
+            .post(&files_url)
+            .json(&serde_json::json!({ "file_path": file_path }))
+            .send()
+            .expect("failed to link a file")
+    };
+
+    link("src/lib.rs")
+        .error_for_status()
+        .expect("the server refused to link a file of the repo");
+
+    // A path that names nothing, one outside the repo, and the same file twice all stay off
+    // the card.
+    for (file_path, why) in [
+        ("src/gone.rs", "a file that is not there"),
+        ("../outside.rs", "a path outside the repo"),
+        ("/etc/hosts", "an absolute path"),
+        ("src", "a directory"),
+        ("src/lib.rs", "a file already on the card"),
+    ] {
+        assert!(
+            link(file_path).status().is_client_error(),
+            "{why} should have been refused"
+        );
+    }
+
+    let board = |served: &Served| -> serde_json::Value {
+        served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board")
+    };
+    let tasks = board(&served);
+    let resources = tasks[0]["resources"]
+        .as_array()
+        .expect("expected an array");
+    assert_eq!(resources.len(), 1, "one link, whatever was refused: {resources:?}");
+    let resource = &resources[0];
+    assert_eq!(resource["kind"], "file");
+    assert_eq!(resource["file_path"], "src/lib.rs");
+    assert_eq!(resource["label"], "src/lib.rs");
+    assert_eq!(resource["running"], false);
+    assert_eq!(resource["resumable"], false);
+    // Written down, so it is on the card after a restart the way an agent run is.
+    let metadata = fs::read_to_string(
+        served
+            .root
+            .join(".moontasks")
+            .join(&task_id)
+            .join("metadata.json"),
+    )
+    .expect("failed to read the task's metadata");
+    assert!(
+        metadata.contains("\"file_path\": \"src/lib.rs\""),
+        "the link should be in the task folder: {metadata}"
+    );
+
+    // Off the card again by the same delete a run leaves by, and the file itself untouched.
+    let resource_id = resource["id"].as_str().expect("expected a resource id");
+    served
+        .client
+        .delete(format!("{tasks_url}/{task_id}/resources/{resource_id}"))
+        .send()
+        .expect("failed to unlink the file")
+        .error_for_status()
+        .expect("the server refused to unlink the file");
+    assert!(
+        board(&served)[0]["resources"]
+            .as_array()
+            .expect("expected an array")
+            .is_empty(),
+        "an unlinked file should be off the task"
+    );
+    assert!(
+        served.root.join("src/lib.rs").is_file(),
+        "unlinking is not deleting"
+    );
+}

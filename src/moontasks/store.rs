@@ -129,25 +129,32 @@ impl BoardConfig {
     }
 }
 
-/// Whether a resource is a plain shell or an agent working on the task.
+/// What a resource on a card is: a plain shell, an agent working on the task, or a file of
+/// the repo the task is about.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TaskResourceKind {
     Shell,
     Agent,
+    File,
 }
 
-/// Something the task has running, or had running: a shell, or a run of an agent.
+/// Something on the task's card: a shell, a run of an agent, or a file linked to the task.
 ///
-/// Whether it is running right now is not written down - the shells the server has are what
-/// answers that, and they are gone once the server is.
+/// Whether a shell or a run is going right now is not written down - the shells the server
+/// has are what answers that, and they are gone once the server is. A file has nothing
+/// running; it is a way back to the file from the card.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskResource {
     pub(crate) id: String,
     pub(crate) kind: TaskResourceKind,
-    /// Which agent this is a run of. `None` for a shell.
+    /// Which agent this is a run of. `None` for a shell or a file.
     #[serde(default)]
     pub(crate) agent: AgentKind,
+    /// The file this links to, relative to the repo root - the way every file pane path is
+    /// addressed. `Some` for a file and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) file_path: Option<String>,
     /// The shell it was last attached to. Kept after the shell ends so the board can tell
     /// which past run a resumed one continues.
     #[serde(default)]

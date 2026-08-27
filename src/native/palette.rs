@@ -75,6 +75,9 @@ pub(crate) enum CommandAction {
     OpenFile,
     /// Turn the palette into the file finder, where what is typed is a file name.
     FindFile,
+    /// Put a file of the repo on a task's card, then open it: what the file finder does with
+    /// a pick when a card's `[start]` menu opened it.
+    LinkTaskFile { task_id: String, file_path: String },
     /// Turn the palette into the content search, where what is typed is looked for in the
     /// text of every file of the repo.
     SearchContent,
@@ -343,6 +346,9 @@ fn rows_for(app: &App) -> Vec<Command> {
 }
 
 /// One row per file the search found: the name to read it by, and the path it is at.
+///
+/// Running one opens the file - and first puts it on a card, when the finder was opened from
+/// that card's `[start]` menu.
 fn file_rows(app: &App) -> Vec<Command> {
     app.model
         .palette
@@ -352,11 +358,17 @@ fn file_rows(app: &App) -> Vec<Command> {
         .map(|file_path| Command {
             title: file_name_of(file_path).to_string(),
             description: file_path.clone(),
-            action: CommandAction::OpenPane(OpenPaneRequest::File {
-                session_id: app.model.root_session_id.clone(),
-                file_path: file_path.clone(),
-                at: None,
-            }),
+            action: match &app.model.palette.files_link_to_task {
+                Some(task_id) => CommandAction::LinkTaskFile {
+                    task_id: task_id.clone(),
+                    file_path: file_path.clone(),
+                },
+                None => CommandAction::OpenPane(OpenPaneRequest::File {
+                    session_id: app.model.root_session_id.clone(),
+                    file_path: file_path.clone(),
+                    at: None,
+                }),
+            },
             shortcut: None,
         })
         .collect()
@@ -408,9 +420,12 @@ fn file_name_of(file_path: &str) -> &str {
     file_path.rsplit('/').next().unwrap_or(file_path)
 }
 
-fn hint_of(mode: PaletteMode) -> &'static str {
-    match mode {
+fn hint_of(app: &App) -> &'static str {
+    match app.model.palette.mode {
         PaletteMode::Commands => "Execute a command…",
+        PaletteMode::Files if app.model.palette.files_link_to_task.is_some() => {
+            "Link a file to the task by name…"
+        }
         PaletteMode::Files => "Open a file by name…",
         PaletteMode::Contents => "Find text in the files…",
     }
@@ -604,9 +619,10 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     ui.set_width((screen.width() * 0.5).clamp(360.0, 560.0));
 
+                    let hint = hint_of(app);
                     let entry = ui.add(
                         egui::TextEdit::singleline(&mut app.model.palette.query)
-                            .hint_text(hint_of(app.model.palette.mode))
+                            .hint_text(hint)
                             .desired_width(f32::INFINITY)
                             .margin(egui::Margin::symmetric(7, 5)),
                     );

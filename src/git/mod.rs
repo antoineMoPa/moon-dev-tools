@@ -369,6 +369,26 @@ pub(crate) fn current_branch_upstream_ref(repo_path: &Path) -> Result<Option<Str
     Ok(None)
 }
 
+/// Where a plain `git push` would send the current branch, when git can tell from its config.
+///
+/// `None` when it cannot: a branch with no upstream, or - under `push.default=simple`, git's
+/// default - one whose upstream is not named like it. No check that the ref exists: the first
+/// push under `push.default=current` goes to a branch the remote has not got yet, and git
+/// still knows where that is.
+pub(crate) fn current_branch_push_ref(repo_path: &Path) -> Result<Option<String>> {
+    let push_ref = run_git_allow_status(
+        repo_path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"],
+        &[0, 128],
+    )?;
+    let push_ref = push_ref.trim();
+    if push_ref.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(push_ref.to_string()))
+    }
+}
+
 fn git_ref_exists(repo_path: &Path, git_ref: &str) -> Result<bool> {
     Ok(!run_git_allow_status(
         repo_path,

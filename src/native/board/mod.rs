@@ -315,6 +315,41 @@ pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
     }
 }
 
+/// A linked file's mark, in the place a shell's or a run's dot goes: a small page, so the row
+/// reads as a file at a glance and lines up with the rows above it.
+///
+/// Drawn for the same reason the dot is - the bundled fonts have no page glyph either.
+pub(super) fn file_mark(ui: &mut Ui, palette: &Palette) {
+    const WIDTH: f32 = 7.0;
+    const HEIGHT: f32 = 8.0;
+    const FOLD: f32 = 2.5;
+
+    let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, HEIGHT), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let rect = rect.shrink(0.5);
+    let stroke = egui::Stroke::new(1.0, palette.muted);
+    // The page: the corner at the top right is folded, so the outline goes round it.
+    let outline = [
+        rect.left_top(),
+        egui::pos2(rect.max.x - FOLD, rect.min.y),
+        egui::pos2(rect.max.x, rect.min.y + FOLD),
+        rect.right_bottom(),
+        rect.left_bottom(),
+        rect.left_top(),
+    ];
+    ui.painter().add(egui::Shape::line(outline.to_vec(), stroke));
+    ui.painter().add(egui::Shape::line(
+        vec![
+            egui::pos2(rect.max.x - FOLD, rect.min.y),
+            egui::pos2(rect.max.x - FOLD, rect.min.y + FOLD),
+            egui::pos2(rect.max.x, rect.min.y + FOLD),
+        ],
+        stroke,
+    ));
+}
+
 /// A `+` on a filled disc, the same button the tab strips carry for a new tab.
 ///
 /// It is drawn rather than taken from `egui_frames`, which only offers it as part of a tab

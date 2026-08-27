@@ -292,6 +292,7 @@ fn pushing_a_branch_that_tracks_nothing_sets_its_upstream() {
         .commit_state(&opened.session_id)
         .expect("expected a commit state");
     assert_eq!(before.upstream_ref, None, "the fixture tracks nothing yet");
+    assert_eq!(before.push_ref, None, "so git has nowhere to send a plain push");
 
     let terminal_id = backend
         .start_commit_run(&opened.session_id, &CommitAction::Push)
@@ -314,6 +315,94 @@ fn pushing_a_branch_that_tracks_nothing_sets_its_upstream() {
         after.upstream_ref.as_deref(),
         Some("origin/main"),
         "the push should have set the upstream it sent to"
+    );
+    assert_eq!(after.ahead, 0, "the remote has everything this branch has");
+}
+
+/// The state `git switch -c work origin/main` leaves a branch in: it tracks the branch it was
+/// started from, and git's default `push.default=simple` refuses a plain `git push` from
+/// there. The pane sends the branch under its own name instead, and leaves it tracking that.
+#[test]
+fn pushing_a_branch_that_tracks_another_name_sends_it_under_its_own() {
+    use crate::{backend::Backend, committing::CommitAction};
+
+    let fixture = seeded_fixture("push-other-name");
+    fixture.commit("Add the rest");
+    let remote = fixture
+        .root
+        .parent()
+        .expect("expected an enclosing directory")
+        .join("origin.git");
+    std::fs::create_dir_all(&remote).expect("failed to make the remote");
+    run_git_no_output(&remote, &["init", "--bare"]).expect("failed to init the remote");
+    run_git_no_output(
+        &fixture.root,
+        &["remote", "add", "origin", &remote.display().to_string()],
+    )
+    .expect("failed to add the remote");
+    // Pinned in the repo, so a machine whose global config says `current` cannot make this
+    // pass for the wrong reason.
+    run_git_no_output(&fixture.root, &["config", "push.default", "simple"])
+        .expect("failed to set push.default");
+    run_git_no_output(&fixture.root, &["branch", "-M", "main"]).expect("failed to name the branch");
+    run_git_no_output(&fixture.root, &["push", "-u", "origin", "main"])
+        .expect("failed to push main");
+    run_git_no_output(&fixture.root, &["switch", "-c", "work", "--track", "origin/main"])
+        .expect("failed to branch off origin/main");
+    fixture.write("src/more.rs", "pub const MORE: u32 = 1;\n");
+    fixture.commit("Add more");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = crate::backend::local::LocalBackend::new(state);
+    let opened = backend
+        .open_session(crate::api::OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected a session");
+
+    let before = backend
+        .commit_state(&opened.session_id)
+        .expect("expected a commit state");
+    assert_eq!(before.branch_name.as_deref(), Some("work"));
+    assert_eq!(
+        before.upstream_ref.as_deref(),
+        Some("origin/main"),
+        "the branch tracks the one it was started from"
+    );
+    assert_eq!(
+        before.push_ref, None,
+        "push.default=simple has nowhere to send a plain push"
+    );
+    assert_eq!(before.ahead, 1, "the one commit since origin/main");
+
+    let terminal_id = backend
+        .start_commit_run(&opened.session_id, &CommitAction::Push)
+        .expect("expected the push to start");
+
+    let deadline = Instant::now() + GIT_DEADLINE;
+    let mut outcome = None;
+    while Instant::now() < deadline && outcome.is_none() {
+        std::thread::sleep(Duration::from_millis(50));
+        outcome = backend
+            .commit_run_outcome(&opened.session_id, &terminal_id)
+            .expect("expected an answer");
+    }
+
+    assert_eq!(outcome, Some(0), "the push should have gone through");
+    let after = backend
+        .commit_state(&opened.session_id)
+        .expect("expected a commit state");
+    assert_eq!(
+        after.upstream_ref.as_deref(),
+        Some("origin/work"),
+        "the push should have left the branch tracking what it was sent as"
+    );
+    assert_eq!(
+        after.push_ref.as_deref(),
+        Some("origin/work"),
+        "and a plain push now has somewhere to go"
     );
     assert_eq!(after.ahead, 0, "the remote has everything this branch has");
 }

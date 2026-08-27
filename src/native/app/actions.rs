@@ -210,16 +210,36 @@ impl App {
         });
     }
 
-    /// Open the notes file the board just made sure exists, in a pane down the right.
+    /// Open the file the board just readied - a task's notes, or a file linked to a card - in
+    /// a pane down the right.
     ///
     /// The board's tasks are read from the root session's repo, so that is the session the
-    /// file pane reads the notes through.
-    pub(super) fn open_notes_the_board_readied(&mut self) {
-        let Some(file_path) = self.model.board.opened_notes.take() else {
+    /// file pane reads the file through.
+    pub(super) fn open_file_the_board_readied(&mut self) {
+        let Some(file_path) = self.model.board.opened_file.take() else {
             return;
         };
         let session_id = self.model.root_session_id.clone();
         self.open_notes_pane(session_id, file_path);
+    }
+
+    /// Put a file on a task's card, and open it once it is there.
+    ///
+    /// The link comes first: the pane is the same one the card opens the file into, so a
+    /// link the server refused would be a file open beside a card that does not name it.
+    fn link_task_file(&mut self, task_id: String, file_path: String) {
+        let session_id = self.model.root_session_id.clone();
+        let opens = file_path.clone();
+        self.tasks.spawn(
+            move |backend| backend.link_task_file(&session_id, &task_id, &file_path),
+            move |model, result| {
+                model.board.refresh_requested = true;
+                match result {
+                    Ok(()) => model.board.opened_file = Some(opens),
+                    Err(error) => model.error(format!("could not link the file: {error}")),
+                }
+            },
+        );
     }
 
     pub(super) fn poll_submodules(&mut self) {
@@ -249,6 +269,9 @@ impl App {
             CommandAction::RestartWindow => self.restart_window(ctx),
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
             CommandAction::FindFile => self.model.palette.show_files(),
+            CommandAction::LinkTaskFile { task_id, file_path } => {
+                self.link_task_file(task_id, file_path);
+            }
             CommandAction::SearchContent => self.model.palette.show_contents(),
             CommandAction::Split(side) => self.split_frame(side),
         }

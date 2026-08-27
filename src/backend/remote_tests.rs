@@ -251,3 +251,50 @@ fn an_unreachable_address_fails_with_the_address_in_the_message() {
         "the error should name what it could not reach: {error}"
     );
 }
+
+/// A file linked over the wire is on the card the next time the board is read, by the same
+/// path the file pane then opens it with.
+#[test]
+fn a_linked_file_round_trips_over_http() {
+    let served = serve_a_repo("task-files");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let task = backend
+        .create_task(
+            &opened.session_id,
+            &CreateTaskRequest {
+                title: "Fix the login page".to_string(),
+                agent: AgentKind::None,
+                status: ColumnId::new("todo"),
+                joins: ColumnEnd::Top,
+            },
+        )
+        .expect("expected the remote task to be created");
+
+    backend
+        .link_task_file(&opened.session_id, &task.id, "main.rs")
+        .expect("expected the file to be linked");
+    assert!(
+        backend
+            .link_task_file(&opened.session_id, &task.id, "missing.rs")
+            .is_err(),
+        "a file that is not in the repo has no place on a card"
+    );
+
+    let tasks = backend
+        .list_tasks(&opened.session_id)
+        .expect("expected the remote task list");
+    let linked = &tasks[0].resources[0];
+    assert_eq!(linked.kind, crate::moontasks::TaskResourceKind::File);
+    assert_eq!(linked.file_path.as_deref(), Some("main.rs"));
+    let content = backend
+        .file_content(&opened.session_id, "main.rs")
+        .expect("expected the file pane's read to find the linked file");
+    assert!(content.content.contains("fn main()"));
+}

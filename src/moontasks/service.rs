@@ -248,23 +248,43 @@ pub(crate) fn place_column(
 }
 
 fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
-    // Agent runs are the task's record and outlive the process; its shells are only ever the
-    // ones open right now, so the two are listed from different places and merged by age.
+    // Agent runs and linked files are the task's record and outlive the process; its shells
+    // are only ever the ones open right now, so the two are listed from different places and
+    // merged by age.
     let mut resources: Vec<TaskResourceView> = metadata
         .resources
         .iter()
-        .map(|resource| TaskResourceView {
-            id: resource.id.clone(),
-            kind: resource.kind,
-            agent: resource.agent,
-            label: resource.agent.label().to_lowercase(),
-            running: resource
-                .terminal_id
-                .as_ref()
-                .is_some_and(|terminal_id| state.terminals.is_live(terminal_id)),
-            terminal_id: resource.terminal_id.clone(),
-            resumable: agent_launch(resource.agent).is_some(),
-            started_at_unix: resource.started_at_unix,
+        .map(|resource| match resource.kind {
+            TaskResourceKind::File => {
+                let Some(file_path) = resource.file_path.clone() else {
+                    panic!("linked file {} has no file path", resource.id);
+                };
+                TaskResourceView {
+                    id: resource.id.clone(),
+                    kind: TaskResourceKind::File,
+                    agent: AgentKind::None,
+                    label: file_path.clone(),
+                    file_path: Some(file_path),
+                    running: false,
+                    terminal_id: None,
+                    resumable: false,
+                    started_at_unix: resource.started_at_unix,
+                }
+            }
+            TaskResourceKind::Shell | TaskResourceKind::Agent => TaskResourceView {
+                id: resource.id.clone(),
+                kind: resource.kind,
+                agent: resource.agent,
+                label: resource.agent.label().to_lowercase(),
+                file_path: None,
+                running: resource
+                    .terminal_id
+                    .as_ref()
+                    .is_some_and(|terminal_id| state.terminals.is_live(terminal_id)),
+                terminal_id: resource.terminal_id.clone(),
+                resumable: agent_launch(resource.agent).is_some(),
+                started_at_unix: resource.started_at_unix,
+            },
         })
         .collect();
     resources.extend(
@@ -278,6 +298,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
                 label: "shell".to_string(),
+                file_path: None,
                 running: true,
                 terminal_id: Some(shell.terminal_id),
                 resumable: false,
@@ -311,6 +332,63 @@ pub(crate) fn open_notes(state: &AppState, session_id: &str, task_id: &str) -> R
     store::read_task(&repo_path, task_id)?;
     store::ensure_notes_file(&repo_path, task_id)?;
     Ok(super::notes_repo_path(task_id))
+}
+
+/// Put a file of the repo on the task's card.
+///
+/// The path is kept as the file pane addresses it - relative to the repo root - and has to be
+/// a file in the working tree right now: a card is a way back to the file, and one pointing
+/// at nothing is worse than none. The same file twice is refused rather than listed twice.
+pub(crate) fn link_file(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    file_path: &str,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+
+    let file_path = file_path.trim();
+    if file_path.is_empty() {
+        bail!("a linked file needs a path");
+    }
+    if Path::new(file_path).is_absolute() {
+        bail!("a linked file is named relative to the repo");
+    }
+    // Both sides are resolved before they are compared: on macOS the repo may be reached
+    // through a symlink (`/var` for `/private/var`), and comparing a resolved path against an
+    // unresolved root would refuse a file that is plainly inside it.
+    let repo_root = repo_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", repo_path.display()))?;
+    let resolved = repo_root
+        .join(file_path)
+        .canonicalize()
+        .with_context(|| format!("{file_path} is not a file of the repo"))?;
+    if !resolved.starts_with(&repo_root) {
+        bail!("{file_path} is outside the repo");
+    }
+    if !resolved.is_file() {
+        bail!("{file_path} is not a file");
+    }
+    if metadata
+        .resources
+        .iter()
+        .any(|resource| resource.file_path.as_deref() == Some(file_path))
+    {
+        bail!("{file_path} is already on this task");
+    }
+
+    metadata.resources.push(TaskResource {
+        id: store::new_uuid(),
+        kind: TaskResourceKind::File,
+        agent: AgentKind::None,
+        file_path: Some(file_path.to_string()),
+        terminal_id: None,
+        agent_session_id: None,
+        started_at_unix: store::now_unix(),
+    });
+    store::write_task(&repo_path, task_id, &metadata)
 }
 
 pub(crate) fn create_task(
@@ -394,6 +472,7 @@ pub(crate) fn start_resource(
             }
             request.agent
         }
+        TaskResourceKind::File => bail!("a file is linked to a task, not started"),
     };
     let launch = agent_launch(agent);
     // Only an agent whose start args name a session id has a run that can be resumed exactly.
@@ -430,6 +509,7 @@ pub(crate) fn start_resource(
             id: store::new_uuid(),
             kind: request.kind,
             agent,
+            file_path: None,
             terminal_id: Some(terminal_id.clone()),
             agent_session_id,
             started_at_unix: store::now_unix(),
@@ -537,6 +617,7 @@ pub(crate) fn attach_resource(
         id: store::new_uuid(),
         kind: TaskResourceKind::Agent,
         agent: request.agent,
+        file_path: None,
         terminal_id: Some(terminal_id.clone()),
         agent_session_id: Some(agent_session_id.to_string()),
         started_at_unix: store::now_unix(),
@@ -854,6 +935,7 @@ mod tests {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
                 agent: AgentKind::Claude,
+                file_path: None,
                 // No server in this test, so no shell of this name is live.
                 terminal_id: Some("terminal-gone".to_string()),
                 agent_session_id: None,
@@ -885,6 +967,7 @@ mod tests {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
                 agent: AgentKind::Claude,
+                file_path: None,
                 terminal_id: Some("terminal-gone".to_string()),
                 agent_session_id: None,
                 started_at_unix: 0,

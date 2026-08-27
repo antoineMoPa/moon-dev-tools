@@ -25,8 +25,8 @@ use crate::{
     agent::detect_agent_availability,
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
-        TaskTitleRequest, TaskView, TerminalOpened,
+        CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
+        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
     service,
@@ -169,6 +169,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/notes/open",
             post(open_task_notes),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/files",
+            post(link_task_file),
         )
         .route("/api/session/{session_id}/commit-state", get(commit_state))
         .route("/api/session/{session_id}/stage-all", post(stage_all))
@@ -808,6 +812,16 @@ async fn open_task_notes(
     Ok(Json(TaskNotesPayload {
         file_path: moontasks::service::open_notes(&state, &session_id, &task_id)?,
     }))
+}
+
+async fn link_task_file(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<LinkFileRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::link_file(&state, &session_id, &task_id, &request.file_path)?;
+    Ok("ok")
 }
 
 async fn discard_hunks(

@@ -237,9 +237,10 @@ pub(crate) struct BoardState {
     /// A shell a board action just started, waiting for the window to open a tab on it. The
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
-    /// A notes file a board action just made sure exists, as the repo-relative path a file
-    /// pane opens it by - waiting for the window the same way an opened shell does.
-    pub(crate) opened_notes: Option<String>,
+    /// A file a board action just readied - the task's notes, made sure to exist, or a file
+    /// just linked to a card - as the repo-relative path a file pane opens it by. Waiting for
+    /// the window the same way an opened shell does.
+    pub(crate) opened_file: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
@@ -353,6 +354,9 @@ pub(crate) struct PaletteState {
     /// The same for the content search: the lines of the repo that hold what was typed.
     pub(crate) contents: crate::native::palette::Search<crate::api::ContentMatch>,
     pub(crate) query: String,
+    /// The task the file finder is picking a file for, while it is: the file chosen is put on
+    /// that task's card and then opened, rather than only opened. `None` is the plain finder.
+    pub(crate) files_link_to_task: Option<String>,
     pub(crate) highlighted: usize,
     /// The query the highlight was picked under. A keystroke changes which commands are on
     /// the list, so a highlight from before it means nothing - Enter should run the first
@@ -372,6 +376,7 @@ impl PaletteState {
         // Whatever the last search found belongs to the query that is being cleared.
         self.files = crate::native::palette::Search::default();
         self.contents = crate::native::palette::Search::default();
+        self.files_link_to_task = None;
         self.query.clear();
         self.highlighted = 0;
         self.highlight_query.clear();
@@ -383,6 +388,13 @@ impl PaletteState {
     pub(crate) fn show_files(&mut self) {
         self.show();
         self.mode = crate::native::palette::PaletteMode::Files;
+    }
+
+    /// The file finder again, picking a file for a task's card: the one chosen is linked to
+    /// the task before it is opened.
+    pub(crate) fn show_files_for_task(&mut self, task_id: String) {
+        self.show_files();
+        self.files_link_to_task = Some(task_id);
     }
 
     /// The same, on the content search: what is typed is looked for in the text of the files.
@@ -407,6 +419,7 @@ impl Default for PaletteState {
             files: crate::native::palette::Search::default(),
             contents: crate::native::palette::Search::default(),
             query: String::new(),
+            files_link_to_task: None,
             highlighted: 0,
             highlight_query: String::new(),
             rect: None,

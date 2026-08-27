@@ -15,8 +15,9 @@ in the repo straight away.
 | `+` on a column's heading | a new task at the top of it |
 | `+` under a column's last card | a new task at the bottom of it |
 | `+` at the right-hand end | add a column |
-| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, or an agent |
+| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
 | a running resource | click its name to bring its terminal back on screen |
+| a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
 | `[add notes]` | the same, on a task that has none yet |
 
@@ -36,6 +37,19 @@ A card being dragged leaves the place it came from and takes up the one it is be
 which the cards around it move aside for, so the drop changes nothing that was not already on
 screen. It stays marked for a moment after it lands, which is how you find it again among the
 ones it landed between. A column being dragged does the same thing sideways.
+
+## Files on a card
+
+`file…` on the `[start]` menu opens the file finder on the repo - the same one `cmd+P` opens -
+and the file picked there goes onto the card and opens in a pane. A task usually has a handful
+of files it is about, and this is where they are kept: the card carries the path, and clicking
+it opens the file.
+
+A file is written into the task's `metadata.json` the way an agent run is, so it is still on
+the card after a restart, and a link is only made to a file that is in the working tree at the
+time - a card is a way back to a file, and one pointing at nothing is worse than none. The
+mark at the end of the row takes the file off the card without asking, because nothing is lost
+by it: the file stays exactly where it is, and linking it again is one menu away.
 
 ## The columns
 
@@ -84,7 +98,7 @@ The board is a folder in the repo, which is the whole of its state:
   .gitignore          # ignores the whole board, written when the board is created
   board.json          # the columns, once you have changed them
   fix-the-login-page-6f9c1e2a-…/
-    metadata.json     # title, column, place in the column, and the shells and agent runs
+    metadata.json     # title, column, place in the column, the agent runs and the linked files
     brief.md          # what the agents working here have been told
     notes.md          # the task's description and shared notes, shown on the card
     …                 # anything you or an agent puts here

@@ -124,7 +124,8 @@ Run any of them inside a git repository. The other tools remain one command-pale
 ### Moontasks
 
 Create a card for a piece of work, choose an agent, and Moontasks starts it in the repo. Cards
-group the task brief, shared notes, agent runs and shells in one place. Drag cards and columns
+group the task brief, shared notes, agent runs, shells and the files the task is about in one
+place. Drag cards and columns
 to make the board match your workflow.
 
 Task state lives in the repo's `.moontasks/` directory. See [Moontasks.md](Moontasks.md) for the

@@ -13,7 +13,7 @@ use egui_kittest::SnapshotOptions;
 
 use crate::native::{panes::Pane, theme::ThemeMode};
 
-use super::{app_for, seeded_fixture, press_key};
+use super::{app_for, press_key, seeded_fixture, settle, type_letter};
 
 /// The board is the repo's `.moontasks` folder, so the fixture writes the folder and the
 /// window is expected to show exactly what is in it.
@@ -685,5 +685,142 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
     assert!(
         started.is_file(),
         "opening the notes is what makes the file real"
+    );
+}
+
+/// A file on a card is a way back to the file: its path opens it in a pane, the way the
+/// notes do. And `[start]` is where one is put there, through the file finder - a pick there
+/// lands on the card and opens, rather than only opening.
+#[test]
+fn a_linked_file_opens_from_its_card_and_start_links_another() {
+    let fixture = seeded_fixture("board-files");
+    fixture.write(
+        ".moontasks/write-the-parser-1111/metadata.json",
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": [\n    {\n      \
+         \"id\": \"file-1111\",\n      \"kind\": \"file\",\n      \
+         \"file_path\": \"src/extra.rs\",\n      \"started_at_unix\": 1700000001\n    }\n  ]\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let file_panes = Arc::new(Mutex::new(Vec::<String>::new()));
+    let file_panes_in_ui = Arc::clone(&file_panes);
+    // What the finder has searched for, so the test can wait for the answer to the typed name.
+    let searched = Arc::new(Mutex::new(None::<String>));
+    let searched_in_ui = Arc::clone(&searched);
+    // How many resources the card has, read back out of the board's own last answer.
+    let linked = Arc::new(Mutex::new(Vec::<String>::new()));
+    let linked_in_ui = Arc::clone(&linked);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 1,
+                Ordering::Relaxed,
+            );
+            if let Ok(mut panes) = file_panes_in_ui.lock() {
+                *panes = app
+                    .model
+                    .layout
+                    .panes()
+                    .filter_map(|(_, pane)| match pane {
+                        Pane::File { file_path, .. } => Some(file_path.clone()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            if let Ok(mut searched) = searched_in_ui.lock() {
+                *searched = app.model.palette.files.searched.clone();
+            }
+            if let Ok(mut linked) = linked_in_ui.lock() {
+                *linked = app
+                    .model
+                    .board
+                    .tasks
+                    .iter()
+                    .flat_map(|task| task.resources.iter())
+                    .filter_map(|resource| resource.file_path.clone())
+                    .collect();
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the board never read the task out of .moontasks"
+    );
+    harness.run_steps(3);
+    let panes_open = || {
+        file_panes
+            .lock()
+            .map(|panes| panes.clone())
+            .unwrap_or_default()
+    };
+
+    // The card carries the file the way it carries a run: a mark, then the path.
+    harness.snapshot("moontasks-linked-file");
+
+    // The linked file is on the card by its path, and the path opens it.
+    use egui_kittest::kittest::Queryable as _;
+    harness.get_by_label("src/extra.rs").click();
+    assert!(
+        settle(&mut harness, || panes_open().contains(&"src/extra.rs".to_string())),
+        "clicking the linked file should have opened it, got {:?}",
+        panes_open()
+    );
+
+    // `[start]` -> `file…` is the file finder, picking for this card: the pick is linked and
+    // then opened.
+    harness.get_by_label("[start]").click();
+    harness.run_steps(3);
+    harness.get_by_label("file…").click();
+    harness.run_steps(3);
+    for (key, letter) in [(egui::Key::L, "l"), (egui::Key::I, "i"), (egui::Key::B, "b")] {
+        type_letter(&mut harness, key, letter);
+    }
+    assert!(
+        settle(&mut harness, || {
+            searched.lock().expect("poisoned").as_deref() == Some("lib")
+        }),
+        "the finder never searched for what was typed - is ag installed?"
+    );
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+
+    assert!(
+        settle(&mut harness, || panes_open().contains(&"src/lib.rs".to_string())),
+        "the picked file should have opened, got {:?}",
+        panes_open()
+    );
+    assert!(
+        settle(&mut harness, || linked
+            .lock()
+            .expect("poisoned")
+            .contains(&"src/lib.rs".to_string())),
+        "the picked file should be on the card, got {:?}",
+        linked.lock().expect("poisoned")
+    );
+    let metadata = std::fs::read_to_string(
+        fixture
+            .root
+            .join(".moontasks/write-the-parser-1111/metadata.json"),
+    )
+    .expect("failed to read the task's metadata");
+    assert!(
+        metadata.contains("\"file_path\": \"src/lib.rs\""),
+        "the link should be written to the task folder: {metadata}"
     );
 }

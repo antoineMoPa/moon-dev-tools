@@ -14,7 +14,7 @@ use crate::{
         app::App,
         board::{
             Axis, BoardAction, CLOSE_MARK_SIZE, agent_label, available_agents, close_button,
-            filter::Filter, running_dot, slide_into_place, stamp_place,
+            file_mark, filter::Filter, running_dot, slide_into_place, stamp_place,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -526,8 +526,12 @@ fn draw_notes_box(
     }
 }
 
-/// One shell or agent run of a task: what it is, whether it is still going, and the way back
-/// to it.
+/// How many characters of a linked file's path the card shows before the middle is cut out.
+/// The end of a path is what tells files apart, so that is the part that is kept.
+const FILE_PATH_CHARS: usize = 34;
+
+/// One shell, agent run or linked file of a task: what it is, whether it is still going, and
+/// the way back to it.
 fn draw_resource(
     ui: &mut Ui,
     task: &TaskView,
@@ -536,6 +540,10 @@ fn draw_resource(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
+    if resource.kind == TaskResourceKind::File {
+        draw_file_resource(ui, task, resource, palette, actions);
+        return;
+    }
     ui.horizontal(|ui| {
         running_dot(ui, resource.running, palette);
 
@@ -616,9 +624,48 @@ fn draw_resource(
     });
 }
 
-/// Everything a card starts, on the one menu: a review of the repo, a shell in the task, or
-/// an agent. They were three buttons across the card, which is three times the row for three
-/// things you press once each.
+/// A file linked to the task: its path, which opens it, and the mark that takes it off the
+/// card again.
+///
+/// Nothing runs here, so there is nothing to stop or resume, and taking the file off the
+/// card loses nothing - the file stays where it is - so unlike a run it goes without asking.
+fn draw_file_resource(
+    ui: &mut Ui,
+    task: &TaskView,
+    resource: &TaskResourceView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let Some(file_path) = resource.file_path.as_deref() else {
+        panic!("linked file {} has no file path", resource.id);
+    };
+    ui.horizontal(|ui| {
+        file_mark(ui, palette);
+
+        if widgets::quiet_button(ui, &widgets::elide_path(file_path, FILE_PATH_CHARS))
+            .on_hover_text(format!("Open {file_path} in a pane"))
+            .clicked()
+        {
+            actions.push(BoardAction::OpenFile(file_path.to_string()));
+        }
+
+        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+            if close_button(ui, palette)
+                .on_hover_text("Take this file off the task")
+                .clicked()
+            {
+                actions.push(BoardAction::DeleteResource(
+                    task.id.clone(),
+                    resource.id.clone(),
+                ));
+            }
+        });
+    });
+}
+
+/// Everything a card starts, on the one menu: a review of the repo, a shell in the task, an
+/// agent, or a file of the repo linked to the card. They were three buttons across the card,
+/// which is three times the row for three things you press once each.
 ///
 /// It comes up with the notes offer above it and goes the same way, so a card at rest is its
 /// title and its description and nothing else. It sits at the bottom right, out of the way of
@@ -672,6 +719,14 @@ fn draw_card_actions(
                         agent: AgentKind::None,
                     },
                 ));
+                ui.close();
+            }
+
+            if widgets::clickable(ui.button("file…"))
+                .on_hover_text("Pick a file of the repo to put on this card, and open it")
+                .clicked()
+            {
+                actions.push(BoardAction::PickFile(task.id.clone()));
                 ui.close();
             }
 
