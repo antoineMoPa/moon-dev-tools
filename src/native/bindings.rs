@@ -34,6 +34,8 @@ pub(crate) enum Action {
     Find,
     /// Open the palette on its file finder, where what is typed names a file of the repo.
     FindFile,
+    /// Bring the review of this window's repo forward, opening it if it is not open.
+    OpenReview,
     /// Open the palette on its content search, where what is typed is looked for in the text
     /// of the files.
     SearchContent,
@@ -163,6 +165,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::SearchContent,
         chord: &[press(COMMAND_SHIFT, Key::F)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::OpenReview,
+        chord: &[press(COMMAND_SHIFT, Key::R)],
         reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
@@ -315,7 +322,7 @@ fn press_of(event: &egui::Event) -> Option<Press> {
     }
 }
 
-/// A chord written the way it is spoken: `⌘⇧P`, or `C-x o` for a prefixed one.
+/// A chord written the way it is spoken: `⌘ shift P`, or `C-x o` for a prefixed one.
 pub(crate) fn describe(chord: &[Press]) -> String {
     chord
         .iter()
@@ -328,10 +335,14 @@ fn describe_press(press: &Press) -> String {
     // A chord with a command modifier is a platform shortcut and reads as ⌘; one built on
     // Ctrl or Alt is an emacs-style chord and reads the way emacs writes it.
     //
+    // ⌘ leads, the way the chord is spoken - cmd+shift+P, not shift+cmd+P - and everything
+    // after it is spaced out: the glyph and a letter smudge together at the size a tab or a
+    // palette row wears one.
+    //
     // ⌘ is the only modifier glyph the bundled fonts carry, so the others are spelled out
     // rather than drawn as empty boxes.
     if press.mods.command || press.mods.mac_cmd {
-        let mut out = String::new();
+        let mut out = String::from("⌘ ");
         for (held, word) in [
             (press.mods.ctrl, "ctrl "),
             (press.mods.alt, "alt "),
@@ -341,7 +352,6 @@ fn describe_press(press: &Press) -> String {
                 out.push_str(word);
             }
         }
-        out.push('⌘');
         out.push_str(press.key.name());
         return out;
     }
@@ -360,15 +370,9 @@ fn describe_press(press: &Press) -> String {
     out
 }
 
-/// The chord that raises the nth tab, written for the tab's indicator: `⌘ 1`, with a space so
-/// the glyph and the digit don't smudge together at a tab's size.
+/// The chord that raises the nth tab, written for the tab's indicator: `⌘ 1`.
 pub(crate) fn tab_shortcut_label(index: usize) -> Option<String> {
-    let chord = chord_of(Action::SelectTab(index))?;
-    // The table binds SelectTab as a single bare-command press, and the label leans on that.
-    let [press] = chord else {
-        unreachable!("SelectTab is bound as a single press");
-    };
-    Some(format!("⌘ {}", press.key.name()))
+    Some(describe(chord_of(Action::SelectTab(index))?))
 }
 
 /// The chord that fires an action, for anything that shows the keyboard to the user.
@@ -532,17 +536,30 @@ mod tests {
         assert_eq!(fired, vec![Action::OpenPalette]);
     }
 
+    /// cmd+shift+R is the review, and it reaches it from inside a shell - which is exactly
+    /// where you are when you want the review back in front.
+    #[test]
+    fn the_review_is_a_chord_away_from_a_shell() {
+        let mut keymap = Keymap::default();
+        let (fired, left) = run(&mut keymap, true, vec![key_event(COMMAND_SHIFT, Key::R)]);
+
+        assert_eq!(fired, vec![Action::OpenReview]);
+        assert!(left.is_empty(), "the shell must not be sent it as well");
+    }
+
     #[test]
     fn chords_read_the_way_they_are_spoken() {
         assert_eq!(
             describe(chord_of(Action::FocusNextFrame).expect("bound")),
             "C-x o"
         );
+        // ⌘ leads, as the chord is spoken: cmd+shift+P.
         assert_eq!(
             describe(chord_of(Action::OpenPalette).expect("bound")),
-            "shift ⌘P"
+            "⌘ shift P"
         );
         // The label a tab wears at the right of its title breathes between glyph and digit.
         assert_eq!(tab_shortcut_label(0).expect("bound"), "⌘ 1");
+        assert_eq!(describe(chord_of(Action::NewShellTab).expect("bound")), "⌘ T");
     }
 }

@@ -3,7 +3,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -616,5 +616,65 @@ fn raising_a_tab_hands_it_the_keyboard() {
     assert!(
         harness.ctx.memory(|memory| memory.focused()).is_some(),
         "raising the file again should have given its editor the keyboard back"
+    );
+}
+
+/// cmd+shift+R brings the review back. Closing it is a cmd+W away, so a window can end up
+/// without one, and the chord opens it again rather than sending the user to the palette.
+#[test]
+fn the_review_chord_opens_the_review_again_after_it_is_closed() {
+    let fixture = seeded_fixture("review-chord");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let reviews = Arc::new(AtomicUsize::new(0));
+    let reviews_in_ui = Arc::clone(&reviews);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            reviews_in_ui.store(
+                app.model
+                    .layout
+                    .panes()
+                    .filter(|(_, pane)| pane.kind() == PaneKind::Review)
+                    .count(),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || reviews.load(Ordering::Relaxed) == 1),
+        "the window never opened on its review"
+    );
+
+    press_key(&mut harness, egui::Key::W, egui::Modifiers::COMMAND);
+    assert_eq!(
+        reviews.load(Ordering::Relaxed),
+        0,
+        "cmd+W should have closed the review tab"
+    );
+
+    press_key(
+        &mut harness,
+        egui::Key::R,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    assert_eq!(
+        reviews.load(Ordering::Relaxed),
+        1,
+        "cmd+shift+R should have opened the review again"
+    );
+
+    // And again on a window that already has one: the review is a pane there is one of.
+    press_key(
+        &mut harness,
+        egui::Key::R,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    assert_eq!(
+        reviews.load(Ordering::Relaxed),
+        1,
+        "the review that is open should be raised rather than duplicated"
     );
 }

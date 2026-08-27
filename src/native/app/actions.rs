@@ -482,7 +482,22 @@ impl App {
             Action::Find => find::open(self),
             Action::FindFile => self.model.palette.show_files(),
             Action::SearchContent => self.model.palette.show_contents(),
+            Action::OpenReview => self.open_main_review(),
         }
+    }
+
+    /// cmd+shift+R brings this window's review forward, opening it if the workspace has not
+    /// got one - the same thing the palette's "review" command does. A window whose review is
+    /// still opening has no session to point a pane at yet, so the chord does nothing there.
+    fn open_main_review(&mut self) {
+        if self.model.root_session_id.is_empty() {
+            return;
+        }
+        let session_id = self.model.root_session_id.clone();
+        self.open_pane(OpenPaneRequest::Review {
+            session_id,
+            title: "review".to_string(),
+        });
     }
 
     /// `s` and `u` act on the hunk the review pane has under the caret: stage and unstage in

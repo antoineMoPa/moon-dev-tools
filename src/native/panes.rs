@@ -12,6 +12,7 @@ use crate::{
     api::AgentKind,
     native::{
         app::App,
+        bindings::{self, Action},
         commit_pane, review,
         theme::{self, Palette, ThemeMode},
         widgets,
@@ -201,7 +202,14 @@ impl PaneView<Pane> for App {
         ui.painter().text(
             ui.max_rect().center(),
             egui::Align2::CENTER_CENTER,
-            "shift ⌘P to execute a command",
+            // Read out of the binding table, so the hint cannot name a chord the keyboard
+            // has stopped answering to.
+            &format!(
+                "{} to execute a command",
+                bindings::describe(
+                    bindings::chord_of(Action::OpenPalette).expect("the palette is bound")
+                )
+            ),
             egui::FontId::proportional(theme::UI_SIZE),
             palette.muted,
         );

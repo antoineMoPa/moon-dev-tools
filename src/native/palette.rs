@@ -118,6 +118,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             session_id: root.clone(),
             title: "review".to_string(),
         }),
+        bindings::chord_of(Action::OpenReview),
     ));
     commands.push(single_pane_command(
         app.model
@@ -128,6 +129,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         "Open the comment agent monitor",
         "Bring the comment agent monitor forward",
         CommandAction::OpenPane(OpenPaneRequest::Agents),
+        None,
     ));
     commands.push(single_pane_command(
         app.model
@@ -138,6 +140,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         "Open the task board and the agents working on it",
         "Bring the task board forward",
         CommandAction::OpenPane(OpenPaneRequest::Tasks),
+        None,
     ));
     commands.push(single_pane_command(
         app.model
@@ -150,6 +153,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Commit {
             session_id: root.clone(),
         }),
+        None,
     ));
     commands.push(Command {
         title: "terminal".to_string(),
@@ -297,12 +301,13 @@ fn single_pane_command(
     opens: &str,
     raises: &str,
     action: CommandAction,
+    shortcut: Option<&'static [bindings::Press]>,
 ) -> Command {
     Command {
         title: title.to_string(),
         description: if already_open { raises } else { opens }.to_string(),
         action,
-        shortcut: None,
+        shortcut,
     }
 }
 

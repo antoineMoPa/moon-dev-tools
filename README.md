@@ -158,6 +158,7 @@ Inside the window:
 | `⌘⇧P` | command palette — open a review, a shell, the task board, or the agent monitor |
 | `⌘P` | find a file of the repo by name, from any directory under it, and open it |
 | `⌘⇧F` | search the files of the repo for text, and open a file at the line that holds it |
+| `⌘⇧R` | bring the review of this repo forward, opening it if it was closed |
 | `⌘N` | another window of this same program, on its launch screen |
 | `⌘J` | switch light and dark |
 | `?` | the shortcut list |
