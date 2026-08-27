@@ -9,7 +9,8 @@ export type UiCommand = {
   request: OpenPaneRequest;
 };
 
-type CommandDefinition = Omit<UiCommand, "request"> & {
+type CommandDefinition = Omit<UiCommand, "request" | "description"> & {
+  description: (rootRepoName: string) => string;
   request: (rootSessionId: string) => OpenPaneRequest;
   available: (layout: WorkspaceLayout, rootSessionId: string) => boolean;
 };
@@ -18,21 +19,21 @@ const commandDefinitions: CommandDefinition[] = [
   {
     id: "open-review",
     title: "review",
-    description: "Open the main review",
+    description: (rootRepoName) => `Open the ${rootRepoName} review`,
     request: (rootSessionId) => ({ kind: "review", sessionId: rootSessionId, title: "review" }),
     available: (layout, rootSessionId) => !findReviewPane(layout, rootSessionId),
   },
   {
     id: "open-agents",
     title: "comment agents",
-    description: "Open the comment agent monitor",
+    description: () => "Open the comment agent monitor",
     request: () => ({ kind: "agents" }),
     available: (layout) => !findPaneOfKind(layout, "agents"),
   },
   {
     id: "open-terminal",
     title: "terminal",
-    description: "Open a new shell",
+    description: () => "Open a new shell",
     request: () => ({ kind: "terminal" }),
     available: () => true,
   },
@@ -58,10 +59,14 @@ const agentCommandDefinitions = [
 
 /// Commands currently available to the workspace. Keeping their labels and requests here
 /// lets compact menus and searchable palettes expose the same actions.
+///
+/// The review command is named after the repo the workspace was opened on. Before that
+/// review has loaded there is no name to use, and it says "repo", as the server does.
 export function uiCommandsFor(
   layout: WorkspaceLayout,
   rootSessionId: string,
   agents: AgentOption[] = [],
+  rootRepoName = "repo",
 ): UiCommand[] {
   const availableAgentKinds = new Set(
     agents.filter((agent) => agent.available).map((agent) => agent.kind),
@@ -71,7 +76,7 @@ export function uiCommandsFor(
     .map((command) => ({
       id: command.id,
       title: command.title,
-      description: command.description,
+      description: command.description(rootRepoName),
       request: command.request(rootSessionId),
     }));
 

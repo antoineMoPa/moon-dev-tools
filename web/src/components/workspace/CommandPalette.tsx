@@ -13,10 +13,12 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const reviewStore = useReviewStoreFor(workspace.focusedReviewSessionId);
+  const rootReviewStore = useReviewStoreFor(getRootSessionId());
   const commands = uiCommandsFor(
     workspace.layout,
     getRootSessionId(),
     reviewStore?.state.data?.available_agents,
+    rootReviewStore?.state.data?.repo_name,
   );
   const matches = filterUiCommands(commands, query);
 

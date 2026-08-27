@@ -381,7 +381,7 @@ impl App {
         }
     }
 
-    /// The repo the main review is of, as a path on whichever machine the backend reads.
+    /// The repo the window was launched on, as a path on whichever machine the backend reads.
     pub(crate) fn repo_root(&self) -> Option<std::path::PathBuf> {
         let session_id = self.model.root_session_id.clone();
         let payload = self.model.review_ref(&session_id)?.payload.as_ref()?;
@@ -505,14 +505,14 @@ impl App {
             Action::Find => find::open(self),
             Action::FindFile => self.model.palette.show_files(),
             Action::SearchContent => self.model.palette.show_contents(),
-            Action::OpenReview => self.open_main_review(),
+            Action::OpenReview => self.open_root_review(),
         }
     }
 
     /// cmd+shift+R brings this window's review forward, opening it if the workspace has not
     /// got one - the same thing the palette's "review" command does. A window whose review is
     /// still opening has no session to point a pane at yet, so the chord does nothing there.
-    fn open_main_review(&mut self) {
+    fn open_root_review(&mut self) {
         if self.model.root_session_id.is_empty() {
             return;
         }

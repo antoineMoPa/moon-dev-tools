@@ -542,8 +542,8 @@ fn the_palette_still_offers_a_review_that_is_already_open() {
     let (reviews, described) = seen.lock().expect("poisoned").clone();
     assert_eq!(reviews, 1, "the window opens on its review");
     assert_eq!(
-        described, "Bring the main review forward",
-        "the open review stays on the list, as something to bring forward"
+        described, "Bring the repo review forward",
+        "the open review stays on the list, named after the fixture's directory"
     );
 
     press_key(

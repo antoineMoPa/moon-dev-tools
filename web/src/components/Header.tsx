@@ -46,10 +46,12 @@ export function OpenWindowMenu({ frameId }: { frameId: string }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const reviewStore = useReviewStoreFor(workspace.focusedReviewSessionId);
+  const rootReviewStore = useReviewStoreFor(getRootSessionId());
   const commands = uiCommandsFor(
     workspace.layout,
     getRootSessionId(),
     reviewStore?.state.data?.available_agents,
+    rootReviewStore?.state.data?.repo_name,
   );
 
   useEffect(() => {

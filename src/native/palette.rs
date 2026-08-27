@@ -111,12 +111,15 @@ const SPLIT_COMMANDS: &[(DropSide, &str, &str)] = &[
 pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let mut commands = Vec::new();
     let root = app.model.root_session_id.clone();
+    // The review the window was launched on is named after its repo, the way the submodule
+    // reviews further down are named after theirs.
+    let root_repo = root_repo_name(app);
 
     commands.push(single_pane_command(
         app.model.layout.find_pane(|pane| pane.reviews(&root)).is_some(),
         "review",
-        "Open the main review",
-        "Bring the main review forward",
+        &format!("Open the {root_repo} review"),
+        &format!("Bring the {root_repo} review forward"),
         CommandAction::OpenPane(OpenPaneRequest::Review {
             session_id: root.clone(),
             title: "review".to_string(),
@@ -293,6 +296,16 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     }
 
     commands
+}
+
+/// The name of the repo the window was launched on - the same name the review header shows.
+/// A window whose review has not loaded yet has no repo to name, and says "repo" until it has.
+fn root_repo_name(app: &App) -> String {
+    app.model
+        .review_ref(&app.model.root_session_id)
+        .and_then(|review| review.payload.as_ref())
+        .map(|payload| payload.repo_name.clone())
+        .unwrap_or_else(|| "repo".to_string())
 }
 
 /// A pane the workspace keeps one of. It stays on the list once it is open - searching for
@@ -748,7 +761,10 @@ mod tests {
 
     #[test]
     fn an_empty_query_keeps_every_command() {
-        let commands = vec![command("review", "Open the main review"), command("terminal", "Open a new shell")];
+        let commands = vec![
+            command("review", "Open the moon-dev-tools review"),
+            command("terminal", "Open a new shell"),
+        ];
 
         assert_eq!(filter(commands, "  ").len(), 2);
     }

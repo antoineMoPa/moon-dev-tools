@@ -21,12 +21,15 @@ describe("uiCommandsFor", () => {
     ]);
   });
 
-  it("offers the main review when it is closed", () => {
-    expect(uiCommandsFor(emptyLayout(), "root").map((command) => command.title)).toEqual([
+  it("offers the review when it is closed, named after the repo", () => {
+    const commands = uiCommandsFor(emptyLayout(), "root", [], "moon-dev-tools");
+
+    expect(commands.map((command) => command.title)).toEqual([
       "review",
       "comment agents",
       "terminal",
     ]);
+    expect(commands[0].description).toBe("Open the moon-dev-tools review");
   });
 
   it("offers direct terminals only for installed agents", () => {
