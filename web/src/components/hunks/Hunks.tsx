@@ -137,9 +137,7 @@ function FileAccordion({
   } = useReviewStore();
   const canStageWholeFile = activeView !== ReviewView.All;
   const staged = hunks.every((hunk) => hunk.staged);
-  const reviewed = hunks.every((hunk) => hunk.reviewed);
   const status = staged ? "Staged" : "Unstaged";
-  const reviewStatus = reviewed ? "Reviewed" : "Unreviewed";
   const diffStats = hunks.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const readOnly = data?.read_only ?? false;
   const isCommitReview = Boolean(data?.active_commit);
@@ -155,10 +153,9 @@ function FileAccordion({
             <span className="diff-stat diff-stat-added">++{diffStats.added}</span>
             <span className="diff-stat diff-stat-removed">--{diffStats.removed}</span>
           </span>
-          <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{status}</span>
-          {isCommitReview ? (
-            <span className={`badge ${reviewed ? "reviewed" : "unreviewed"}`.trim()}>{reviewStatus}</span>
-          ) : null}
+          {readOnly ? null : (
+            <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{status}</span>
+          )}
           <span className="muted">{hunks.length}</span>
           {canStageWholeFile && !readOnly && !staged ? (
             <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
@@ -222,20 +219,15 @@ export function Hunks({
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
-  const unreviewedGroups = useMemo(
-    () => groupByFile(hunks.filter((hunk) => !hunk.reviewed)),
-    [hunks],
-  );
-  const reviewedGroups = useMemo(
-    () => groupByFile(hunks.filter((hunk) => hunk.reviewed)),
-    [hunks],
-  );
+  // A commit review has no index behind it, so its hunks are one list rather than a staged
+  // and an unstaged half.
+  const allGroups = useMemo(() => groupByFile(hunks), [hunks]);
   const [stagedOpen, setStagedOpen] = useState(
     () => stagedGroups.length > 0 && unstagedGroups.length === 0,
   );
   const stagedDefaultKey = useRef<string | null>(null);
-  const firstSectionTitle = isCommitReview ? "Unreviewed" : "Unstaged";
-  const secondSectionTitle = isCommitReview ? "Reviewed" : "Staged";
+  const firstSectionTitle = isCommitReview ? "Changed" : "Unstaged";
+  const secondSectionTitle = "Staged";
 
   useEffect(() => {
     if (isCommitReview) {
@@ -250,34 +242,34 @@ export function Hunks({
     return unstagedGroups[0]?.filePath ?? stagedGroups[0]?.filePath ?? null;
   }, [hunks, selectedFilePath, stagedGroups, unstagedGroups]);
   const emptyFirstSectionText = isCommitReview
-    ? "No unreviewed hunks."
+    ? "No changes in this commit."
     : activeFilePath
       ? `No unstaged hunks in ${activeFilePath}.`
       : "No unstaged hunks.";
-  const emptySecondSectionText = isCommitReview ? "No reviewed hunks." : "No staged hunks.";
+  const emptySecondSectionText = "No staged hunks.";
   const visibleUnstagedGroups = useMemo(
     () => {
       if (isViewingAll) {
-        return isCommitReview ? unreviewedGroups : unstagedGroups;
+        return isCommitReview ? allGroups : unstagedGroups;
       }
       if (isCommitReview) {
-        return unreviewedGroups.filter((group) => group.filePath === activeFilePath);
+        return allGroups.filter((group) => group.filePath === activeFilePath);
       }
       return unstagedGroups.filter((group) => group.filePath === activeFilePath);
     },
-    [activeFilePath, isCommitReview, isViewingAll, unreviewedGroups, unstagedGroups],
+    [activeFilePath, allGroups, isCommitReview, isViewingAll, unstagedGroups],
   );
   const visibleStagedGroups = useMemo(
     () => {
-      if (isViewingAll) {
-        return isCommitReview ? reviewedGroups : stagedGroups;
-      }
       if (isCommitReview) {
-        return reviewedGroups.filter((group) => group.filePath === activeFilePath);
+        return [];
+      }
+      if (isViewingAll) {
+        return stagedGroups;
       }
       return stagedGroups.filter((group) => group.filePath === activeFilePath);
     },
-    [activeFilePath, isCommitReview, isViewingAll, reviewedGroups, stagedGroups],
+    [activeFilePath, isCommitReview, isViewingAll, stagedGroups],
   );
   const hasVisibleUnstagedGroups = visibleUnstagedGroups.length > 0;
   const hasVisibleStagedGroups = visibleStagedGroups.length > 0;
@@ -337,7 +329,6 @@ export function Hunks({
           hunk.id,
           {
             filePath: hunk.file_path,
-            reviewed: hunk.reviewed,
             staged: hunk.staged,
           },
         ]),
@@ -354,11 +345,7 @@ export function Hunks({
 
     if (target) {
       if (isCommitReview) {
-        if (target.reviewed) {
-          setStagedOpen(true);
-        } else {
-          setUnstagedOpen(true);
-        }
+        setUnstagedOpen(true);
       } else if (target.staged) {
         setStagedOpen(true);
       } else {
@@ -390,13 +377,7 @@ export function Hunks({
         return;
       }
 
-      if (isCommitReview && key === "s" && !activeHunk.reviewed) {
-        event.preventDefault();
-        void actions.setReviewed(activeHunk.id, true);
-      } else if (isCommitReview && key === "u" && activeHunk.reviewed) {
-        event.preventDefault();
-        void actions.setReviewed(activeHunk.id, false);
-      } else if (!readOnly && key === "s" && !activeHunk.staged) {
+      if (!readOnly && key === "s" && !activeHunk.staged) {
         event.preventDefault();
         const shouldScrollToTop = interactiveUnstagedHunks[0]?.id === activeHunk.id;
         void actions.toggleStage(activeHunk.id, activeHunk.staged).then((changed) => {
@@ -441,30 +422,32 @@ export function Hunks({
         </div>
       </section>
 
-      <section className="panel panel-plain hunk-section">
-        <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setStagedOpen((open) => !open)}>
-          <h2>{secondSectionTitle}</h2>
-          <span className="muted">{visibleStagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
-        </button>
-        <div className={`collapsible-content ${stagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
-          {visibleStagedGroups.length > 0 ? (
-            visibleStagedGroups.map((group) => (
-              <FileAccordion
-                key={group.filePath}
-                filePath={group.filePath}
-                hunks={group.hunks}
-                agents={agents}
-                selectedAgent={selectedAgent}
-                onAgentChange={onAgentChange}
-                onSnoozeFile={onSnoozeFile}
-                onJumpToHunk={onJumpToHunk}
-              />
-            ))
-          ) : (
-            <div className="empty-section muted">{emptySecondSectionText}</div>
-          )}
-        </div>
-      </section>
+      {isCommitReview ? null : (
+        <section className="panel panel-plain hunk-section">
+          <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setStagedOpen((open) => !open)}>
+            <h2>{secondSectionTitle}</h2>
+            <span className="muted">{visibleStagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
+          </button>
+          <div className={`collapsible-content ${stagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
+            {visibleStagedGroups.length > 0 ? (
+              visibleStagedGroups.map((group) => (
+                <FileAccordion
+                  key={group.filePath}
+                  filePath={group.filePath}
+                  hunks={group.hunks}
+                  agents={agents}
+                  selectedAgent={selectedAgent}
+                  onAgentChange={onAgentChange}
+                  onSnoozeFile={onSnoozeFile}
+                  onJumpToHunk={onJumpToHunk}
+                />
+              ))
+            ) : (
+              <div className="empty-section muted">{emptySecondSectionText}</div>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

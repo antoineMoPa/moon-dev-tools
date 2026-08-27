@@ -128,7 +128,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                     if is_commit_review { "commit" } else { "diff" },
                     &hunks,
                     read_only,
-                    is_commit_review,
                     preview_limit,
                     scroll_target.as_deref(),
                     palette,
@@ -143,7 +142,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                 "unstaged",
                 &unstaged,
                 read_only,
-                is_commit_review,
                 preview_limit,
                 scroll_target.as_deref(),
                 palette,
@@ -157,7 +155,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                     "staged",
                     &staged,
                     read_only,
-                    is_commit_review,
                     preview_limit,
                     scroll_target.as_deref(),
                     palette,
@@ -213,7 +210,6 @@ fn draw_section(
     title: &str,
     hunks: &[&HunkView],
     read_only: bool,
-    is_commit_review: bool,
     preview_limit: usize,
     scroll_target: Option<&str>,
     palette: &Palette,
@@ -259,7 +255,6 @@ fn draw_section(
             session_id,
             hunk,
             read_only,
-            is_commit_review,
             preview_limit,
             scroll_target,
             palette,
@@ -295,7 +290,6 @@ fn draw_hunk_card(
     session_id: &str,
     hunk: &HunkView,
     read_only: bool,
-    is_commit_review: bool,
     preview_limit: usize,
     scroll_target: Option<&str>,
     palette: &Palette,
@@ -349,7 +343,7 @@ fn draw_hunk_card(
 
     let response = frame
         .show(ui, |ui| {
-            draw_hunk_toolbar(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+            draw_hunk_toolbar(app, ui, session_id, hunk, read_only, palette);
             if let Some(image) = &hunk.image_diff {
                 image_diff::draw_image_diff(app, ui, &hunk.file_path, image, palette);
                 return;

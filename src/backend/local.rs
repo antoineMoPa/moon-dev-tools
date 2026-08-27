@@ -143,14 +143,6 @@ impl Backend for LocalBackend {
         service::dispatch_log(&self.state, session_id, dispatch_key)
     }
 
-    fn set_reviewed(&self, session_id: &str, hunk_id: &str, reviewed: Option<bool>) -> Result<()> {
-        service::toggle_reviewed(&self.state, session_id, hunk_id, reviewed)
-    }
-
-    fn set_file_reviewed(&self, session_id: &str, file_path: &str, reviewed: bool) -> Result<()> {
-        service::update_file_reviewed(&self.state, session_id, file_path, reviewed)
-    }
-
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()> {
         service::stage_hunk(&self.state, session_id, hunk_id)
     }

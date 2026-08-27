@@ -9,7 +9,6 @@ function makeHunk(overrides: Partial<Hunk>): Hunk {
     change_kind: "modified",
     header: "@@ -1,5 +10,5 @@",
     staged: false,
-    reviewed: false,
     comment: "",
     comment_dispatches: [],
     patch_preview: "@@ -1,5 +10,5 @@\n export class Example {\n   value() {}\n }\n",

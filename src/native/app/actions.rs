@@ -523,8 +523,8 @@ impl App {
         });
     }
 
-    /// `s` and `u` act on the hunk the review pane has under the caret: stage and unstage in
-    /// a working-tree review, mark reviewed and unreviewed in a read-only one.
+    /// `s` and `u` stage and unstage the hunk the review pane has under the caret. A
+    /// read-only review has no index to move anything into, so they do nothing there.
     fn apply_hunk_shortcut(&mut self, forward: bool) {
         let Some(session_id) = self.focused_review_session() else {
             return;
@@ -538,18 +538,7 @@ impl App {
         let Some(hunk) = review.hunks().iter().find(|hunk| hunk.id == active).cloned() else {
             return;
         };
-        let read_only = review.read_only();
-
-        if read_only {
-            if hunk.reviewed == forward {
-                return;
-            }
-            let hunk_id = hunk.id.clone();
-            let for_call = session_id.clone();
-            self.tasks
-                .act(&session_id, "could not mark the hunk", move |backend| {
-                    backend.set_reviewed(&for_call, &hunk_id, Some(forward))
-                });
+        if review.read_only() {
             return;
         }
 

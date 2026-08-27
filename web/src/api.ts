@@ -122,35 +122,6 @@ export function fetchFileContent(sessionId: string, filePath: string): Promise<F
   return request<FileContentPayload>(`/api/session/${sessionId}/file?${params.toString()}`);
 }
 
-export function toggleReviewed(sessionId: string, hunkId: string): Promise<string> {
-  return request<string>(`/api/session/${sessionId}/reviewed`, {
-    method: "POST",
-    body: JSON.stringify({ hunk_id: hunkId }),
-  });
-}
-
-export function setReviewed(
-  sessionId: string,
-  hunkId: string,
-  reviewed: boolean,
-): Promise<string> {
-  return request<string>(`/api/session/${sessionId}/reviewed`, {
-    method: "POST",
-    body: JSON.stringify({ hunk_id: hunkId, reviewed }),
-  });
-}
-
-export function setFileReviewed(
-  sessionId: string,
-  filePath: string,
-  reviewed: boolean,
-): Promise<string> {
-  return request<string>(`/api/session/${sessionId}/reviewed-file`, {
-    method: "POST",
-    body: JSON.stringify({ file_path: filePath, reviewed }),
-  });
-}
-
 export function setActiveCommit(sessionId: string, commit: string | null): Promise<string> {
   return request<string>(`/api/session/${sessionId}/commit`, {
     method: "POST",

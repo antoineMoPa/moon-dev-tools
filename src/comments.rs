@@ -279,10 +279,7 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
     out.push_str("=================\n");
     out.push_str("Please fix these code issues and mark as resolved:\n\n");
 
-    for hunk in hunks
-        .iter()
-        .filter(|h| h.reviewed || !h.comment.trim().is_empty())
-    {
+    for hunk in hunks.iter().filter(|h| !h.comment.trim().is_empty()) {
         let anchored = parse_anchored_comments(&hunk.comment);
         if anchored.iter().all(|entry| entry.resolved) {
             continue;

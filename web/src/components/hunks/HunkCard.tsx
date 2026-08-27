@@ -402,14 +402,6 @@ export function HunkCard({
       ref={hunkRef}
     >
       <div className="hunk-actions">
-        {isCommitReview ? (
-          <button
-            className="hunk-reviewed-toggle"
-            onClick={() => void actions.setReviewed(hunk.id, !hunk.reviewed)}
-          >
-            [{hunk.reviewed ? "mark unreviewed" : "mark reviewed"}]
-          </button>
-        ) : null}
         {!readOnly && !moveDiffView ? (
           <>
             <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>

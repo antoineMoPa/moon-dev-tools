@@ -18,7 +18,6 @@ mod moontasks;
 mod moved_hunks;
 #[cfg(feature = "native")]
 mod native;
-mod reviewed_cache;
 mod search;
 mod server;
 #[cfg(test)]

@@ -19,7 +19,6 @@ pub(super) fn draw_hunk_toolbar(
     session_id: &str,
     hunk: &HunkView,
     read_only: bool,
-    is_commit_review: bool,
     palette: &Palette,
 ) {
     egui::Frame::new()
@@ -28,9 +27,10 @@ pub(super) fn draw_hunk_toolbar(
         .show(ui, |ui| {
             // The actions get a line of their own above the header, so a long move hint or a
             // wide count never squeezes them out to the edge of the card.
-            if !read_only || is_commit_review {
+            // A read-only review has nothing to do to a hunk, so it gets no action row.
+            if !read_only {
                 ui.horizontal(|ui| {
-                    draw_hunk_actions(app, ui, session_id, hunk, read_only, is_commit_review, palette);
+                    draw_hunk_actions(app, ui, session_id, hunk, palette);
                 });
             }
 
@@ -55,9 +55,6 @@ pub(super) fn draw_hunk_toolbar(
                             .size(SMALL_SIZE)
                             .color(palette.removed),
                     );
-                }
-                if hunk.reviewed {
-                    widgets::pill(ui, "reviewed", palette.accent_2, palette.status_resolved_bg);
                 }
 
                 if let Some(hint) = &hunk.moved_from {
@@ -98,72 +95,55 @@ fn draw_hunk_actions(
     ui: &mut Ui,
     session_id: &str,
     hunk: &HunkView,
-    read_only: bool,
-    is_commit_review: bool,
     palette: &Palette,
 ) {
-    if !read_only {
-        if hunk.staged {
-            if widgets::quiet_button(ui, "[unstage hunk]").clicked() {
-                let hunk_id = hunk.id.clone();
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not unstage the hunk", move |backend| {
-                        backend.unstage_hunk(&for_call, &hunk_id)
-                    });
-            }
-        } else {
-            if widgets::quiet_button(ui, "[stage hunk]").on_hover_text("stage this hunk (s)").clicked() {
-                let hunk_id = hunk.id.clone();
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not stage the hunk", move |backend| {
-                        backend.stage_hunk(&for_call, &hunk_id)
-                    });
-            }
-        }
-
-        let discarding = app
-            .model
-            .review_ref(session_id)
-            .is_some_and(|review| review.pending_discard.as_deref() == Some(hunk.id.as_str()));
-        if discarding {
-            match widgets::confirm(
-                ui,
-                &palette,
-                "[really discard]",
-                "this throws the change away and cannot be undone",
-            ) {
-                widgets::Confirmed::Yes => {
-                    app.model.review(session_id).pending_discard = None;
-                    let hunk_id = hunk.id.clone();
-                    let for_call = session_id.to_string();
-                    app.tasks
-                        .act(session_id, "could not discard the hunk", move |backend| {
-                            backend.discard_hunk(&for_call, &hunk_id)
-                        });
-                }
-                widgets::Confirmed::No => app.model.review(session_id).pending_discard = None,
-                widgets::Confirmed::Waiting => {}
-            }
-        } else if widgets::quiet_button_colored(ui, "[discard hunk]", palette.warn).clicked() {
-            // Discarding is destructive and has no undo, so it takes a second press.
-            app.model.review(session_id).pending_discard = Some(hunk.id.clone());
-        }
-    }
-
-    if is_commit_review || read_only {
-        let next = !hunk.reviewed;
-        if widgets::quiet_button(ui, if next { "[mark reviewed]" } else { "[mark unreviewed]" }).clicked() {
+    if hunk.staged {
+        if widgets::quiet_button(ui, "[unstage hunk]").clicked() {
             let hunk_id = hunk.id.clone();
             let for_call = session_id.to_string();
             app.tasks
-                .act(session_id, "could not mark the hunk", move |backend| {
-                    backend.set_reviewed(&for_call, &hunk_id, Some(next))
+                .act(session_id, "could not unstage the hunk", move |backend| {
+                    backend.unstage_hunk(&for_call, &hunk_id)
+                });
+        }
+    } else {
+        if widgets::quiet_button(ui, "[stage hunk]").on_hover_text("stage this hunk (s)").clicked() {
+            let hunk_id = hunk.id.clone();
+            let for_call = session_id.to_string();
+            app.tasks
+                .act(session_id, "could not stage the hunk", move |backend| {
+                    backend.stage_hunk(&for_call, &hunk_id)
                 });
         }
     }
 
+    let discarding = app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.pending_discard.as_deref() == Some(hunk.id.as_str()));
+    if discarding {
+        match widgets::confirm(
+            ui,
+            &palette,
+            "[really discard]",
+            "this throws the change away and cannot be undone",
+        ) {
+            widgets::Confirmed::Yes => {
+                app.model.review(session_id).pending_discard = None;
+                let hunk_id = hunk.id.clone();
+                let for_call = session_id.to_string();
+                app.tasks
+                    .act(session_id, "could not discard the hunk", move |backend| {
+                        backend.discard_hunk(&for_call, &hunk_id)
+                    });
+            }
+            widgets::Confirmed::No => app.model.review(session_id).pending_discard = None,
+            widgets::Confirmed::Waiting => {}
+        }
+    } else if widgets::quiet_button_colored(ui, "[discard hunk]", palette.warn).clicked() {
+        // Discarding is destructive and has no undo, so it takes a second press.
+        app.model.review(session_id).pending_discard = Some(hunk.id.clone());
+    }
 }
 
 pub(super) fn draw_truncation_notice(

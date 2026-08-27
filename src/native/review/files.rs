@@ -23,8 +23,7 @@ pub(crate) struct SidebarFile {
     pub(crate) added_line_count: usize,
     pub(crate) removed_line_count: usize,
     pub(crate) hunk_count: usize,
-    pub(crate) reviewed_hunk_count: usize,
-    pub(crate) reviewed: bool,
+    pub(crate) staged_hunk_count: usize,
     pub(crate) moved_from_file_path: Option<String>,
     pub(crate) moved_to_file_path: Option<String>,
 }
@@ -57,10 +56,9 @@ pub(crate) fn build_sidebar_files(payload: &SessionPayload) -> Vec<SidebarFile> 
                 existing.added_line_count += hunk.added_line_count;
                 existing.removed_line_count += hunk.removed_line_count;
                 existing.hunk_count += 1;
-                if hunk.reviewed {
-                    existing.reviewed_hunk_count += 1;
+                if hunk.staged {
+                    existing.staged_hunk_count += 1;
                 }
-                existing.reviewed = existing.reviewed_hunk_count == existing.hunk_count;
                 if (existing.status == FileStageStatus::Staged && !hunk.staged)
                     || (existing.status == FileStageStatus::Unstaged && hunk.staged)
                 {
@@ -83,8 +81,7 @@ pub(crate) fn build_sidebar_files(payload: &SessionPayload) -> Vec<SidebarFile> 
                         added_line_count: hunk.added_line_count,
                         removed_line_count: hunk.removed_line_count,
                         hunk_count: 1,
-                        reviewed_hunk_count: usize::from(hunk.reviewed),
-                        reviewed: hunk.reviewed,
+                        staged_hunk_count: usize::from(hunk.staged),
                         moved_from_file_path: None,
                         moved_to_file_path: None,
                     },
@@ -235,7 +232,6 @@ mod tests {
             change_kind: FileChangeKind::Modified,
             header: "@@ -1 +1 @@".to_string(),
             staged,
-            reviewed: false,
             comment: String::new(),
             comment_dispatches: Vec::new(),
             patch_preview: String::new(),
@@ -307,20 +303,19 @@ mod tests {
     }
 
     #[test]
-    fn a_file_is_reviewed_only_once_all_its_hunks_are() {
-        let mut first = hunk("src/a.rs", false, 1, 0);
-        first.reviewed = true;
+    fn a_file_counts_how_many_of_its_hunks_are_staged() {
+        let first = hunk("src/a.rs", true, 1, 0);
         let second = hunk("src/a.rs", false, 2, 0);
 
         let files = build_sidebar_files(&payload(vec![first.clone(), second]));
-        assert!(!files[0].reviewed);
-        assert_eq!(files[0].reviewed_hunk_count, 1);
+        assert_eq!(files[0].staged_hunk_count, 1);
+        assert_eq!(files[0].status, FileStageStatus::Partial);
 
         let mut both = first.clone();
         both.id = "other".to_string();
-        both.reviewed = true;
         let files = build_sidebar_files(&payload(vec![first, both]));
-        assert!(files[0].reviewed);
+        assert_eq!(files[0].staged_hunk_count, 2);
+        assert_eq!(files[0].status, FileStageStatus::Staged);
     }
 
     #[test]

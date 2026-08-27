@@ -411,7 +411,6 @@ fn parse_commit_view(line: &str) -> Option<CommitView> {
         short_sha,
         subject,
         author,
-        review_status: Default::default(),
     })
 }
 

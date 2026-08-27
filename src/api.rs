@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -70,8 +70,6 @@ pub(crate) struct RepoSession {
     pub(crate) active_commit: Option<String>,
     pub(crate) comments: HashMap<String, String>,
     pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
-    pub(crate) reviewed: HashSet<String>,
-    pub(crate) commit_statuses: HashMap<String, CommitReviewStatus>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
 }
@@ -136,16 +134,6 @@ pub(crate) struct CommitView {
     pub(crate) short_sha: String,
     pub(crate) subject: String,
     pub(crate) author: String,
-    pub(crate) review_status: CommitReviewStatus,
-}
-
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum CommitReviewStatus {
-    Reviewed,
-    Partial,
-    #[default]
-    Unreviewed,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -155,7 +143,6 @@ pub(crate) struct HunkView {
     pub(crate) change_kind: FileChangeKind,
     pub(crate) header: String,
     pub(crate) staged: bool,
-    pub(crate) reviewed: bool,
     pub(crate) comment: String,
     pub(crate) comment_dispatches: Vec<CommentDispatchView>,
     pub(crate) patch_preview: String,
@@ -395,21 +382,9 @@ pub(crate) struct CommitSelectionRequest {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct FileReviewedRequest {
-    pub(crate) file_path: String,
-    pub(crate) reviewed: bool,
-}
-
-#[derive(Deserialize)]
 pub(crate) struct SelectionRequest {
     pub(crate) hunk_id: String,
     pub(crate) selection: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ReviewedRequest {
-    pub(crate) hunk_id: String,
-    pub(crate) reviewed: Option<bool>,
 }
 
 pub(crate) type CancelToken = Arc<AtomicBool>;

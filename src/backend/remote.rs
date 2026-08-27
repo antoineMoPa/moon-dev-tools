@@ -319,20 +319,6 @@ impl Backend for RemoteBackend {
         ))
     }
 
-    fn set_reviewed(&self, session_id: &str, hunk_id: &str, reviewed: Option<bool>) -> Result<()> {
-        self.post(
-            &format!("/api/session/{session_id}/reviewed"),
-            &json!({ "hunk_id": hunk_id, "reviewed": reviewed }),
-        )
-    }
-
-    fn set_file_reviewed(&self, session_id: &str, file_path: &str, reviewed: bool) -> Result<()> {
-        self.post(
-            &format!("/api/session/{session_id}/reviewed-file"),
-            &json!({ "file_path": file_path, "reviewed": reviewed }),
-        )
-    }
-
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/stage"),

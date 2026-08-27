@@ -9,8 +9,6 @@ import {
   saveComment as saveCommentRequest,
   sendCommentBatch as sendCommentBatchRequest,
   setActiveCommit as setActiveCommitRequest,
-  setFileReviewed as setFileReviewedRequest,
-  setReviewed as setReviewedRequest,
   stageSelection as stageSelectionRequest,
   toggleStage as toggleStageRequest,
   toggleStageFile as toggleStageFileRequest,
@@ -52,8 +50,6 @@ export type ReviewStoreValue = {
   actions: {
     loadState: () => Promise<void>;
     setActiveCommit: (commit: string | null) => Promise<void>;
-    setReviewed: (hunkId: string, reviewed: boolean) => Promise<boolean>;
-    setFileReviewed: (filePath: string, reviewed: boolean) => Promise<void>;
     toggleStage: (hunkId: string, staged: boolean) => Promise<boolean>;
     stageHunks: (hunks: Array<{ hunkId: string; staged: boolean }>) => Promise<boolean>;
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
@@ -340,10 +336,6 @@ export function ReviewStoreProvider({
     });
   }
 
-  async function setReviewed(hunkId: string, reviewed: boolean) {
-    return mutate(() => setReviewedRequest(sessionId, hunkId, reviewed));
-  }
-
   function updateDraftComment(hunkId: string, comment: string) {
     dispatch({ type: "draft_comment_updated", hunkId, comment });
   }
@@ -401,10 +393,6 @@ export function ReviewStoreProvider({
         setActiveCommit: async (commit) => {
           dispatch({ type: "active_view_set", view: ReviewView.All });
           await mutate(() => setActiveCommitRequest(sessionId, commit));
-        },
-        setReviewed,
-        setFileReviewed: async (filePath, reviewed) => {
-          await mutate(() => setFileReviewedRequest(sessionId, filePath, reviewed));
         },
         toggleStage,
         stageHunks,

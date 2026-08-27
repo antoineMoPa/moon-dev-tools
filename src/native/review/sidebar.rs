@@ -6,7 +6,7 @@
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
 
 use crate::{
-    api::{CommitReviewStatus, CommitView},
+    api::CommitView,
     native::{
         app::App,
         review::files::{
@@ -139,7 +139,7 @@ fn draw_file_row(
     palette: &Palette,
 ) {
     let width = ui.available_width();
-    // One line per file: the name, then the counts and the reviewed tally against the right
+    // One line per file: the name, then the counts and the staged tally against the right
     // edge. A second line for the counts doubled the height of the list for no more meaning.
     let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::click());
     let response = widgets::clickable(response);
@@ -175,7 +175,8 @@ fn draw_file_row(
         let radius = if dot_hovered { 4.0 } else { 3.0 };
         ui.painter().circle_filled(dot_center, radius, dot_ink);
 
-        let name_ink = if file.reviewed {
+        let fully_staged = file.status == FileStageStatus::Staged;
+        let name_ink = if fully_staged {
             palette.muted
         } else {
             palette.ink
@@ -183,13 +184,13 @@ fn draw_file_row(
         // Everything to the right of the name is drawn first, so what is left over is what
         // the name has to fit in.
         let mut right_edge = rect.max.x - 6.0;
-        let reviewed_note = format!("{}/{}", file.reviewed_hunk_count, file.hunk_count);
+        let staged_note = format!("{}/{}", file.staged_hunk_count, file.hunk_count);
         let drawn = ui.painter().text(
             egui::pos2(right_edge, rect.center().y),
             Align2::RIGHT_CENTER,
-            reviewed_note,
+            staged_note,
             egui::FontId::proportional(SMALL_SIZE - 1.0),
-            if file.reviewed {
+            if fully_staged {
                 palette.accent_2
             } else {
                 palette.muted
@@ -235,11 +236,11 @@ fn draw_file_row(
     }
 
     let mut hover_text = format!(
-        "{}\n{} hunk{}, {} reviewed",
+        "{}\n{} hunk{}, {} staged",
         file.file_path,
         file.hunk_count,
         if file.hunk_count == 1 { "" } else { "s" },
-        file.reviewed_hunk_count
+        file.staged_hunk_count
     );
     // The row has no second line for it any more, so where a file came from is said here.
     if let Some(from) = &file.moved_from_file_path {
@@ -260,117 +261,88 @@ fn draw_file_row(
             .map(|hunk| hunk.id.clone());
     }
 
-    // Right-clicking a file offers what can be done to all of it at once.
-    response.context_menu(|ui| {
-        if is_commit_review || read_only {
-            let next = !file.reviewed;
-            if ui
-                .button(if next {
-                    "mark the file reviewed"
-                } else {
-                    "mark the file unreviewed"
-                })
-                .clicked()
+    // Right-clicking a file offers what can be done to all of it at once. A review with no
+    // index behind it - a commit, a comparison - can do none of it, and gets no menu.
+    if !can_stage {
+        return;
+    }
+
+    // A menu closes on any click inside it by default, which would take the discard away on
+    // the press that arms it and leave the question unasked. Every item here closes the menu
+    // itself once it has acted, so the menu only has to go away on a click outside it.
+    egui::Popup::context_menu(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            if file.status != FileStageStatus::Staged
+                && widgets::clickable(ui.button("stage the whole file")).clicked()
             {
                 let path = file.file_path.clone();
                 let for_call = session_id.to_string();
                 app.tasks
-                    .act(session_id, "could not mark the file", move |backend| {
-                        backend.set_file_reviewed(&for_call, &path, next)
+                    .act(session_id, "could not stage the file", move |backend| {
+                        backend.stage_file(&for_call, &path)
                     });
                 ui.close();
             }
-            return;
-        }
-
-        if file.status != FileStageStatus::Staged
-            && widgets::clickable(ui.button("stage the whole file")).clicked()
-        {
-            let path = file.file_path.clone();
-            let for_call = session_id.to_string();
-            app.tasks
-                .act(session_id, "could not stage the file", move |backend| {
-                    backend.stage_file(&for_call, &path)
-                });
-            ui.close();
-        }
-        if file.status != FileStageStatus::Unstaged
-            && widgets::clickable(ui.button("unstage the whole file")).clicked()
-        {
-            let path = file.file_path.clone();
-            let for_call = session_id.to_string();
-            app.tasks
-                .act(session_id, "could not unstage the file", move |backend| {
-                    backend.unstage_file(&for_call, &path)
-                });
-            ui.close();
-        }
-        let next = !file.reviewed;
-        if ui
-            .button(if next {
-                "mark the file reviewed"
-            } else {
-                "mark the file unreviewed"
-            })
-            .clicked()
-        {
-            let path = file.file_path.clone();
-            let for_call = session_id.to_string();
-            app.tasks
-                .act(session_id, "could not mark the file", move |backend| {
-                    backend.set_file_reviewed(&for_call, &path, next)
-                });
-            ui.close();
-        }
-
-        ui.separator();
-        // Discarding a whole file goes through the batch endpoint so the file is either
-        // fully reverted or left alone, rather than half-reverted on a mid-way failure.
-        let confirming = app
-            .model
-            .review_ref(session_id)
-            .is_some_and(|review| review.pending_discard.as_deref() == Some(file.file_path.as_str()));
-        if confirming {
-            match widgets::confirm(
-                ui,
-                palette,
-                "[really discard the whole file]",
-                "this throws every change in the file away and cannot be undone",
-            ) {
-                widgets::Confirmed::Yes => {
-                    let hunk_ids = app
-                        .model
-                        .review_ref(session_id)
-                        .map(|review| {
-                            review
-                                .hunks()
-                                .iter()
-                                .filter(|hunk| hunk.file_path == file.file_path)
-                                .map(|hunk| hunk.id.clone())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    app.model.review(session_id).pending_discard = None;
-                    let for_call = session_id.to_string();
-                    app.tasks
-                        .act(session_id, "could not discard the file", move |backend| {
-                            backend.discard_hunks(&for_call, &hunk_ids)
-                        });
-                    ui.close();
-                }
-                widgets::Confirmed::No => {
-                    app.model.review(session_id).pending_discard = None;
-                    ui.close();
-                }
-                widgets::Confirmed::Waiting => {}
+            if file.status != FileStageStatus::Unstaged
+                && widgets::clickable(ui.button("unstage the whole file")).clicked()
+            {
+                let path = file.file_path.clone();
+                let for_call = session_id.to_string();
+                app.tasks
+                    .act(session_id, "could not unstage the file", move |backend| {
+                        backend.unstage_file(&for_call, &path)
+                    });
+                ui.close();
             }
-        } else if ui
-            .button(RichText::new("discard the whole file").color(palette.warn))
-            .clicked()
-        {
-            app.model.review(session_id).pending_discard = Some(file.file_path.clone());
-        }
-    });
+            ui.separator();
+            // Discarding a whole file goes through the batch endpoint so the file is either
+            // fully reverted or left alone, rather than half-reverted on a mid-way failure.
+            let confirming = app
+                .model
+                .review_ref(session_id)
+                .is_some_and(|review| review.pending_discard.as_deref() == Some(file.file_path.as_str()));
+            if confirming {
+                match widgets::confirm(
+                    ui,
+                    palette,
+                    "[really discard the whole file]",
+                    "this throws every change in the file away and cannot be undone",
+                ) {
+                    widgets::Confirmed::Yes => {
+                        let hunk_ids = app
+                            .model
+                            .review_ref(session_id)
+                            .map(|review| {
+                                review
+                                    .hunks()
+                                    .iter()
+                                    .filter(|hunk| hunk.file_path == file.file_path)
+                                    .map(|hunk| hunk.id.clone())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        app.model.review(session_id).pending_discard = None;
+                        let for_call = session_id.to_string();
+                        app.tasks
+                            .act(session_id, "could not discard the file", move |backend| {
+                                backend.discard_hunks(&for_call, &hunk_ids)
+                            });
+                        ui.close();
+                    }
+                    widgets::Confirmed::No => {
+                        app.model.review(session_id).pending_discard = None;
+                        ui.close();
+                    }
+                    widgets::Confirmed::Waiting => {}
+                }
+            } else if ui
+                .button(RichText::new("discard the whole file").color(palette.warn))
+                .clicked()
+            {
+                app.model.review(session_id).pending_discard = Some(file.file_path.clone());
+            }
+        });
 }
 
 fn draw_commits_section(
@@ -397,7 +369,6 @@ fn draw_commits_section(
         None,
         local_summary,
         active_commit.is_none(),
-        None,
         palette,
     ) {
         select_commit(app, session_id, None);
@@ -417,7 +388,6 @@ fn draw_commits_section(
             Some(&commit.short_sha),
             &commit.author,
             active_commit == Some(commit.sha.as_str()),
-            Some(commit.review_status),
             palette,
         ) {
             select_commit(app, session_id, Some(commit.sha.clone()));
@@ -457,7 +427,6 @@ fn draw_commits_section(
             Some(&commit.short_sha),
             &commit.author,
             active_commit == Some(commit.sha.as_str()),
-            Some(commit.review_status),
             palette,
         ) {
             select_commit(app, session_id, Some(commit.sha.clone()));
@@ -522,7 +491,6 @@ fn draw_commit_row(
     short_sha: Option<&str>,
     meta: &str,
     active: bool,
-    status: Option<CommitReviewStatus>,
     palette: &Palette,
 ) -> bool {
     let width = ui.available_width();
@@ -573,23 +541,6 @@ fn draw_commit_row(
             egui::FontId::proportional(SMALL_SIZE - 1.0),
             palette.muted,
         );
-
-        if let Some(status) = status {
-            let (text, ink) = match status {
-                CommitReviewStatus::Reviewed => ("reviewed", palette.accent_2),
-                CommitReviewStatus::Partial => ("partial", palette.partial),
-                CommitReviewStatus::Unreviewed => ("", palette.muted),
-            };
-            if !text.is_empty() {
-                ui.painter().text(
-                    egui::pos2(rect.max.x - 5.0, rect.min.y + 18.0),
-                    Align2::RIGHT_TOP,
-                    text,
-                    egui::FontId::proportional(SMALL_SIZE - 2.0),
-                    ink,
-                );
-            }
-        }
     }
 
     let hover = match short_sha {

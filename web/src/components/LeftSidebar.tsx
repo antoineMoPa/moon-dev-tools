@@ -73,22 +73,17 @@ function SidebarShortcutsHint() {
     state: { activeHunkId, data },
   } = useReviewStore();
   const activeHunk = data?.hunks.find((hunk) => hunk.id === activeHunkId) ?? null;
-  const isCommitReview = Boolean(data?.active_commit);
 
-  if (!activeHunk) {
+  // Staging is the only thing the keys do, and a review with no index behind it - a commit,
+  // a comparison - cannot stage.
+  if (!activeHunk || data?.read_only) {
     return null;
   }
 
   return (
     <div className="sidebar-shortcuts">
       <div className="sidebar-shortcuts-list">
-        {isCommitReview ? (
-          activeHunk.reviewed ? (
-            <p><kbd>u</kbd> mark current hunk unreviewed</p>
-          ) : (
-            <p><kbd>s</kbd> mark current hunk reviewed</p>
-          )
-        ) : activeHunk.staged ? (
+        {activeHunk.staged ? (
           <p><kbd>u</kbd> unstage current hunk</p>
         ) : (
           <p><kbd>s</kbd> stage current hunk</p>
@@ -142,9 +137,6 @@ function SidebarCommitsSection({
         </div>
         <p className="sidebar-commit-meta">
           <span>{commit.author}</span>
-          <span className={`sidebar-commit-review-status ${commit.review_status}`.trim()}>
-            {commit.review_status}
-          </span>
         </p>
       </div>
     );
@@ -246,7 +238,6 @@ export function LeftSidebar({
         activeFilePath={isViewingAll ? null : activeFilePath}
         readOnly={data.read_only}
         busy={busy}
-        reviewMode={isCommitReview}
         onJumpToFile={onJumpToFile}
         onToggleFileStage={(file) => {
           const shouldUnstage = file.status === FILE_STAGE_STATUS.staged;
@@ -254,9 +245,6 @@ export function LeftSidebar({
             onStageWholeFile?.(file);
           }
           void actions.toggleStageFile(file.filePath, shouldUnstage);
-        }}
-        onToggleFileReviewed={(file) => {
-          void actions.setFileReviewed(file.filePath, !file.reviewed);
         }}
       />
       <SidebarCommitsSection

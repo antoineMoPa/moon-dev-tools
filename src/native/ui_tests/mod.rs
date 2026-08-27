@@ -14,6 +14,7 @@ mod layout;
 mod palette;
 mod shell_input;
 mod shell_lifecycle;
+mod sidebar_menu;
 
 use std::{
     fs,

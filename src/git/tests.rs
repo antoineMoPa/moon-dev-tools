@@ -75,8 +75,6 @@ fn test_session(repo_root: PathBuf, active_commit: Option<String>) -> RepoSessio
         active_commit,
         comments: HashMap::new(),
         comment_contexts: HashMap::new(),
-        reviewed: HashSet::new(),
-        commit_statuses: HashMap::new(),
         selected_agent: AgentKind::None,
         comment_dispatches: HashMap::new(),
     }

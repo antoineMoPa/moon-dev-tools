@@ -13,10 +13,10 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitReviewStatus,
-        CommitView, ContentMatchesPayload, DiffHunk, DiffTarget, FileContentPayload,
-        FileMatchesPayload, HunkView, OpenSessionRequest, PatchPayload, RepoSession,
-        SessionOpened, SessionPayload, SubmoduleView,
+        AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitView,
+        ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
+        OpenSessionRequest, PatchPayload, RepoSession, SessionOpened, SessionPayload,
+        SubmoduleView,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -30,10 +30,6 @@ use crate::{
         build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
         commit_history_page, commit_view, current_branch_name, list_changed_submodule_repos,
         local_change_summary_from_status, preview_patch, read_repo_file, run_git, run_git_no_output,
-    },
-    reviewed_cache::{
-        hunk_patch_hash, mark_hunk_patch_reviewed, read_reviewed_hunk_hashes,
-        unmark_hunk_patch_reviewed,
     },
 };
 
@@ -60,46 +56,6 @@ fn diff_line_stats(patch: &str) -> (usize, usize) {
 
 fn branch_commit_shas(commits: &[CommitView]) -> HashSet<String> {
     commits.iter().map(|commit| commit.sha.clone()).collect()
-}
-
-fn review_status_for_hunks(
-    session: &RepoSession,
-    cached_reviewed: &HashSet<String>,
-    hunks: &[DiffHunk],
-) -> CommitReviewStatus {
-    if hunks.is_empty() {
-        return CommitReviewStatus::Unreviewed;
-    }
-
-    let reviewed_count = hunks
-        .iter()
-        .filter(|hunk| {
-            session.reviewed.contains(&hunk.id)
-                || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch))
-        })
-        .count();
-
-    if reviewed_count == hunks.len() {
-        CommitReviewStatus::Reviewed
-    } else if reviewed_count > 0 {
-        CommitReviewStatus::Partial
-    } else {
-        CommitReviewStatus::Unreviewed
-    }
-}
-
-fn apply_commit_status(commits: &mut [CommitView], commit_sha: &str, status: CommitReviewStatus) {
-    if let Some(commit) = commits.iter_mut().find(|commit| commit.sha == commit_sha) {
-        commit.review_status = status;
-    }
-}
-
-fn apply_cached_commit_statuses(session: &RepoSession, commits: &mut [CommitView]) {
-    for commit in commits {
-        if let Some(status) = session.commit_statuses.get(&commit.sha) {
-            commit.review_status = *status;
-        }
-    }
 }
 
 fn ensure_active_commit_visible(
@@ -180,8 +136,6 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
                     active_commit,
                     comments: HashMap::new(),
                     comment_contexts: HashMap::new(),
-                    reviewed: HashSet::new(),
-                    commit_statuses: HashMap::new(),
                     selected_agent: AgentKind::None,
                     comment_dispatches: HashMap::new(),
                 },
@@ -203,8 +157,7 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
             !hunks.is_empty(),
         );
         let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
-        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
-        let (commit_base, mut commits) = branch_commits_since_default(&session.repo_path)?;
+        let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
         let (mut history_commits, history_has_more) = commit_history_page(
             &session.repo_path,
             &branch_commit_shas(&commits),
@@ -217,16 +170,6 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
             &mut history_commits,
             session.active_commit.as_deref(),
         )?;
-        apply_cached_commit_statuses(session, &mut commits);
-        apply_cached_commit_statuses(session, &mut history_commits);
-        if let Some(active_commit) = session.active_commit.as_deref() {
-            let active_commit_status = review_status_for_hunks(session, &cached_reviewed, &hunks);
-            session
-                .commit_statuses
-                .insert(active_commit.to_string(), active_commit_status);
-            apply_commit_status(&mut commits, active_commit, active_commit_status);
-            apply_commit_status(&mut history_commits, active_commit, active_commit_status);
-        }
         let local_change_summary = if session.diff_target.comparison.is_some() {
             Default::default()
         } else {
@@ -255,8 +198,6 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
                 let moved_to = move_hints.moved_to.get(&hunk.id).cloned();
 
                 HunkView {
-                    reviewed: session.reviewed.contains(&hunk.id)
-                        || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch)),
                     id: hunk.id,
                     file_path: hunk.file_path,
                     change_kind: hunk.change_kind,
@@ -326,13 +267,12 @@ pub(crate) fn commit_history(
 ) -> Result<CommitHistoryPayload> {
     crate::api::with_session(state, session_id, |session| {
         let (_, commits) = branch_commits_since_default(&session.repo_path)?;
-        let (mut commits, has_more) = commit_history_page(
+        let (commits, has_more) = commit_history_page(
             &session.repo_path,
             &branch_commit_shas(&commits),
             offset,
             limit.min(100),
         )?;
-        apply_cached_commit_statuses(session, &mut commits);
 
         Ok(CommitHistoryPayload { commits, has_more })
     })
@@ -480,60 +420,6 @@ fn store_anchored_comments(
     }
 }
 
-pub(crate) fn toggle_reviewed(
-    state: &AppState,
-    session_id: &str,
-    hunk_id: &str,
-    reviewed: Option<bool>,
-) -> Result<()> {
-    crate::api::with_session(state, session_id, |session| {
-        let cached_reviewed = read_reviewed_hunk_hashes(&session.repo_path)?;
-        let Some(hunk) = collect_session_hunks(session)?
-            .into_iter()
-            .find(|hunk| hunk.id == hunk_id)
-        else {
-            return Ok(());
-        };
-        let is_reviewed = session.reviewed.contains(&hunk.id)
-            || cached_reviewed.contains(&hunk_patch_hash(&hunk.patch));
-        let next_reviewed = reviewed.unwrap_or(!is_reviewed);
-
-        if next_reviewed {
-            mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-            session.reviewed.insert(hunk_id.to_string());
-        } else {
-            unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-            session.reviewed.remove(hunk_id);
-        }
-
-        Ok(())
-    })
-}
-
-pub(crate) fn update_file_reviewed(
-    state: &AppState,
-    session_id: &str,
-    file_path: &str,
-    reviewed: bool,
-) -> Result<()> {
-    crate::api::with_session(state, session_id, |session| {
-        let hunks = collect_session_hunks(session)?
-            .into_iter()
-            .filter(|hunk| hunk.file_path == file_path)
-            .collect::<Vec<_>>();
-        for hunk in hunks {
-            if reviewed {
-                mark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-                session.reviewed.insert(hunk.id);
-            } else {
-                unmark_hunk_patch_reviewed(&session.repo_path, &hunk.patch)?;
-                session.reviewed.remove(&hunk.id);
-            }
-        }
-        Ok(())
-    })
-}
-
 pub(crate) fn update_comment(
     state: &AppState,
     session_id: &str,
@@ -593,7 +479,6 @@ pub(crate) fn stage_hunk(state: &AppState, session_id: &str, hunk_id: &str) -> R
         return Ok(());
     }
     apply_patch(&repo_path, &patch, true, false)?;
-    mark_hunk_patch_reviewed(&repo_path, &patch)?;
     Ok(())
 }
 
@@ -620,50 +505,31 @@ pub(crate) fn stage_selection(
     }
     let partial_patch = build_partial_patch_from_selection(&patch, selection)?;
     apply_patch(&repo_path, &partial_patch, true, false)?;
-    mark_hunk_patch_reviewed(&repo_path, &patch)?;
     Ok(())
 }
 
 pub(crate) fn stage_file(state: &AppState, session_id: &str, file_path: &str) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;
-    let (repo_path, patches) = crate::api::with_session(state, session_id, |session| {
-        let patches = collect_session_hunks(session)?
-            .into_iter()
-            .filter(|hunk| hunk.file_path == file_path && !hunk.staged)
-            .map(|hunk| hunk.patch)
-            .collect::<Vec<_>>();
-        Ok((session.repo_path.clone(), patches))
-    })?;
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
     run_git_no_output(&repo_path, &["add", "--", file_path])?;
-    for patch in patches {
-        mark_hunk_patch_reviewed(&repo_path, &patch)?;
-    }
     Ok(())
 }
 
 /// Stage the whole working tree, untracked files included - the one sweep the commit pane
-/// offers. Marks what it staged as reviewed, the way staging a file does.
+/// offers.
 pub(crate) fn stage_all(state: &AppState, session_id: &str) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;
-    let (repo_path, pathspec, patches) = crate::api::with_session(state, session_id, |session| {
-        let patches = collect_session_hunks(session)?
-            .into_iter()
-            .filter(|hunk| !hunk.staged)
-            .map(|hunk| hunk.patch)
-            .collect::<Vec<_>>();
+    let (repo_path, pathspec) = crate::api::with_session(state, session_id, |session| {
         Ok((
             session.repo_path.clone(),
             session.diff_target.pathspec.clone(),
-            patches,
         ))
     })?;
     // Only what the review is pointed at, when it is pointed at part of the repo.
     let mut args = vec!["add", "-A"];
     crate::git::append_pathspec(&mut args, pathspec.as_deref());
     run_git_no_output(&repo_path, &args)?;
-    for patch in patches {
-        mark_hunk_patch_reviewed(&repo_path, &patch)?;
-    }
     Ok(())
 }
 

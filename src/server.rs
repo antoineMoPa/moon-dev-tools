@@ -18,9 +18,8 @@ use crate::{
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
         CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, ContentMatchesPayload, FileMatchesPayload,
-        FileQuery, FileReviewedRequest, FileSearchQuery, OpenSessionRequest, PatchPayload,
-        ReviewedRequest, SelectionRequest, ServerState, SessionOpened, SessionPayload,
-        SubmoduleView, bind_host, port, server_url,
+        FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload, SelectionRequest,
+        ServerState, SessionOpened, SessionPayload, SubmoduleView, bind_host, port, server_url,
     },
     agent::detect_agent_availability,
     moontasks::{
@@ -81,11 +80,6 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/content",
             get(search_session_contents),
-        )
-        .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
-        .route(
-            "/api/session/{session_id}/reviewed-file",
-            post(update_file_reviewed),
         )
         .route("/api/session/{session_id}/comment", post(update_comment))
         .route(
@@ -441,26 +435,6 @@ async fn resolve_comment_by_key(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     service::resolve_comment_by_key(&state, &session_id, &hunk_id, &comment_key)?;
-    Ok("ok")
-}
-
-async fn toggle_reviewed(
-    AxumPath(session_id): AxumPath<String>,
-    State(state): State<AppState>,
-    Json(request): Json<ReviewedRequest>,
-) -> Result<&'static str, AppError> {
-    mark_activity(&state);
-    service::toggle_reviewed(&state, &session_id, &request.hunk_id, request.reviewed)?;
-    Ok("ok")
-}
-
-async fn update_file_reviewed(
-    AxumPath(session_id): AxumPath<String>,
-    State(state): State<AppState>,
-    Json(request): Json<FileReviewedRequest>,
-) -> Result<&'static str, AppError> {
-    mark_activity(&state);
-    service::update_file_reviewed(&state, &session_id, &request.file_path, request.reviewed)?;
     Ok("ok")
 }
 

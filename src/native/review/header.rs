@@ -167,7 +167,7 @@ pub(crate) fn draw_agent_select(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{CommitReviewStatus, CommitView, LocalChangeSummary, SessionPayload};
+    use crate::api::{CommitView, LocalChangeSummary, SessionPayload};
 
     fn payload(active_commit: Option<&str>, commits: Vec<CommitView>) -> SessionPayload {
         SessionPayload {
@@ -197,7 +197,6 @@ mod tests {
             short_sha: sha.chars().take(7).collect(),
             subject: subject.to_string(),
             author: "someone".to_string(),
-            review_status: CommitReviewStatus::Unreviewed,
         }
     }
 

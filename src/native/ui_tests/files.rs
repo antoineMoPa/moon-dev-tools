@@ -691,3 +691,97 @@ fn find_scrolls_a_file_to_a_match_below_the_fold() {
     harness.run_steps(2);
     harness.snapshot("file-find-scrolled");
 }
+
+/// The same as far as the user is concerned: type into the file, then press the pane's own
+/// [save] button and cmd+s, which is how the edit actually gets asked for.
+#[test]
+fn the_save_button_and_the_chord_write_the_file() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = Fixture::new("file-save-button");
+    fixture.write("src/lib.rs", "one\n");
+    fixture.commit("Add the library");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            let open_pane = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                .map(|(pane_id, _)| pane_id);
+            if let Some(id) = open_pane {
+                loaded_in_ui.store(
+                    app.model
+                        .file_editors
+                        .get(&id)
+                        .and_then(|editor| editor.content_for_test())
+                        .is_some(),
+                    Ordering::Relaxed,
+                );
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the file never loaded"
+    );
+    harness.run_steps(2);
+
+    // Type at the end of the text, the way clicking into the file and typing does.
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    let text = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    text.click();
+    harness.run_steps(2);
+    press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+    super::type_letter(&mut harness, egui::Key::X, "x");
+
+    assert!(
+        harness.query_by_label("[save]").is_some(),
+        "an edited file should offer [save]"
+    );
+
+    // cmd+s first, with the keyboard still in the text where typing left it.
+    press_key(&mut harness, egui::Key::S, egui::Modifiers::COMMAND);
+    let saved_by_chord = settle(&mut harness, || {
+        fs::read_to_string(fixture.root.join("src/lib.rs")).expect("failed to read") != "one\n"
+    });
+    assert!(
+        saved_by_chord,
+        "cmd+s should have written the file, saw {:?}",
+        fs::read_to_string(fixture.root.join("src/lib.rs"))
+    );
+
+    // Then the button, on a second edit.
+    let text = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    text.click();
+    harness.run_steps(2);
+    press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+    super::type_letter(&mut harness, egui::Key::Y, "y");
+    harness.get_by_label("[save]").click();
+    let written = settle(&mut harness, || {
+        fs::read_to_string(fixture.root.join("src/lib.rs"))
+            .expect("failed to read")
+            .contains('y')
+    });
+    assert!(
+        written,
+        "clicking [save] should have written the file, saw {:?}",
+        fs::read_to_string(fixture.root.join("src/lib.rs"))
+    );
+}

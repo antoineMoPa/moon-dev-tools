@@ -73,8 +73,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
     fn dispatch_log(&self, session_id: &str, dispatch_key: &str) -> Result<AgentLogPayload>;
 
-    fn set_reviewed(&self, session_id: &str, hunk_id: &str, reviewed: Option<bool>) -> Result<()>;
-    fn set_file_reviewed(&self, session_id: &str, file_path: &str, reviewed: bool) -> Result<()>;
 
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn unstage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;

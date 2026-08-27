@@ -24,9 +24,9 @@ pub(crate) enum Action {
     NewWindow,
     SaveFile,
     ToggleTheme,
-    /// Stage the hunk under the caret, or mark it reviewed in a review that cannot be staged.
+    /// Stage the hunk under the caret.
     AdvanceHunk,
-    /// The reverse: unstage it, or mark it unreviewed.
+    /// The reverse: unstage it.
     ReverseHunk,
     /// Move the keyboard to the next frame of the workspace.
     FocusNextFrame,
