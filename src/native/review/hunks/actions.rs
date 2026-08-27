@@ -295,12 +295,7 @@ pub(super) fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     ui.ctx()
         .input_mut(|input| input.events.retain(|event| *event != egui::Event::Copy));
 
-    let count = covered.len();
     ui.ctx().copy_text(covered.join("\n"));
-    app.model.info(format!(
-        "copied {count} line{}",
-        if count == 1 { "" } else { "s" }
-    ));
 }
 
 /// The patch the selection's indices point into: the expanded one where the hunk was
