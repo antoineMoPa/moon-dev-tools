@@ -13,24 +13,16 @@ installs three executables:
 
 ![Moontasks sprint board with a shell beside it](docs/assets/moontasks-workspace.png)
 
-**Moontasks** is a sprint board that keeps you organized while several agents and shells work
-through a repo. Each card is a task folder with notes, running shells and agents attached to it,
-so agent work has a visible place instead of disappearing into terminal tabs. Open any resource
-beside the board and move cards through your own workflow as work progresses.
+**Moontasks** is a sprint board that keeps you organized. Each card is a task folder with notes,
+running shells and agents attached to it, so agent work has a visible place instead of
+disappearing into terminal tabs. Open any resource beside the board and move cards through the
+columns as work progresses.
 
 ![Moonreview showing local changes](docs/assets/review-dark.png)
 
 **Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage
-them individually, then commit and push what you staged from a pane beside the review — signed
-commits included, since git runs in a real terminal there and pinentry can ask for your
-passphrase in it. The message writes itself if you let it: with `opencode` installed, a
-subject and a paragraph for what you staged appear under the message box, and `[use]` puts
-them in it. Send comments to your local Claude, Codex or OpenCode using your signed-in
-account, or collect one review to paste into another AI tool. **Moonshell** opens the same
-workspace directly on a shell.
-
-Whichever you start, the other two are a command palette away — they are frames of the same
-window, not separate apps.
+them individually, then commit and push what you staged from a pane beside the review. Send
+comments to your local Claude, Codex or OpenCode.
 
 ## Quick install
 
@@ -72,21 +64,21 @@ brew install zig@0.15
 export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
 ```
 
-Everything still links statically — the result is three executables with no runtime
+Everything still links statically - the result is three executables with no runtime
 dependency on Zig or on a separate server process. They share one library, so the build
 compiles once and links three times.
 
 ## Desktop launchers
 
 `cargo install` leaves three executables on `PATH`, which is all a shell needs. To open them
-from the OS as well — Spotlight and Launchpad on macOS, the application menu on Linux:
+from the OS as well - Spotlight and Launchpad on macOS, the application menu on Linux:
 
 ```bash
 moonreview install-launchers
 ```
 
-It writes one launcher per installed executable: a `.app` bundle in `/Applications` on macOS —
-in `~/Applications` instead, for an account that cannot write the shared folder — and a
+It writes one launcher per installed executable: a `.app` bundle in `/Applications` on macOS -
+in `~/Applications` instead, for an account that cannot write the shared folder - and a
 `.desktop` entry in `~/.local/share/applications` on Linux. The window has the same thing in
 its macOS menu bar and in the command palette, as `install desktop launchers`. Each launcher
 runs the executable where it is installed, so `cargo install` over it is also an upgrade of
@@ -143,7 +135,7 @@ Inside the window:
 | shift-click | extend the selection over more lines |
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
-| `⌘⇧P` | command palette — open a review, a shell, the task board, the submodules of the repo, or the agent monitor |
+| `⌘⇧P` | command palette - open a review, a shell, the task board, the submodules of the repo, or the agent monitor |
 | `⌘P` | find a file of the repo by name, from any directory under it, and open it |
 | `⌘⇧F` | search the files of the repo for text, and open a file at the line that holds it |
 | `⌘⇧R` | bring the review of this repo forward, opening it if it was closed |
@@ -155,7 +147,7 @@ Clicking a diff line selects it and opens a comment on it; shift-click extends t
 comment is anchored to exactly those lines, and `stage lines` stages exactly those lines.
 
 On macOS the **View** menu carries the theme switch and the command palette, and the **Window**
-menu opens another window of any of the three programs — `New Moontasks Window` from the
+menu opens another window of any of the three programs - `New Moontasks Window` from the
 review, `New Moonreview Window` from the board. A new window opens on its launch screen, so it
 is a new place to work rather than a second view of this one; `moontasks --pick` is the same
 thing from a shell. Everywhere else those live in the command palette, which also has them on
@@ -169,7 +161,7 @@ What belongs to you rather than to a repo or a window is kept in one file:
 ~/.moonreview/settings.json
 ```
 
-Right now that is which agent Moonreview hands comments to — the selector at the top right.
+Right now that is which agent Moonreview hands comments to - the selector at the top right.
 Pick one and the next window comes up on it. The file is meant to be readable and editable:
 
 ```json
@@ -217,9 +209,9 @@ Closing the window ends the process, server included. A standalone `serve` stops
 Two pieces of the window are libraries in their own right, kept as submodules under
 `crates/` and published separately:
 
-- [**egui_frames**](crates/egui_frames) — tabs, splits and draggable panes for egui. The
+- [**egui_frames**](crates/egui_frames) - tabs, splits and draggable panes for egui. The
   arrangement the Moon tools workspace is made of, with nothing product-specific in it.
-- [**egui_tty**](crates/egui_tty) — a terminal emulator widget for egui, on Ghostty's VT engine.
+- [**egui_tty**](crates/egui_tty) - a terminal emulator widget for egui, on Ghostty's VT engine.
   What a shell tab holds.
 
 After cloning, pull them in:
