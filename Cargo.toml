@@ -1,6 +1,6 @@
 [package]
 name = "moon-review"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 
 # One library, three executables. They differ only in what the window opens on, so the whole
