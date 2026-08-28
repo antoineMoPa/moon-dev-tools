@@ -36,6 +36,8 @@ pub(crate) enum Action {
     FindFile,
     /// Bring the review of this window's repo forward, opening it if it is not open.
     OpenReview,
+    /// Open the submodule hub, or bring it forward if it is already open.
+    OpenSubmodules,
     /// Open the palette on its content search, where what is typed is looked for in the text
     /// of the files.
     SearchContent,
@@ -170,6 +172,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::OpenReview,
         chord: &[press(COMMAND_SHIFT, Key::R)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::OpenSubmodules,
+        chord: &[press(COMMAND_SHIFT, Key::S)],
         reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
@@ -524,13 +531,13 @@ mod tests {
         assert_eq!(fired, vec![Action::SelectTab(8)]);
     }
 
-    /// ⌘⇧P must not also be read as the ⌘P that no binding claims, and ⌘S must not fire
+    /// ⌘⇧P must not also be read as the ⌘P that no binding claims, and ⌘J must not fire
     /// while Shift is held.
     #[test]
     fn modifiers_have_to_match_exactly() {
         let mut keymap = Keymap::default();
-        let (fired, _) = run(&mut keymap, false, vec![key_event(COMMAND_SHIFT, Key::S)]);
-        assert!(fired.is_empty(), "⌘⇧S is not ⌘S");
+        let (fired, _) = run(&mut keymap, false, vec![key_event(COMMAND_SHIFT, Key::J)]);
+        assert!(fired.is_empty(), "⌘⇧J is not ⌘J");
 
         let (fired, _) = run(&mut keymap, false, vec![key_event(COMMAND_SHIFT, Key::P)]);
         assert_eq!(fired, vec![Action::OpenPalette]);

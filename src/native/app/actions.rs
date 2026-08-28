@@ -13,17 +13,22 @@ use crate::{
     native::{
         bindings::Action,
         board, find,
-        model::Stage,
+        model::{ProjectEditor, Stage},
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
         programs::Opens,
+        workspace::TerminalPlacement,
     },
+    project::ProjectCommands,
 };
 
 use super::{
     App, BACKGROUND_POLL_INTERVAL, BOARD_POLL_INTERVAL, POLL_INTERVAL, QUIT_CONFIRM_WINDOW,
     TabAction,
 };
+
+/// The key that keeps the project file to one write at a time - see [`App::save_project`].
+const PROJECT_SAVE: &str = "project-save";
 
 impl App {
 
@@ -48,6 +53,7 @@ impl App {
                     model.opened_project = Some(repo_path.clone());
                     model.project_path = Some(repo_path.clone());
                     model.adopt_shells_pending = true;
+                    model.project_pending = true;
                     model.board.refresh_requested = true;
                     // `moonshell` opens on a shell, which has to be started before there is
                     // anything to draw.
@@ -258,6 +264,59 @@ impl App {
         );
     }
 
+    /// Read the project's commands, which is what the Project menu offers.
+    pub(super) fn load_project(&mut self) {
+        if self.model.root_session_id.is_empty() {
+            return;
+        }
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn_keyed(
+            Some("project".to_string()),
+            move |backend| backend.project_commands(&session_id),
+            |model, result| match result {
+                Ok(commands) => {
+                    // The pane's boxes are seeded here rather than as it draws: the file is
+                    // read on a worker thread, and boxes filled in before it comes back would
+                    // be a project with no commands set.
+                    if model.project_editor.is_none() {
+                        model.project_editor = Some(ProjectEditor::of(&commands));
+                    }
+                    model.project = commands;
+                }
+                Err(error) => model.error(format!("could not read the project file: {error}")),
+            },
+        );
+    }
+
+    /// Write what the pane's boxes hold back to the repo's file, if a keystroke has left them
+    /// saying something the file does not.
+    ///
+    /// One write at a time: keystrokes arrive far faster than a write to a remote backend
+    /// finishes, and two in flight together could land in either order. Whatever is typed
+    /// while one is going is written by the next, which the finished write's repaint brings
+    /// about - so the last keystroke is always the one on disk.
+    pub(crate) fn save_project(&mut self) {
+        if !self.model.project_unsaved || self.tasks.is_busy(PROJECT_SAVE) {
+            return;
+        }
+        let Some(editor) = &self.model.project_editor else {
+            return;
+        };
+        self.model.project_unsaved = false;
+        let commands = ProjectCommands::typed(&editor.build, &editor.run);
+        let session_id = self.model.root_session_id.clone();
+        let written = commands.clone();
+        self.tasks.spawn_keyed(
+            Some(PROJECT_SAVE.to_string()),
+            move |backend| backend.set_project_commands(&session_id, &commands),
+            move |model, result| match result {
+                // The menu offers what the file now says without waiting to read it again.
+                Ok(()) => model.project = written,
+                Err(error) => model.error(format!("could not write the project file: {error}")),
+            },
+        );
+    }
+
     /// Run whatever the palette or the menu bar asked for.
     pub(crate) fn run_action(&mut self, ctx: &egui::Context, action: CommandAction) {
         match action {
@@ -273,6 +332,10 @@ impl App {
             }
             CommandAction::SearchContent => self.model.palette.show_contents(),
             CommandAction::Split(side) => self.split_frame(side),
+            CommandAction::RunProject(which) => {
+                let session_id = self.model.root_session_id.clone();
+                self.run_project_command(session_id, which, TerminalPlacement::WithOtherShells);
+            }
         }
     }
 
@@ -493,13 +556,14 @@ impl App {
             Action::FindFile => self.model.palette.show_files(),
             Action::SearchContent => self.model.palette.show_contents(),
             Action::OpenReview => self.open_root_review(),
+            Action::OpenSubmodules => self.open_pane(OpenPaneRequest::Submodules),
         }
     }
 
     /// cmd+shift+R brings this window's review forward, opening it if the workspace has not
     /// got one - the same thing the palette's "review" command does. A window whose review is
     /// still opening has no session to point a pane at yet, so the chord does nothing there.
-    fn open_root_review(&mut self) {
+    pub(super) fn open_root_review(&mut self) {
         if self.model.root_session_id.is_empty() {
             return;
         }

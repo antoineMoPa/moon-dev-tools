@@ -30,6 +30,7 @@ pub(crate) enum PaneKind {
     Tasks,
     Commit,
     Submodules,
+    Project,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -59,6 +60,8 @@ pub(crate) enum Pane {
     Commit { session_id: String },
     /// Every submodule of the repo, and a way into a review of the changed ones.
     Submodules,
+    /// The two commands the Project menu runs, and where they are set.
+    Project,
 }
 
 impl Pane {
@@ -71,6 +74,7 @@ impl Pane {
             Self::Tasks => PaneKind::Tasks,
             Self::Commit { .. } => PaneKind::Commit,
             Self::Submodules => PaneKind::Submodules,
+            Self::Project => PaneKind::Project,
         }
     }
 
@@ -93,6 +97,7 @@ impl Pane {
             Self::Tasks => "moontasks".to_string(),
             Self::Commit { .. } => "commit".to_string(),
             Self::Submodules => "submodules".to_string(),
+            Self::Project => "project".to_string(),
         }
     }
 
@@ -138,6 +143,8 @@ pub(crate) enum OpenPaneRequest {
         session_id: String,
     },
     Submodules,
+    /// The two commands the Project menu runs, and where they are set.
+    Project,
 }
 
 /// The match a file is opened at: the line to bring on screen, and the text that was
@@ -201,6 +208,7 @@ impl PaneView<Pane> for App {
                 commit_pane::draw(self, ui, pane_id, &session_id);
             }
             Pane::Submodules => crate::native::submodules::draw(self, ui),
+            Pane::Project => crate::native::project_pane::draw(self, ui),
         }
     }
 

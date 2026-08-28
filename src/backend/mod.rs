@@ -24,6 +24,7 @@ use crate::{
         AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
         TaskView,
     },
+    project::{ProjectCommand, ProjectCommands},
 };
 
 /// Every review operation the window performs. Calls block, so the UI runs them
@@ -144,6 +145,13 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Put a column at a place among the others, which is what dragging its heading does. Its
     /// cards go with it, because a card names its column rather than its place on screen.
     fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()>;
+
+    /// The two commands the Project menu runs, out of the reviewed repo's own file.
+    fn project_commands(&self, session_id: &str) -> Result<ProjectCommands>;
+    fn set_project_commands(&self, session_id: &str, commands: &ProjectCommands) -> Result<()>;
+    /// Start a shell with one of those commands typed into it and sent, and answer with the
+    /// shell it runs in. Attached with [`Backend::attach_terminal`], like any other.
+    fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String>;
 
     /// What the commit pane draws: what is staged, and where a push would send it.
     fn commit_state(&self, session_id: &str) -> Result<CommitState>;

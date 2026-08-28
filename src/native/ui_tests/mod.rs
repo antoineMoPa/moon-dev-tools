@@ -12,6 +12,7 @@ mod files;
 mod launch;
 mod layout;
 mod palette;
+mod project;
 mod shell_input;
 mod shell_lifecycle;
 mod sidebar_menu;

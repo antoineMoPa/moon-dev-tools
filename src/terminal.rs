@@ -132,6 +132,18 @@ impl TerminalSpec {
             type_ahead: None,
         }
     }
+
+    /// The same shell with one command typed into it and sent, which is how a project's build
+    /// and run are started - the way `committing::start_commit_run` runs git.
+    ///
+    /// The shell outlives the command: what it printed is still there to read, and the same
+    /// tab is where the command is run again.
+    pub(crate) fn running(cwd: std::path::PathBuf, command: &str) -> Self {
+        Self {
+            type_ahead: Some(format!("{command}\r")),
+            ..Self::shell(cwd, None)
+        }
+    }
 }
 
 /// A shell that lives in the server, not in the tab showing it: closing the tab detaches

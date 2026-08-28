@@ -27,6 +27,7 @@ use crate::{
         CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
         TaskPlacementRequest, TaskView, TerminalOpened,
     },
+    project::{ProjectCommand, ProjectCommands},
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -402,6 +403,22 @@ impl Backend for RemoteBackend {
                 label: label.to_string(),
             },
         )
+    }
+
+    fn project_commands(&self, session_id: &str) -> Result<ProjectCommands> {
+        self.get(&format!("/api/session/{session_id}/project"))
+    }
+
+    fn set_project_commands(&self, session_id: &str, commands: &ProjectCommands) -> Result<()> {
+        self.post(&format!("/api/session/{session_id}/project"), commands)
+    }
+
+    fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/project/run/{}", which.label()),
+            &json!({}),
+        )?;
+        Ok(opened.terminal_id)
     }
 
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {

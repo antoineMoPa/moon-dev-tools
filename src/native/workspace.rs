@@ -17,6 +17,7 @@ use crate::{
         bindings,
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
+    project::ProjectCommand,
 };
 
 /// The narrowest a frame may be left at by opening a shell beside it. Below this, the shell
@@ -243,6 +244,23 @@ impl App {
                 // screen beside it.
                 add_right_column(&mut self.model.layout, Pane::Commit { session_id });
             }
+            OpenPaneRequest::Project => {
+                // Read again on the way in: the file is one a person may also have edited by
+                // hand, and the boxes are seeded from what comes back.
+                self.model.project_editor = None;
+                self.model.project_pending = true;
+                self.model.project_focus = true;
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Project)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Project, active_frame);
+                self.model.layout.add_pane(frame, Pane::Project, None);
+            }
             OpenPaneRequest::Submodules => {
                 self.model.submodule_filter_focus = true;
                 if let Some((pane, _)) = self
@@ -288,6 +306,35 @@ impl App {
         command: Option<AgentKind>,
         placement: TerminalPlacement,
     ) {
+        let started = session_id.clone();
+        self.spawn_shell(session_id, command, placement, move |backend| {
+            backend.create_terminal(&started, command)
+        });
+    }
+
+    /// The same, with one of the project's commands typed into the shell and sent. The pane
+    /// is an ordinary shell pane: the command is over in a moment, and what is left is a
+    /// shell in the repo with its output above the prompt.
+    pub(crate) fn run_project_command(
+        &mut self,
+        session_id: String,
+        which: ProjectCommand,
+        placement: TerminalPlacement,
+    ) {
+        let started = session_id.clone();
+        self.spawn_shell(session_id, None, placement, move |backend| {
+            backend.run_project_command(&started, which)
+        });
+    }
+
+    /// Start a shell whichever way `start` starts it, then open a pane attached to it.
+    fn spawn_shell(
+        &mut self,
+        session_id: String,
+        command: Option<AgentKind>,
+        placement: TerminalPlacement,
+        start: impl FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<String> + Send + 'static,
+    ) {
         if session_id.is_empty() {
             self.model.error("no review is open yet");
             return;
@@ -297,7 +344,7 @@ impl App {
 
         self.tasks.spawn(
             move |backend| {
-                let terminal_id = backend.create_terminal(&session_id, command)?;
+                let terminal_id = start(backend)?;
                 let attachment = backend.attach_terminal(&session_id, &terminal_id);
                 Ok((terminal_id, attachment))
             },

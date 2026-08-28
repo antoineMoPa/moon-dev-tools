@@ -114,6 +114,14 @@ pub(crate) fn router(state: AppState) -> Router {
             get(list_columns).post(add_column),
         )
         .route(
+            "/api/session/{session_id}/project",
+            get(project_commands).post(set_project_commands),
+        )
+        .route(
+            "/api/session/{session_id}/project/run/{which}",
+            post(run_project_command),
+        )
+        .route(
             "/api/session/{session_id}/columns/{column_id}",
             delete(delete_column),
         )
@@ -593,6 +601,33 @@ async fn delete_task(
     mark_activity(&state);
     moontasks::service::delete_task(&state, &session_id, &task_id)?;
     Ok("ok")
+}
+
+async fn project_commands(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<crate::project::ProjectCommands>, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::project::session_commands(&state, &session_id)?))
+}
+
+async fn set_project_commands(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::project::ProjectCommands>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::project::set_session_commands(&state, &session_id, &request)?;
+    Ok("ok")
+}
+
+async fn run_project_command(
+    AxumPath((session_id, which)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    let terminal_id = crate::project::run(&state, &session_id, which.parse()?)?;
+    Ok(Json(TerminalOpened { terminal_id }))
 }
 
 async fn list_columns(

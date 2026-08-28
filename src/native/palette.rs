@@ -7,6 +7,7 @@ use egui_frames::DropSide;
 
 use crate::{
     api::AgentKind,
+    project::ProjectCommand,
     native::{
         app::App,
         bindings::{self, Action},
@@ -81,6 +82,8 @@ pub(crate) enum CommandAction {
     SearchContent,
     /// Split the frame the keyboard is in against this side, with a shell in the new half.
     Split(DropSide),
+    /// Run one of the project's own commands in a shell of its own.
+    RunProject(ProjectCommand),
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -155,6 +158,30 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         "Open the submodules of this repo, and the reviews of the changed ones",
         "Bring the submodules forward",
         CommandAction::OpenPane(OpenPaneRequest::Submodules),
+        bindings::chord_of(Action::OpenSubmodules),
+    ));
+    // The project's own commands, and the pane they are set in. Only the ones the project
+    // has set are offered: an item that runs nothing is worse than no item.
+    for which in [ProjectCommand::Build, ProjectCommand::Run] {
+        let Some(line) = app.model.project.line(which) else {
+            continue;
+        };
+        commands.push(Command {
+            title: which.label().to_string(),
+            description: format!("Run {line} in a shell"),
+            action: CommandAction::RunProject(which),
+            shortcut: None,
+        });
+    }
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Project)
+            .is_some(),
+        "project",
+        "Open the project settings: the build and run commands",
+        "Bring the project settings forward",
+        CommandAction::OpenPane(OpenPaneRequest::Project),
         None,
     ));
     commands.push(single_pane_command(

@@ -48,6 +48,41 @@ fn a_commit_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
 /// A login shell stands in for an agent here: it echoes what is typed at it, which is the
 /// same evidence an agent's input box gives - and unlike an agent it is on every machine
 /// this runs on. What it must not do is run anything, so nothing here sends a newline.
+/// A project's build and run are ordinary shells with the command typed in and sent, which
+/// is what makes the output stay on screen and the tab reusable once the command is over.
+#[test]
+fn a_project_command_is_typed_into_the_shell_and_sent() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = registry
+        .spawn(TerminalSpec::running(
+            std::env::temp_dir(),
+            "printf %s \"[project-command-ran]\"",
+        ))
+        .expect("expected the shell to start");
+    let session = registry.get(&terminal_id).expect("expected the session");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut printed = String::new();
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+        if printed.contains("[project-command-ran]") {
+            break;
+        }
+    }
+
+    assert!(
+        printed.contains("[project-command-ran]"),
+        "the command should have been sent, printed {printed:?}"
+    );
+    // The shell is the workspace's own: it is listed and closed like any other, and it
+    // outlives the command it was given.
+    assert!(
+        registry.terminal_ids().contains(&terminal_id),
+        "a project command's shell should be one of the workspace's shells"
+    );
+}
+
 #[test]
 fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
     let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));

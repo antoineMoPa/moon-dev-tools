@@ -14,6 +14,7 @@ pub(crate) mod menu;
 pub(crate) mod model;
 pub(crate) mod palette;
 pub(crate) mod panes;
+pub(crate) mod project_pane;
 mod programs;
 pub(crate) mod review;
 pub(crate) mod submodules;

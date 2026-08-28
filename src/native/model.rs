@@ -11,6 +11,7 @@ use egui_frames::{Layout, PaneId};
 use crate::{
     api::{AgentKind, AgentLogPayload, CommitView, HunkView, SessionPayload, SubmoduleView},
     native::{panes::Pane, theme::ThemeMode},
+    project::{ProjectCommand, ProjectCommands},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -491,6 +492,57 @@ pub(crate) struct Model {
     pub(crate) opened_project: Option<String>,
     /// The project this window is on, once one is open. What the title bar says.
     pub(crate) project_path: Option<String>,
+    /// The commands the Project menu runs, as the repo's `.moonreview.json` has them. Read
+    /// when the review opens, and again whenever the configuration pane is opened or saves,
+    /// because the file is one a person may also edit by hand.
+    pub(crate) project: ProjectCommands,
+    /// Set when a review opens, so the commands above are read for it.
+    pub(crate) project_pending: bool,
+    /// Set when the configuration pane is opened, so its first box takes the keyboard: the
+    /// pane is two boxes and nothing else, and typing is what it is opened for.
+    pub(crate) project_focus: bool,
+    /// What the configuration pane's two boxes hold. Seeded from the file when the pane is
+    /// opened, and what a save writes back.
+    pub(crate) project_editor: Option<ProjectEditor>,
+    /// Set by a keystroke in one of those boxes, cleared by the write it causes. The pane
+    /// saves as it is typed in, and this is what keeps that to one write at a time: a second
+    /// keystroke while a write is in flight is written by the next one rather than by a write
+    /// of its own, which could land in either order.
+    pub(crate) project_unsaved: bool,
+}
+
+/// The configuration pane's two boxes, mid-edit. They are text rather than commands because
+/// a box someone has emptied is still a box: it becomes a command that is not set only when
+/// the pane saves - see [`ProjectCommands::typed`].
+#[derive(Default)]
+pub(crate) struct ProjectEditor {
+    pub(crate) build: String,
+    pub(crate) run: String,
+}
+
+impl ProjectEditor {
+    /// The box one of the menu's commands is typed in. The one place a command is paired
+    /// with its box, so the pane draws the two rows from the same list it reads them by.
+    pub(crate) fn text(&self, which: ProjectCommand) -> &str {
+        match which {
+            ProjectCommand::Build => &self.build,
+            ProjectCommand::Run => &self.run,
+        }
+    }
+
+    pub(crate) fn text_mut(&mut self, which: ProjectCommand) -> &mut String {
+        match which {
+            ProjectCommand::Build => &mut self.build,
+            ProjectCommand::Run => &mut self.run,
+        }
+    }
+
+    pub(crate) fn of(commands: &ProjectCommands) -> Self {
+        Self {
+            build: commands.build.clone().unwrap_or_default(),
+            run: commands.run.clone().unwrap_or_default(),
+        }
+    }
 }
 
 impl Model {

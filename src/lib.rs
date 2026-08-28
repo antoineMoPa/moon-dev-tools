@@ -16,6 +16,7 @@ mod git;
 mod moontasks;
 mod moved_hunks;
 mod native;
+mod project;
 mod search;
 mod server;
 #[cfg(test)]

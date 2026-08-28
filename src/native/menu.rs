@@ -12,10 +12,21 @@ pub(crate) enum MenuAction {
     OpenCommandPalette,
     /// Ask the OS which file of the repo to open for editing.
     OpenFile,
+    /// Open the palette on the file finder, where what is typed is a file name.
+    FindFile,
+    /// Open the palette on the content search, where what is typed is looked for in the
+    /// text of the repo's files.
+    SearchContent,
     NewTab,
     CloseTab,
     /// The submodule hub: every submodule of the repo, and the changed ones' reviews.
     OpenSubmodules,
+    /// Bring this window's own review forward, opening it if it is not open.
+    OpenReview,
+    /// Run one of the project's own commands in a shell.
+    RunProject(crate::project::ProjectCommand),
+    /// Open the pane those commands are set in.
+    OpenProject,
     /// Open another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
     /// Start this program again on the repo this window is on, and close this window.
@@ -34,6 +45,7 @@ mod platform {
     use crate::{
         cli::{Frame, NEW_WINDOW_FRAMES},
         native::programs,
+        project::ProjectCommand,
     };
 
     /// The menu, kept alive for as long as the window: dropping it would take the bar with it.
@@ -42,9 +54,15 @@ mod platform {
         toggle_theme: MenuId,
         command_palette: MenuId,
         open_file: MenuId,
+        find_file: MenuId,
+        search_content: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
+        open_review: MenuId,
         open_submodules: MenuId,
+        /// One per command the Project menu runs, in the order the menu has them.
+        project_commands: Vec<(MenuId, ProjectCommand)>,
+        open_project: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
         restart_window: MenuId,
@@ -87,8 +105,32 @@ mod platform {
                 picks_files,
                 Some(Accelerator::new(Some(Modifiers::META), Code::KeyO)),
             );
+            // The two searches that open a file without knowing where it is: by its name, and
+            // by text inside it. Both carry the chords their keyboard bindings have, which
+            // from here on is what answers them - macOS hands a chord to the menu bar before
+            // the window sees it - so both items do what those bindings did.
+            let find_file = MenuItem::new(
+                "Find File…",
+                true,
+                Some(Accelerator::new(Some(Modifiers::META), Code::KeyP)),
+            );
+            let search_content = MenuItem::new(
+                "Search Contents…",
+                true,
+                Some(Accelerator::new(
+                    Some(Modifiers::META | Modifiers::SHIFT),
+                    Code::KeyF,
+                )),
+            );
             let file_menu = Submenu::new("File", true);
-            file_menu.append(&open_file).ok()?;
+            file_menu
+                .append_items(&[
+                    &open_file,
+                    &PredefinedMenuItem::separator(),
+                    &find_file,
+                    &search_content,
+                ])
+                .ok()?;
 
             let toggle_theme = MenuItem::new(
                 "Switch Light and Dark",
@@ -163,10 +205,66 @@ mod platform {
             // without a trip to the terminal - the new instance opens on this window's repo.
             let restart_window = MenuItem::new("Restart", true, None);
 
-            // A Tools menu for what the window can open on the repo beside the review itself.
-            let open_submodules = MenuItem::new("Submodule Status", true, None);
+            // The project's own two commands, and the pane they are set in.
+            //
+            // Both items are always there and always enabled. The bar is built as the window
+            // opens, before any repo has been read, and macOS gives no way to grow it later -
+            // so a command the project has not set says so when it is picked, which is what
+            // the palette avoids by only listing the ones that are set.
+            let project_commands: Vec<(MenuItem, ProjectCommand)> =
+                [
+                    (
+                        ProjectCommand::Build,
+                        Accelerator::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyB),
+                    ),
+                    (
+                        ProjectCommand::Run,
+                        Accelerator::new(Some(Modifiers::META), Code::KeyR),
+                    ),
+                ]
+                .into_iter()
+                .map(|(which, accelerator)| {
+                    let mut label = which.label().to_string();
+                    label[..1].make_ascii_uppercase();
+                    (MenuItem::new(label, true, Some(accelerator)), which)
+                })
+                .collect();
+            let open_project = MenuItem::new("Project Settings…", true, None);
+            let project_menu = Submenu::new("Project", true);
+            for (item, _) in &project_commands {
+                project_menu.append(item).ok()?;
+            }
+            project_menu
+                .append_items(&[&PredefinedMenuItem::separator(), &open_project])
+                .ok()?;
+
+            // A Tools menu for the review itself and for what the window can open on the repo
+            // beside it.
+            //
+            // Review carries the chord `Action::OpenReview` has in the keyboard table. macOS
+            // hands a chord to the menu bar before the window sees it, so from here on it is
+            // this item that answers cmd+shift+R rather than the binding - which is why the
+            // item has to do what the binding did, and does: `App::open_root_review`.
+            let open_review = MenuItem::new(
+                "Review",
+                true,
+                Some(Accelerator::new(
+                    Some(Modifiers::META | Modifiers::SHIFT),
+                    Code::KeyR,
+                )),
+            );
+            let open_submodules = MenuItem::new(
+                "Submodule Status",
+                true,
+                Some(Accelerator::new(
+                    Some(Modifiers::META | Modifiers::SHIFT),
+                    Code::KeyS,
+                )),
+            );
             let tools_menu = Submenu::new("Tools", true);
-            tools_menu.append(&open_submodules).ok()?;
+            tools_menu
+                .append_items(&[&open_review, &open_submodules])
+                .ok()?;
 
             let window_menu = Submenu::new("Window", true);
             for (item, _) in &new_windows {
@@ -185,7 +283,14 @@ mod platform {
                 ])
                 .ok()?;
 
-            menu.append_items(&[&app_menu, &file_menu, &view_menu, &tools_menu, &window_menu])
+            menu.append_items(&[
+                &app_menu,
+                &file_menu,
+                &view_menu,
+                &project_menu,
+                &tools_menu,
+                &window_menu,
+            ])
                 .ok()?;
             menu.init_for_nsapp();
 
@@ -194,9 +299,17 @@ mod platform {
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
                 open_file: open_file.id().clone(),
+                find_file: find_file.id().clone(),
+                search_content: search_content.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
+                open_review: open_review.id().clone(),
                 open_submodules: open_submodules.id().clone(),
+                project_commands: project_commands
+                    .iter()
+                    .map(|(item, which)| (item.id().clone(), *which))
+                    .collect(),
+                open_project: open_project.id().clone(),
                 new_windows: new_windows
                     .iter()
                     .map(|(item, frame)| (item.id().clone(), *frame))
@@ -216,12 +329,26 @@ mod platform {
                     MenuAction::OpenCommandPalette
                 } else if event.id == self.open_file {
                     MenuAction::OpenFile
+                } else if event.id == self.find_file {
+                    MenuAction::FindFile
+                } else if event.id == self.search_content {
+                    MenuAction::SearchContent
                 } else if event.id == self.new_tab {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
+                } else if event.id == self.open_review {
+                    MenuAction::OpenReview
                 } else if event.id == self.open_submodules {
                     MenuAction::OpenSubmodules
+                } else if event.id == self.open_project {
+                    MenuAction::OpenProject
+                } else if let Some((_, which)) = self
+                    .project_commands
+                    .iter()
+                    .find(|(id, _)| *id == event.id)
+                {
+                    MenuAction::RunProject(*which)
                 } else if event.id == self.restart_window {
                     MenuAction::RestartWindow
                 } else if event.id == self.install_launchers {

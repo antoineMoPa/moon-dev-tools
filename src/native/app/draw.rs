@@ -258,6 +258,16 @@ impl App {
                 MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
                 MenuAction::RestartWindow => CommandAction::RestartWindow,
                 MenuAction::OpenFile => CommandAction::OpenFile,
+                MenuAction::FindFile => CommandAction::FindFile,
+                MenuAction::SearchContent => CommandAction::SearchContent,
+                MenuAction::RunProject(which) => CommandAction::RunProject(which),
+                MenuAction::OpenProject => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
+                }
+                MenuAction::OpenReview => {
+                    self.open_root_review();
+                    continue;
+                }
                 MenuAction::OpenSubmodules => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)
                 }
@@ -289,6 +299,10 @@ impl App {
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
+        if std::mem::take(&mut self.model.project_pending) {
+            self.load_project();
+        }
+        self.save_project();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
             self.adopt_existing_shells();
         }
