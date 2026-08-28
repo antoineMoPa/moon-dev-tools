@@ -2,7 +2,7 @@
 //!
 //! Selecting lines is how everything specific happens here - a comment is anchored to the
 //! lines it was written against, and a partial stage applies exactly those lines. That is
-//! the same contract the web frontend's text selection has. The selection itself is
+//! the contract a text selection has. The selection itself is
 //! character-precise - a drag sweeps characters, a double-click takes a word - but a comment
 //! is still anchored to the whole lines the selection covers.
 

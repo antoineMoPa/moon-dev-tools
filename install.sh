@@ -173,8 +173,8 @@ echo "Installed${installed} to ${INSTALL_DIR}"
 "$INSTALL_PATH" --help >/dev/null 2>&1 || true
 
 # The executables are on PATH now; this is what puts them in Spotlight, Launchpad or an
-# application menu as well. A build without the desktop frontend has no window to launch, so a
-# refusal here is not a failed install.
+# application menu as well. A platform with nowhere to write a launcher refuses here, which is
+# not a failed install.
 if "$INSTALL_PATH" install-launchers >/dev/null 2>&1; then
     echo "Installed desktop launchers"
 fi

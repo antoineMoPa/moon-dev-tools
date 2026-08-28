@@ -52,7 +52,6 @@ EOF
 
 require_command git "Install git from https://git-scm.com/downloads"
 require_command rustup "Install rustup from https://rustup.rs/"
-require_command npm "Install Node.js with npm from https://nodejs.org/"
 
 echo "Updating Rust toolchain ($RUST_TOOLCHAIN)..."
 rustup update "$RUST_TOOLCHAIN"
@@ -63,13 +62,10 @@ git -C "$ROOT_DIR" submodule update --init --recursive
 echo "Installing Zig $ZIG_MAJOR_MINOR.x..."
 install_zig
 
-echo "Installing npm dependencies..."
-npm --prefix "$ROOT_DIR" ci
-
 cat <<EOF
 
 Development dependencies are ready.
 
-For native cargo builds in this shell, run:
+For cargo builds in this shell, run:
   export PATH="$zig_prefix/bin:\$PATH"
 EOF

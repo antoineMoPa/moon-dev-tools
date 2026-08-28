@@ -263,7 +263,6 @@ impl App {
         match action {
             CommandAction::OpenPane(request) => self.open_pane(request),
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
-            CommandAction::OpenInBrowser => self.open_in_browser(),
             CommandAction::InstallLaunchers => self.install_launchers(),
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
             CommandAction::RestartWindow => self.restart_window(ctx),
@@ -426,18 +425,6 @@ impl App {
                 picked.display(),
                 repo_root.display()
             )),
-        }
-    }
-
-    fn open_in_browser(&mut self) {
-        if !self.serves_web {
-            self.model
-                .error("this window is not serving the web frontend");
-            return;
-        }
-        let url = self.backend().web_url(&self.model.root_session_id);
-        if let Err(error) = webbrowser::open(&url) {
-            self.model.error(format!("could not open a browser: {error}"));
         }
     }
 

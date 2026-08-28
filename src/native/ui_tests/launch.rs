@@ -121,7 +121,6 @@ fn a_window_with_no_repo_asks_which_one_to_review() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
             frame: crate::cli::Frame::Review,
         },
     );
@@ -149,7 +148,6 @@ fn the_launch_screen_of_the_board_does_not_offer_a_review() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
             frame: crate::cli::Frame::Tasks,
         },
     );
@@ -192,7 +190,6 @@ fn the_launch_screen_offers_the_projects_opened_before() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
             frame: crate::cli::Frame::Review,
         },
     );
@@ -348,7 +345,6 @@ fn a_recent_project_opens_from_the_middle_of_its_row() {
         Launch {
             backend: Arc::new(LocalBackend::new(state)),
             open: None,
-            serves_web: false,
             frame: crate::cli::Frame::Review,
         },
     );

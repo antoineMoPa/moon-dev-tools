@@ -1,7 +1,6 @@
 //! The command palette: everything the workspace can open, searchable.
 //!
-//! The command set mirrors `web/src/components/workspace/commands.ts` so ⌘⇧P offers the
-//! same things in both frontends.
+//! Everything ⌘⇧P offers, in one list.
 
 use egui::{Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind, vec2};
 use egui_frames::DropSide;
@@ -64,7 +63,6 @@ pub(crate) struct Command {
 #[derive(Clone)]
 pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
-    OpenInBrowser,
     ToggleTheme,
     InstallLaunchers,
     /// Another window of one of the three programs, on its launch screen.
@@ -240,14 +238,6 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
 
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
-    if app.serves_web {
-        commands.push(Command {
-            title: "open in browser".to_string(),
-            description: "Open this review in a browser".to_string(),
-            action: CommandAction::OpenInBrowser,
-            shortcut: None,
-        });
-    }
     // Only the two platforms that have a launcher to write are offered it.
     if cfg!(any(target_os = "macos", target_os = "linux")) {
         commands.push(Command {

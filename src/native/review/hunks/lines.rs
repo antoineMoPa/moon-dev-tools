@@ -133,7 +133,7 @@ fn draw_diff_line(
         diff_line_id(&hunk.id, index),
         if selectable {
             // Dragging is how a run of lines gets picked, the same gesture as sweeping over
-            // text in the web frontend.
+            // text anywhere else.
             Sense::click_and_drag()
         } else {
             Sense::hover()
@@ -302,8 +302,8 @@ fn draw_diff_line(
         return;
     }
 
-    // Selecting lines and writing a comment are one gesture, the way dragging over text in
-    // the web frontend pops its composer: a click selects and opens the composer at once.
+    // Selecting lines and writing a comment are one gesture: a click selects and opens the
+    // composer at once.
     let extend = ui.input(|input| input.modifiers.shift);
     let whole_line = LineSelection::whole_line(hunk_hash, index);
     let existing = app

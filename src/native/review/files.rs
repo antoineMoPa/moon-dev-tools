@@ -1,6 +1,6 @@
 //! Rolling a diff's hunks up into one row per file, which is what the sidebar lists.
 //!
-//! Ported from `web/src/components/sidebarFiles.ts`, including the whole-file-move detection
+//! The file list the sidebar shows, including the whole-file-move detection
 //! that lets a delete and an add be shown as one rename.
 
 use std::collections::HashMap;

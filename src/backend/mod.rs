@@ -1,8 +1,8 @@
-//! Where the native frontend gets its reviews from.
+//! Where the window gets its reviews from.
 //!
 //! The window is the same either way: [`local::LocalBackend`] reviews a repo in this
-//! process, and [`remote::RemoteBackend`] reviews a repo on another machine over the same
-//! HTTP API the web frontend uses. Only this trait knows which one is in play.
+//! process, and [`remote::RemoteBackend`] reviews a repo on another machine over the HTTP
+//! API its `serve` answers. Only this trait knows which one is in play.
 
 pub(crate) mod local;
 pub(crate) mod remote;
@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-/// Every review operation the native frontend performs. Calls block, so the UI runs them
+/// Every review operation the window performs. Calls block, so the UI runs them
 /// on worker threads - a remote backend is a network round-trip.
 pub(crate) trait Backend: Send + Sync + 'static {
     /// How this connection reads in the UI, e.g. `local` or `dev-box:42000`.
@@ -35,9 +35,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Whether the repos this reads are on the machine the window runs on, which is what
     /// decides if the window can offer a folder picker for them.
     fn reads_this_machine(&self) -> bool;
-
-    /// Where a browser can open the same review, for the "open in browser" action.
-    fn web_url(&self, session_id: &str) -> String;
 
     /// What another window would have to be given as `--remote` to reach the same repos.
     /// `None` for a backend that reads this machine, which needs no address at all.

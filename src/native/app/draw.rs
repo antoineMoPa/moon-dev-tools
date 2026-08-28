@@ -253,7 +253,6 @@ impl App {
 
         for action in self.menu.as_ref().map(NativeMenu::drain).unwrap_or_default() {
             self.pending_action = Some(match action {
-                MenuAction::OpenInBrowser => CommandAction::OpenInBrowser,
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
                 MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),

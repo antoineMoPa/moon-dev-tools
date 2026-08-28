@@ -15,7 +15,7 @@ use crate::{
     api::{
         AgentKind, AgentLog, AppState, CancelToken, CommentDispatchStatus, CommentDispatchView,
         CommentRequest, DiffHunk, HunkCommentContext, HunkView, RepoSession, ReviewCommentView,
-        append_to_agent_log, export_server_url, server_url, with_session,
+        append_to_agent_log, export_server_url, with_session,
     },
     git::collect_session_hunks,
 };
@@ -60,7 +60,6 @@ pub(crate) struct DispatchTarget {
 pub(crate) struct DispatchJob {
     pub(crate) session_id: String,
     pub(crate) repo_path: PathBuf,
-    pub(crate) ui_url: String,
     pub(crate) agent: AgentKind,
     pub(crate) targets: Vec<DispatchTarget>,
     pub(crate) cancel_token: CancelToken,
@@ -475,7 +474,6 @@ pub(crate) fn plan_batched_comment_dispatches(
     Ok(vec![DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
-        ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets,
         cancel_token,
@@ -604,7 +602,6 @@ fn build_dispatch_job(
     DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
-        ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets: vec![build_dispatch_target(hunk_id, hunk, entry)],
         cancel_token,

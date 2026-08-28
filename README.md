@@ -32,11 +32,6 @@ workspace directly on a shell.
 Whichever you start, the other two are a command palette away — they are frames of the same
 window, not separate apps.
 
-Moonreview has two frontends over the same local server:
-
-- a **native window**, which carries the server inside the same executable — this is the default
-- the **web frontend**, in a browser tab, which is the same review and stays fully supported
-
 ## Quick install
 
 Install the latest prebuilt release:
@@ -53,24 +48,22 @@ your `PATH`, add it in your shell configuration.
 Requirements:
 
 - [Rust](https://www.rust-lang.org/tools/install)
-- Node.js with npm
-- [Zig](https://ziglang.org/) 0.15.x, for the native window's terminal
+- [Zig](https://ziglang.org/) 0.15.x, for the window's terminal
 - [the silver searcher](https://github.com/ggreer/the_silver_searcher) (`ag`), which is what
   finds files by name for `⌘P` and text in them for `⌘⇧F`
 
 ```bash
-./scripts/setup-dev.sh           # Rust update, npm packages, Zig and submodules
+./scripts/setup-dev.sh            # Rust update, Zig and submodules
 export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
 cargo install --locked --path .   # installs moonreview, moontasks and moonshell
 moonreview install-launchers      # optional: launchers the OS itself offers
 moonreview
 ```
 
-Source builds require Rust plus the existing Node/npm frontend toolchain used by `build.rs`.
 `--locked` builds the dependency versions in `Cargo.lock`; without it `cargo install` re-resolves
 to the newest compatible versions, which is how you end up compiling a release nobody tested.
 
-The native window embeds Ghostty's terminal emulator
+The window embeds Ghostty's terminal emulator
 ([libghostty-vt](https://libghostty.tip.ghostty.org/)), which is built from Ghostty's Zig
 source, so a Zig 0.15.x toolchain has to be on `PATH` at build time. On macOS:
 
@@ -82,12 +75,6 @@ export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
 Everything still links statically — the result is three executables with no runtime
 dependency on Zig or on a separate server process. They share one library, so the build
 compiles once and links three times.
-
-To build Moonreview's web frontend only, without the native window or Zig:
-
-```bash
-cargo install --locked --path . --no-default-features
-```
 
 ## Desktop launchers
 
@@ -139,7 +126,7 @@ Pass two paths to compare arbitrary files in a read-only review:
 moonreview a.txt b.txt
 ```
 
-Every review target works the same in either frontend:
+Every review target opens the same window:
 
 ```bash
 moonreview .              # only the current directory
@@ -167,25 +154,12 @@ Inside the window:
 Clicking a diff line selects it and opens a comment on it; shift-click extends the run. The
 comment is anchored to exactly those lines, and `stage lines` stages exactly those lines.
 
-On macOS the **View** menu carries "Open in Browser" and the theme switch, and the **Window**
+On macOS the **View** menu carries the theme switch and the command palette, and the **Window**
 menu opens another window of any of the three programs — `New Moontasks Window` from the
 review, `New Moonreview Window` from the board. A new window opens on its launch screen, so it
 is a new place to work rather than a second view of this one; `moontasks --pick` is the same
 thing from a shell. Everywhere else those live in the command palette, which also has them on
 macOS.
-
-### Web frontend
-
-`--web` opens a browser tab against a background server instead, which is how moonreview
-worked before the window existed:
-
-```bash
-moonreview --web
-```
-
-The window also serves the web frontend, so **View → Open in Browser** (`⌘B`), or
-`open in browser` in the command palette, opens the same review in a browser without starting
-anything else.
 
 ## Settings
 
@@ -235,17 +209,12 @@ ssh -N -L 42000:127.0.0.1:42000 dev-box   # then: moonreview --remote 127.0.0.1
 
 ## Stopping the server
 
-Closing the native window ends the process. For the `--web` flow:
-
-```bash
-pkill moonreview
-```
-
-A standalone `serve` also times out after 30 minutes of inactivity.
+Closing the window ends the process, server included. A standalone `serve` stops with
+`pkill moonreview`, and times out on its own after 30 minutes of inactivity.
 
 ## Crates
 
-Two pieces of the native window are libraries in their own right, kept as submodules under
+Two pieces of the window are libraries in their own right, kept as submodules under
 `crates/` and published separately:
 
 - [**egui_frames**](crates/egui_frames) — tabs, splits and draggable panes for egui. The

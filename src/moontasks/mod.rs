@@ -1,6 +1,6 @@
 //! Moontasks: the sprint board moonreview runs agents from.
 //!
-//! [`store`] is the `.moontasks` folder on disk and [`service`] is everything both frontends
+//! [`store`] is the `.moontasks` folder on disk and [`service`] is everything the board
 //! do to it.
 
 pub(crate) mod service;

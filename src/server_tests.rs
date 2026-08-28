@@ -1,7 +1,5 @@
-//! The web frontend's contract: the page, its assets, and the API it calls.
-//!
-//! The native window is the default frontend now, so these exist to make sure the browser
-//! one keeps working - a change that only breaks the web client would otherwise go unnoticed.
+//! The HTTP contract a remote window reviews through: the routes it calls over the network,
+//! which a change made only against the in-process backend would otherwise break unnoticed.
 
 use std::{
     fs,
@@ -28,7 +26,7 @@ impl Drop for Served {
 }
 
 fn serve(name: &str) -> Served {
-    let root = std::env::temp_dir().join(format!("moonreview-web-{}-{name}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("moonreview-server-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("failed to create the fixture directory");
     run_git_no_output(&root, &["init"]).expect("failed to init the fixture repo");
@@ -103,55 +101,7 @@ impl Served {
 }
 
 #[test]
-fn the_review_page_and_its_assets_are_served() {
-    let served = serve("assets");
-    let session_id = served.open_session();
-
-    let page = served
-        .client
-        .get(format!("{}/review/{session_id}", served.base_url))
-        .send()
-        .expect("failed to fetch the review page");
-    assert!(page.status().is_success());
-    let html = page.text().expect("failed to read the review page");
-    assert!(
-        html.contains("/assets/app.js"),
-        "the page must load the bundle"
-    );
-    assert!(
-        html.contains("/assets/app.css"),
-        "the page must load the styles"
-    );
-
-    for (path, content_type, needle) in [
-        ("/assets/app.js", "application/javascript", "moonreview"),
-        ("/assets/app.css", "text/css", "--accent"),
-    ] {
-        let asset = served
-            .client
-            .get(format!("{}{path}", served.base_url))
-            .send()
-            .expect("failed to fetch an asset");
-        assert!(asset.status().is_success(), "{path} should be served");
-        assert!(
-            asset
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|value| value.starts_with(content_type)),
-            "{path} should be served as {content_type}"
-        );
-        let body = asset.text().expect("failed to read an asset");
-        assert!(!body.is_empty(), "{path} should not be empty");
-        assert!(
-            body.contains(needle),
-            "{path} does not look like the bundle"
-        );
-    }
-}
-
-#[test]
-fn the_api_the_web_frontend_calls_still_answers() {
+fn the_api_a_remote_window_calls_still_answers() {
     let served = serve("api");
     let session_id = served.open_session();
 
@@ -168,7 +118,7 @@ fn the_api_the_web_frontend_calls_still_answers() {
         .json()
         .expect("failed to decode the session state");
 
-    // The web client reads these by name, so their shape is part of the contract.
+    // A remote window reads these by name, so their shape is part of the contract.
     for field in [
         "repo_name",
         "hunks",
@@ -402,7 +352,7 @@ fn creating_a_task_teaches_its_column_the_agent() {
         "a column nothing was created in has no say"
     );
 
-    // And the columns endpoint carries the memory to the frontends.
+    // And the columns endpoint carries the memory to the window.
     let columns: serde_json::Value = served
         .client
         .get(format!(

@@ -1,4 +1,4 @@
-//! Everything both frontends do to the board.
+//! Everything the board does to the tasks on disk.
 //!
 //! Like [`crate::service`], this is synchronous and takes `&AppState`, so the native window
 //! calls it directly and the axum routes are a thin skin over the same functions.

@@ -259,7 +259,7 @@ mod platform {
     fn info_plist(frame: Frame, identifier: &str) -> String {
         let display_name = frame.display_name();
         let program = frame.program();
-        let version = env!("MOONREVIEW_VERSION");
+        let version = env!("CARGO_PKG_VERSION");
 
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>

@@ -399,8 +399,8 @@ impl App {
 
     /// Adopt shells the server is already running that this window has no tab for.
     ///
-    /// A remote server outlives any one window, and the embedded one is shared with the web
-    /// frontend, so a shell started elsewhere is still a shell this window can show.
+    /// A remote server outlives any one window, so a shell started by another window on the
+    /// same server is still a shell this one can show.
     pub(crate) fn adopt_existing_shells(&mut self) {
         let session_id = self.model.root_session_id.clone();
         if session_id.is_empty() {
@@ -476,8 +476,7 @@ impl App {
         self.model.file_editors.remove(&pane_id);
         let closed = self.model.layout.close_pane(pane_id);
 
-        // Closing a shell's tab ends the shell: unlike the web frontend, where a closed tab may
-        // just be a navigation away, this is the only window it had.
+        // Closing a shell's tab ends the shell: the tab is the only window it had.
         //
         // A task's shell is the exception. It belongs to the task rather than to the tab, and
         // keeps running with nothing attached until the task reaches DONE, so the user can come

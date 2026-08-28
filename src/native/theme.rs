@@ -1,5 +1,4 @@
-//! The web app's palette, as Rust. Both frontends are the same product, so the colors are
-//! kept in step with `web/src/style/base.css` rather than reinvented here.
+//! The palette the whole window is drawn from.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
 

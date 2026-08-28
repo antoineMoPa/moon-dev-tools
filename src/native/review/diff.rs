@@ -1,8 +1,7 @@
 //! Turning a patch into the lines the review draws: what kind each line is, the old and new
 //! line numbers it carries, and which words actually changed.
 //!
-//! Ported from `web/src/components/hunks/HunkDiffCode.tsx` and `wordDiff.tsx` so a hunk
-//! reads identically in both frontends.
+//! How a hunk's lines and their word-level changes are drawn.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LineKind {

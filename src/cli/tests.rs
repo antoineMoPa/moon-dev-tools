@@ -17,8 +17,7 @@ fn parse_bare_review_of_the_working_tree() {
         parse(&[]),
         CliCommand::Review {
             target: ReviewTarget::WorkingTree,
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -29,8 +28,7 @@ fn parse_dot_as_current_directory_review() {
         parse(&["."]),
         CliCommand::Review {
             target: ReviewTarget::CurrentDirectory,
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -41,8 +39,7 @@ fn parse_single_path_as_working_tree_pathspec() {
         parse(&["packages/app/src/example.ts"]),
         CliCommand::Review {
             target: ReviewTarget::Path("packages/app/src/example.ts".to_string()),
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -127,8 +124,7 @@ fn parse_two_paths_as_file_comparison() {
         parse(&["a.txt", "b.txt"]),
         CliCommand::Review {
             target: ReviewTarget::Comparison(["a.txt".to_string(), "b.txt".to_string()]),
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -159,8 +155,7 @@ fn parse_diff_review_against_a_named_ref() {
         parse(&["diff", "dev"]),
         CliCommand::Review {
             target: ReviewTarget::Diff("dev".to_string()),
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -171,8 +166,7 @@ fn parse_bare_short_sha_as_commit_review() {
         parse(&["4542abe"]),
         CliCommand::Review {
             target: ReviewTarget::Commit("4542abe".to_string()),
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -183,8 +177,7 @@ fn parse_diff_short_sha_as_range_diff_review() {
         parse(&["diff", "4542abe"]),
         CliCommand::Review {
             target: ReviewTarget::Diff("4542abe".to_string()),
-            logs: false,
-            frontend: Frontend::Native,
+            source: ReviewSource::ThisMachine,
         }
     );
 }
@@ -229,8 +222,7 @@ fn parse_repo_with_remote_as_a_path_on_that_machine() {
         parse(&["--remote", "dev-box", "--repo", "/home/you/project"]),
         CliCommand::Review {
             target: ReviewTarget::WorkingTree,
-            logs: false,
-            frontend: Frontend::Remote {
+            source: ReviewSource::Remote {
                 target: "dev-box".to_string(),
                 repo_path: Some("/home/you/project".to_string()),
             },

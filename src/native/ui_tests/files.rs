@@ -336,7 +336,6 @@ fn an_unchanged_file_opens_as_the_file_itself() {
             }),
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);

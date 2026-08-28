@@ -1,7 +1,6 @@
 //! The comment agent monitor: every comment that has been handed to an agent, what its run
 //! is doing, and its output.
 //!
-//! Mirrors `web/src/components/workspace/AgentMonitorPane.tsx`.
 
 use egui::{Align, CornerRadius, Layout, RichText, Stroke, Ui};
 

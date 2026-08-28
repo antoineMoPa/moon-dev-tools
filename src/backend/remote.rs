@@ -1,7 +1,7 @@
-//! Reviews a repo on another machine, over the same HTTP API the web frontend speaks.
+//! Reviews a repo on another machine, over the HTTP API its `moonreview serve` answers.
 //!
 //! `moonreview serve` on the far side is the whole server contract, so no extra daemon is
-//! involved: this is the web client's transport with a native window in front of it.
+//! involved.
 
 use std::{
     net::TcpStream,
@@ -209,10 +209,6 @@ impl Backend for RemoteBackend {
 
     fn reads_this_machine(&self) -> bool {
         false
-    }
-
-    fn web_url(&self, session_id: &str) -> String {
-        format!("{}/review/{session_id}", self.base_url)
     }
 
     fn connect_target(&self) -> Option<String> {

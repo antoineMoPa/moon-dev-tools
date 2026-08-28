@@ -1,6 +1,4 @@
 /target
-node_modules
-/web/dist
 
 # What a failing UI snapshot leaves behind. The baselines themselves are committed.
 /tests/snapshots/*.new.png

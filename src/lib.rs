@@ -7,7 +7,6 @@
 mod agent;
 mod agent_sessions;
 mod api;
-#[cfg(feature = "native")]
 mod backend;
 mod cli;
 mod comments;
@@ -16,7 +15,6 @@ mod committing;
 mod git;
 mod moontasks;
 mod moved_hunks;
-#[cfg(feature = "native")]
 mod native;
 mod search;
 mod server;

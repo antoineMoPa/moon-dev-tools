@@ -20,14 +20,17 @@ if ! git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>
     exit 1
 fi
 
-echo "Checking npmjs.com authentication..."
-if ! NPM_USER="$(npm whoami --registry=https://registry.npmjs.org/)"; then
-    echo "sign in with 'npm login --registry=https://registry.npmjs.org/' and try again" >&2
-    exit 1
-fi
-echo "Signed in to npmjs.com as $NPM_USER."
-
 git push --dry-run --follow-tags
-npm version minor
+
+# The release version is the crate's, so the bump is a commit on Cargo.toml and its lockfile
+# entry, tagged the way the release assets are named.
+VERSION="$(bash scripts/_internal/version.sh)"
+NEXT_VERSION="$(awk -F. '{ printf "%s.%s.0", $1, $2 + 1 }' <<<"$VERSION")"
+echo "Bumping $VERSION to $NEXT_VERSION..."
+sed -i '' "s/^version = \"$VERSION\"$/version = \"$NEXT_VERSION\"/" Cargo.toml
+cargo update --workspace --offline
+git commit -am "v$NEXT_VERSION"
+git tag "v$NEXT_VERSION"
+
 git push --follow-tags
-npm run bin-release
+bash scripts/bin-release.sh

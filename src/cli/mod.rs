@@ -4,24 +4,15 @@ mod args;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    env,
-    net::TcpStream,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
-    time::Duration,
-};
+use std::{env, path::Path};
 
-use anyhow::{Context, Result, anyhow, bail};
-use reqwest::blocking::Client;
+use anyhow::{Context, Result};
 
 use args::{
-    CliCommand, Frontend, ReviewOpenRequest, ReviewTarget, current_dir_pathspec, parse_cli_args,
-    review_open_request,
+    CliCommand, ReviewSource, ReviewTarget, current_dir_pathspec, parse_cli_args, review_open_request,
 };
 use crate::{
-    api::{DiffTarget, OpenSessionRequest, SessionOpened, client_host, port, server_url},
+    api::{DiffTarget, OpenSessionRequest},
     git::{canonicalize_repo, find_repo_root},
     server,
 };
@@ -101,7 +92,6 @@ impl Frame {
     }
 
     /// The name a desktop launcher shows: the one the OS puts under the icon.
-    #[cfg(feature = "native")]
     pub(crate) fn display_name(self) -> &'static str {
         self.entry().display_name
     }
@@ -113,7 +103,6 @@ impl Frame {
 
     /// How the launch screen asks which repo to open, which depends on whether this machine
     /// can browse for it.
-    #[cfg(feature = "native")]
     pub(crate) fn asks_for_repo(self, picks_folders: bool) -> &'static str {
         let entry = self.entry();
         if picks_folders {
@@ -124,7 +113,6 @@ impl Frame {
     }
 
     /// What the launch screen's button says.
-    #[cfg(feature = "native")]
     pub(crate) fn opens_button(self) -> &'static str {
         self.entry().opens_button
     }
@@ -160,17 +148,12 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
         CliCommand::InstallLaunchers => install_launchers(),
         CliCommand::PickProject => pick_project(frame),
         CliCommand::OpenRepo(path) => open_repo(&path, frame),
-        CliCommand::Review {
-            target,
-            logs,
-            frontend,
-        } => launch_review(target, logs, frontend, frame),
+        CliCommand::Review { target, source } => launch_review(target, source, frame),
     }
 }
 
 /// `install-launchers` from a terminal: the same writing the window's menu item does, with
 /// what landed where printed rather than shown as a toast.
-#[cfg(feature = "native")]
 fn install_launchers() -> Result<()> {
     use crate::native::launchers;
 
@@ -188,27 +171,15 @@ fn install_launchers() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "native"))]
-fn install_launchers() -> Result<()> {
-    bail!("this build has no desktop frontend, so a launcher would have no window to open")
-}
-
 /// The window opened on nothing, asking which repo to open.
-#[cfg(feature = "native")]
 fn pick_project(frame: Frame) -> Result<()> {
     crate::native::run(crate::native::launch_prompt(frame)?)
-}
-
-#[cfg(not(feature = "native"))]
-fn pick_project(_frame: Frame) -> Result<()> {
-    bail!("this build has no desktop frontend, so there is no window to pick a repo in")
 }
 
 /// The window on a named repo rather than on the one the shell it was started from is in.
 ///
 /// It opens on the whole working tree: a path names the repo here, not a part of it to
 /// narrow the review to.
-#[cfg(feature = "native")]
 fn open_repo(path: &str, frame: Frame) -> Result<()> {
     let repo_path = canonicalize_repo(Path::new(path))?;
     let launch = crate::native::launch_local(
@@ -217,25 +188,13 @@ fn open_repo(path: &str, frame: Frame) -> Result<()> {
             diff_target: Some(DiffTarget::default()),
             active_commit: None,
         },
-        true,
         frame,
     )?;
     crate::native::run(launch)
 }
 
-#[cfg(not(feature = "native"))]
-fn open_repo(_path: &str, _frame: Frame) -> Result<()> {
-    bail!("this build has no desktop frontend, so there is no window to open a repo in")
-}
-
-fn launch_review(
-    target: ReviewTarget,
-    logs: bool,
-    frontend: Frontend,
-    frame: Frame,
-) -> Result<()> {
-    #[cfg(feature = "native")]
-    if let Frontend::Remote { target, repo_path } = &frontend {
+fn launch_review(target: ReviewTarget, source: ReviewSource, frame: Frame) -> Result<()> {
+    if let ReviewSource::Remote { target, repo_path } = &source {
         // The repo lives on the far side, so nothing here is resolved against this machine.
         let launch = crate::native::launch_remote(target, repo_path.clone(), frame)?;
         return crate::native::run(launch);
@@ -243,11 +202,7 @@ fn launch_review(
 
     let current_dir = env::current_dir()?;
 
-    #[cfg(feature = "native")]
-    if frontend == Frontend::Native
-        && target == ReviewTarget::WorkingTree
-        && find_repo_root(&current_dir)?.is_none()
-    {
+    if target == ReviewTarget::WorkingTree && find_repo_root(&current_dir)?.is_none() {
         // A launcher opened from the OS starts outside any repo - there is no terminal it could
         // have inherited one from - so the window asks which repo to open.
         let launch = crate::native::launch_prompt(frame)?;
@@ -258,95 +213,17 @@ fn launch_review(
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
     let open_request = review_open_request(&repo_path, target, current_dir_pathspec, &current_dir)?;
 
-    #[cfg(feature = "native")]
-    if frontend == Frontend::Native {
-        // The window is the app: it carries the review server with it, so a browser can be
-        // pointed at the same review without a second process.
-        let launch = crate::native::launch_local(
-            OpenSessionRequest {
-                repo_path: repo_path.display().to_string(),
-                diff_target: Some(open_request.diff_target.clone()),
-                active_commit: open_request.active_commit.clone(),
-            },
-            true,
-            frame,
-        )?;
-        return crate::native::run(launch);
-    }
-    let _ = (&frontend, frame);
-
-    if logs {
-        return launch_review_with_foreground_server(repo_path, open_request);
-    }
-
-    ensure_server_running(logs)?;
-    open_review_session(&repo_path, &open_request)?;
-    Ok(())
-}
-
-fn launch_review_with_foreground_server(
-    repo_path: PathBuf,
-    open_request: ReviewOpenRequest,
-) -> Result<()> {
-    if server_is_running()? {
-        bail!("moonreview server already running; stop it first to use --logs in the foreground");
-    }
-
-    println!("Moon Review server logs attached to this terminal. Press Ctrl+C to stop.");
-    let server_thread = thread::spawn(|| -> Result<()> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context("failed to build tokio runtime")?;
-        runtime.block_on(server::run_server())
-    });
-
-    for _ in 0..30 {
-        if server_is_running()? {
-            open_review_session(&repo_path, &open_request)?;
-            return server_thread
-                .join()
-                .map_err(|_| anyhow!("review server thread panicked"))?;
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    bail!("review server did not become ready on {}", server_url())
-}
-
-/// One browser tab per run. Changed submodules are offered inside it, as review windows
-/// the user opens from the workspace.
-fn open_review_session(repo_path: &Path, open_request: &ReviewOpenRequest) -> Result<()> {
-    let url = open_review_url_for_session(repo_path, open_request)?;
-    webbrowser::open(&url).context("failed to open browser")?;
-    println!("Opened {url}");
-    Ok(())
-}
-
-fn open_review_url_for_session(
-    repo_path: &Path,
-    open_request: &ReviewOpenRequest,
-) -> Result<String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .context("failed to create client")?;
-
-    let opened: SessionOpened = client
-        .post(format!("{}/api/session/open", server_url()))
-        .json(&OpenSessionRequest {
+    // The window is the app: it carries the review server with it, so another window can be
+    // pointed at the same repo through `--remote`.
+    let launch = crate::native::launch_local(
+        OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
-            diff_target: Some(open_request.diff_target.clone()),
-            active_commit: open_request.active_commit.clone(),
-        })
-        .send()
-        .context("failed to connect to review server")?
-        .error_for_status()
-        .context("server refused to open session")?
-        .json()
-        .context("failed to decode session response")?;
-
-    Ok(format!("{}/review/{}", server_url(), opened.session_id))
+            diff_target: Some(open_request.diff_target),
+            active_commit: open_request.active_commit,
+        },
+        frame,
+    )?;
+    crate::native::run(launch)
 }
 
 fn print_help(frame: Frame) {
@@ -382,7 +259,6 @@ Usage:
   {program} <before-path> <after-path>
   {program} <commit>
   {program} diff <target>
-  {program} --web
   {program} --pick
   {program} --repo <path>
   {program} --remote <host> [--repo <path>]
@@ -398,7 +274,6 @@ Examples:
   {program} before.json after.json
   {program} 4542abe
   {program} diff dev
-  {program} --web
   {program} --remote dev-box --repo /home/you/project
 
 Run `{program}` inside any git repository you want to work in.
@@ -423,10 +298,9 @@ Desktop launchers:
   application menu as well as from a shell. The window has the same thing in its menu.
   A window opened that way starts outside any repo, so it asks which repo to open.
 
-Frontends:
-  By default the window carries the review server inside it, so the same review can be
-  opened in a browser.
-  `--web` opens a browser tab against a background server instead.
+Reviewing another machine's repo:
+  The window carries the review server inside it, so a window elsewhere can be pointed at
+  this repo.
   `--remote <host>` opens the window against a `serve` on another machine, where the repo
   lives; `--repo <path>` then names the path there, and without it the window asks.
   `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
@@ -438,8 +312,8 @@ Moontasks:
   The columns are the board's own - rename them, reorder them, add and remove them - and a
   finished agent is reflected on its card the next time the board reads the folder.
 
-Use `--logs` with `--web` or `serve` to run the server in the foreground and print
-agent/failure logs until you stop it with Ctrl+C.
+Use `--logs` with `serve` to run the server in the foreground and print agent/failure logs
+until you stop it with Ctrl+C.
 Changed submodules are offered inside the review, as extra reviews you can open from the
 command palette.",
         siblings = siblings.join("\n")
@@ -447,41 +321,5 @@ command palette.",
 }
 
 fn print_version(frame: Frame) {
-    println!("{} {}", frame.program(), env!("MOONREVIEW_VERSION"));
-}
-
-fn ensure_server_running(logs: bool) -> Result<()> {
-    if server_is_running()? {
-        if logs {
-            eprintln!(
-                "moonreview server already running; restart it to attach logs to this terminal"
-            );
-        }
-        return Ok(());
-    }
-
-    let exe = env::current_exe().context("failed to locate current executable")?;
-    let mut command = Command::new(exe);
-    command.arg("serve").stdin(Stdio::null());
-    if !logs {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
-    }
-    command.spawn().context("failed to spawn review server")?;
-
-    if logs {
-        println!("Moon Review server logs attached to this terminal.");
-    }
-
-    for _ in 0..30 {
-        if server_is_running()? {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    bail!("review server did not become ready on {}", server_url())
-}
-
-fn server_is_running() -> Result<bool> {
-    Ok(TcpStream::connect((client_host(), port()?)).is_ok())
+    println!("{} {}", frame.program(), env!("CARGO_PKG_VERSION"));
 }

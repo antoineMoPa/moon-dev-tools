@@ -58,7 +58,6 @@ fn a_shell_that_exits_closes_its_tab() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -153,7 +152,6 @@ fn restarting_closes_the_window_a_shell_is_still_running_in() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Shell,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -274,7 +272,6 @@ fn quitting_with_a_shell_still_running_asks_first() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);

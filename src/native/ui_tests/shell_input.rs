@@ -183,7 +183,6 @@ fn tab_stays_with_the_shell_instead_of_moving_focus() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -283,7 +282,6 @@ fn raising_a_shell_tab_hands_it_the_keyboard() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -384,7 +382,6 @@ fn dragging_over_a_shell_selects_its_text() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);
@@ -570,7 +567,6 @@ fn the_wheel_scrolls_a_shell_pane() {
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame: crate::cli::Frame::Review,
     };
     let mut app = App::new(egui::Context::default(), launch);

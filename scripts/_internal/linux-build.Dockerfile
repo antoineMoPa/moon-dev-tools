@@ -24,8 +24,6 @@ RUN apt-get update \
         libc6-dev-arm64-cross \
         libc6-dev-amd64-cross \
         git \
-        nodejs \
-        npm \
         pkg-config \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*

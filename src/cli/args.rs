@@ -27,19 +27,17 @@ pub(super) enum CliCommand {
     OpenRepo(String),
     Review {
         target: ReviewTarget,
-        logs: bool,
-        frontend: Frontend,
+        source: ReviewSource,
     },
 }
 
-/// Which frontend a review opens in.
+/// Which machine the repo being reviewed is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Frontend {
-    /// The desktop window, with the server in the same process.
-    Native,
-    /// A browser tab against a background server, which is how moonreview started out.
-    Web,
-    /// The desktop window, reviewing a repo on another machine through its `serve`.
+pub(super) enum ReviewSource {
+    /// The repo this shell is in, reviewed by a window carrying the server in its own
+    /// process.
+    ThisMachine,
+    /// A repo on another machine, reviewed through its `serve`.
     Remote {
         target: String,
         repo_path: Option<String>,
@@ -64,7 +62,6 @@ pub(super) struct ReviewOpenRequest {
 
 pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliCommand> {
     let mut logs = false;
-    let mut web = false;
     let mut pick = false;
     let mut remote: Option<String> = None;
     let mut repo: Option<String> = None;
@@ -75,7 +72,6 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
         match arg.as_str() {
             "--logs" => logs = true,
             "--pick" => pick = true,
-            "--web" => web = true,
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
             "--remote" => {
@@ -101,12 +97,9 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
         }
     }
 
-    if web && remote.is_some() {
-        bail!("--web and --remote are different frontends; pick one");
-    }
-    // A remote window with no --repo already opens on the repo prompt, and a browser tab has
-    // no launch screen to show, so --pick is the window's own and asks for nothing else.
-    if pick && (web || remote.is_some() || logs || !positional.is_empty()) {
+    // A remote window with no --repo already opens on the repo prompt, so --pick is the
+    // window's own and asks for nothing else.
+    if pick && (remote.is_some() || logs || !positional.is_empty()) {
         bail!("--pick opens the window on its launch screen, so it takes nothing else");
     }
     if pick {
@@ -117,24 +110,28 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
     if let Some(path) = &repo
         && remote.is_none()
     {
-        if web || logs || !positional.is_empty() {
+        if logs || !positional.is_empty() {
             bail!("--repo opens the window on that repo, so it takes nothing else");
         }
         return Ok(CliCommand::OpenRepo(path.clone()));
     }
 
-    let frontend = match (web, remote) {
-        (true, _) => Frontend::Web,
-        (false, Some(target)) => Frontend::Remote {
+    // `--logs` prints what the review server is doing, and `serve` is the only command that
+    // runs one in this terminal.
+    if logs && positional.first().map(String::as_str) != Some("serve") {
+        bail!("--logs prints the review server's logs, so it goes with `serve`");
+    }
+
+    let source = match remote {
+        Some(target) => ReviewSource::Remote {
             target,
             repo_path: repo,
         },
-        (false, None) => Frontend::Native,
+        None => ReviewSource::ThisMachine,
     };
     let review = |target: ReviewTarget| CliCommand::Review {
         target,
-        logs,
-        frontend: frontend.clone(),
+        source: source.clone(),
     };
 
     match positional.as_slice() {

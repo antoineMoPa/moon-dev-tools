@@ -66,8 +66,8 @@ pub(crate) fn small_spinner(ui: &mut Ui, color: Color32) -> Response {
     response
 }
 
-/// The cursor anything clickable shows, the way the web frontend's `cursor: pointer` does.
-/// Everything the pointer can act on goes through here, so the two frontends feel the same.
+/// The cursor anything clickable shows. Everything the pointer can act on goes through here,
+/// so the whole window answers a hover the same way.
 pub(crate) fn clickable(response: Response) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }

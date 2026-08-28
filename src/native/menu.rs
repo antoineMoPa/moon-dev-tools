@@ -8,7 +8,6 @@
 /// Something the menu asked for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MenuAction {
-    OpenInBrowser,
     ToggleTheme,
     OpenCommandPalette,
     /// Ask the OS which file of the repo to open for editing.
@@ -40,7 +39,6 @@ mod platform {
     /// The menu, kept alive for as long as the window: dropping it would take the bar with it.
     pub(crate) struct NativeMenu {
         _menu: Menu,
-        open_in_browser: MenuId,
         toggle_theme: MenuId,
         command_palette: MenuId,
         open_file: MenuId,
@@ -54,12 +52,11 @@ mod platform {
     }
 
     impl NativeMenu {
-        /// Install the menu bar. `serves_web` decides whether the browser item is offered at
-        /// all, since a window with no server behind it has nothing to open; `picks_files`
-        /// the same for Open File, which needs the repo to be on this machine for the OS
-        /// picker to reach it. `frame` is which of the three programs this window is - the
-        /// one whose new window takes ⌘N.
-        pub(crate) fn install(serves_web: bool, picks_files: bool, frame: Frame) -> Option<Self> {
+        /// Install the menu bar. `picks_files` decides whether Open File is offered at all,
+        /// since it needs the repo to be on this machine for the OS picker to reach it.
+        /// `frame` is which of the three programs this window is - the one whose new window
+        /// takes ⌘N.
+        pub(crate) fn install(picks_files: bool, frame: Frame) -> Option<Self> {
             let menu = Menu::new();
 
             // Written on demand rather than by the installer, which drops executables on PATH
@@ -93,11 +90,6 @@ mod platform {
             let file_menu = Submenu::new("File", true);
             file_menu.append(&open_file).ok()?;
 
-            let open_in_browser = MenuItem::new(
-                "Open in Browser",
-                serves_web,
-                Some(Accelerator::new(Some(Modifiers::META), Code::KeyB)),
-            );
             let toggle_theme = MenuItem::new(
                 "Switch Light and Dark",
                 true,
@@ -115,8 +107,6 @@ mod platform {
             let view_menu = Submenu::new("View", true);
             view_menu
                 .append_items(&[
-                    &open_in_browser,
-                    &PredefinedMenuItem::separator(),
                     &toggle_theme,
                     &command_palette,
                 ])
@@ -201,7 +191,6 @@ mod platform {
 
             Some(Self {
                 _menu: menu,
-                open_in_browser: open_in_browser.id().clone(),
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
                 open_file: open_file.id().clone(),
@@ -221,9 +210,7 @@ mod platform {
         pub(crate) fn drain(&self) -> Vec<MenuAction> {
             let mut actions = Vec::new();
             while let Ok(event) = MenuEvent::receiver().try_recv() {
-                let action = if event.id == self.open_in_browser {
-                    MenuAction::OpenInBrowser
-                } else if event.id == self.toggle_theme {
+                let action = if event.id == self.toggle_theme {
                     MenuAction::ToggleTheme
                 } else if event.id == self.command_palette {
                     MenuAction::OpenCommandPalette
@@ -264,7 +251,6 @@ mod platform {
 
     impl NativeMenu {
         pub(crate) fn install(
-            _serves_web: bool,
             _picks_files: bool,
             _frame: crate::cli::Frame,
         ) -> Option<Self> {

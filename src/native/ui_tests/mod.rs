@@ -142,7 +142,7 @@ impl Drop for Fixture {
     }
 }
 
-/// Build the window over a local backend, with no web server: the tests are about the UI.
+/// Build the window over a local backend, with no server behind it: the tests are about the UI.
 pub(crate) fn app_for(repo_path: &Path, theme: ThemeMode) -> App {
     app_for_frame(repo_path, theme, crate::cli::Frame::Review)
 }
@@ -157,7 +157,6 @@ fn app_for_frame(repo_path: &Path, theme: ThemeMode, frame: crate::cli::Frame) -
             diff_target: None,
             active_commit: None,
         }),
-        serves_web: false,
         frame,
     };
 

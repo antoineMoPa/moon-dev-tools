@@ -91,7 +91,6 @@ pub(crate) struct App {
     pub(crate) attaching: AttachInbox,
     /// Panes whose terminal could not be attached, so the pane can say so.
     pub(crate) terminal_errors: HashMap<String, String>,
-    pub(crate) serves_web: bool,
     last_poll: Instant,
     last_board_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
@@ -210,7 +209,6 @@ impl App {
             frames: Frames::new(),
             attaching: Arc::new(Mutex::new(Vec::new())),
             terminal_errors: HashMap::new(),
-            serves_web: launch.serves_web,
             // Backdated so the first frame fetches instead of waiting out an interval.
             last_poll: Instant::now()
                 .checked_sub(POLL_INTERVAL)
@@ -252,7 +250,7 @@ impl App {
     /// not where a test runs.
     pub(crate) fn install_menu(&mut self) {
         let picks_files = self.backend().reads_this_machine();
-        self.menu = NativeMenu::install(self.serves_web, picks_files, self.frame);
+        self.menu = NativeMenu::install(picks_files, self.frame);
     }
 
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {

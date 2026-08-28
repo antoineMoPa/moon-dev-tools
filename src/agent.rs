@@ -46,15 +46,13 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
                 "File: {}\n",
                 "Hunk: {}\n\n",
                 "Selected code:\n{}\n\n",
-                "Issue:\n{}\n\n",
-                "Moonreview UI:\n{}\n",
+                "Issue:\n{}\n",
             ),
             job.repo_path.display(),
             target.file_path,
             target.header,
             target.selection,
             target.comment,
-            job.ui_url,
         );
     }
 
@@ -63,13 +61,10 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
             "Moon Review batch\n",
             "=================\n",
             "Please address all of the following code review comments in one pass.\n\n",
-            "Repository: {}\n",
-            "Moonreview UI:\n",
-            "{}\n\n",
+            "Repository: {}\n\n",
             "Comments:\n\n",
         ),
         job.repo_path.display(),
-        job.ui_url,
     );
 
     for (index, target) in job.targets.iter().enumerate() {

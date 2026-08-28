@@ -5,8 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-TAG="v$PACKAGE_VERSION"
+TAG="v$(bash "$ROOT_DIR/scripts/_internal/version.sh")"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
 # The three executables Cargo builds. install.sh expects every one of them in the archive.
@@ -99,8 +98,6 @@ require_zig() {
 zig $ZIG_MAJOR_MINOR.x is required to build the native window's terminal.
 
   brew install zig@$ZIG_MAJOR_MINOR
-
-Or build the web frontend only, with: cargo build --release --no-default-features
 EOF
         exit 1
     fi
@@ -168,7 +165,7 @@ build_linux() {
             # does not match the container user, so git refuses to touch it without this.
             git config --global --add safe.directory "*"
             cargo build --release --locked --target "$LINUX_TARGET_TRIPLE"
-            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
+            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home 2>/dev/null || true
         '
 
     package_binaries "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release"

@@ -1,7 +1,7 @@
 //! The before/after view of a changed image.
 //!
-//! The server hands both sides over as `data:` URIs, which is what the web frontend puts in an
-//! `<img>` tag. egui has no loader for that scheme, so each side is decoded here once and given
+//! The server hands both sides over as `data:` URIs. egui has no loader for that scheme, so
+//! each side is decoded here once and given
 //! to egui as bytes under a `bytes://` URI derived from the image's own content - which is also
 //! what makes egui drop the old texture when the picture changes.
 

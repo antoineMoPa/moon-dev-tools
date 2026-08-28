@@ -1,8 +1,8 @@
-//! Review operations shared by both frontends.
+//! Review operations, wherever they are asked for.
 //!
-//! The axum routes in [`crate::server`] and the native egui app in [`crate::native`] are
-//! two skins over this module. Everything here is synchronous and takes `&AppState`, so
-//! the native app calls it directly instead of talking HTTP to itself.
+//! The window in [`crate::native`] calls these directly, and the axum routes in
+//! [`crate::server`] are the same calls for a window on another machine. Everything here is
+//! synchronous and takes `&AppState`, so a local window never talks HTTP to itself.
 
 use std::{
     collections::{HashMap, HashSet},

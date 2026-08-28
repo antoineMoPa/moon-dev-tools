@@ -1,6 +1,6 @@
 //! The review's left column: the files that changed, then the commits they belong to.
 //!
-//! Mirrors `web/src/components/LeftSidebar.tsx`, minus its comments list - comments have a
+//! The review's left sidebar, minus a comments list - comments have a
 //! window of their own.
 
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
@@ -72,7 +72,7 @@ fn draw_files_section(
     is_commit_review: bool,
     palette: &Palette,
 ) {
-    // What the whole review adds up to, the way the web frontend heads its file list.
+    // What the whole review adds up to, at the head of the file list.
     let added: usize = files.iter().map(|file| file.added_line_count).sum();
     let removed: usize = files.iter().map(|file| file.removed_line_count).sum();
     widgets::section_header(ui, "files", palette, |ui| {
@@ -112,7 +112,7 @@ fn stage_status_color(status: FileStageStatus, palette: &Palette) -> Color32 {
 }
 
 /// Staged goes back to unstaged; anything else - unstaged or half-staged - is staged whole.
-/// The same rule the web sidebar's status badge follows.
+/// The rule the sidebar's status badge follows.
 fn toggle_file_stage(app: &mut App, session_id: &str, file: &SidebarFile) {
     let path = file.file_path.clone();
     let for_call = session_id.to_string();
@@ -145,7 +145,7 @@ fn draw_file_row(
     let response = widgets::clickable(response);
     let hovered = response.hovered();
 
-    // The staging dot doubles as the control for it, the way the web sidebar's status badge
+    // The staging dot doubles as the control for it, the way the sidebar's status badge
     // does. It sits on top of the row, so it takes the click the row would otherwise get.
     let can_stage = !read_only && !is_commit_review;
     let dot_center = egui::pos2(rect.min.x + 6.0, rect.center().y);

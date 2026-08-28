@@ -5,8 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-TAG="v$PACKAGE_VERSION"
+TAG="v$(bash "$ROOT_DIR/scripts/_internal/version.sh")"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 TARGET_TRIPLES=(
     "aarch64-apple-darwin"
@@ -33,7 +32,7 @@ for target_triple in "${TARGET_TRIPLES[@]}"; do
 done
 
 if gh release view "$TAG" >/dev/null 2>&1; then
-    echo "release $TAG already exists; run 'npm version minor' before uploading release assets" >&2
+    echo "release $TAG already exists; bump the version in Cargo.toml before uploading release assets" >&2
     exit 1
 else
     echo "Creating release $TAG and uploading assets..."

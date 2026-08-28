@@ -1,4 +1,4 @@
-//! The desktop frontend: one window, and - when it is reviewing the machine it runs on -
+//! The window: one of them per process, and - when it is reviewing the machine it runs on -
 //! the review server in the same process and the same executable.
 
 pub(crate) mod app;
@@ -45,51 +45,42 @@ pub(crate) struct Launch {
     /// The review to open on startup. `None` means ask, which is what a remote connection
     /// does when it was given an address but no path.
     pub(crate) open: Option<OpenSessionRequest>,
-    /// Whether a browser can reach this review, which decides if the window offers the link.
-    pub(crate) serves_web: bool,
     /// What the window opens on: which of the three executables this is.
     pub(crate) frame: crate::cli::Frame,
 }
 
-/// Review the repo on this machine. The window and the web frontend end up sharing one
-/// server, in this process, so the same review is open in both.
-pub(crate) fn launch_local(
-    open: OpenSessionRequest,
-    serve_web: bool,
-    frame: crate::cli::Frame,
-) -> Result<Launch> {
+/// Review the repo on this machine. The review server runs in this process, so a window on
+/// another machine can be pointed at the same repo with `--remote`.
+pub(crate) fn launch_local(open: OpenSessionRequest, frame: crate::cli::Frame) -> Result<Launch> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = server::build_state(last_activity);
 
-    if serve_web {
-        let served_state = state.clone();
-        // No idle timeout: the window decides how long this process lives, not the clock.
-        thread::Builder::new()
-            .name("moonreview-server".to_string())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        eprintln!("[moonreview] could not start the web server: {error}");
-                        return;
-                    }
-                };
-                if let Err(error) = runtime.block_on(server::serve(served_state, None)) {
-                    // A busy port is the common case, and it is not fatal: the window works
-                    // either way, it just cannot also be opened in a browser.
-                    eprintln!("[moonreview] web frontend unavailable: {error}");
+    let served_state = state.clone();
+    // No idle timeout: the window decides how long this process lives, not the clock.
+    thread::Builder::new()
+        .name("moonreview-server".to_string())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("[moonreview] could not start the review server: {error}");
+                    return;
                 }
-            })
-            .context("failed to start the web server thread")?;
-    }
+            };
+            if let Err(error) = runtime.block_on(server::serve(served_state, None)) {
+                // A busy port is the common case, and it is not fatal: the window works
+                // either way, it just cannot also be reached from another machine.
+                eprintln!("[moonreview] review server unavailable: {error}");
+            }
+        })
+        .context("failed to start the review server thread")?;
 
     Ok(Launch {
         backend: Arc::new(LocalBackend::new(state)),
         open: Some(open),
-        serves_web: serve_web,
         frame,
     })
 }
@@ -110,7 +101,6 @@ pub(crate) fn launch_remote(
     Ok(Launch {
         backend: Arc::new(backend),
         open,
-        serves_web: true,
         frame,
     })
 }
@@ -123,8 +113,6 @@ pub(crate) fn launch_prompt(frame: crate::cli::Frame) -> Result<Launch> {
     Ok(Launch {
         backend: Arc::new(LocalBackend::new(server::build_state(last_activity))),
         open: None,
-        // Nothing is served until a repo is picked, and the window is the only frontend then.
-        serves_web: false,
         frame,
     })
 }

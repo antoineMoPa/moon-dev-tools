@@ -19,7 +19,7 @@ use crate::{
 use super::{Fixture, app_for, seeded_fixture, click_at, settle};
 
 /// Clicking a diff line selects it and opens the comment composer in one gesture, the way
-/// selecting text does in the web frontend.
+/// selecting text does.
 #[test]
 fn clicking_a_diff_line_opens_the_comment_composer() {
     let fixture = seeded_fixture("comment");
@@ -457,7 +457,7 @@ fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
     );
 }
 
-/// The sidebar's staging dot is also the control for it, the way the web sidebar's status
+/// The sidebar's staging dot is also the control for it, the way its status
 /// badge is: one click stages the whole file, the next one takes it back out of the index.
 #[test]
 fn clicking_a_file_staging_dot_stages_the_whole_file() {

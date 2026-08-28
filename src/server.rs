@@ -1,5 +1,5 @@
-//! The HTTP surface for the web frontend. Every route is a thin wrapper over
-//! [`crate::service`], which the native frontend calls directly.
+//! The HTTP surface a remote window reviews through. Every route is a thin wrapper over
+//! [`crate::service`], which a window on this machine calls directly.
 
 use std::{
     sync::{Arc, Mutex},
@@ -32,12 +32,8 @@ use crate::{
 };
 
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
-const INDEX_HTML: &str = include_str!("index.html");
-const APP_JS: &str = include_str!("../web/dist/app.js");
-const APP_CSS: &str = include_str!("../web/dist/app.css");
-
-/// The state both frontends share. The native app builds this once and hands a clone to
-/// the background server, so a review is the same review in the window and in the browser.
+/// The state the window and the server share. The app builds this once and hands a clone to
+/// the server it carries, so a remote window reviews the same sessions this one does.
 pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
     AppState {
         inner: Arc::new(Mutex::new(ServerState::default())),
@@ -51,9 +47,6 @@ pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/healthz", get(healthz))
-        .route("/review/{session_id}", get(review_page))
-        .route("/assets/app.js", get(app_js))
-        .route("/assets/app.css", get(app_css))
         .route(
             "/api/session/{session_id}/resolve/{hunk_id}/{comment_index}",
             get(resolve_comment),
@@ -200,8 +193,8 @@ pub(crate) async fn run_server() -> Result<()> {
     serve(state, Some(last_activity)).await
 }
 
-/// Serve the web frontend. `idle_shutdown` is the clock the standalone server stops on;
-/// the native app passes `None` because its window decides when the process ends.
+/// Serve the review API. `idle_shutdown` is the clock the standalone server stops on;
+/// a window passes `None` because it decides when the process ends itself.
 pub(crate) async fn serve(
     state: AppState,
     idle_shutdown: Option<Arc<Mutex<Instant>>>,
@@ -273,36 +266,12 @@ fn mark_activity(state: &AppState) {
 
 async fn root(State(state): State<AppState>) -> impl IntoResponse {
     mark_activity(&state);
-    Html("<!doctype html><title>Moon Review</title><p>Open via the CLI in a git repo.</p>")
+    Html("<!doctype html><title>Moon Review</title><p>A review server. Point a window at it with `moonreview --remote`.</p>")
 }
 
 async fn healthz(State(state): State<AppState>) -> &'static str {
     mark_activity(&state);
     "ok"
-}
-
-async fn review_page(State(state): State<AppState>) -> Html<&'static str> {
-    mark_activity(&state);
-    Html(INDEX_HTML)
-}
-
-async fn app_js(State(state): State<AppState>) -> impl IntoResponse {
-    mark_activity(&state);
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        APP_JS,
-    )
-}
-
-async fn app_css(State(state): State<AppState>) -> impl IntoResponse {
-    mark_activity(&state);
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        APP_CSS,
-    )
 }
 
 async fn session_submodules(

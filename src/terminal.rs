@@ -134,8 +134,8 @@ impl TerminalSpec {
     }
 }
 
-/// A shell that lives in the server, not in the browser tab: closing the tab detaches
-/// the websocket while the pty keeps running, so reopening it resumes the same shell.
+/// A shell that lives in the server, not in the tab showing it: closing the tab detaches
+/// from the pty while it keeps running, so reopening it resumes the same shell.
 pub(crate) struct TerminalSession {
     owner: Option<String>,
     /// What it was started as. A task's plain shells are listed from here, because they are
@@ -174,13 +174,12 @@ pub(crate) struct TerminalSession {
 
 impl TerminalSession {
     /// Whether the shell has ended. Set by the reader thread when the pty reaches EOF.
-    #[cfg(feature = "native")]
     pub(crate) fn has_exited(&self) -> bool {
         *self.exited.borrow()
     }
 
-    // The native window drives a pty directly; a web tab goes through the websocket.
-    #[cfg(feature = "native")]
+    // A window on this machine drives the pty directly; a remote one goes through the
+    // websocket.
     pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
         self.typed_into.store(true, Ordering::Relaxed);
@@ -189,7 +188,6 @@ impl TerminalSession {
 
     /// The terminal answering the program's own query. It goes to the same place a keystroke
     /// does, but it is not one: nobody typed it, so it does not call off the type-ahead.
-    #[cfg(feature = "native")]
     pub(crate) fn write_reply(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
         self.write_to_child(data)
@@ -205,7 +203,6 @@ impl TerminalSession {
         Ok(())
     }
 
-    #[cfg(feature = "native")]
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         self.master.lock().unwrap().resize(PtySize {
             rows,
@@ -273,7 +270,6 @@ impl TerminalRegistry {
     /// Attach the native window to a shell: everything it has printed so far, then
     /// everything it prints from here on, delivered to whichever thread owns the
     /// terminal emulator. Web tabs attach to the same shell over a websocket.
-    #[cfg(feature = "native")]
     pub(crate) fn attach(
         &self,
         terminal_id: &str,
@@ -473,8 +469,8 @@ impl TerminalRegistry {
                 }
             }
             // An agent that fell over on its own - `claude --resume` on a session id that no
-            // longer exists, say - has printed the only account of what went wrong, and both
-            // frontends close the tab of a shell marked exited. So its session is kept, with a
+            // longer exists, say - has printed the only account of what went wrong, and the
+            // window closes the tab of a shell marked exited. So its session is kept, with a
             // notice saying how it ended, until the user closes it themselves. A shell taken
             // out of the registry already was ended on purpose, and has nothing to explain.
             match failure_notice(&session) {

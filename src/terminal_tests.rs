@@ -105,7 +105,6 @@ fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
 /// A terminal answers the program's own questions the moment it attaches, and those
 /// answers travel the same way keystrokes do - but they are not somebody typing, and a
 /// tab being open must not be what stops the title going in.
-#[cfg(feature = "native")]
 #[test]
 fn a_reply_to_the_program_is_not_somebody_typing() {
     let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));

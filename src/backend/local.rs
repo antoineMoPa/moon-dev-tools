@@ -1,5 +1,5 @@
 //! Reviews the repo in this process. Calls [`crate::service`] straight through, so the
-//! window and any browser tab pointed at the embedded server see one shared review.
+//! window and anything reaching the embedded server see one shared review.
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
         FileContentPayload, ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleView, server_url,
+        SessionPayload, SubmoduleView,
     },
     backend::Backend,
     moontasks::{
@@ -64,10 +64,6 @@ impl Backend for LocalBackend {
 
     fn reads_this_machine(&self) -> bool {
         true
-    }
-
-    fn web_url(&self, session_id: &str) -> String {
-        format!("{}/review/{session_id}", server_url())
     }
 
     fn connect_target(&self) -> Option<String> {
