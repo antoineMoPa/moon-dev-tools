@@ -30,7 +30,8 @@ echo "Bumping $VERSION to $NEXT_VERSION..."
 sed -i '' "s/^version = \"$VERSION\"$/version = \"$NEXT_VERSION\"/" Cargo.toml
 cargo update --workspace --offline
 git commit -am "v$NEXT_VERSION"
-git tag "v$NEXT_VERSION"
+# Annotated, since `git push --follow-tags` below skips lightweight tags.
+git tag -a "v$NEXT_VERSION" -m "v$NEXT_VERSION"
 
 git push --follow-tags
 bash scripts/bin-release.sh
