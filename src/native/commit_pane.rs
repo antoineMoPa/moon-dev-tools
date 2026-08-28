@@ -473,6 +473,7 @@ impl App {
                     pane.suggestion_asked = false;
                     pane.closes_review = true;
                 }
+                let pull_request_is_open = run.worked() && run.kind == RunKind::OpenPr;
                 if run.worked() {
                     pane.reached = match run.kind {
                         RunKind::Commit => Reached::Committed,
@@ -485,6 +486,15 @@ impl App {
                 // hook that changed the tree.
                 pane.stale = true;
                 model.review(&for_apply).refresh_requested = true;
+
+                // The pull request is the last thing this review is for: it is open in the
+                // browser, and what is left on screen is a pane with no button still worth
+                // pressing. Closing both is what the user would do next by hand, and the
+                // window goes with them when they were the last of it.
+                if pull_request_is_open {
+                    model.close_review_panes(&for_apply);
+                    model.close_commit_pane(&for_apply);
+                }
             },
         );
     }

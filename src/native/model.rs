@@ -571,6 +571,19 @@ impl Model {
         }
     }
 
+    /// The same for the commit pane of a review, once it has done what it was opened for.
+    pub(crate) fn close_commit_pane(&mut self, session_id: &str) {
+        let committing: Vec<_> = self
+            .layout
+            .panes()
+            .filter(|(_, pane)| pane.commits(session_id))
+            .map(|(pane_id, _)| pane_id)
+            .collect();
+        for pane_id in committing {
+            self.layout.close_pane(pane_id);
+        }
+    }
+
     pub(crate) fn toast(&mut self, kind: ToastKind, text: impl Into<String>) {
         let text = text.into();
         // A repeated message means the same thing; refresh it instead of stacking copies.

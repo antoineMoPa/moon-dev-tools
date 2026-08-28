@@ -407,6 +407,38 @@ fn pushing_a_branch_that_tracks_another_name_sends_it_under_its_own() {
     assert_eq!(after.ahead, 0, "the remote has everything this branch has");
 }
 
+/// The pull request is the last thing the pane is for: once `gh` has opened it in the browser
+/// there is no button left worth pressing, so the pane goes the way pressing `close` sends it -
+/// and the review beside it goes with it, rather than being left as clutter.
+#[test]
+fn the_commit_pane_of_a_review_is_closed_by_the_session_it_belongs_to() {
+    use crate::native::panes::OpenPaneRequest;
+
+    let fixture = seeded_fixture("commit-pane-close");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let session_id = app.model.root_session_id.clone();
+    app.open_pane(OpenPaneRequest::Commit {
+        session_id: session_id.clone(),
+    });
+
+    let kinds = |app: &crate::native::app::App| -> Vec<PaneKind> {
+        app.model.layout.panes().map(|(_, pane)| pane.kind()).collect()
+    };
+    assert!(
+        kinds(&app).contains(&PaneKind::Commit),
+        "the commit pane should have opened, panes are {:?}",
+        kinds(&app)
+    );
+
+    app.model.close_commit_pane(&session_id);
+
+    assert!(
+        !kinds(&app).contains(&PaneKind::Commit),
+        "the commit pane should have closed, panes are {:?}",
+        kinds(&app)
+    );
+}
+
 /// A pane restored from a saved arrangement is a commit pane like any other.
 #[test]
 fn a_commit_pane_names_its_tab() {

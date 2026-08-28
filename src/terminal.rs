@@ -70,7 +70,7 @@ pub(crate) struct TerminalList {
 
 /// What runs in a pty: the user's login shell, or one of the agents.
 ///
-/// A commit run is a login shell too, with the command typed into it - see
+/// A commit run is a login shell too, given its command as a `-c` script - see
 /// [`crate::committing::start_commit_run`] for why it is a shell rather than `git` itself.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum TerminalProgram {
@@ -112,7 +112,7 @@ pub(crate) struct TerminalSpec {
     /// exactly as given, down to whether it ends in a return.
     ///
     /// An agent's opening line ends without one: what that does is leave something written in
-    /// the agent's box for the person to send. A commit run's line ends with `\r`, because
+    /// the agent's box for the person to send. A build or run command ends with `\r`, because
     /// there is nobody to press return on a command the pane was asked to run. A write that
     /// lands too early - while the agent is still asking whether it trusts the folder - is
     /// lost rather than acted on, which is what makes typing at a program that has not said it
@@ -134,7 +134,7 @@ impl TerminalSpec {
     }
 
     /// The same shell with one command typed into it and sent, which is how a project's build
-    /// and run are started - the way `committing::start_commit_run` runs git.
+    /// and run are started.
     ///
     /// The shell outlives the command: what it printed is still there to read, and the same
     /// tab is where the command is run again.

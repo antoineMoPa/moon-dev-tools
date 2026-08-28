@@ -105,6 +105,11 @@ impl Pane {
     pub(crate) fn reviews(&self, session_id: &str) -> bool {
         matches!(self, Self::Review { session_id: open, .. } if open == session_id)
     }
+
+    /// Whether this pane is the commit pane of one particular review.
+    pub(crate) fn commits(&self, session_id: &str) -> bool {
+        matches!(self, Self::Commit { session_id: open } if open == session_id)
+    }
 }
 
 /// A pane the user asked for, before it has a name.

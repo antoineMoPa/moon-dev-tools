@@ -2,7 +2,7 @@
 //!
 //! Both run as `git` in a pty rather than as a captured process: commits here are signed, and
 //! the only pinentry many machines have is a terminal one, so the passphrase prompt needs a
-//! terminal to appear on. See [`crate::terminal::TerminalProgram::Command`].
+//! terminal to appear on. See [`crate::terminal::TerminalProgram::LoginShell`].
 
 use std::path::Path;
 
@@ -66,8 +66,8 @@ pub(crate) enum CommitAction {
 }
 
 /// The environment the run's shell is given: where to read the commit message from, and where
-/// to write down how the command went. Both are named rather than spelled out in the line that
-/// is typed, so what the user reads on that line is the command they would have typed.
+/// to write down how the command went. Both are named rather than spelled out in the command,
+/// so what the pane shows is the command the user would have typed.
 const MESSAGE_VARIABLE: &str = "MOONREVIEW_RUN_MESSAGE";
 const STATUS_VARIABLE: &str = "MOONREVIEW_RUN_STATUS";
 
@@ -146,6 +146,34 @@ pub(crate) fn command_for(action: &CommitAction, state: &CommitState) -> Result<
             Ok("gh pr create -w".to_string())
         }
     }
+}
+
+/// The script the run's shell is started with, rather than typed into.
+///
+/// A line typed at an interactive prompt is written to the user's shell history, and the part
+/// of it that writes the status down is noise in a history they read: `-c` runs the script
+/// without a prompt, so nothing a run does is remembered there.
+///
+/// The script prints the command first, so the pane shows what ran the way a prompt would
+/// have; then it writes down how the command went; then it hands the pty to an interactive
+/// login shell, so the output stays on screen above a shell to carry on in.
+fn run_script(command: &str) -> String {
+    let login_shell = crate::shell_path::login_shell();
+    let printed = single_quoted(command);
+    let shell = single_quoted(&login_shell);
+    [
+        format!("printf '%s\\n' {printed}"),
+        command.to_string(),
+        format!("echo $? > \"${STATUS_VARIABLE}\""),
+        format!("exec {shell} -l"),
+    ]
+    .join("\n")
+}
+
+/// A string a shell reads back as itself: single quotes hold every character literally, and
+/// the one they cannot hold is closed, escaped, and reopened.
+fn single_quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn ahead_behind(repo_path: &Path, upstream: &str) -> Result<(usize, usize)> {
@@ -246,11 +274,13 @@ fn repo_of(
 /// through pinentry, and a terminal pinentry has nowhere to ask without one. The same goes for
 /// anything a hook, or a push over ssh, wants typed.
 ///
-/// A login shell rather than the program itself because of what happens after: the shell is
-/// still there when the command is done, in the repo, with the output above it, so the pane's
-/// terminal is one to work in rather than a transcript to read. The shell has no exit code to
-/// report for the command it ran - it outlives it - so the line it is given writes that status
-/// down where [`commit_run_outcome`] reads it.
+/// A login shell rather than the program itself because of what happens after: the shell the
+/// script ends by exec-ing is still there when the command is done, in the repo, with the
+/// output above it, so the pane's terminal is one to work in rather than a transcript to read.
+///
+/// The command is run by that shell's `-c` rather than typed at its prompt, so none of it -
+/// least of all the `echo` that writes the status down where [`commit_run_outcome`] reads it -
+/// is added to the history of the user's own shell. See [`run_script`].
 pub(crate) fn start_commit_run(
     state: &crate::api::AppState,
     session_id: &str,
@@ -281,7 +311,7 @@ pub(crate) fn start_commit_run(
     state.terminals.spawn(crate::terminal::TerminalSpec {
         cwd: repo_path,
         program: crate::terminal::TerminalProgram::LoginShell,
-        args: Vec::new(),
+        args: vec!["-c".to_string(), run_script(&command)],
         env: vec![
             (
                 MESSAGE_VARIABLE.to_string(),
@@ -293,9 +323,7 @@ pub(crate) fn start_commit_run(
             ),
         ],
         owner: Some(owner),
-        type_ahead: Some(format!(
-            "{command} ; echo $? > \"${STATUS_VARIABLE}\"\r"
-        )),
+        type_ahead: None,
     })
 }
 
@@ -458,6 +486,46 @@ mod tests {
         let refused = command_for(&CommitAction::OpenPr, &state);
 
         assert!(refused.is_err(), "gh was not installed");
+    }
+
+    /// The user's shell history is theirs: a run is a `-c` script, so what it does is never
+    /// typed at a prompt, and the command itself is one line of that script with the status
+    /// `echo` on a line of its own rather than appended to it.
+    #[test]
+    fn a_run_keeps_the_status_echo_off_the_command_it_runs() {
+        let script = run_script("git push -u origin HEAD");
+        let lines: Vec<&str> = script.lines().collect();
+
+        assert_eq!(
+            lines[1], "git push -u origin HEAD",
+            "the command runs as itself"
+        );
+        assert_eq!(lines[2], "echo $? > \"$MOONREVIEW_RUN_STATUS\"");
+        assert!(
+            lines[0].starts_with("printf "),
+            "the pane is shown what ran, printed {:?}",
+            lines[0]
+        );
+        assert!(
+            lines[3].starts_with("exec "),
+            "the shell to carry on in takes the pty over, ran {:?}",
+            lines[3]
+        );
+    }
+
+    #[test]
+    fn a_command_the_script_prints_is_quoted_so_the_shell_leaves_it_alone() {
+        let script = run_script("git commit -F \"$MOONREVIEW_RUN_MESSAGE\"");
+
+        assert_eq!(
+            script.lines().next(),
+            Some("printf '%s\\n' 'git commit -F \"$MOONREVIEW_RUN_MESSAGE\"'")
+        );
+    }
+
+    #[test]
+    fn a_quote_of_its_own_is_closed_escaped_and_reopened() {
+        assert_eq!(single_quoted("it's"), "'it'\\''s'");
     }
 
     #[test]

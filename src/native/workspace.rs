@@ -234,9 +234,11 @@ impl App {
             OpenPaneRequest::Commit { session_id } => {
                 // One commit pane a review: opening it again brings it forward, with whatever
                 // message was already written still in it.
-                if let Some((pane, _)) = self.model.layout.find_pane(
-                    |pane| matches!(pane, Pane::Commit { session_id: open } if *open == session_id),
-                ) {
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.commits(&session_id))
+                {
                     self.model.layout.focus_pane(pane);
                     return;
                 }
