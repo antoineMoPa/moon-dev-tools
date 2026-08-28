@@ -86,7 +86,7 @@ export function closeTerminal(terminalId: string): Promise<{ terminal_ids: strin
   );
 }
 
-/// The submodules of a reviewed repo that have changes of their own.
+/// Every submodule of a reviewed repo, with how many files are changed in each.
 export function fetchSubmodules(sessionId: string): Promise<Submodule[]> {
   return request<Submodule[]>(`/api/session/${sessionId}/submodules`);
 }

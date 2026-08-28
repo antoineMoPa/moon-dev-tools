@@ -259,6 +259,9 @@ impl App {
                 MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
                 MenuAction::RestartWindow => CommandAction::RestartWindow,
                 MenuAction::OpenFile => CommandAction::OpenFile,
+                MenuAction::OpenSubmodules => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)
+                }
                 MenuAction::NewTab => {
                     self.pending_tab_action = Some(TabAction::New);
                     continue;

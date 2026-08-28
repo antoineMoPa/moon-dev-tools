@@ -243,6 +243,19 @@ impl App {
                 // screen beside it.
                 add_right_column(&mut self.model.layout, Pane::Commit { session_id });
             }
+            OpenPaneRequest::Submodules => {
+                self.model.submodule_filter_focus = true;
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Submodules)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Submodules, active_frame);
+                self.model.layout.add_pane(frame, Pane::Submodules, None);
+            }
             OpenPaneRequest::Tasks => {
                 if let Some((pane, _)) = self
                     .model

@@ -4,8 +4,8 @@ use super::hunks::{
     collect_commit_hunks, collect_hunks, collect_session_hunks, local_change_summary_from_status,
 };
 use super::{
-    branch_commits_since_default, canonicalize_repo, commit_history_page, run_git,
-    run_git_no_output,
+    branch_commits_since_default, canonicalize_repo, commit_history_page,
+    list_submodule_repos, run_git, run_git_no_output,
 };
 use crate::api::{AgentKind, DiffTarget, RepoSession};
 use std::collections::{HashMap, HashSet};
@@ -678,4 +678,62 @@ fn parse_submodule_status_path_handles_plain_and_branch_lines() {
     // Assert
     assert_eq!(plain_path, Some("modules/libfoo"));
     assert_eq!(branch_path, Some("modules/libfoo"));
+}
+
+/// The hub lists every submodule, clean ones included, and says how many files are changed
+/// in each - which is what decides the ones with a review to open.
+#[test]
+fn list_submodule_repos_counts_the_changes_in_every_submodule() {
+    // Arrange
+    let temp = TestDir::new();
+    let parent = temp.path.join("parent");
+    init_test_repo(&parent);
+    fs::write(parent.join("README.md"), "parent\n").expect("failed to write the readme");
+    run_git_no_output(&parent, &["add", "README.md"]).expect("failed to add the readme");
+    run_git_no_output(&parent, &["commit", "-m", "Add the readme"]).expect("failed to commit");
+
+    for name in ["clean", "dirty"] {
+        let child = temp.path.join(name);
+        init_test_repo(&child);
+        fs::write(child.join("lib.rs"), "// lib\n").expect("failed to write the child file");
+        run_git_no_output(&child, &["add", "lib.rs"]).expect("failed to add the child file");
+        run_git_no_output(&child, &["commit", "-m", "Add lib"]).expect("failed to commit");
+        run_git_no_output(
+            &parent,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                child.to_str().expect("a utf-8 path"),
+                name,
+            ],
+        )
+        .expect("failed to add the submodule");
+    }
+    fs::write(parent.join("dirty/lib.rs"), "// changed\n").expect("failed to change the child");
+    fs::write(parent.join("dirty/new.rs"), "// new\n").expect("failed to add a child file");
+
+    // Act
+    let submodules = list_submodule_repos(&parent).expect("failed to list the submodules");
+
+    // Assert
+    let counts: Vec<(String, usize)> = submodules
+        .iter()
+        .map(|submodule| {
+            (
+                submodule
+                    .repo_path
+                    .file_name()
+                    .expect("a submodule directory")
+                    .to_string_lossy()
+                    .to_string(),
+                submodule.changed_file_count,
+            )
+        })
+        .collect();
+    assert_eq!(
+        counts,
+        vec![("clean".to_string(), 0), ("dirty".to_string(), 2)]
+    );
 }

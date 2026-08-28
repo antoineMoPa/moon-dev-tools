@@ -28,7 +28,7 @@ use crate::{
     git::{
         apply_patch, branch_commits_since_default,
         build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
-        commit_history_page, commit_view, current_branch_name, list_changed_submodule_repos,
+        commit_history_page, commit_view, current_branch_name, list_submodule_repos,
         local_change_summary_from_status, preview_patch, read_repo_file, run_git, run_git_no_output,
     },
 };
@@ -247,14 +247,16 @@ pub(crate) fn session_submodules(state: &AppState, session_id: &str) -> Result<V
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
 
-    Ok(list_changed_submodule_repos(&repo_path)?
+    Ok(list_submodule_repos(&repo_path)?
         .into_iter()
-        .map(|path| SubmoduleView {
-            name: path
+        .map(|submodule| SubmoduleView {
+            name: submodule
+                .repo_path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string()),
-            repo_path: path.display().to_string(),
+                .unwrap_or_else(|| submodule.repo_path.display().to_string()),
+            repo_path: submodule.repo_path.display().to_string(),
+            changed_files: submodule.changed_file_count,
         })
         .collect())
 }

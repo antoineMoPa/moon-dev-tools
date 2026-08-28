@@ -15,6 +15,8 @@ pub(crate) enum MenuAction {
     OpenFile,
     NewTab,
     CloseTab,
+    /// The submodule hub: every submodule of the repo, and the changed ones' reviews.
+    OpenSubmodules,
     /// Open another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
     /// Start this program again on the repo this window is on, and close this window.
@@ -44,6 +46,7 @@ mod platform {
         open_file: MenuId,
         new_tab: MenuId,
         close_tab: MenuId,
+        open_submodules: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
         restart_window: MenuId,
@@ -170,6 +173,11 @@ mod platform {
             // without a trip to the terminal - the new instance opens on this window's repo.
             let restart_window = MenuItem::new("Restart", true, None);
 
+            // A Tools menu for what the window can open on the repo beside the review itself.
+            let open_submodules = MenuItem::new("Submodule Status", true, None);
+            let tools_menu = Submenu::new("Tools", true);
+            tools_menu.append(&open_submodules).ok()?;
+
             let window_menu = Submenu::new("Window", true);
             for (item, _) in &new_windows {
                 window_menu.append(item).ok()?;
@@ -187,7 +195,7 @@ mod platform {
                 ])
                 .ok()?;
 
-            menu.append_items(&[&app_menu, &file_menu, &view_menu, &window_menu])
+            menu.append_items(&[&app_menu, &file_menu, &view_menu, &tools_menu, &window_menu])
                 .ok()?;
             menu.init_for_nsapp();
 
@@ -199,6 +207,7 @@ mod platform {
                 open_file: open_file.id().clone(),
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
+                open_submodules: open_submodules.id().clone(),
                 new_windows: new_windows
                     .iter()
                     .map(|(item, frame)| (item.id().clone(), *frame))
@@ -224,6 +233,8 @@ mod platform {
                     MenuAction::NewTab
                 } else if event.id == self.close_tab {
                     MenuAction::CloseTab
+                } else if event.id == self.open_submodules {
+                    MenuAction::OpenSubmodules
                 } else if event.id == self.restart_window {
                     MenuAction::RestartWindow
                 } else if event.id == self.install_launchers {

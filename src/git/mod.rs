@@ -60,27 +60,36 @@ pub(crate) fn find_repo_root(path: impl AsRef<Path>) -> Result<Option<PathBuf>> 
     }
 }
 
-pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathBuf>> {
+/// One submodule of a repo, and how much is changed inside it.
+pub(crate) struct SubmoduleRepo {
+    pub(crate) repo_path: PathBuf,
+    pub(crate) changed_file_count: usize,
+}
+
+/// Every submodule of the repo, nested ones included, each with the number of files changed
+/// in it - which is what decides whether it has a review worth opening.
+pub(crate) fn list_submodule_repos(repo_path: &Path) -> Result<Vec<SubmoduleRepo>> {
     let submodule_paths = run_git(repo_path, &["submodule", "status", "--recursive"])?
         .lines()
         .filter_map(parse_submodule_status_path)
         .map(|relative_path| repo_path.join(relative_path))
         .collect::<Vec<_>>();
 
-    let mut changed = Vec::new();
+    let mut submodules = Vec::new();
     for submodule_path in submodule_paths {
         let status = run_git(
             &submodule_path,
             &["status", "--short", "--ignore-submodules=none"],
         )?;
-        if !status.trim().is_empty() {
-            changed.push(canonicalize_repo(&submodule_path)?);
-        }
+        submodules.push(SubmoduleRepo {
+            repo_path: canonicalize_repo(&submodule_path)?,
+            changed_file_count: status.lines().filter(|line| !line.trim().is_empty()).count(),
+        });
     }
 
-    changed.sort();
-    changed.dedup();
-    Ok(changed)
+    submodules.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
+    submodules.dedup_by(|left, right| left.repo_path == right.repo_path);
+    Ok(submodules)
 }
 
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {

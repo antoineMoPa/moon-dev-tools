@@ -244,10 +244,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     void fetchSubmodules(getRootSessionId())
       .then(async (submodules) =>
         Promise.all(
-          submodules.map(async (submodule) => ({
-            name: submodule.name,
-            sessionId: (await openSession(submodule.repo_path)).session_id,
-          })),
+          submodules
+            .filter((submodule) => submodule.changed_files > 0)
+            .map(async (submodule) => ({
+              name: submodule.name,
+              sessionId: (await openSession(submodule.repo_path)).session_id,
+            })),
         ),
       )
       .then((reviews) => {

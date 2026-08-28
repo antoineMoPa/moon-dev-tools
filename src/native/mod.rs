@@ -16,6 +16,7 @@ pub(crate) mod palette;
 pub(crate) mod panes;
 mod programs;
 pub(crate) mod review;
+pub(crate) mod submodules;
 pub(crate) mod tasks;
 pub(crate) mod theme;
 #[cfg(test)]

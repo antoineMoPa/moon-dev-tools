@@ -183,6 +183,8 @@ impl App {
                 last_shell_session_id: None,
                 reviews: HashMap::new(),
                 submodules: Vec::new(),
+                submodule_filter: String::new(),
+                submodule_filter_focus: false,
                 toasts: Vec::new(),
                 palette: Default::default(),
                 board: Default::default(),

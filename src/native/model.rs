@@ -453,6 +453,12 @@ pub(crate) struct Model {
     pub(crate) last_shell_session_id: Option<String>,
     pub(crate) reviews: HashMap<String, ReviewState>,
     pub(crate) submodules: Vec<SubmoduleView>,
+    /// What the submodule hub's box is being narrowed by. It lives on the model rather
+    /// than in the pane so it survives the pane being closed and opened again.
+    pub(crate) submodule_filter: String,
+    /// Set when the hub is opened or brought forward, so its box takes the keyboard: the
+    /// hub is a list to find one submodule in, and typing is how it is found.
+    pub(crate) submodule_filter_focus: bool,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) palette: PaletteState,
     pub(crate) board: BoardState,

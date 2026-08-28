@@ -107,12 +107,13 @@ pub(crate) struct SessionPayload {
     pub(crate) export_text: String,
 }
 
-/// A submodule of the reviewed repo that has changes of its own, offered as another
-/// review the user can open beside this one.
-#[derive(Serialize, Deserialize)]
+/// A submodule of the reviewed repo, as the submodule hub lists it. One with changed files
+/// is another review the user can open beside this one.
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct SubmoduleView {
     pub(crate) repo_path: String,
     pub(crate) name: String,
+    pub(crate) changed_files: usize,
 }
 
 #[derive(Serialize, Deserialize)]

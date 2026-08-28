@@ -156,7 +156,7 @@ Inside the window:
 | shift-click | extend the selection over more lines |
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
-| `⌘⇧P` | command palette — open a review, a shell, the task board, or the agent monitor |
+| `⌘⇧P` | command palette — open a review, a shell, the task board, the submodules of the repo, or the agent monitor |
 | `⌘P` | find a file of the repo by name, from any directory under it, and open it |
 | `⌘⇧F` | search the files of the repo for text, and open a file at the line that holds it |
 | `⌘⇧R` | bring the review of this repo forward, opening it if it was closed |

@@ -151,6 +151,17 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     commands.push(single_pane_command(
         app.model
             .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Submodules)
+            .is_some(),
+        "submodules",
+        "Open the submodules of this repo, and the reviews of the changed ones",
+        "Bring the submodules forward",
+        CommandAction::OpenPane(OpenPaneRequest::Submodules),
+        None,
+    ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
             .find_pane(|pane| pane.kind() == PaneKind::Commit)
             .is_some(),
         "commit",
@@ -256,7 +267,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     });
 
     // Changed submodules are further reviews the user can open beside this one.
-    for submodule in &app.model.submodules {
+    for submodule in app
+        .model
+        .submodules
+        .iter()
+        .filter(|submodule| submodule.changed_files > 0)
+    {
         commands.push(Command {
             title: submodule.name.clone(),
             description: format!("Review the changed submodule at {}", submodule.repo_path),

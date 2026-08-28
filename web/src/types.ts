@@ -134,8 +134,9 @@ export type AgentLogPayload = {
   text: string;
 };
 
-/// A changed submodule of a reviewed repo, offered as another review to open.
+/// A submodule of a reviewed repo. One with changed files is another review to open.
 export type Submodule = {
   repo_path: string;
   name: string;
+  changed_files: number;
 };
