@@ -239,9 +239,11 @@ pub(crate) struct BoardState {
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
     /// A file a board action just readied - the task's notes, made sure to exist, or a file
-    /// just linked to a card - as the repo-relative path a file pane opens it by. Waiting for
-    /// the window the same way an opened shell does.
-    pub(crate) opened_file: Option<String>,
+    /// just linked to a card - waiting for the window the same way an opened shell does.
+    pub(crate) opened_file: Option<OpenedFile>,
+    /// The title and notes as they are being typed on a task's own pane, one for each pane
+    /// open, so the board reading itself again does not overwrite a half-typed word.
+    pub(crate) task_editors: HashMap<String, TaskEditor>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
@@ -330,6 +332,21 @@ pub(crate) struct TaskDropped {
 }
 
 /// A card's title, open for editing after a double click.
+/// One task's title and notes, open for editing on that task's pane.
+pub(crate) struct TaskEditor {
+    pub(crate) title: String,
+    pub(crate) notes: String,
+    /// When the notes were last typed into, on `egui`'s own clock. The notes are written a
+    /// moment after the typing stops rather than on every letter, and this is that moment
+    /// being waited for; `None` once they are written.
+    pub(crate) notes_typed_at: Option<f64>,
+    /// What the board last said the title and the notes were. The boxes are filled in again
+    /// when the board's answer changes from this and not otherwise, so an answer that has not
+    /// caught up with what was just typed cannot take it back.
+    pub(crate) said_title: String,
+    pub(crate) said_notes: String,
+}
+
 pub(crate) struct TaskRename {
     pub(crate) task_id: String,
     pub(crate) title: String,
@@ -337,6 +354,14 @@ pub(crate) struct TaskRename {
     pub(crate) focus: bool,
 }
 
+
+/// A file the board readied and wants shown: where it is, and the task it was opened from,
+/// which the pane carries so the board can mark that task's card while the file is in front.
+pub(crate) struct OpenedFile {
+    /// Relative to the repo, which is how a file pane opens one.
+    pub(crate) file_path: String,
+    pub(crate) task_id: String,
+}
 
 /// A shell the board started and wants shown.
 pub(crate) struct OpenedShell {

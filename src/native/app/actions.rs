@@ -13,7 +13,7 @@ use crate::{
     native::{
         bindings::Action,
         board, find,
-        model::{ProjectEditor, Stage},
+        model::{OpenedFile, ProjectEditor, Stage},
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
         programs::Opens,
@@ -222,11 +222,11 @@ impl App {
     /// The board's tasks are read from the root session's repo, so that is the session the
     /// file pane reads the file through.
     pub(super) fn open_file_the_board_readied(&mut self) {
-        let Some(file_path) = self.model.board.opened_file.take() else {
+        let Some(opened) = self.model.board.opened_file.take() else {
             return;
         };
         let session_id = self.model.root_session_id.clone();
-        self.open_notes_pane(session_id, file_path);
+        self.open_notes_pane(session_id, opened.file_path, opened.task_id);
     }
 
     /// Put a file on a task's card, and open it once it is there.
@@ -235,7 +235,10 @@ impl App {
     /// link the server refused would be a file open beside a card that does not name it.
     fn link_task_file(&mut self, task_id: String, file_path: String) {
         let session_id = self.model.root_session_id.clone();
-        let opens = file_path.clone();
+        let opens = OpenedFile {
+            file_path: file_path.clone(),
+            task_id: task_id.clone(),
+        };
         self.tasks.spawn(
             move |backend| backend.link_task_file(&session_id, &task_id, &file_path),
             move |model, result| {

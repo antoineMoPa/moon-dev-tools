@@ -11,12 +11,15 @@ in the repo straight away.
 | `⌘F` on the board | put the keyboard in that box; Escape empties it |
 | drag a card by its title | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | drag a column by its heading | move the column, cards and all |
+| click a card's title | open the task's own pane: its title and notes, and what it can start |
+| double click a card's title | rename the task |
 | double click a heading | rename the column |
 | `+` on a column's heading | a new task at the top of it |
 | `+` under a column's last card | a new task at the bottom of it |
 | `+` at the right-hand end | add a column |
 | `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
 | a running resource | click its name to bring its terminal back on screen |
+| a card drawn in the accent color | the task you are working in: the one whose tab was last in front |
 | a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
 | `[add notes]` | the same, on a task that has none yet |

@@ -89,6 +89,7 @@ impl App {
         // keeps its single frame: that is a state rather than a leftover.
         self.model.layout.drop_empty_frames();
         self.follow_front_tab(ui.ctx());
+        self.follow_worked_in_task();
         self.stamp_tab_shortcuts();
         *self.frames.style_mut() = self.palette_of().frames_style();
 
@@ -195,6 +196,9 @@ impl App {
                             Pane::File {
                                 session_id: session_id.clone(),
                                 file_path: file_path.clone(),
+                                // Opened by name or from a search, which is the repo's file
+                                // rather than any one task's.
+                                task_id: None,
                             },
                             None,
                         )
@@ -213,23 +217,83 @@ impl App {
                 command,
                 task_id,
             } => {
+                // The start window that was standing in for this shell, if the task had one:
+                // the shell opens in its place and it closes behind, because what it was
+                // offering has now happened.
+                let standing_in = task_id
+                    .as_deref()
+                    .and_then(|task| self.start_pane_of(task))
+                    .filter(|pane| self.model.layout.frame_of(*pane).is_some());
+
                 // The shell is already running on the server; all this opens is a way to see it.
-                if let Some((pane, _)) = self.model.layout.find_pane(
+                match self.model.layout.find_pane(
                     |pane| matches!(pane, Pane::Terminal { terminal_id: open, .. } if *open == terminal_id),
                 ) {
+                    Some((pane, _)) => self.model.layout.focus_pane(pane),
+                    None => {
+                        let shell = Pane::Terminal {
+                            terminal_id: terminal_id.clone(),
+                            command,
+                            task_id,
+                        };
+                        match standing_in.and_then(|pane| self.model.layout.frame_of(pane)) {
+                            // In the start window's own frame, and in its place among the
+                            // tabs, so the tab the shell arrives in is the one that was there.
+                            Some(frame) => {
+                                self.model.layout.add_pane(frame, shell, standing_in);
+                            }
+                            None => place_shell(
+                                &mut self.model.layout,
+                                &TerminalPlacement::WithOtherShells,
+                                shell,
+                            ),
+                        }
+                        self.attach_terminal(&terminal_id);
+                    }
+                }
+
+                if let Some(pane) = standing_in {
+                    self.close_pane(pane);
+                }
+            }
+            OpenPaneRequest::TaskStart { task_id, title } => {
+                // One start window a task: asking for it again brings it forward.
+                if let Some(pane) = self.start_pane_of(&task_id) {
                     self.model.layout.focus_pane(pane);
                     return;
                 }
-                place_shell(
-                    &mut self.model.layout,
-                    &TerminalPlacement::WithOtherShells,
-                    Pane::Terminal {
-                        terminal_id: terminal_id.clone(),
-                        command,
-                        task_id,
-                    },
-                );
-                self.attach_terminal(&terminal_id);
+                // And one in the window at a time: every card clicked leaving its own tab
+                // behind would fill the strip with tasks nobody is looking at any more.
+                let others: Vec<PaneId> = self
+                    .model
+                    .layout
+                    .panes()
+                    .filter(|(_, pane)| pane.kind() == PaneKind::Start)
+                    .map(|(pane, _)| pane)
+                    .collect();
+                for pane in others {
+                    self.close_pane(pane);
+                }
+                // Into whatever is already down the right of the board, and only into a column
+                // of its own when there is nothing there yet: a window that split itself again
+                // for every card clicked would be a new column a minute.
+                //
+                // First among that frame's tabs rather than last: it is opened to be read now
+                // and closed in a moment, and a tab that lands at the end of a long strip is
+                // one you have to go looking for.
+                let pane = Pane::Start { task_id, title };
+                match frame_at_the_right(&self.model.layout).filter(|frame| *frame != active_frame)
+                {
+                    Some(frame) => {
+                        let first = self
+                            .model
+                            .layout
+                            .frame(frame)
+                            .and_then(|frame| frame.panes().first().copied());
+                        self.model.layout.add_pane(frame, pane, first);
+                    }
+                    None => add_right_column(&mut self.model.layout, pane),
+                }
             }
             OpenPaneRequest::Commit { session_id } => {
                 // One commit pane a review: opening it again brings it forward, with whatever
@@ -525,6 +589,21 @@ impl App {
         self.model.file_editors.remove(&pane_id);
         let closed = self.model.layout.close_pane(pane_id);
 
+        // A task's pane takes its boxes with it, writing whatever was typed into the notes and
+        // not yet written: the tab closing is the last chance those words get.
+        if let Some(Pane::Start { task_id, .. }) = &closed
+            && let Some(editor) = self.model.board.task_editors.remove(task_id)
+            && editor.notes_typed_at.is_some()
+        {
+            crate::native::board::actions::apply(
+                self,
+                crate::native::board::actions::BoardAction::SaveNotes {
+                    task_id: task_id.clone(),
+                    notes: editor.notes,
+                },
+            );
+        }
+
         // Closing a shell's tab ends the shell: the tab is the only window it had.
         //
         // A task's shell is the exception. It belongs to the task rather than to the tab, and
@@ -630,6 +709,51 @@ impl App {
     /// Anything that floats over a pane - the find bar - is placed against this.
     pub(crate) fn pane_rect(&self, pane_id: PaneId) -> Option<egui::Rect> {
         self.frames.pane_rect(pane_id)
+    }
+
+    /// The task the window is being worked in: the one whose tab was last in front, for as
+    /// long as that tab is open.
+    ///
+    /// The board draws this card apart from the others, which is where the question is asked
+    /// from - a column of cards says nothing about which of them the agent in the next tab is
+    /// working on.
+    pub(crate) fn worked_in_task(&self) -> Option<&str> {
+        self.worked_in_task.as_deref()
+    }
+
+    /// The start window open on this task, if one is.
+    fn start_pane_of(&self, task_id: &str) -> Option<PaneId> {
+        self.model
+            .layout
+            .find_pane(|pane| matches!(pane, Pane::Start { task_id: on, .. } if on == task_id))
+            .map(|(pane, _)| pane)
+    }
+
+    /// Work out which task the window is being worked in, before the frame is drawn.
+    ///
+    /// A task's own tabs are what say so - its shell, its pane, a file opened from its card -
+    /// and the last of them to be in front is the answer, for as long as it is open. It is
+    /// remembered rather than read off whatever is in front right now, because the board is
+    /// where the mark is read: a mark that went out the moment you clicked onto the board
+    /// would be gone exactly when you were looking for it. Held as the pane rather than as the
+    /// task, so a tab that is closed takes the mark with it and nothing has to clear it.
+    ///
+    /// The task is read off that pane here rather than by the board, because the arrangement is
+    /// lent out to the workspace widget for the length of the draw - see [`Self::draw_workspace`]
+    /// - and the board could not ask it anything while it is out.
+    fn follow_worked_in_task(&mut self) {
+        let front = self.active_pane_id();
+        if front
+            .and_then(|pane| self.model.layout.pane(pane))
+            .is_some_and(|pane| pane.task_id().is_some())
+        {
+            self.worked_in_pane = front;
+        }
+        self.worked_in_task = self
+            .worked_in_pane
+            .and_then(|pane| self.model.layout.pane(pane))
+            .and_then(Pane::task_id)
+            .map(str::to_string);
     }
 
     /// The review in the frontmost pane of the active frame, if that pane is a review.
@@ -783,6 +907,31 @@ impl App {
             .filter(|pane| pane.is_running())
             .count();
         workspace_shells + running_commands
+    }
+}
+
+/// The frame down the right of the workspace: the last of a row, and the first of a column, so
+/// what is answered is the one at the top right rather than whichever frame happens to be last
+/// in the arrangement.
+///
+/// `None` where there is nothing to the right - a workspace of one frame has no right-hand side
+/// yet, only a middle.
+fn frame_at_the_right(layout: &Layout<Pane>) -> Option<FrameId> {
+    let mut node = layout.root();
+    loop {
+        match node {
+            egui_frames::LayoutNode::Frame { frame } => return Some(*frame),
+            egui_frames::LayoutNode::Split {
+                direction,
+                children,
+                ..
+            } => {
+                node = match direction {
+                    egui_frames::SplitDirection::Row => children.last()?,
+                    egui_frames::SplitDirection::Column => children.first()?,
+                };
+            }
+        }
     }
 }
 

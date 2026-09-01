@@ -17,6 +17,7 @@ pub(crate) mod panes;
 pub(crate) mod project_pane;
 mod programs;
 pub(crate) mod review;
+pub(crate) mod start_pane;
 pub(crate) mod submodules;
 pub(crate) mod tasks;
 pub(crate) mod theme;

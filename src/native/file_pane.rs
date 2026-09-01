@@ -109,7 +109,12 @@ impl App {
     /// Open a task's notes beside the board: in the frame the other file tabs are in, or a
     /// new column down the right - the way a shell opens. It lands in the text editor rather
     /// than the rendered page, because notes are opened to be written.
-    pub(crate) fn open_notes_pane(&mut self, session_id: String, file_path: String) {
+    pub(crate) fn open_notes_pane(
+        &mut self,
+        session_id: String,
+        file_path: String,
+        task_id: String,
+    ) {
         use crate::native::panes::{Pane, PaneKind};
 
         let pane_id = match self
@@ -118,6 +123,12 @@ impl App {
             .find_pane(|pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path))
         {
             Some((pane, _)) => {
+                // The tab was already open, on the file of the repo rather than on the task's
+                // copy of it: opening it from a card is what puts it on that task, and what
+                // marks the card while it is in front.
+                if let Some(Pane::File { task_id: on, .. }) = self.model.layout.pane_mut(pane) {
+                    *on = Some(task_id.clone());
+                }
                 self.model.layout.focus_pane(pane);
                 pane
             }
@@ -125,6 +136,7 @@ impl App {
                 let pane = Pane::File {
                     session_id: session_id.clone(),
                     file_path: file_path.clone(),
+                    task_id: Some(task_id.clone()),
                 };
                 let active = self.model.layout.active_frame();
                 match self

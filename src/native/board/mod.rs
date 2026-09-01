@@ -8,7 +8,9 @@ pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
 pub(crate) mod filter;
-mod actions;
+pub(crate) mod actions;
+pub(crate) mod resources;
+pub(crate) mod start;
 
 pub(super) use actions::BoardAction;
 use actions::apply;
@@ -638,8 +640,11 @@ pub(super) fn agent_label(agent: AgentKind) -> String {
 
 /// Whether the board is open, which is what decides if it is worth polling.
 pub(crate) fn is_open(app: &App) -> bool {
+    // A task's own pane is drawn from the same answer, so it counts as the board being open:
+    // it says what the task has running, and a pane that is never read again would go on
+    // saying whatever was true when it opened.
     app.model
         .layout
-        .find_pane(|pane| pane.kind() == PaneKind::Tasks)
+        .find_pane(|pane| matches!(pane.kind(), PaneKind::Tasks | PaneKind::Start))
         .is_some()
 }

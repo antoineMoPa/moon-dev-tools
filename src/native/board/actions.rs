@@ -5,7 +5,7 @@ use crate::{
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
-        model::OpenedShell,
+        model::{OpenedFile, OpenedShell},
         palette::CommandAction,
         panes::OpenPaneRequest,
     },
@@ -38,7 +38,7 @@ pub(crate) enum BoardAction {
     /// Turn the palette into the file finder, picking a file to put on this task's card.
     PickFile(String),
     /// Open a file linked to a card, in a pane down the right.
-    OpenFile(String),
+    OpenFile { task_id: String, file_path: String },
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -66,9 +66,14 @@ pub(crate) enum BoardAction {
     },
     /// Open the review of what the task has changed.
     OpenReview(String, String),
+    /// Write what has been typed into a task's notes on its own pane.
+    SaveNotes { task_id: String, notes: String },
+    /// Open the task's own pane: its title and notes, what it has running, and what it can
+    /// start.
+    OpenStart { task_id: String, title: String },
 }
 
-pub(super) fn apply(app: &mut App, action: BoardAction) {
+pub(crate) fn apply(app: &mut App, action: BoardAction) {
     let session_id = app.model.root_session_id.clone();
 
     match action {
@@ -258,16 +263,24 @@ pub(super) fn apply(app: &mut App, action: BoardAction) {
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
         BoardAction::OpenNotes(task_id) => {
+            let opened_from = task_id.clone();
             app.tasks.spawn(
                 move |backend| backend.open_task_notes(&session_id, &task_id),
-                |model, result| match result {
-                    Ok(file_path) => model.board.opened_file = Some(file_path),
+                move |model, result| match result {
+                    Ok(file_path) => {
+                        model.board.opened_file = Some(OpenedFile {
+                            file_path,
+                            task_id: opened_from,
+                        })
+                    }
                     Err(error) => model.error(format!("could not open the notes: {error}")),
                 },
             );
         }
         BoardAction::PickFile(task_id) => app.model.palette.show_files_for_task(task_id),
-        BoardAction::OpenFile(file_path) => app.model.board.opened_file = Some(file_path),
+        BoardAction::OpenFile { task_id, file_path } => {
+            app.model.board.opened_file = Some(OpenedFile { file_path, task_id })
+        }
         BoardAction::AddColumn(label) => {
             // The box closes on the way out: the column it was standing in for is on its way.
             app.model.board.new_column_label.clear();
@@ -315,6 +328,20 @@ pub(super) fn apply(app: &mut App, action: BoardAction) {
                 terminal_id,
                 command,
                 task_id: Some(task_id),
+            }));
+        }
+        BoardAction::SaveNotes { task_id, notes } => {
+            act(app, "could not write the notes", move |backend| {
+                // Opened first, which is what makes the file real: a task that has never had
+                // notes has no `notes.md` to write into yet.
+                let file_path = backend.open_task_notes(&session_id, &task_id)?;
+                backend.write_file(&session_id, &file_path, &notes)
+            });
+        }
+        BoardAction::OpenStart { task_id, title } => {
+            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TaskStart {
+                task_id,
+                title,
             }));
         }
         BoardAction::OpenReview(repo_path, title) => {

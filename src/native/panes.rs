@@ -28,6 +28,8 @@ pub(crate) enum PaneKind {
     Terminal,
     File,
     Tasks,
+    /// One task: what it has running, and what it can start.
+    Start,
     Commit,
     Submodules,
     Project,
@@ -53,9 +55,17 @@ pub(crate) enum Pane {
     File {
         session_id: String,
         file_path: String,
+        /// The moontasks task the file was opened from, if it was opened from a card: its
+        /// notes, or a file linked to it.
+        #[serde(default)]
+        task_id: Option<String>,
     },
     /// The moontasks board of the repo being reviewed.
     Tasks,
+    /// One task, in a tab of its own: what a click on its card opens. The title it was opened
+    /// under is only the name for the tab until the board answers - the task's own is what the
+    /// pane reads and writes.
+    Start { task_id: String, title: String },
     /// Committing what one review has staged, and pushing it.
     Commit { session_id: String },
     /// Every submodule of the repo, and a way into a review of the changed ones.
@@ -72,6 +82,7 @@ impl Pane {
             Self::Terminal { .. } => PaneKind::Terminal,
             Self::File { .. } => PaneKind::File,
             Self::Tasks => PaneKind::Tasks,
+            Self::Start { .. } => PaneKind::Start,
             Self::Commit { .. } => PaneKind::Commit,
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
@@ -95,9 +106,21 @@ impl Pane {
                 .unwrap_or(file_path)
                 .to_string(),
             Self::Tasks => "moontasks".to_string(),
+            // The task's own name: the tab is that task's, and what it offers is on the pane.
+            Self::Start { title, .. } => title.clone(),
             Self::Commit { .. } => "commit".to_string(),
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
+        }
+    }
+
+    /// The moontasks task this pane is working in, if it is one of a task's: its shell, a file
+    /// opened from its card, or the pane of what it can start.
+    pub(crate) fn task_id(&self) -> Option<&str> {
+        match self {
+            Self::Terminal { task_id, .. } | Self::File { task_id, .. } => task_id.as_deref(),
+            Self::Start { task_id, .. } => Some(task_id),
+            _ => None,
         }
     }
 
@@ -143,6 +166,11 @@ pub(crate) enum OpenPaneRequest {
         at: Option<OpenAt>,
     },
     Tasks,
+    /// One task, in a tab of its own.
+    TaskStart {
+        task_id: String,
+        title: String,
+    },
     /// Committing what one review has staged.
     Commit {
         session_id: String,
@@ -170,12 +198,23 @@ impl PaneView<Pane> for App {
                 .get(terminal_id)
                 .and_then(egui_tty::Terminal::title)
                 .unwrap_or_else(|| pane.tab_title()),
+            // The task's title as the board has it now, so a task renamed after its start
+            // window opened is renamed on the tab too.
+            Pane::Start { task_id, .. } => self
+                .model
+                .board
+                .tasks
+                .iter()
+                .find(|task| task.id == *task_id)
+                .map(|task| task.title.clone())
+                .unwrap_or_else(|| pane.tab_title()),
             _ => pane.tab_title(),
         };
         // A file with edits that are not on disk carries a dot before its name.
         let unsaved = matches!(pane, Pane::File { .. }) && self.file_pane_is_dirty(pane_id);
         let hover = match pane {
             Pane::File { file_path, .. } => file_path.clone(),
+            Pane::Start { title, .. } => format!("Start something in {title}"),
             _ => title.clone(),
         };
 
@@ -203,11 +242,16 @@ impl PaneView<Pane> for App {
             Pane::File {
                 session_id,
                 file_path,
+                ..
             } => {
                 let (session_id, file_path) = (session_id.clone(), file_path.clone());
                 self.draw_file_pane(ui, pane_id, &session_id, &file_path);
             }
             Pane::Tasks => crate::native::board::draw(self, ui),
+            Pane::Start { task_id, title } => {
+                let (task_id, title) = (task_id.clone(), title.clone());
+                crate::native::start_pane::draw(self, ui, &task_id, &title);
+            }
             Pane::Commit { session_id } => {
                 let session_id = session_id.clone();
                 commit_pane::draw(self, ui, pane_id, &session_id);

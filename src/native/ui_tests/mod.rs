@@ -5,7 +5,10 @@
 //! actually looks like - a diff that fails to draw, or an empty pane, shows up here.
 
 mod board;
+mod board_cards;
 mod board_drag;
+mod board_task_pane;
+mod board_worked_in;
 mod diff_comments;
 mod diff_selection;
 mod files;

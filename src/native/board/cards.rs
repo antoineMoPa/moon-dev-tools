@@ -5,16 +5,15 @@
 //! it. Where it would land is worked out from the cards it would be put among rather than
 //! from what the pointer is over, which is what keeps the answer from bouncing.
 
-use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
+use egui::{Align, CornerRadius, Layout as UiLayout, Ui, vec2};
 
 use crate::{
-    api::AgentKind,
-    moontasks::{ColumnId, StartResourceRequest, TaskResourceKind, TaskResourceView, TaskView},
+    moontasks::{ColumnId, TaskView},
     native::{
         app::App,
         board::{
-            Axis, BoardAction, CLOSE_MARK_SIZE, agent_label, available_agents, close_button,
-            file_mark, filter::Filter, running_dot, slide_into_place, stamp_place,
+            Axis, BoardAction, CLOSE_MARK_SIZE, close_button, filter::Filter, resources,
+            slide_into_place, stamp_place, start,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -142,7 +141,7 @@ pub(super) fn column_size(tasks: &[TaskView], status: &ColumnId) -> usize {
 }
 
 /// The id a card is dragged by, which is also the layer its ghost is drawn into.
-pub(super) fn card_drag_id(task_id: &str) -> egui::Id {
+pub(crate) fn card_drag_id(task_id: &str) -> egui::Id {
     egui::Id::new(("moontask-card", task_id))
 }
 
@@ -268,26 +267,47 @@ pub(super) fn draw_card(
     card.rect
 }
 
-/// A card's border, which is the ordinary one except for a moment after the card was dropped.
+/// A card's border: the ordinary one, unless the card is the task being worked in, or was
+/// dropped a moment ago.
+///
+/// The drop flash comes first of the two because it is the shorter-lived: a card dropped onto
+/// the task you are working in is being told two things at once, and the one that only has a
+/// second to say it goes first.
+fn card_stroke(app: &App, ui: &Ui, task: &TaskView, palette: &Palette) -> egui::Stroke {
+    if let Some(dropped) = dropped_stroke(app, ui, task, palette) {
+        return dropped;
+    }
+    if app.worked_in_task() == Some(task.id.as_str()) {
+        return egui::Stroke::new(CARD_BORDER_WIDTH, palette.accent);
+    }
+    egui::Stroke::new(CARD_BORDER_WIDTH, palette.line)
+}
+
+/// How heavy a card's border is, marked or not. The task being worked in is told apart by the
+/// color of its edge alone: a heavier one would take its width out of the card's inside and
+/// walk the whole column along by a pixel every time the tab in front changed.
+const CARD_BORDER_WIDTH: f32 = 1.0;
+
+/// The border of a card that was dropped a moment ago, if it was.
 ///
 /// A card let go of among a column of others is easy to lose track of, so the one that just
 /// landed is marked and fades back over [`DROP_FLASH`]. It is a fade rather than a mark that
 /// is cleared: nothing has to remember to put it back.
-fn dropped_stroke(app: &App, ui: &Ui, task: &TaskView, palette: &Palette) -> egui::Stroke {
-    let plain = egui::Stroke::new(1.0, palette.line);
-    let Some(dropped) = &app.model.board.dropped else {
-        return plain;
-    };
+fn dropped_stroke(app: &App, ui: &Ui, task: &TaskView, palette: &Palette) -> Option<egui::Stroke> {
+    let dropped = app.model.board.dropped.as_ref()?;
     if dropped.task_id != task.id {
-        return plain;
+        return None;
     }
     let left = (DROP_FLASH - (ui.input(|input| input.time) - dropped.at) as f32) / DROP_FLASH;
     if left <= 0.0 {
-        return plain;
+        return None;
     }
     // The fade is drawn frame by frame, so it needs frames to be drawn in.
     ui.ctx().request_repaint();
-    egui::Stroke::new(1.0 + left, palette.line.lerp_to_gamma(palette.warn, left))
+    Some(egui::Stroke::new(
+        CARD_BORDER_WIDTH,
+        palette.line.lerp_to_gamma(palette.warn, left),
+    ))
 }
 
 fn draw_card_body(
@@ -300,7 +320,7 @@ fn draw_card_body(
 ) -> egui::Rect {
     egui::Frame::new()
         .fill(palette.panel)
-        .stroke(dropped_stroke(app, ui, task, palette))
+        .stroke(card_stroke(app, ui, task, palette))
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(8, 7))
         .show(ui, |ui| {
@@ -325,11 +345,7 @@ fn draw_card_body(
             draw_notes_box(ui, task, palette, showing, actions);
             ui.add_space(3.0);
 
-            let removing = app.model.board.pending_resource_delete.clone();
-            for resource in &task.resources {
-                let pending = removing.as_deref() == Some(resource.id.as_str());
-                draw_resource(ui, task, resource, pending, palette, actions);
-            }
+            resources::draw_list(app, ui, task, palette, actions);
             if !task.resources.is_empty() {
                 ui.add_space(3.0);
             }
@@ -393,8 +409,8 @@ fn draw_card_title(
     });
 }
 
-/// The title as it usually reads: what the card is dragged by, and what a double click opens
-/// for renaming.
+/// The title as it usually reads: what the card is dragged by, what a click goes to the task
+/// by, and what a double click opens for renaming.
 fn draw_title_handle(
     app: &mut App,
     ui: &mut Ui,
@@ -404,7 +420,6 @@ fn draw_title_handle(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    let _ = actions;
     let width = handle_width.max(0.0);
     // Cut rather than wrapped without end: a card sits in a column of a fixed width, and a
     // title long enough to need a fourth line used to widen the whole column to fit it.
@@ -429,9 +444,31 @@ fn draw_title_handle(
         .interact(laid_out.rect, drag_id, egui::Sense::click_and_drag())
         .on_hover_cursor(egui::CursorIcon::Grab)
         // The title in full, since the card may only have room for the start of it.
-        .on_hover_text(format!("{}\n\n{}", task.title, task.dir_path));
+        .on_hover_text(format!(
+            "{}\n\n{}\n\nClick to open this task",
+            task.title, task.dir_path
+        ));
+
+    // Acted on the moment it lands, rather than held to see whether a second click is coming:
+    // a wait would be felt on every click for the sake of the few that turn out to be renames.
+    //
+    // The pane it opens is the whole answer, whatever the task has running - not the agent,
+    // even when there is one. A click that sometimes landed in a terminal instead would be one
+    // you had to know the task's state to predict; the runs are listed on the card, each its
+    // own way back to its own shell.
+    if handle.clicked() {
+        actions.push(BoardAction::OpenStart {
+            task_id: task.id.clone(),
+            title: task.title.clone(),
+        });
+    }
 
     if handle.double_clicked() {
+        // The first of the two clicks opened the task's tab and promised it the keyboard. The
+        // box being opened here is what the keyboard was reached for, so the promise is taken
+        // back - a shell that is still attaching would otherwise take it frames later, out of
+        // a box that has been typed into by then.
+        app.pane_taking_keyboard = None;
         app.model.board.renaming = Some(crate::native::model::TaskRename {
             task_id: task.id.clone(),
             title: task.title.clone(),
@@ -526,146 +563,8 @@ fn draw_notes_box(
     }
 }
 
-/// How many characters of a linked file's path the card shows before the middle is cut out.
-/// The end of a path is what tells files apart, so that is the part that is kept.
-const FILE_PATH_CHARS: usize = 34;
-
-/// One shell, agent run or linked file of a task: what it is, whether it is still going, and
-/// the way back to it.
-fn draw_resource(
-    ui: &mut Ui,
-    task: &TaskView,
-    resource: &TaskResourceView,
-    pending_delete: bool,
-    palette: &Palette,
-    actions: &mut Vec<BoardAction>,
-) {
-    if resource.kind == TaskResourceKind::File {
-        draw_file_resource(ui, task, resource, palette, actions);
-        return;
-    }
-    ui.horizontal(|ui| {
-        running_dot(ui, resource.running, palette);
-
-        match (&resource.terminal_id, resource.running) {
-            (Some(terminal_id), true) => {
-                if widgets::quiet_button(ui, &resource.label)
-                    .on_hover_text("Open this shell in a tab")
-                    .clicked()
-                {
-                    actions.push(BoardAction::OpenShell {
-                        terminal_id: terminal_id.clone(),
-                        command: (resource.agent != AgentKind::None).then_some(resource.agent),
-                        task_id: task.id.clone(),
-                    });
-                }
-            }
-            _ => {
-                ui.label(
-                    RichText::new(&resource.label)
-                        .size(SMALL_SIZE)
-                        .color(palette.muted),
-                );
-            }
-        }
-
-        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            // Furthest right, so the two that keep the run are never the one you mean to
-            // press and miss. Removing a run is not undoable either, so it asks first.
-            // A shell has nothing to keep - closing it is the end of it - so it is offered the
-            // close mark alone, while an agent run can be stopped and come back to.
-            let is_shell = resource.kind == TaskResourceKind::Shell;
-
-            if pending_delete {
-                match widgets::confirm(
-                    ui,
-                    palette,
-                    "[really close]",
-                    if is_shell {
-                        "this ends the shell, and its scrollback goes with it"
-                    } else {
-                        "this ends the run and takes it off the task for good"
-                    },
-                ) {
-                    widgets::Confirmed::Yes => actions.push(BoardAction::DeleteResource(
-                        task.id.clone(),
-                        resource.id.clone(),
-                    )),
-                    widgets::Confirmed::No => actions.push(BoardAction::CancelResourceDelete),
-                    widgets::Confirmed::Waiting => {}
-                }
-                return;
-            }
-            if close_button(ui, palette)
-                .on_hover_text(match (is_shell, resource.running) {
-                    (true, _) => "Close this shell",
-                    (false, true) => "End this run and take it off the task",
-                    (false, false) => "Take this run off the task",
-                })
-                .clicked()
-            {
-                actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
-            }
-            if resource.running && !is_shell {
-                if widgets::quiet_button_colored(ui, "stop", palette.muted)
-                    .on_hover_text("End this shell, keeping the run to come back to")
-                    .clicked()
-                {
-                    actions.push(BoardAction::Stop(task.id.clone(), resource.id.clone()));
-                }
-            } else if resource.resumable
-                && widgets::quiet_button_colored(ui, "resume", palette.accent)
-                    .on_hover_text("Start this agent again where it left off")
-                    .clicked()
-            {
-                actions.push(BoardAction::Resume(task.id.clone(), resource.id.clone()));
-            }
-        });
-    });
-}
-
-/// A file linked to the task: its path, which opens it, and the mark that takes it off the
-/// card again.
-///
-/// Nothing runs here, so there is nothing to stop or resume, and taking the file off the
-/// card loses nothing - the file stays where it is - so unlike a run it goes without asking.
-fn draw_file_resource(
-    ui: &mut Ui,
-    task: &TaskView,
-    resource: &TaskResourceView,
-    palette: &Palette,
-    actions: &mut Vec<BoardAction>,
-) {
-    let Some(file_path) = resource.file_path.as_deref() else {
-        panic!("linked file {} has no file path", resource.id);
-    };
-    ui.horizontal(|ui| {
-        file_mark(ui, palette);
-
-        if widgets::quiet_button(ui, &widgets::elide_path(file_path, FILE_PATH_CHARS))
-            .on_hover_text(format!("Open {file_path} in a pane"))
-            .clicked()
-        {
-            actions.push(BoardAction::OpenFile(file_path.to_string()));
-        }
-
-        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            if close_button(ui, palette)
-                .on_hover_text("Take this file off the task")
-                .clicked()
-            {
-                actions.push(BoardAction::DeleteResource(
-                    task.id.clone(),
-                    resource.id.clone(),
-                ));
-            }
-        });
-    });
-}
-
-/// Everything a card starts, on the one menu: a review of the repo, a shell in the task, an
-/// agent, or a file of the repo linked to the card. They were three buttons across the card,
-/// which is three times the row for three things you press once each.
+/// Everything a card starts, on the one menu - the button and what is under it are
+/// [`start::draw_button`], the same ones the start window shows.
 ///
 /// It comes up with the notes offer above it and goes the same way, so a card at rest is its
 /// title and its description and nothing else. It sits at the bottom right, out of the way of
@@ -679,11 +578,6 @@ fn draw_card_actions(
     showing: f32,
     actions: &mut Vec<BoardAction>,
 ) {
-    let agents: Vec<AgentKind> = available_agents(app)
-        .into_iter()
-        .filter(|agent| *agent != AgentKind::None)
-        .collect();
-
     // A row of its own, the width of the card and no taller than the button, and the button
     // laid out from the right-hand end of it. The row has to be allocated rather than laid
     // out into what is left: a right-to-left layout given the rest of the column takes the
@@ -692,77 +586,9 @@ fn draw_card_actions(
     ui.allocate_ui_with_layout(row, UiLayout::right_to_left(Align::Center), |ui| {
         // Multiplied rather than set, so the ghost of a card being dragged stays a ghost.
         ui.multiply_opacity(showing);
-        // The menu is built from the button rather than the other way round, so it can be one.
-        let (button, menu) = egui::containers::menu::MenuButton::from_button(
-            egui::Button::new("[start]").frame(false),
-        )
-        .ui(ui, |ui| {
-            if widgets::clickable(ui.button("review"))
-                .on_hover_text("Open the review of this repo in a tab")
-                .clicked()
-            {
-                actions.push(BoardAction::OpenReview(
-                    task.repo_path.clone(),
-                    task.title.clone(),
-                ));
-                ui.close();
-            }
-
-            if widgets::clickable(ui.button("shell"))
-                .on_hover_text("Open a shell in this task")
-                .clicked()
-            {
-                actions.push(BoardAction::Start(
-                    task.id.clone(),
-                    StartResourceRequest {
-                        kind: TaskResourceKind::Shell,
-                        agent: AgentKind::None,
-                    },
-                ));
-                ui.close();
-            }
-
-            if widgets::clickable(ui.button("file…"))
-                .on_hover_text("Pick a file of the repo to put on this card, and open it")
-                .clicked()
-            {
-                actions.push(BoardAction::PickFile(task.id.clone()));
-                ui.close();
-            }
-
-            if agents.is_empty() {
-                return;
-            }
-            ui.separator();
-            for agent in agents {
-                if widgets::clickable(ui.button(agent_label(agent))).clicked() {
-                    actions.push(BoardAction::Start(
-                        task.id.clone(),
-                        StartResourceRequest {
-                            kind: TaskResourceKind::Agent,
-                            agent,
-                        },
-                    ));
-                    ui.close();
-                }
-            }
-            // The way back when a run's recorded session id stopped pointing anywhere:
-            // pick one straight off the agents' own records instead.
-            ui.separator();
-            if widgets::clickable(ui.button("attach a session…"))
-                .on_hover_text("Pick a past session of one of the agents and put it on this task")
-                .clicked()
-            {
-                actions.push(BoardAction::OpenAttachPicker {
-                    task_id: task.id.clone(),
-                    task_title: task.title.clone(),
-                });
-                ui.close();
-            }
-        });
+        let menu_up = start::draw_button(app, ui, task, actions);
         // Told to the card, which keeps its offers out for as long as this is up.
-        ui.data_mut(|data| data.insert_temp(menu_up_id(drag_id), menu.is_some()));
-        widgets::clickable(button);
+        ui.data_mut(|data| data.insert_temp(menu_up_id(drag_id), menu_up));
     });
 }
 

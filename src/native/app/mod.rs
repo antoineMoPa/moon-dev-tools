@@ -103,6 +103,12 @@ pub(crate) struct App {
     /// The tab the keyboard was last handed to, so a different one coming to the front -
     /// however it got there - is noticed once rather than every frame it stays there.
     pub(crate) keyboard_pane: Option<PaneId>,
+    /// The task's own tab that was last in front, held as its pane rather than as the task, so
+    /// a tab that is closed takes the mark off the board's card with it.
+    pub(crate) worked_in_pane: Option<PaneId>,
+    /// The task that pane belongs to, read off it once a frame - see
+    /// [`App::follow_worked_in_task`] for why the board cannot read it itself.
+    pub(crate) worked_in_task: Option<String>,
     /// The tab owed the keyboard, waiting for its own draw to take it. A shell and a file
     /// editor can only ask for focus from inside the widget that would hold it.
     pub(crate) pane_taking_keyboard: Option<PaneId>,
@@ -226,6 +232,8 @@ impl App {
             pending_tab_action: None,
             tab_shortcuts: HashMap::new(),
             keyboard_pane: None,
+            worked_in_pane: None,
+            worked_in_task: None,
             pane_taking_keyboard: None,
             menu: None,
             diffs: HashMap::new(),
