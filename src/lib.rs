@@ -23,6 +23,7 @@ mod server;
 mod server_tests;
 mod service;
 mod settings;
+mod shell_locale;
 mod shell_path;
 mod terminal;
 

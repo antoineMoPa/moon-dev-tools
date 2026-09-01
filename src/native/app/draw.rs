@@ -316,6 +316,7 @@ impl App {
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
         self.poll_submodules();
+        self.poll_running_shells();
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();

@@ -317,6 +317,10 @@ impl Backend for LocalBackend {
         Ok(self.state.terminals.terminal_ids())
     }
 
+    fn terminals_running_a_command(&self, _session_id: &str) -> Result<Vec<String>> {
+        Ok(self.state.terminals.terminals_running_a_command())
+    }
+
     fn close_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<()> {
         self.state.terminals.remove(terminal_id);
         Ok(())

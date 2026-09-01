@@ -237,7 +237,7 @@ fn restarting_closes_the_window_a_shell_is_still_running_in() {
 /// Quitting takes every shell in the window with it, so the first ⌘Q says what it is about to
 /// end and the second one goes through.
 #[test]
-fn quitting_with_a_shell_still_running_asks_first() {
+fn quitting_with_a_command_running_asks_first() {
     let fixture = seeded_fixture("quit-warning");
     let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
     let backend = Arc::new(LocalBackend::new(state));
@@ -251,7 +251,7 @@ fn quitting_with_a_shell_still_running_asks_first() {
     )
     .expect("expected the session to open");
 
-    // A shell that is left alone, and so is still running when the quit arrives.
+    // A shell with a command running in it, which is the work a quit would interrupt.
     let terminal_id =
         crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
             .expect("expected a shell to start");
@@ -264,6 +264,10 @@ fn quitting_with_a_shell_still_running_asks_first() {
     let pane = egui_tty::Terminal::new(attachment)
         .expect("expected the terminal emulator to start")
         .with_label(terminal_id.clone());
+    // Written before the shell has finished starting, which is fine: the pty holds the line
+    // until the shell reads it, and then the command runs for as long as the test needs.
+    pane.send(b"sleep 300\n")
+        .expect("expected the shell to take the command");
 
     let launch = Launch {
         backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
@@ -293,11 +297,11 @@ fn quitting_with_a_shell_still_running_asks_first() {
                 app.model.toasts.clear();
             }
             app.draw(ui);
-            // Both halves of what the warning needs: an open window to draw it, and a shell
-            // that is still running for it to be about.
+            // Both halves of what the warning needs: an open window to draw it, and a command
+            // running in a shell for it to be about.
             ready_in_ui.store(
                 matches!(app.model.stage, crate::native::model::Stage::Ready)
-                    && app.running_shells() == 1,
+                    && app.shells_running_a_command() == 1,
                 Ordering::Relaxed,
             );
             *warnings_in_ui.lock().expect("poisoned") = app
@@ -317,7 +321,7 @@ fn quitting_with_a_shell_still_running_asks_first() {
     }
     assert!(
         ready.load(Ordering::Relaxed),
-        "the window should have opened on the review, with its shell running"
+        "the window should have opened on the review, with a command running in its shell"
     );
     harness.run_steps(3);
 
@@ -355,6 +359,102 @@ fn quitting_with_a_shell_still_running_asks_first() {
     );
 
     // The window would have taken the shell with it; the test has to do it by hand.
+    crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
+        .expect("expected the shell to close");
+}
+
+/// A shell waiting at its prompt has nothing to interrupt, so quitting with one open goes
+/// through rather than asking about it: the warning is about work, not about open tabs.
+#[test]
+fn quitting_with_a_shell_at_its_prompt_does_not_ask() {
+    let fixture = seeded_fixture("quit-idle-shell");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let opened = crate::backend::Backend::open_session(
+        backend.as_ref(),
+        OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("expected the session to open");
+
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let pane = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        }),
+        frame: crate::cli::Frame::Review,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), pane);
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let idle = Arc::new(AtomicBool::new(false));
+    let idle_in_ui = Arc::clone(&idle);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .build_ui(move |ui| {
+            app.draw(ui);
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.running_shells() == 1,
+                Ordering::Relaxed,
+            );
+            idle_in_ui.store(app.shells_running_a_command() == 0, Ordering::Relaxed);
+        });
+
+    // The shell is started and then left alone, so what has to be waited out is its prompt
+    // arriving: until bash is up, the pty's foreground group is not yet the shell's own.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline
+        && !(ready.load(Ordering::Relaxed) && idle.load(Ordering::Relaxed))
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the window should have opened on the review, with its shell open"
+    );
+    assert!(
+        idle.load(Ordering::Relaxed),
+        "a shell sitting at its prompt should not read as running a command"
+    );
+    harness.run_steps(3);
+
+    harness
+        .input_mut()
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .expect("expected the root viewport")
+        .events
+        .push(egui::ViewportEvent::Close);
+    harness.step();
+
+    assert!(
+        !asked_to_stay_open(&harness),
+        "quitting with an idle shell should not have been held back to ask about it"
+    );
+
     crate::backend::Backend::close_terminal(backend.as_ref(), &opened.session_id, &terminal_id)
         .expect("expected the shell to close");
 }

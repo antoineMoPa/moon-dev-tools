@@ -198,6 +198,10 @@ pub(crate) struct TerminalSession {
     child_ended: std::sync::atomic::AtomicBool,
     /// Typing in a shell, and a shell printing output, both keep the server from idling out.
     last_activity: Arc<Mutex<Instant>>,
+    /// The process started on the pty: the shell itself, or the agent. Kept here rather than
+    /// asked of [`TerminalSession::child`], whose lock is held for as long as a wait on the
+    /// program takes - see [`failure_notice`].
+    child_pid: Option<u32>,
 }
 
 impl TerminalSession {
@@ -229,6 +233,34 @@ impl TerminalSession {
         }
         self.writer.lock().unwrap().write_all(data)?;
         Ok(())
+    }
+
+    /// Whether something is running in this shell right now, as opposed to a prompt waiting
+    /// to be typed at. This is what quitting would actually take down with it.
+    ///
+    /// The pty's foreground process group is the answer for a login shell: it is the shell's
+    /// own while the prompt is up, and the job's while one runs. A job someone sent to the
+    /// background is not the foreground group and so does not count - it is also not what
+    /// anybody means by the shell being busy.
+    ///
+    /// An agent is the program on the pty rather than something a shell was told to run, so
+    /// it counts for as long as it is alive.
+    pub(crate) fn is_running_a_command(&self) -> bool {
+        if self.has_exited() || self.child_ended.load(Ordering::Relaxed) {
+            return false;
+        }
+        if self.program.agent().is_some() {
+            return true;
+        }
+        let (Some(shell), Some(foreground)) = (
+            self.child_pid,
+            self.master.lock().unwrap().process_group_leader(),
+        ) else {
+            // Nothing to compare, so nothing to say the shell is idle: the warning is the
+            // safe answer when the pty cannot be read.
+            return true;
+        };
+        u32::try_from(foreground).is_ok_and(|foreground| foreground != shell)
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
@@ -383,6 +415,22 @@ impl TerminalRegistry {
         ids
     }
 
+    /// The shells with something running in them right now - see
+    /// [`TerminalSession::is_running_a_command`]. This is what quitting would interrupt, as
+    /// opposed to the shells that are merely open.
+    pub(crate) fn terminals_running_a_command(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.is_running_a_command())
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Whether this shell is still one the server has, which is what tells a task's recorded
     /// agent run from one that ended - or that died with a previous run of the server.
     pub(crate) fn is_live(&self, terminal_id: &str) -> bool {
@@ -475,10 +523,22 @@ impl TerminalRegistry {
         // The agent is started by name, so it has to be looked up on the PATH the user's shell
         // has rather than the one a desktop launcher hands this process.
         command.env("PATH", crate::shell_path::installed_tools_path());
+        // Which characters the tools in the shell can print. A window started from a desktop
+        // launcher has no locale of its own, and a tool that finds none prints anything
+        // outside ASCII as its bytes - `git log` writes an em dash as `<E2><80><94>`.
+        if let Some(lang) = crate::shell_locale::shell_lang() {
+            command.env("LANG", lang);
+        }
+        // A test's shell is the developer's own login shell, started with their HOME, so
+        // whatever a test types into it would be saved to their bash history on exit. An
+        // empty HISTFILE is what bash reads as "keep none", and it survives the profile.
+        #[cfg(test)]
+        command.env("HISTFILE", "");
         for (name, value) in &spec.env {
             command.env(name, value);
         }
         let child = pty.slave.spawn_command(command)?;
+        let child_pid = child.process_id();
         // The slave handle must be dropped so the reader sees EOF once the shell exits.
         drop(pty.slave);
 
@@ -505,6 +565,7 @@ impl TerminalRegistry {
             typed_into: std::sync::atomic::AtomicBool::new(false),
             child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
+            child_pid,
         });
         self.sessions
             .lock()
@@ -702,6 +763,17 @@ pub(crate) async fn list_terminals(
     crate::api::with_session(&state, &session_id, |_| Ok(()))?;
     Ok(Json(TerminalList {
         terminal_ids: state.terminals.terminal_ids(),
+    }))
+}
+
+/// The shells with something running in them, which is what a quit would interrupt.
+pub(crate) async fn terminals_running_a_command(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+    Ok(Json(TerminalList {
+        terminal_ids: state.terminals.terminals_running_a_command(),
     }))
 }
 

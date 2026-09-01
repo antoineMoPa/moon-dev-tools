@@ -585,6 +585,16 @@ impl Backend for RemoteBackend {
         Ok(list.terminal_ids)
     }
 
+    fn terminals_running_a_command(&self, session_id: &str) -> Result<Vec<String>> {
+        #[derive(serde::Deserialize)]
+        struct List {
+            terminal_ids: Vec<String>,
+        }
+
+        let list: List = self.get(&format!("/api/session/{session_id}/terminals/running"))?;
+        Ok(list.terminal_ids)
+    }
+
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()> {
         self.delete(&format!(
             "/api/session/{session_id}/terminals/{terminal_id}"

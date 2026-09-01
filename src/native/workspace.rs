@@ -1072,9 +1072,30 @@ impl App {
         self.running_shells() > 0
     }
 
-    /// How many shells are still going, which is what quitting would take down with it. A
-    /// commit or a push in flight counts: a passphrase half typed is work in progress like any
-    /// other, and it is the same warning that is owed for it.
+    /// How many of the window's shells have a command running in them, which is what quitting
+    /// would interrupt. A shell waiting at its prompt is not one of them: nothing is lost by
+    /// closing it, so there is nothing to ask about.
+    ///
+    /// Which shells those are is the server's answer, polled - see `App::poll_running_shells`.
+    /// A commit or a push in flight counts the same way it does for [`Self::running_shells`].
+    pub(crate) fn shells_running_a_command(&self) -> usize {
+        let busy_shells = self
+            .terminals
+            .keys()
+            .filter(|terminal_id| self.model.shells_running_a_command.contains(terminal_id))
+            .count();
+        let running_commands = self
+            .model
+            .commit_panes
+            .values()
+            .filter(|pane| pane.is_running())
+            .count();
+        busy_shells + running_commands
+    }
+
+    /// How many shells are open and have not ended, whatever they are doing: this is what
+    /// keeps the window repainting, since a live shell can print at any time. What quitting
+    /// would interrupt is [`Self::shells_running_a_command`], which is a smaller number.
     ///
     /// A commit pane's shell stays on after its command is done, to carry on working in - so it
     /// counts while its command is going rather than for as long as it is open.

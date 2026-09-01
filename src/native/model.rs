@@ -505,6 +505,10 @@ pub(crate) struct Model {
     /// Set when the hub is opened or brought forward, so its box takes the keyboard: the
     /// hub is a list to find one submodule in, and typing is how it is found.
     pub(crate) submodule_filter_focus: bool,
+    /// The shells the server says have something running in them, as of the last poll. What
+    /// quitting would interrupt is these rather than every open shell, so this is what the
+    /// quit warning is about - see `App::quit_would_kill_shells`.
+    pub(crate) shells_running_a_command: Vec<String>,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) palette: PaletteState,
     pub(crate) board: BoardState,

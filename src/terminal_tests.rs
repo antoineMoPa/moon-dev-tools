@@ -519,3 +519,104 @@ fn renaming_a_tasks_run_writes_the_name_on_the_task() {
         "and the card reads it after the shell is gone"
     );
 }
+
+/// A shell waiting at its prompt has nothing running in it, and one with a command going
+/// does: this is what the quit warning is about, so it has to tell them apart.
+#[test]
+fn a_shell_reads_as_running_a_command_only_while_one_runs() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = registry
+        .spawn(TerminalSpec::shell(std::env::temp_dir(), None, None))
+        .expect("expected the shell to start");
+    let session = registry.get(&terminal_id).expect("expected the session");
+
+    let settle = |wanted: bool| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if session.is_running_a_command() == wanted {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    };
+
+    assert!(
+        settle(false),
+        "a shell that was started and left alone should be sitting at its prompt"
+    );
+    assert!(
+        registry.terminals_running_a_command().is_empty(),
+        "and so should not be listed as running a command"
+    );
+
+    session
+        .write_input(b"sleep 300\n")
+        .expect("expected the shell to take the command");
+    assert!(
+        settle(true),
+        "a shell running a command should say so while it runs"
+    );
+    assert_eq!(
+        registry.terminals_running_a_command(),
+        vec![terminal_id.clone()],
+        "and should be the one listed"
+    );
+
+    registry.remove(&terminal_id);
+}
+
+/// The `<E2><80><94>` bug: a window started from a desktop launcher has no locale, and the
+/// pager git hands its output to draws every byte of an em dash as its own hex escape. What
+/// a shell is started in is a UTF-8 locale, so the character is drawn as itself.
+///
+/// `less` is the tool that does the escaping and the one git uses, so it is what is run here.
+#[test]
+#[cfg(unix)]
+fn a_shell_pages_utf8_text_as_characters_rather_than_escapes() {
+    // Nothing to fix, and nothing to test, on a machine that has no UTF-8 locale to start a
+    // shell in - see `crate::shell_locale::shell_lang`.
+    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|name| {
+        std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8"))
+    });
+    if !inherits_utf8 && crate::shell_locale::shell_lang().is_none() {
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!(
+        "moonreview-pager-{}",
+        crate::moontasks::store::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).expect("failed to create the folder to page from");
+    std::fs::write(dir.join("dash.txt"), "an em dash \u{2014} here\n")
+        .expect("failed to write the file to page");
+
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    // Quit at the end of the file rather than waiting to be told to, which is how git runs it.
+    let terminal_id = registry
+        .spawn(TerminalSpec::running(dir.clone(), "less -F -X dash.txt"))
+        .expect("expected the shell to start");
+    let session = registry.get(&terminal_id).expect("expected the session");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut printed = String::new();
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+        if printed.contains("an em dash") {
+            break;
+        }
+    }
+
+    registry.remove(&terminal_id);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        printed.contains('\u{2014}'),
+        "the pager should have drawn the em dash itself, printed {printed:?}"
+    );
+    assert!(
+        !printed.contains("<E2>"),
+        "the pager should not have drawn the bytes of it, printed {printed:?}"
+    );
+}

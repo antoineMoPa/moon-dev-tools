@@ -93,6 +93,8 @@ pub(crate) struct App {
     pub(crate) terminal_errors: HashMap<String, String>,
     last_poll: Instant,
     last_board_poll: Instant,
+    /// When the window last asked which shells have something running in them.
+    last_running_shells_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
@@ -197,6 +199,7 @@ impl App {
                 restart_on_shell_exit: None,
                 submodule_filter: String::new(),
                 submodule_filter_focus: false,
+                shells_running_a_command: Vec::new(),
                 toasts: Vec::new(),
                 palette: Default::default(),
                 board: Default::default(),
@@ -230,6 +233,9 @@ impl App {
                 .unwrap_or_else(Instant::now),
             last_board_poll: Instant::now()
                 .checked_sub(BOARD_POLL_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            last_running_shells_poll: Instant::now()
+                .checked_sub(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
             pending_action: None,
             pending_close: None,
@@ -405,13 +411,17 @@ impl App {
     /// Quitting kills every shell the window holds, along with whatever they were in the
     /// middle of, so the first ⌘Q says so and the second one goes through.
     ///
+    /// A shell sitting at its prompt has nothing to interrupt, and asking about it would make
+    /// the warning something to click through rather than something to read: what counts is a
+    /// shell with a command running in it - see `App::shells_running_a_command`.
+    ///
     /// Closing the last shell's tab is not this: it ends that shell deliberately, and the
     /// window that follows it out has nothing left running to warn about.
     fn quit_would_kill_shells(&mut self, ctx: &egui::Context) -> bool {
         if !ctx.input(|input| input.viewport().close_requested()) {
             return false;
         }
-        let running = self.running_shells();
+        let running = self.shells_running_a_command();
         if running == 0 {
             return false;
         }

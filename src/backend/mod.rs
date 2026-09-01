@@ -167,6 +167,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
+    /// The shells with something running in them right now, as opposed to the ones sitting at
+    /// a prompt. This is what quitting would interrupt, and so what the window warns about.
+    fn terminals_running_a_command(&self, session_id: &str) -> Result<Vec<String>>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
     /// What a shell is called, if it has been named: an agent's shell is named as it starts,
     /// a plain one only once someone renames it. A shell the server does not have is an error.

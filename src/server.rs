@@ -185,6 +185,10 @@ pub(crate) fn router(state: AppState) -> Router {
             get(crate::terminal::list_terminals).post(crate::terminal::create_terminal),
         )
         .route(
+            "/api/session/{session_id}/terminals/running",
+            get(crate::terminal::terminals_running_a_command),
+        )
+        .route(
             "/api/session/{session_id}/terminals/{terminal_id}",
             get(crate::terminal::terminal_view).delete(crate::terminal::close_terminal),
         )

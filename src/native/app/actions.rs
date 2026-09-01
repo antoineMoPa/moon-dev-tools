@@ -268,6 +268,30 @@ impl App {
         );
     }
 
+    /// Ask which shells have something running in them, which is what quitting would
+    /// interrupt. Kept on the poll clock rather than asked at the moment of the quit: a
+    /// remote server answers over HTTP, and the window must not stall on a keystroke.
+    pub(super) fn poll_running_shells(&mut self) {
+        if self.model.root_session_id.is_empty()
+            || self.last_running_shells_poll.elapsed() < POLL_INTERVAL
+        {
+            return;
+        }
+        self.last_running_shells_poll = Instant::now();
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn_keyed(
+            Some("running-shells".to_string()),
+            move |backend| backend.terminals_running_a_command(&session_id),
+            |model, result| {
+                // A failed answer leaves the last one standing: the warning is worth more
+                // than the news that one poll did not land.
+                if let Ok(terminal_ids) = result {
+                    model.shells_running_a_command = terminal_ids;
+                }
+            },
+        );
+    }
+
     /// Read the project's commands, which is what the Project menu offers.
     pub(super) fn load_project(&mut self) {
         if self.model.root_session_id.is_empty() {
