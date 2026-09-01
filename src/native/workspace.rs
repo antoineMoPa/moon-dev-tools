@@ -405,7 +405,7 @@ impl App {
         placement: TerminalPlacement,
     ) {
         let started = session_id.clone();
-        self.spawn_shell(session_id, command, placement, move |backend| {
+        self.spawn_shell(session_id, command, placement, false, move |backend| {
             backend.create_terminal(&started, command)
         });
     }
@@ -413,16 +413,25 @@ impl App {
     /// The same, with one of the project's commands typed into the shell and sent. The pane
     /// is an ordinary shell pane: the command is over in a moment, and what is left is a
     /// shell in the repo with its output above the prompt.
+    ///
+    /// `restarts_when_exited` marks the shell as the one whose end restarts the window: the
+    /// build-and-run of a project whose run command is the restart word, whose typed line
+    /// only exits on a build that came out well.
     pub(crate) fn run_project_command(
         &mut self,
         session_id: String,
         which: ProjectCommand,
         placement: TerminalPlacement,
+        restarts_when_exited: bool,
     ) {
         let started = session_id.clone();
-        self.spawn_shell(session_id, None, placement, move |backend| {
-            backend.run_project_command(&started, which)
-        });
+        self.spawn_shell(
+            session_id,
+            None,
+            placement,
+            restarts_when_exited,
+            move |backend| backend.run_project_command(&started, which),
+        );
     }
 
     /// Start a shell whichever way `start` starts it, then open a pane attached to it.
@@ -431,6 +440,7 @@ impl App {
         session_id: String,
         command: Option<AgentKind>,
         placement: TerminalPlacement,
+        restarts_when_exited: bool,
         start: impl FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<String> + Send + 'static,
     ) {
         if session_id.is_empty() {
@@ -448,6 +458,9 @@ impl App {
             },
             move |model, result| match result {
                 Ok((terminal_id, attachment)) => {
+                    if restarts_when_exited {
+                        model.restart_on_shell_exit = Some(terminal_id.clone());
+                    }
                     let pane = Pane::Terminal {
                         terminal_id: terminal_id.clone(),
                         command,
@@ -592,7 +605,7 @@ impl App {
     /// `crate::terminal`.
     ///
     /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
-    pub(crate) fn close_tabs_of_exited_shells(&mut self) {
+    pub(crate) fn close_tabs_of_exited_shells(&mut self, ctx: &egui::Context) {
         let Some(terminal_id) = self
             .terminals
             .iter()
@@ -601,6 +614,17 @@ impl App {
         else {
             return;
         };
+
+        // The build whose end was to restart the window: the line typed into it only exits on
+        // a build that came out well, so this shell ending is the rebuilt program being ready
+        // to start. The window closing takes the tab with it, so there is nothing left to
+        // close here - unless the restart could not start a new window, in which case the
+        // toast it left says so and the tab closes on the next frame like any other.
+        if self.model.restart_on_shell_exit.as_deref() == Some(terminal_id.as_str()) {
+            self.model.restart_on_shell_exit = None;
+            self.restart_window(ctx);
+            return;
+        }
 
         let pane = self
             .model
@@ -647,6 +671,10 @@ impl App {
             ..
         }) = closed
         {
+            // Closing the build shell by hand is calling its restart off.
+            if self.model.restart_on_shell_exit.as_deref() == Some(terminal_id.as_str()) {
+                self.model.restart_on_shell_exit = None;
+            }
             self.terminals.remove(&terminal_id);
             self.terminal_errors.remove(&terminal_id);
             if task_id.is_some() {
@@ -900,10 +928,21 @@ impl App {
             return;
         }
         self.keyboard_pane = front;
-        // A shell that keeps the keyboard keeps every key sent to the window, and a pane with
-        // nothing to type into never takes it off it, so letting go is not the arriving pane's
-        // job to do.
+        // A widget drawn in the arriving pane is not being left behind: the click that brought
+        // the pane forward may be the very one that put the keyboard in that widget - the third
+        // click of a triple on a card's title, say, with the rename box the first two opened
+        // already holding it. The keyboard is where it was reached for, so it stays.
         if let Some(focused) = ctx.memory(|memory| memory.focused()) {
+            let in_front_pane = front
+                .and_then(|pane| self.frames.pane_rect(pane))
+                .zip(ctx.read_response(focused))
+                .is_some_and(|(pane, widget)| pane.intersects(widget.rect));
+            if in_front_pane {
+                return;
+            }
+            // A shell that keeps the keyboard keeps every key sent to the window, and a pane
+            // with nothing to type into never takes it off it, so letting go is not the
+            // arriving pane's job to do.
             ctx.memory_mut(|memory| memory.surrender_focus(focused));
         }
         self.pane_taking_keyboard = front;

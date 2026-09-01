@@ -193,6 +193,7 @@ impl App {
                 project_focus: false,
                 project_editor: None,
                 project_unsaved: false,
+                restart_on_shell_exit: None,
                 submodule_filter: String::new(),
                 submodule_filter_focus: false,
                 toasts: Vec::new(),

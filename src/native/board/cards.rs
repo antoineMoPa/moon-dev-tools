@@ -474,6 +474,7 @@ fn draw_title_handle(
             task_id: task.id.clone(),
             title: task.title.clone(),
             focus: true,
+            title_rect: laid_out.rect,
         });
     }
 }
@@ -494,6 +495,34 @@ fn draw_title_editor(
         egui::TextEdit::singleline(&mut rename.title).hint_text("Task title"),
     );
     if std::mem::take(&mut rename.focus) {
+        entry.request_focus();
+    }
+
+    // The third click of the triple that opened this box selects the whole title. That click
+    // is routed against the frame before the box existed - the double click's frame, where the
+    // title was still a label - so the box's own response never hears it and it is read off
+    // the pointer itself instead.
+    let tripled = ui.input(|input| {
+        input
+            .pointer
+            .button_triple_clicked(egui::PointerButton::Primary)
+            && input.pointer.interact_pos().is_some_and(|pos| {
+                entry.rect.contains(pos) || rename.title_rect.contains(pos)
+            })
+    });
+    if tripled {
+        let mut state =
+            egui::text_edit::TextEditState::load(ui.ctx(), entry.id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(rename.title.chars().count()),
+            )));
+        // Stored after the box's own end-of-frame store, so this range is the one it loads
+        // next frame - and focused, since a box without the keyboard drops its selection as
+        // it loads.
+        state.store(ui.ctx(), entry.id);
         entry.request_focus();
     }
 

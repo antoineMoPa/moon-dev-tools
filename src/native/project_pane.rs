@@ -22,7 +22,11 @@ const BOXES: &[(ProjectCommand, &str)] = &[
         ProjectCommand::Build,
         "the command that builds this project",
     ),
-    (ProjectCommand::Run, "the command that runs this project"),
+    (
+        ProjectCommand::Run,
+        // The one word that is not a line of shell - see `crate::project::RESTART_RUN_COMMAND`.
+        "the command that runs this project, or @restart to start this window again",
+    ),
 ];
 
 /// How wide a command box gets. A command line is longer than a name and shorter than a

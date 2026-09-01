@@ -415,7 +415,7 @@ impl Backend for RemoteBackend {
 
     fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
-            &format!("/api/session/{session_id}/project/run/{}", which.label()),
+            &format!("/api/session/{session_id}/project/run/{}", which.token()),
             &json!({}),
         )?;
         Ok(opened.terminal_id)

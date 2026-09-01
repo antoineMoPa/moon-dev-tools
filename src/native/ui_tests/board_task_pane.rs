@@ -621,3 +621,157 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
         std::fs::read_to_string(&notes)
     );
 }
+
+/// A triple click on a card's title is a double click and one more: the double opens the title
+/// for renaming, and the third click selects the whole of it, so the next letters replace the
+/// title rather than landing inside it. The third click is the awkward one - it is routed
+/// against the frame where the title was still a label, so the rename box never hears it and
+/// has to read it off the pointer.
+#[test]
+fn triple_clicking_the_title_selects_all_of_it() {
+    const TASK: &str = "write-the-parser-1111";
+
+    let fixture = seeded_fixture("card-triple-click");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let pane_open = Arc::new(AtomicBool::new(false));
+    let pane_open_in_ui = Arc::clone(&pane_open);
+    // The title as the card's rename box has it, while one is open.
+    let renaming: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let renaming_in_ui = Arc::clone(&renaming);
+    // Whether that box has the keyboard yet: it asks for it as it is drawn, and only has it
+    // from the frame after, which is the one it is safe to type into.
+    let typing_lands = Arc::new(AtomicBool::new(false));
+    let typing_lands_in_ui = Arc::clone(&typing_lands);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        // Three clicks are a triple within 0.6 seconds of the first, on egui's clock, which
+        // ticks by this much every step. The default quarter second would leave the third
+        // click 0.1 seconds inside that window - too close to a timing to be testing one.
+        .with_step_dt(0.05)
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            pane_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(
+                        |pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK),
+                    )
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+            *renaming_in_ui.lock().expect("poisoned") = app
+                .model
+                .board
+                .renaming
+                .as_ref()
+                .map(|rename| rename.title.clone());
+            typing_lands_in_ui.store(
+                ui.ctx().memory(|memory| memory.focused()).is_some(),
+                Ordering::Relaxed,
+            );
+            loaded_in_ui.store(app.model.board.loaded, Ordering::Relaxed);
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the board never read the task out of .moontasks"
+    );
+
+    // The first click of the triple opens the task's pane, whose column takes its share of the
+    // board's width and sets the cards walking to where that leaves them. The pane is opened
+    // ahead of the gesture instead, and the triple is tried again until all three of its
+    // clicks land on where the title has walked to, rather than betting on the walk being
+    // over after some number of frames.
+    let card = harness
+        .ctx
+        .read_response(crate::native::board::cards::card_drag_id(TASK))
+        .expect("expected the card to have been drawn")
+        .rect;
+    click_at(&mut harness, card.center());
+    assert!(
+        settle(&mut harness, || pane_open.load(Ordering::Relaxed)),
+        "clicking the card should have opened the task's pane"
+    );
+
+    let mut selected = false;
+    for _ in 0..8 {
+        // Enough of a pause that a click of an attempt that missed cannot be counted into
+        // this one's triple.
+        harness.run_steps(14);
+        let card = harness
+            .ctx
+            .read_response(crate::native::board::cards::card_drag_id(TASK))
+            .expect("expected the card to have been drawn")
+            .rect;
+
+        // Three presses one frame apart, by hand rather than through `click_at`: the settle
+        // steps in there would put whole frames between the clicks, and the point is the
+        // tight ones, where the third press falls on the frame the label has only just left.
+        let press_and_release = |pressed| egui::Event::PointerButton {
+            pos: card.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(card.center()),
+            press_and_release(true),
+            press_and_release(false),
+        ]);
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .extend([press_and_release(true), press_and_release(false)]);
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .extend([press_and_release(true), press_and_release(false)]);
+        harness.run_steps(3);
+
+        if renaming.lock().expect("poisoned").is_some() && typing_lands.load(Ordering::Relaxed)
+        {
+            selected = true;
+            break;
+        }
+    }
+    assert!(
+        selected,
+        "a triple click on the title opens it for renaming, with the keyboard in it"
+    );
+    assert_eq!(
+        *renaming.lock().expect("poisoned"),
+        Some("Write the parser".to_string()),
+        "and the box opens on the title as it stands"
+    );
+
+    // The whole title was selected, so one letter is the whole of what remains - where the
+    // double click's box, tested above, has the letter joining the title instead.
+    type_letter(&mut harness, egui::Key::Y, "Y");
+    harness.run_steps(2);
+    assert_eq!(
+        *renaming.lock().expect("poisoned"),
+        Some("Y".to_string()),
+        "a letter typed after the triple click should replace the whole title"
+    );
+}

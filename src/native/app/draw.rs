@@ -354,7 +354,7 @@ impl App {
         {
             self.close_pane(pane_id);
         }
-        self.close_tabs_of_exited_shells();
+        self.close_tabs_of_exited_shells(ctx);
 
         // Closing the last tab closes the window: an empty workspace has nothing to show and
         // no way back other than the palette.

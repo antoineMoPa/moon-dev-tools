@@ -356,6 +356,10 @@ pub(crate) struct TaskRename {
     pub(crate) title: String,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) focus: bool,
+    /// Where the title sat when the double click opened this box. The third click of a triple
+    /// lands within a few pixels of the first two, so a click in here while the box is open is
+    /// the triple finishing on it - even where the box is drawn narrower than the title was.
+    pub(crate) title_rect: egui::Rect,
 }
 
 
@@ -538,6 +542,12 @@ pub(crate) struct Model {
     /// keystroke while a write is in flight is written by the next one rather than by a write
     /// of its own, which could land in either order.
     pub(crate) project_unsaved: bool,
+    /// The shell whose end restarts the window: a `build and run` of a project whose run
+    /// command is the restart word. The line typed into that shell only exits on a build that
+    /// came out well - a failed one keeps the shell open on its errors - so the shell ending
+    /// is the rebuilt program being ready to start. Cleared when the tab is closed by hand,
+    /// which is the restart being called off.
+    pub(crate) restart_on_shell_exit: Option<String>,
 }
 
 /// The configuration pane's two boxes, mid-edit. They are text rather than commands because
@@ -556,6 +566,8 @@ impl ProjectEditor {
         match which {
             ProjectCommand::Build => &self.build,
             ProjectCommand::Run => &self.run,
+            // Built out of the two boxes rather than stored, so it has no box of its own.
+            ProjectCommand::BuildAndRun => unreachable!("build and run has no box"),
         }
     }
 
@@ -563,6 +575,7 @@ impl ProjectEditor {
         match which {
             ProjectCommand::Build => &mut self.build,
             ProjectCommand::Run => &mut self.run,
+            ProjectCommand::BuildAndRun => unreachable!("build and run has no box"),
         }
     }
 

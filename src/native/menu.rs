@@ -221,6 +221,10 @@ mod platform {
                         ProjectCommand::Run,
                         Accelerator::new(Some(Modifiers::META), Code::KeyR),
                     ),
+                    (
+                        ProjectCommand::BuildAndRun,
+                        Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyR),
+                    ),
                 ]
                 .into_iter()
                 .map(|(which, accelerator)| {

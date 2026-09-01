@@ -161,14 +161,32 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         bindings::chord_of(Action::OpenSubmodules),
     ));
     // The project's own commands, and the pane they are set in. Only the ones the project
-    // has set are offered: an item that runs nothing is worse than no item.
-    for which in [ProjectCommand::Build, ProjectCommand::Run] {
+    // has set are offered: an item that runs nothing is worse than no item. Build and run
+    // needs both halves, which its line saying nothing already answers for.
+    let restarts = app.model.project.run_restarts_window();
+    for which in [
+        ProjectCommand::Build,
+        ProjectCommand::Run,
+        ProjectCommand::BuildAndRun,
+    ] {
         let Some(line) = app.model.project.line(which) else {
             continue;
         };
+        let description = match which {
+            // A run command of the restart word is not a line of shell - see
+            // `crate::project::RESTART_RUN_COMMAND`.
+            ProjectCommand::Run if restarts => format!(
+                "Start {} again on this repo, and close this window",
+                app.frame().program()
+            ),
+            ProjectCommand::BuildAndRun if restarts => {
+                format!("Run {line} in a shell, and restart this window when it ends")
+            }
+            _ => format!("Run {line} in a shell"),
+        };
         commands.push(Command {
             title: which.label().to_string(),
-            description: format!("Run {line} in a shell"),
+            description,
             action: CommandAction::RunProject(which),
             shortcut: None,
         });

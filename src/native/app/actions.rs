@@ -19,7 +19,7 @@ use crate::{
         programs::Opens,
         workspace::TerminalPlacement,
     },
-    project::ProjectCommands,
+    project::{ProjectCommand, ProjectCommands},
 };
 
 use super::{
@@ -335,11 +335,27 @@ impl App {
             }
             CommandAction::SearchContent => self.model.palette.show_contents(),
             CommandAction::Split(side) => self.split_frame(side),
-            CommandAction::RunProject(which) => {
-                let session_id = self.model.root_session_id.clone();
-                self.run_project_command(session_id, which, TerminalPlacement::WithOtherShells);
-            }
+            CommandAction::RunProject(which) => self.run_project(ctx, which),
         }
+    }
+
+    /// Run one of the project's commands in a shell - or restart the window, when the
+    /// project's run command is the restart word rather than a line of shell. Build-and-run
+    /// on such a project spawns the build shell and marks it, so its end restarts the window
+    /// on what it built - see [`crate::project::RESTART_RUN_COMMAND`].
+    fn run_project(&mut self, ctx: &egui::Context, which: ProjectCommand) {
+        let restarts = self.model.project.run_restarts_window();
+        if which == ProjectCommand::Run && restarts {
+            self.restart_window(ctx);
+            return;
+        }
+        let session_id = self.model.root_session_id.clone();
+        self.run_project_command(
+            session_id,
+            which,
+            TerminalPlacement::WithOtherShells,
+            which == ProjectCommand::BuildAndRun && restarts,
+        );
     }
 
     /// Open another window - of this program or of one of its siblings - on its launch
@@ -371,7 +387,7 @@ impl App {
     /// A window runs the executable it was started with, so a rebuilt one only reaches the
     /// screen through a second process. The new instance is started first: a window that
     /// closed on a failed spawn would leave the user with nothing.
-    fn restart_window(&mut self, ctx: &egui::Context) {
+    pub(crate) fn restart_window(&mut self, ctx: &egui::Context) {
         let frame = self.frame;
         let Some(executable) = crate::native::programs::executable_for(frame) else {
             self.model.error(format!(
