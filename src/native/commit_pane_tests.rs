@@ -407,6 +407,95 @@ fn pushing_a_branch_that_tracks_another_name_sends_it_under_its_own() {
     assert_eq!(after.ahead, 0, "the remote has everything this branch has");
 }
 
+/// A push that worked took everything there was to send, so its button goes off rather than
+/// offering to send it again - and a commit made after it turns the button back on.
+#[test]
+fn the_push_button_goes_off_once_the_push_has_gone_through() {
+    use egui_kittest::kittest::NodeT;
+
+    use crate::native::panes::OpenPaneRequest;
+
+    let fixture = seeded_fixture("push-disables");
+    let remote = fixture
+        .root
+        .parent()
+        .expect("expected an enclosing directory")
+        .join("origin.git");
+    std::fs::create_dir_all(&remote).expect("failed to make the remote");
+    run_git_no_output(&remote, &["init", "--bare"]).expect("failed to init the remote");
+    run_git_no_output(
+        &fixture.root,
+        &["remote", "add", "origin", &remote.display().to_string()],
+    )
+    .expect("failed to add the remote");
+    run_git_no_output(&fixture.root, &["push", "-u", "origin", "main"])
+        .expect("failed to push main");
+    // The commit the remote has not got, which is what the push button is there to send.
+    fixture.commit("Add the rest");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    // The session opens on a worker thread, so its id arrives mid-run: the pane is opened by
+    // the first frame that has one, rather than up front for a session that is not there yet.
+    let mut commit_pane_opened = false;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .build_ui(move |ui| {
+            let session_id = app.model.root_session_id.clone();
+            if !commit_pane_opened && !session_id.is_empty() {
+                app.open_pane(OpenPaneRequest::Commit { session_id });
+                commit_pane_opened = true;
+            }
+            app.draw(ui);
+        });
+
+    let step_until = |harness: &mut Harness<'_>, done: &dyn Fn(&Harness<'_>) -> bool| {
+        let deadline = Instant::now() + GIT_DEADLINE;
+        while Instant::now() < deadline && !done(harness) {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let push_is_on = |harness: &Harness<'_>| {
+        harness
+            .query_by_label("push")
+            .is_some_and(|button| !button.accesskit_node().is_disabled())
+    };
+
+    step_until(&mut harness, &push_is_on);
+    assert!(
+        push_is_on(&harness),
+        "a branch ahead of its remote has something to push"
+    );
+
+    harness.get_by_label("push").click();
+    // "pushed" beside the buttons is the run having worked; while it runs every button is off,
+    // so the word is what says the button is off for being done rather than for being busy.
+    step_until(&mut harness, &|harness| {
+        harness.query_by_label("pushed").is_some()
+    });
+    assert!(
+        harness.query_by_label("pushed").is_some(),
+        "the push should have gone through"
+    );
+    assert!(
+        harness
+            .get_by_label("push")
+            .accesskit_node()
+            .is_disabled(),
+        "everything is pushed, so the button has nothing left to send"
+    );
+
+    // A commit made after the push - here from outside the window - is something to send
+    // again, and the next reading of the repo hands the button its job back.
+    fixture.write("src/more.rs", "pub const MORE: u32 = 1;\n");
+    fixture.commit("Add more");
+    step_until(&mut harness, &push_is_on);
+    assert!(
+        push_is_on(&harness),
+        "a commit made after the push should turn the button back on"
+    );
+}
+
 /// The pull request is the last thing the pane is for: once `gh` has opened it in the browser
 /// there is no button left worth pressing, so the pane goes the way pressing `close` sends it -
 /// and the review beside it goes with it, rather than being left as clutter.

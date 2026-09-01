@@ -242,6 +242,9 @@ impl App {
         // commit gets to answer for it. One that was already in flight predates the commit and
         // cannot say what it left behind.
         let answers_a_commit = pane.closes_review;
+        // Read now for the same reason: a reading already in flight when the push ended would
+        // answer with the pre-push count and hand the button back a job it has already done.
+        let answers_for_the_push = pane.reached == Reached::Pushed;
 
         let for_call = session_id.to_string();
         let for_apply = session_id.to_string();
@@ -260,6 +263,14 @@ impl App {
                         review_is_over = answers_a_commit
                             && state.staged_files.is_empty()
                             && state.unstaged_count == 0;
+                        // A push that worked sent everything there was; commits that turn up
+                        // after it - made anywhere - give the push button its job back.
+                        if answers_for_the_push
+                            && pane.reached == Reached::Pushed
+                            && state.ahead > 0
+                        {
+                            pane.reached = Reached::Committed;
+                        }
                         pane.state = Some(state);
                         pane.error = None;
                     }
@@ -644,12 +655,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 // to push, something pushed to open a pull request on. A branch that arrived
                 // with commits its upstream has not got is already past the first of those.
                 let ahead = state.as_ref().map_or(0, |state| state.ahead);
-                let has_something_to_push = ahead > 0 || reached != Reached::Nothing;
-                if has_something_to_push
-                    && widgets::clickable(ui.add_enabled(!running, egui::Button::new("push")))
-                        .clicked()
-                {
-                    app.start_commit_run(session_id, CommitAction::Push);
+                if ahead > 0 || reached != Reached::Nothing {
+                    // A push that worked took everything there was; `ahead` alone cannot say
+                    // so, because the reading it came from may predate the push. The next
+                    // commit - or a reading that finds commits from elsewhere - turns it back on.
+                    let pushed_it_all = reached == Reached::Pushed;
+                    let push = widgets::clickable(
+                        ui.add_enabled(!running && !pushed_it_all, egui::Button::new("push")),
+                    );
+                    if push.clicked() {
+                        app.start_commit_run(session_id, CommitAction::Push);
+                    }
+                    if pushed_it_all && !running {
+                        push.on_disabled_hover_text("everything is pushed already");
+                    }
                 }
 
                 // And only where `gh` is installed: without it there is no pull request to
