@@ -173,6 +173,98 @@ fn the_launch_screen_of_the_board_does_not_offer_a_review() {
     );
 }
 
+/// The launch screen wears the logo of the executable whose window it is in - the shell's moon
+/// in a shell window, and nobody else's.
+#[test]
+fn the_launch_screen_shows_the_logo_of_its_own_executable() {
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            frame: crate::cli::Frame::Shell,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| app.draw(ui));
+    // Decoding the logo and uploading it takes passes of its own after the first draw.
+    harness.run_steps(3);
+
+    let shown = harness.ctx.try_load_texture(
+        "bytes://logo-moonshell-256.png",
+        egui::TextureOptions::default(),
+        egui::SizeHint::Scale(1.0.into()),
+    );
+    assert!(
+        matches!(shown, Ok(egui::load::TexturePoll::Ready { .. })),
+        "expected the shell's launch screen to have drawn the shell logo"
+    );
+    // A URI nothing drew has no bytes behind it, so this is the other two logos staying away.
+    for other in [
+        "bytes://logo-moonreview-256.png",
+        "bytes://logo-moontasks-256.png",
+    ] {
+        assert!(
+            harness.ctx.try_load_bytes(other).is_err(),
+            "expected the shell's launch screen not to draw {other}"
+        );
+    }
+}
+
+/// The screen a window waits on while its repo opens wears the same logo, and says what that
+/// window is opening rather than naming moonreview from a moontasks window.
+#[test]
+fn the_opening_screen_shows_the_logo_of_its_own_executable() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            frame: crate::cli::Frame::Tasks,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+    app.model.stage = crate::native::model::Stage::Opening;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| app.draw(ui));
+    // Decoding the logo and uploading it takes passes of its own after the first draw.
+    harness.run_steps(3);
+
+    let shown = harness.ctx.try_load_texture(
+        "bytes://logo-moontasks-256.png",
+        egui::TextureOptions::default(),
+        egui::SizeHint::Scale(1.0.into()),
+    );
+    assert!(
+        matches!(shown, Ok(egui::load::TexturePoll::Ready { .. })),
+        "expected the board's opening screen to have drawn the board's logo"
+    );
+    for other in [
+        "bytes://logo-moonreview-256.png",
+        "bytes://logo-moonshell-256.png",
+    ] {
+        assert!(
+            harness.ctx.try_load_bytes(other).is_err(),
+            "expected the board's opening screen not to draw {other}"
+        );
+    }
+    harness.get_by_label("opening the board…");
+    harness.snapshot("repo-opening");
+}
+
 /// Going back to yesterday's project should not mean naming it again, so the launch screen
 /// lists the ones opened before and opens the clicked one.
 #[test]

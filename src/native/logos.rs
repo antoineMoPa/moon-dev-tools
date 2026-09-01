@@ -32,6 +32,18 @@ pub(crate) fn logo_png(frame: Frame, size: usize) -> &'static [u8] {
     }
 }
 
+/// The logo as something to draw inside the window, at one of the rendered sizes.
+///
+/// The bytes are handed to egui under a `bytes://` URI naming the frame and the size, which is
+/// what makes it decode and upload the texture on the first frame that shows the logo and reuse
+/// it on every frame after.
+pub(crate) fn logo_image_source(frame: Frame, size: usize) -> egui::ImageSource<'static> {
+    egui::ImageSource::Bytes {
+        uri: format!("bytes://logo-{}-{size}.png", frame.program()).into(),
+        bytes: egui::load::Bytes::Static(logo_png(frame, size)),
+    }
+}
+
 /// The logo as the window icon: the dock, the task switcher and the title bar all take it
 /// from here. 256 pixels because the Dock on a Retina display draws the icon at up to
 /// 128 points, and eframe hands these exact pixels to `setApplicationIconImage` - a smaller

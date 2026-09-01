@@ -53,6 +53,8 @@ struct FrameProgram {
     asks_for_remote_repo: &'static str,
     /// What the launch screen's button says.
     opens_button: &'static str,
+    /// What the screen between that button and the open window says it is doing.
+    opening: &'static str,
 }
 
 const FRAME_PROGRAMS: &[FrameProgram] = &[
@@ -64,6 +66,7 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
         asks_for_repo: "Which repo to review:",
         asks_for_remote_repo: "Path of the repo to review, on that machine:",
         opens_button: "Open review",
+        opening: "opening the review…",
     },
     FrameProgram {
         frame: Frame::Tasks,
@@ -73,6 +76,7 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
         asks_for_repo: "Which repo to open the board of:",
         asks_for_remote_repo: "Path of the repo to open the board of, on that machine:",
         opens_button: "Open board",
+        opening: "opening the board…",
     },
     FrameProgram {
         frame: Frame::Shell,
@@ -82,6 +86,7 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
         asks_for_repo: "Which repo to open a shell in:",
         asks_for_remote_repo: "Path of the repo to open a shell in, on that machine:",
         opens_button: "Open shell",
+        opening: "opening the shell…",
     },
 ];
 
@@ -115,6 +120,11 @@ impl Frame {
     /// What the launch screen's button says.
     pub(crate) fn opens_button(self) -> &'static str {
         self.entry().opens_button
+    }
+
+    /// What the screen between that button and the open window says it is doing.
+    pub(crate) fn opening(self) -> &'static str {
+        self.entry().opening
     }
 
     fn entry(self) -> &'static FrameProgram {

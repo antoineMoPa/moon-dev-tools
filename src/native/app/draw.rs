@@ -7,7 +7,7 @@ use egui::{Align, Align2, CornerRadius, Key, Layout as UiLayout, RichText, Ui, v
 use crate::{
     api::OpenSessionRequest,
     native::{
-        bindings::{self}, find, fonts,
+        bindings::{self}, find, fonts, logos,
         menu::{MenuAction, NativeMenu},
         model::{Stage, ToastKind},
         palette::{self, CommandAction},
@@ -18,6 +18,13 @@ use crate::{
 };
 
 use super::{App, POLL_INTERVAL, TabAction};
+
+/// How big the app's logo is drawn on the screens a window opens on. Big enough to be the
+/// thing the eye lands on when the window appears, small enough that what is under it stays
+/// in view.
+const LOGO_POINTS: f32 = 80.0;
+/// Between that logo and the program's name under it.
+const LOGO_GAP: f32 = 8.0;
 
 impl App {
 
@@ -32,12 +39,17 @@ impl App {
         let frame = self.frame;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.28);
-                ui.label(
-                    RichText::new(format!("🌚 {}", frame.program()))
-                        .size(22.0)
-                        .strong(),
+                // The logo is drawn above where the heading used to start, so the prompt and
+                // the recent projects under it stay where they were in the window.
+                ui.add_space((ui.available_height() * 0.28 - LOGO_POINTS - LOGO_GAP).max(0.0));
+                // The window's own logo, drawn from the 256px asset: at 80 points it covers
+                // 160 pixels on a Retina display, and the 128px one would be upscaled there.
+                ui.add(
+                    egui::Image::new(logos::logo_image_source(frame, 256))
+                        .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
                 );
+                ui.add_space(LOGO_GAP);
+                ui.label(RichText::new(frame.program()).size(22.0).strong());
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("connected to {}", self.model.connection))
@@ -118,15 +130,23 @@ impl App {
     pub(super) fn draw_opening(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
         let ctx = ui.ctx().clone();
+        let frame = self.frame;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.4);
-                ui.label(RichText::new("🌚 moonreview").size(20.0).strong());
+                // Same subtraction as the launch screen this replaces, so the name and the
+                // spinner stay put as one screen gives way to the other.
+                ui.add_space((ui.available_height() * 0.4 - LOGO_POINTS - LOGO_GAP).max(0.0));
+                ui.add(
+                    egui::Image::new(logos::logo_image_source(frame, 256))
+                        .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
+                );
+                ui.add_space(LOGO_GAP);
+                ui.label(RichText::new(frame.program()).size(20.0).strong());
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.add_space((ui.available_width() - 140.0).max(0.0) / 2.0);
                     ui.spinner();
-                    ui.label(RichText::new("opening the review…").color(palette.muted));
+                    ui.label(RichText::new(frame.opening()).color(palette.muted));
                 });
             });
         });
