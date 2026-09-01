@@ -19,7 +19,7 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleView, TerminalNameRequest, TerminalView,
+        SubmoduleHubPayload, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -224,7 +224,7 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/state"))
     }
 
-    fn session_submodules(&self, session_id: &str) -> Result<Vec<SubmoduleView>> {
+    fn session_submodules(&self, session_id: &str) -> Result<SubmoduleHubPayload> {
         self.get(&format!("/api/session/{session_id}/submodules"))
     }
 

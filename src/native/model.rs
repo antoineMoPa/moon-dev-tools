@@ -9,7 +9,7 @@ use std::{
 use egui_frames::{Layout, PaneId};
 
 use crate::{
-    api::{AgentKind, AgentLogPayload, CommitView, HunkView, SessionPayload, SubmoduleView},
+    api::{AgentKind, AgentLogPayload, CommitView, HunkView, RepoStatusView, SessionPayload},
     native::{panes::Pane, theme::ThemeMode},
     project::{ProjectCommand, ProjectCommands},
 };
@@ -495,7 +495,10 @@ pub(crate) struct Model {
     /// names no review - a frame of shells, say - opens where the previous one did.
     pub(crate) last_shell_session_id: Option<String>,
     pub(crate) reviews: HashMap<String, ReviewState>,
-    pub(crate) submodules: Vec<SubmoduleView>,
+    /// The reviewed repo and how many of its files have changed, as the submodule hub shows
+    /// it at the top of its list. None until the hub's first answer arrives.
+    pub(crate) root_repo_status: Option<RepoStatusView>,
+    pub(crate) submodules: Vec<RepoStatusView>,
     /// What the submodule hub's box is being narrowed by. It lives on the model rather
     /// than in the pane so it survives the pane being closed and opened again.
     pub(crate) submodule_filter: String,

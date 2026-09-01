@@ -16,7 +16,7 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleView,
+        SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -46,7 +46,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened>;
     fn session_state(&self, session_id: &str) -> Result<SessionPayload>;
-    fn session_submodules(&self, session_id: &str) -> Result<Vec<SubmoduleView>>;
+    fn session_submodules(&self, session_id: &str) -> Result<SubmoduleHubPayload>;
     fn commit_history(
         &self,
         session_id: &str,

@@ -16,7 +16,7 @@ use crate::{
         AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitView,
         ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
         OpenSessionRequest, PatchPayload, RepoSession, SessionOpened, SessionPayload,
-        SubmoduleView,
+        RepoStatusView, SubmoduleHubPayload,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -243,22 +243,27 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
     })
 }
 
-pub(crate) fn session_submodules(state: &AppState, session_id: &str) -> Result<Vec<SubmoduleView>> {
+pub(crate) fn session_submodules(state: &AppState, session_id: &str) -> Result<SubmoduleHubPayload> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
 
-    Ok(list_submodule_repos(&repo_path)?
+    let root = repo_status_view(&repo_path, crate::git::changed_file_count(&repo_path)?);
+    let submodules = list_submodule_repos(&repo_path)?
         .into_iter()
-        .map(|submodule| SubmoduleView {
-            name: submodule
-                .repo_path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| submodule.repo_path.display().to_string()),
-            repo_path: submodule.repo_path.display().to_string(),
-            changed_files: submodule.changed_file_count,
-        })
-        .collect())
+        .map(|submodule| repo_status_view(&submodule.repo_path, submodule.changed_file_count))
+        .collect();
+    Ok(SubmoduleHubPayload { root, submodules })
+}
+
+fn repo_status_view(repo_path: &std::path::Path, changed_files: usize) -> RepoStatusView {
+    RepoStatusView {
+        name: repo_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| repo_path.display().to_string()),
+        repo_path: repo_path.display().to_string(),
+        changed_files,
+    }
 }
 
 pub(crate) fn commit_history(

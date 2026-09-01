@@ -77,19 +77,23 @@ pub(crate) fn list_submodule_repos(repo_path: &Path) -> Result<Vec<SubmoduleRepo
 
     let mut submodules = Vec::new();
     for submodule_path in submodule_paths {
-        let status = run_git(
-            &submodule_path,
-            &["status", "--short", "--ignore-submodules=none"],
-        )?;
         submodules.push(SubmoduleRepo {
             repo_path: canonicalize_repo(&submodule_path)?,
-            changed_file_count: status.lines().filter(|line| !line.trim().is_empty()).count(),
+            changed_file_count: changed_file_count(&submodule_path)?,
         });
     }
 
     submodules.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
     submodules.dedup_by(|left, right| left.repo_path == right.repo_path);
     Ok(submodules)
+}
+
+/// How many files `git status` lists as changed in a repo, staged or not, untracked
+/// included. A submodule with changes of its own counts as one changed file of the repo
+/// holding it, the way `git status` shows it.
+pub(crate) fn changed_file_count(repo_path: &Path) -> Result<usize> {
+    let status = run_git(repo_path, &["status", "--short", "--ignore-submodules=none"])?;
+    Ok(status.lines().filter(|line| !line.trim().is_empty()).count())
 }
 
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {

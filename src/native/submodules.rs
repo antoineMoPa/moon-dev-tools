@@ -1,15 +1,17 @@
-//! The submodule hub: every submodule of the reviewed repo, and a way into a review of the
-//! ones that have changes.
+//! The submodule hub: the reviewed repo and every submodule of it, each with how many of its
+//! files have changed, and a way into a review of the ones that have changes.
 //!
-//! The list itself is `model.submodules`, which `App::poll_submodules` keeps up to date for
-//! the palette; this pane draws the same answer whole rather than only its changed rows.
+//! The list itself is `model.root_repo_status` and `model.submodules`, which
+//! `App::poll_submodules` keeps up to date for the palette; this pane draws the same answer
+//! whole rather than only its changed rows.
 
 use egui::{Align, CornerRadius, Key, Layout, Modifiers, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
-    api::SubmoduleView,
+    api::RepoStatusView,
     native::{
         app::App,
+        palette::CommandAction,
         panes::OpenPaneRequest,
         theme::{Palette, SMALL_SIZE},
         widgets,
@@ -53,13 +55,12 @@ impl Filter {
 
 /// One row of the hub: what it says, and the review it opens.
 struct Row {
-    repo_path: String,
-    /// The submodule's own directory name, which is all a row says: the folder it sits in is
-    /// the heading above it.
+    /// The repo's own directory name, which is all a row says: the folder it sits in is the
+    /// heading above it.
     name: String,
     /// The same with its folder in front, which is what the row's hover offers to review.
     path_under_repo: String,
-    
+    opens: OpenPaneRequest,
     changes: String,
     changed: bool,
 }
@@ -101,15 +102,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
             widgets::divider(ui, &palette);
             ui.add_space(5.0);
 
+            // The repo itself heads the list, so a query that leaves it out leaves the list
+            // empty; without a query the repo is always there, and only its submodules can
+            // be missing.
             if groups.is_empty() {
-                let empty = if filter.is_on() {
-                    "no submodule matches"
-                } else {
-                    "this repo has no submodules"
-                };
-                ui.label(RichText::new(empty).color(palette.muted));
+                ui.label(RichText::new("no submodule matches").color(palette.muted));
                 return;
             }
+            let no_submodules = !filter.is_on() && app.model.submodules.is_empty();
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -147,6 +147,11 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                                 });
                             });
                             ui.add_space(8.0);
+                        }
+                        if no_submodules {
+                            ui.label(
+                                RichText::new("this repo has no submodules").color(palette.muted),
+                            );
                         }
                     });
                 });
@@ -217,10 +222,11 @@ fn widest<'a>(
         .fold(0.0f32, f32::max)
 }
 
-/// The submodules the query asks for, gathered under the folder of the repo each sits in.
-/// They arrive sorted by path, so a folder's submodules are already together and the groups
-/// keep that order. A folder whose submodules all fall to the query loses its heading with
-/// them, because its group is never made.
+/// The reviewed repo first, in a group of its own, then the submodules the query asks for,
+/// gathered under the folder of the repo each sits in. They arrive sorted by path, so a
+/// folder's submodules are already together and the groups keep that order. A folder whose
+/// submodules all fall to the query loses its heading with them, because its group is never
+/// made.
 fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
     let root_repo_path = app
         .model
@@ -229,6 +235,28 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
         .map(|payload| payload.repo_path.clone());
 
     let mut groups: Vec<Group> = Vec::new();
+    if let Some(root) = app
+        .model
+        .root_repo_status
+        .as_ref()
+        .filter(|root| filter.matches(&root.name))
+    {
+        groups.push(Group {
+            folder: String::new(),
+            rows: vec![Row {
+                name: root.name.clone(),
+                path_under_repo: root.name.clone(),
+                // The review of the repo itself is the one the window opened on, so the row
+                // brings that forward rather than opening a second one.
+                opens: OpenPaneRequest::Review {
+                    session_id: app.model.root_session_id.clone(),
+                    title: "review".to_string(),
+                },
+                changes: changes_label(root),
+                changed: root.changed_files > 0,
+            }],
+        });
+    }
     for submodule in &app.model.submodules {
         let path = path_under_repo(&submodule.repo_path, root_repo_path.as_deref());
         if !filter.matches(path) {
@@ -236,9 +264,12 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
         }
         let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
         let row = Row {
-            repo_path: submodule.repo_path.clone(),
             name: submodule.name.clone(),
             path_under_repo: path.to_string(),
+            opens: OpenPaneRequest::ReviewRepo {
+                repo_path: submodule.repo_path.clone(),
+                title: submodule.name.clone(),
+            },
             changes: changes_label(submodule),
             changed: submodule.changed_files > 0,
         };
@@ -253,15 +284,15 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
     groups
 }
 
-fn changes_label(submodule: &SubmoduleView) -> String {
-    match submodule.changed_files {
+fn changes_label(repo: &RepoStatusView) -> String {
+    match repo.changed_files {
         0 => "no changes".to_string(),
         1 => "1 change".to_string(),
         count => format!("{} changes", widgets::grouped(count)),
     }
 }
 
-/// A row is one target: anywhere on it opens the review of that submodule.
+/// A row is one target: anywhere on it opens the review of that repo.
 fn draw_row(
     app: &mut App,
     ui: &mut Ui,
@@ -272,7 +303,7 @@ fn draw_row(
 ) {
     // The id the row is interacted with below, made here so what is drawn and what is
     // clicked are the same target rather than two ids that happen to look alike.
-    let id = ui.id().with(&row.repo_path);
+    let id = ui.id().with(&row.path_under_repo);
     let response = ui.allocate_ui(vec2(row_width, 0.0), |ui| {
         let hovered = ui
             .ctx()
@@ -316,11 +347,10 @@ fn draw_row(
     let clicked = widgets::clickable(ui.interact(response.response.rect, id, Sense::click()))
     .on_hover_text(format!("Review {}", row.path_under_repo))
     .clicked();
+    // Deferred: the arrangement is lent out while its panes draw, this one included, so a
+    // request made here would find no panes to bring forward. The app acts on it after.
     if clicked {
-        app.open_pane(OpenPaneRequest::ReviewRepo {
-            repo_path: row.repo_path.clone(),
-            title: row.name.clone(),
-        });
+        app.pending_action = Some(CommandAction::OpenPane(row.opens.clone()));
     }
 }
 

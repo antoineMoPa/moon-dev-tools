@@ -260,8 +260,9 @@ impl App {
             Some("submodules".to_string()),
             move |backend| backend.session_submodules(&session_id),
             |model, result| {
-                if let Ok(submodules) = result {
-                    model.submodules = submodules;
+                if let Ok(hub) = result {
+                    model.root_repo_status = Some(hub.root);
+                    model.submodules = hub.submodules;
                 }
             },
         );

@@ -187,6 +187,7 @@ impl App {
                 root_session_id: String::new(),
                 last_shell_session_id: None,
                 reviews: HashMap::new(),
+                root_repo_status: None,
                 submodules: Vec::new(),
                 project: Default::default(),
                 project_pending: false,

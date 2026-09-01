@@ -9,7 +9,7 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
         FileContentPayload, ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleView,
+        SessionPayload, SubmoduleHubPayload,
     },
     backend::Backend,
     moontasks::{
@@ -79,7 +79,7 @@ impl Backend for LocalBackend {
         service::session_state(&self.state, session_id)
     }
 
-    fn session_submodules(&self, session_id: &str) -> Result<Vec<SubmoduleView>> {
+    fn session_submodules(&self, session_id: &str) -> Result<SubmoduleHubPayload> {
         service::session_submodules(&self.state, session_id)
     }
 

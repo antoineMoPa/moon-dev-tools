@@ -19,7 +19,7 @@ use crate::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
         CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, ContentMatchesPayload, FileMatchesPayload,
         FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload, SelectionRequest,
-        ServerState, SessionOpened, SessionPayload, SubmoduleView, bind_host, port, server_url,
+        ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload, bind_host, port, server_url,
     },
     agent::detect_agent_availability,
     moontasks::{
@@ -289,7 +289,7 @@ async fn healthz(State(state): State<AppState>) -> &'static str {
 async fn session_submodules(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-) -> Result<Json<Vec<SubmoduleView>>, AppError> {
+) -> Result<Json<SubmoduleHubPayload>, AppError> {
     mark_activity(&state);
     Ok(Json(service::session_submodules(&state, &session_id)?))
 }
