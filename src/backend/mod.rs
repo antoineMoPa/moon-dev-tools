@@ -168,6 +168,11 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
+    /// What a shell is called, if it has been named: an agent's shell is named as it starts,
+    /// a plain one only once someone renames it. A shell the server does not have is an error.
+    fn terminal_name(&self, session_id: &str, terminal_id: &str) -> Result<Option<String>>;
+    /// Call a shell something else, which is what retyping its tab's title does.
+    fn rename_terminal(&self, session_id: &str, terminal_id: &str, name: &str) -> Result<()>;
     /// Attach to a shell: everything it has printed, and a handle to type into it. This is
     /// what a terminal pane is built from - see [`egui_tty::TtyStream`].
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream>;

@@ -186,7 +186,11 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/api/session/{session_id}/terminals/{terminal_id}",
-            delete(crate::terminal::close_terminal),
+            get(crate::terminal::terminal_view).delete(crate::terminal::close_terminal),
+        )
+        .route(
+            "/api/session/{session_id}/terminals/{terminal_id}/name",
+            post(crate::terminal::rename_terminal),
         )
         .route(
             "/api/session/{session_id}/terminals/{terminal_id}/socket",

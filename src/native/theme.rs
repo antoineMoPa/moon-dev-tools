@@ -42,6 +42,9 @@ pub(crate) struct Palette {
     pub(crate) header_bg: Color32,
     pub(crate) control_bg: Color32,
     pub(crate) control_active_bg: Color32,
+    /// The fill of a listed row the pointer is over - a card's run or file - a shade off the
+    /// panel it sits on, so what a click would open is plain before the click.
+    pub(crate) row_hover_bg: Color32,
     pub(crate) code_bg: Color32,
     pub(crate) composer_bg: Color32,
     pub(crate) batch_bg: Color32,
@@ -98,6 +101,7 @@ fn light() -> Palette {
         header_bg: rgb(0xf7f2e9),
         control_bg: rgb(0xfffdf9),
         control_active_bg: rgb(0xf2ece2),
+        row_hover_bg: rgb(0xf4eee4),
         code_bg: rgb(0xfffdf9),
         composer_bg: rgb(0xffffff),
         batch_bg: rgb(0xeee4d6),
@@ -138,6 +142,7 @@ fn dark() -> Palette {
         header_bg: rgb(0x10141c),
         control_bg: rgb(0x121822),
         control_active_bg: rgb(0x202938),
+        row_hover_bg: rgb(0x212834),
         code_bg: rgb(0x0d121a),
         composer_bg: rgb(0x1b2330),
         batch_bg: rgb(0x202938),

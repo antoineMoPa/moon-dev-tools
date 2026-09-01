@@ -310,12 +310,7 @@ impl Backend for LocalBackend {
     }
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
-        let repo_path = crate::api::with_session(&self.state, session_id, |session| {
-            Ok(session.repo_path.clone())
-        })?;
-        self.state
-            .terminals
-            .spawn(crate::terminal::TerminalSpec::shell(repo_path, command))
+        crate::terminal::start_workspace_shell(&self.state, session_id, command)
     }
 
     fn list_terminals(&self, _session_id: &str) -> Result<Vec<String>> {
@@ -325,6 +320,17 @@ impl Backend for LocalBackend {
     fn close_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<()> {
         self.state.terminals.remove(terminal_id);
         Ok(())
+    }
+
+    fn terminal_name(&self, _session_id: &str, terminal_id: &str) -> Result<Option<String>> {
+        if !self.state.terminals.is_live(terminal_id) {
+            anyhow::bail!("unknown terminal {terminal_id}");
+        }
+        Ok(self.state.terminals.name(terminal_id))
+    }
+
+    fn rename_terminal(&self, session_id: &str, terminal_id: &str, name: &str) -> Result<()> {
+        crate::terminal::rename(&self.state, session_id, terminal_id, name)
     }
 
     fn attach_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

@@ -328,6 +328,15 @@ pub(crate) struct ColumnRename {
     pub(crate) focus: bool,
 }
 
+/// A shell's tab title, open for editing after a double click on the tab - the same shape a
+/// column's heading has.
+pub(crate) struct TabRename {
+    pub(crate) pane_id: PaneId,
+    pub(crate) name: String,
+    /// Set when the box has just opened, so it takes the keyboard once.
+    pub(crate) focus: bool,
+}
+
 /// A card that has just been dropped, marked until [`Self::at`] is that long ago.
 pub(crate) struct TaskDropped {
     pub(crate) task_id: String,
@@ -520,6 +529,15 @@ pub(crate) struct Model {
     /// The widget id of the last shell the keyboard was in. The review's copy chord checks
     /// it against egui's focus to leave cmd+c to a shell the user just selected text in.
     pub(crate) terminal_with_keyboard: Option<egui::Id>,
+    /// What the server said each shell is called, for every shell whose tab has asked: an
+    /// agent's shell is named as it starts - `claude - 1` - and any shell is named by retyping
+    /// its tab's title. `None` for a shell that has no name, whose tab reads what the program
+    /// in it sets. The server holds the name, since a task's shell outlives its tab; a tab
+    /// asks once, the first time it is drawn without an answer, and a rename from here keeps
+    /// the answer up - see `App::read_terminal_name`.
+    pub(crate) terminal_names: HashMap<String, Option<String>>,
+    /// The shell's tab whose title is open for retyping, if one is.
+    pub(crate) renaming_tab: Option<TabRename>,
     /// A project that has just opened, waiting to be written to the recent list. Set on the
     /// worker thread's result, which is in no position to touch the settings file.
     pub(crate) opened_project: Option<String>,

@@ -275,7 +275,13 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: resource.id.clone(),
                 kind: resource.kind,
                 agent: resource.agent,
-                label: resource.agent.label().to_lowercase(),
+                // What the run's shell is called - `claude - 2`, or whatever it was renamed
+                // to - which the run keeps once the shell is gone. The agent alone for a run
+                // written down before runs had names.
+                label: resource
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| resource.agent.label().to_lowercase()),
                 file_path: None,
                 running: resource
                     .terminal_id
@@ -297,7 +303,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: shell.terminal_id.clone(),
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
-                label: "shell".to_string(),
+                label: shell.name.unwrap_or_else(|| "shell".to_string()),
                 file_path: None,
                 running: true,
                 terminal_id: Some(shell.terminal_id),
@@ -386,6 +392,7 @@ pub(crate) fn link_file(
         file_path: Some(file_path.to_string()),
         terminal_id: None,
         agent_session_id: None,
+        name: None,
         started_at_unix: store::now_unix(),
     });
     store::write_task(&repo_path, task_id, &metadata)
@@ -487,13 +494,16 @@ pub(crate) fn start_resource(
         None => Vec::new(),
     };
     let env = task_env(session_id, task_id, &repo_path);
+    let program = TerminalProgram::of_agent(Some(agent));
+    let name = crate::terminal::name_for_new_shell(state, &repo_path, &program)?;
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: TerminalProgram::of_agent(Some(agent)),
+        program,
         args,
         env,
         owner: Some(task_id.to_string()),
+        name: name.clone(),
         // An agent comes up with the card's title already written in its box, waiting on the
         // Enter that sends it. It is still the person who starts the work - the title is a
         // card's name and rarely the whole of what is wanted - but the common case, where it
@@ -512,6 +522,7 @@ pub(crate) fn start_resource(
             file_path: None,
             terminal_id: Some(terminal_id.clone()),
             agent_session_id,
+            name,
             started_at_unix: store::now_unix(),
         });
         store::write_task(&repo_path, task_id, &metadata)?;
@@ -558,18 +569,26 @@ pub(crate) fn resume_resource(
         Some(_) => launch.attach,
         None => launch.resume,
     };
+    let program = TerminalProgram::Agent(resource.agent);
+    // The run keeps the name it had; one written down before runs had names is numbered now.
+    let name = match resource.name {
+        Some(name) => Some(name),
+        None => crate::terminal::name_for_new_shell(state, &repo_path, &program)?,
+    };
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: TerminalProgram::Agent(resource.agent),
+        program,
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
+        name: name.clone(),
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
         type_ahead: None,
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
+    metadata.resources[at].name = name;
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -602,12 +621,15 @@ pub(crate) fn attach_resource(
 
     let fillings =
         write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
+    let program = TerminalProgram::Agent(request.agent);
+    let name = crate::terminal::name_for_new_shell(state, &repo_path, &program)?;
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
-        program: TerminalProgram::Agent(request.agent),
+        program,
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
+        name: name.clone(),
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
         type_ahead: None,
@@ -620,11 +642,34 @@ pub(crate) fn attach_resource(
         file_path: None,
         terminal_id: Some(terminal_id.clone()),
         agent_session_id: Some(agent_session_id.to_string()),
+        name,
         started_at_unix: store::now_unix(),
     });
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
+}
+
+/// Write down what a task's run is now called, for the run whose shell this is. A task's
+/// plain shell is not written down at all, so renaming one changes nothing here.
+pub(crate) fn record_run_name(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    terminal_id: &str,
+    name: &str,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+    let Some(run) = metadata
+        .resources
+        .iter_mut()
+        .find(|resource| resource.terminal_id.as_deref() == Some(terminal_id))
+    else {
+        return Ok(());
+    };
+    run.name = Some(name.trim().to_string());
+    store::write_task(&repo_path, task_id, &metadata)
 }
 
 /// Close one of a task's shells, if that is what the id names.
@@ -939,6 +984,7 @@ mod tests {
                 // No server in this test, so no shell of this name is live.
                 terminal_id: Some("terminal-gone".to_string()),
                 agent_session_id: None,
+                name: None,
                 started_at_unix: 0,
             }],
         };
@@ -970,6 +1016,7 @@ mod tests {
                 file_path: None,
                 terminal_id: Some("terminal-gone".to_string()),
                 agent_session_id: None,
+                name: None,
                 started_at_unix: 0,
             }],
         };

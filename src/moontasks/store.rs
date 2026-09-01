@@ -163,6 +163,11 @@ pub(crate) struct TaskResource {
     /// rather than by whatever the agent thinks the most recent one was.
     #[serde(default)]
     pub(crate) agent_session_id: Option<String>,
+    /// What the run's shell is called: the name it was given as it started - `claude - 2` -
+    /// or was renamed to since. Kept after the shell is gone, so the card still reads it and
+    /// a resumed run's shell takes it back. `None` on a run written down before runs had names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
     pub(crate) started_at_unix: u64,
 }
 
@@ -294,6 +299,21 @@ pub(crate) fn list_task_ids(repo_path: &Path) -> Result<Vec<String>> {
     }
     ids.sort();
     Ok(ids)
+}
+
+/// The name of every run written down on the repo's tasks, whichever task and whether or
+/// not its shell is still running. This is what a new run's number is counted past.
+pub(crate) fn recorded_run_names(repo_path: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for task_id in list_task_ids(repo_path)? {
+        names.extend(
+            read_task(repo_path, &task_id)?
+                .resources
+                .into_iter()
+                .filter_map(|resource| resource.name),
+        );
+    }
+    Ok(names)
 }
 
 pub(crate) fn read_task(repo_path: &Path, task_id: &str) -> Result<TaskMetadata> {

@@ -15,6 +15,7 @@ use crate::{
     native::{
         app::{App, AttachedTerminal, TerminalHolder},
         bindings,
+        model::TabRename,
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
     project::ProjectCommand,
@@ -108,6 +109,7 @@ impl App {
                 // Deferred: a pane must not be taken out of the tree that is drawing it.
                 FramesEvent::PaneCloseRequested(pane) => self.pending_close = Some(pane),
                 FramesEvent::NewTabRequested(frame) => self.open_shell_beside(frame),
+                FramesEvent::TabDoubleClicked(pane) => self.open_tab_rename(pane),
             }
         }
     }
@@ -480,6 +482,60 @@ impl App {
         );
     }
 
+    /// Open a shell's tab title for retyping, which is what a double click on the tab asks.
+    /// Only a shell's: every other tab is named by what it shows.
+    pub(crate) fn open_tab_rename(&mut self, pane_id: PaneId) {
+        let Some(pane) = self.model.layout.pane(pane_id) else {
+            return;
+        };
+        if !matches!(pane, Pane::Terminal { .. }) {
+            return;
+        }
+        // The first of the two clicks brought the tab forward and promised its shell the
+        // keyboard. The box being opened here is what the keyboard was reached for, so the
+        // promise is taken back - a shell still attaching would otherwise take it frames
+        // later, out of a box that has been typed into by then.
+        self.pane_taking_keyboard = None;
+        self.model.renaming_tab = Some(TabRename {
+            pane_id,
+            name: self.shell_tab_title(pane),
+            focus: true,
+        });
+    }
+
+    /// Ask the server what a shell is called, for a tab drawn before the answer is known -
+    /// see [`Model::terminal_names`]. Asked once: what comes back is kept, name or none.
+    pub(crate) fn read_terminal_name(&mut self, terminal_id: &str) {
+        let session_id = self.model.root_session_id.clone();
+        let terminal_id = terminal_id.to_string();
+        let for_model = terminal_id.clone();
+        self.tasks.spawn_keyed(
+            Some(format!("name:{terminal_id}")),
+            move |backend| backend.terminal_name(&session_id, &terminal_id),
+            move |model, result| {
+                // A shell the server no longer has is a shell with no name to read; that it
+                // is gone is for the attachment to report.
+                model.terminal_names.insert(for_model, result.unwrap_or(None));
+            },
+        );
+    }
+
+    /// Call a shell something else: on its tab now, and on the server behind it, where the
+    /// board reads it from.
+    pub(crate) fn rename_terminal(&mut self, terminal_id: String, name: String) {
+        self.model
+            .terminal_names
+            .insert(terminal_id.clone(), Some(name.clone()));
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn(
+            move |backend| backend.rename_terminal(&session_id, &terminal_id, &name),
+            |model, result| {
+                model.report(result, "could not rename the shell");
+                model.board.refresh_requested = true;
+            },
+        );
+    }
+
     /// Reattach a shell whose pane is on screen but whose emulator is not - which happens when
     /// a restored arrangement mentions a terminal this window has not attached yet.
     pub(crate) fn attach_terminal(&mut self, terminal_id: &str) {
@@ -637,6 +693,7 @@ impl App {
             // No tab is showing it, so there is nothing to close but the shell itself.
             None => {
                 self.terminals.remove(&terminal_id);
+                self.model.terminal_names.remove(&terminal_id);
             }
         }
     }
@@ -676,7 +733,16 @@ impl App {
                 self.model.restart_on_shell_exit = None;
             }
             self.terminals.remove(&terminal_id);
+            self.model.terminal_names.remove(&terminal_id);
             self.terminal_errors.remove(&terminal_id);
+            if self
+                .model
+                .renaming_tab
+                .as_ref()
+                .is_some_and(|rename| rename.pane_id == pane_id)
+            {
+                self.model.renaming_tab = None;
+            }
             if task_id.is_some() {
                 return;
             }

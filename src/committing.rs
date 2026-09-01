@@ -311,6 +311,7 @@ pub(crate) fn start_commit_run(
     state.terminals.spawn(crate::terminal::TerminalSpec {
         cwd: repo_path,
         program: crate::terminal::TerminalProgram::LoginShell,
+        name: None,
         args: vec!["-c".to_string(), run_script(&command)],
         env: vec![
             (

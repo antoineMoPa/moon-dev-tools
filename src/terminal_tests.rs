@@ -16,6 +16,7 @@ fn a_commit_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
             args: Vec::new(),
             env: Vec::new(),
             owner: Some("commit:test".to_string()),
+            name: None,
             type_ahead: Some("printf %s \"[$GPG_TTY]\"\r".to_string()),
         })
         .expect("expected the shell to start");
@@ -93,6 +94,7 @@ fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
+            name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
         })
         .expect("expected a shell");
@@ -150,6 +152,7 @@ fn a_reply_to_the_program_is_not_somebody_typing() {
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
+            name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
         })
         .expect("expected a shell");
@@ -208,6 +211,7 @@ fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
             args: Vec::new(),
             env: vec![("PATH".to_string(), path.display().to_string())],
             owner: None,
+            name: None,
             type_ahead: None,
         })
         .expect("expected a shell")
@@ -293,6 +297,7 @@ fn a_plain_shell_that_exits_nonzero_is_still_reaped() {
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
+            name: None,
             type_ahead: None,
         })
         .expect("expected a shell");
@@ -327,6 +332,7 @@ fn a_shell_someone_has_typed_into_is_left_alone() {
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
+            name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
         })
         .expect("expected a shell");
@@ -345,5 +351,171 @@ fn a_shell_someone_has_typed_into_is_left_alone() {
     assert!(
         !printed.contains("moonreview-typed-this"),
         "the title was typed over what was being written, printed: {printed:?}"
+    );
+}
+
+/// A new agent's shell is numbered one past the highest number in use for that agent,
+/// whether the shell carrying it is running or only written down on a task. A name someone
+/// retyped counts for nothing, and each agent counts on its own.
+#[test]
+fn a_new_agent_shell_is_numbered_past_every_number_in_use() {
+    let in_use = || {
+        [
+            "claude - 1",
+            "claude - 3",
+            "codex - 1",
+            "parser",
+            "claude - two",
+        ]
+        .map(str::to_string)
+    };
+
+    assert_eq!(numbered_name(AgentKind::Claude, in_use()), "claude - 4");
+    assert_eq!(numbered_name(AgentKind::Codex, in_use()), "codex - 2");
+    assert_eq!(numbered_name(AgentKind::OpenCode, in_use()), "opencode - 1");
+    assert_eq!(numbered_name(AgentKind::Claude, []), "claude - 1");
+}
+
+/// A shell starts under the name it was given, and a plain shell under none: its tab reads
+/// what the program in it sets.
+#[cfg(unix)]
+#[test]
+fn a_shell_starts_under_the_name_it_was_given() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let path = fake_claude("#!/bin/sh\nsleep 30\n");
+    let agent = registry
+        .spawn(TerminalSpec {
+            cwd: std::env::temp_dir(),
+            program: TerminalProgram::Agent(AgentKind::Claude),
+            args: Vec::new(),
+            env: vec![("PATH".to_string(), path.display().to_string())],
+            owner: Some("write-the-parser".to_string()),
+            name: Some("claude - 2".to_string()),
+            type_ahead: None,
+        })
+        .expect("expected a shell");
+    let shell = registry
+        .spawn(TerminalSpec::shell(std::env::temp_dir(), None, None))
+        .expect("expected a shell");
+
+    assert_eq!(registry.name(&agent).as_deref(), Some("claude - 2"));
+    assert_eq!(registry.owner(&agent).as_deref(), Some("write-the-parser"));
+    assert_eq!(registry.name(&shell), None);
+    assert_eq!(registry.owner(&shell), None);
+    assert_eq!(registry.live_names(), vec!["claude - 2".to_string()]);
+
+    registry.remove(&agent);
+    registry.remove(&shell);
+}
+
+/// A shell is renamed from its tab, and the name is the server's to keep, so a tab closed
+/// and reopened reads it back. A blank name is refused, and so is a shell the server does
+/// not have.
+#[test]
+fn a_shell_is_renamed_and_a_blank_name_is_refused() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let shell = registry
+        .spawn(TerminalSpec::shell(std::env::temp_dir(), None, None))
+        .expect("expected a shell");
+
+    registry
+        .rename(&shell, "  build ")
+        .expect("expected the rename");
+    assert_eq!(
+        registry.name(&shell).as_deref(),
+        Some("build"),
+        "trimmed of the spaces around it"
+    );
+
+    assert!(
+        registry.rename(&shell, "   ").is_err(),
+        "a tab has to read as something"
+    );
+    assert_eq!(
+        registry.name(&shell).as_deref(),
+        Some("build"),
+        "and the refusal changed nothing"
+    );
+    assert!(registry.rename("terminal-nobody-0", "build").is_err());
+    assert_eq!(registry.name("terminal-nobody-0"), None);
+
+    registry.remove(&shell);
+}
+
+/// Renaming a task's run writes the name on the task, where it outlives the shell: the card
+/// reads it after the shell is gone, and a resumed run takes it back.
+#[cfg(unix)]
+#[test]
+fn renaming_a_tasks_run_writes_the_name_on_the_task() {
+    use crate::backend::Backend;
+
+    const TASK: &str = "write-the-parser-1111";
+    let fixture = crate::native::ui_tests::seeded_fixture("run-rename");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let registry = Arc::clone(&state.terminals);
+    let backend = crate::backend::local::LocalBackend::new(state);
+    let opened = backend
+        .open_session(crate::api::OpenSessionRequest {
+            repo_path: fixture.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the session to open");
+
+    let path = fake_claude("#!/bin/sh\nsleep 30\n");
+    let terminal_id = registry
+        .spawn(TerminalSpec {
+            cwd: fixture.root.clone(),
+            program: TerminalProgram::Agent(AgentKind::Claude),
+            args: Vec::new(),
+            env: vec![("PATH".to_string(), path.display().to_string())],
+            owner: Some(TASK.to_string()),
+            name: Some("claude - 1".to_string()),
+            type_ahead: None,
+        })
+        .expect("expected a shell");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        &format!(
+            "{{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+             \"created_at_unix\": 1700000000,\n  \"resources\": [{{\n    \"id\": \"run\",\n    \
+             \"kind\": \"agent\",\n    \"agent\": \"claude\",\n    \
+             \"terminal_id\": \"{terminal_id}\",\n    \"name\": \"claude - 1\",\n    \
+             \"started_at_unix\": 1700000000\n  }}]\n}}\n"
+        ),
+    );
+    let run = |backend: &crate::backend::local::LocalBackend| {
+        let tasks = backend
+            .list_tasks(&opened.session_id)
+            .expect("expected the board");
+        let task = tasks
+            .into_iter()
+            .find(|task| task.id == TASK)
+            .expect("expected the task on the board");
+        let run = &task.resources[0];
+        (run.label.clone(), run.running)
+    };
+    assert_eq!(run(&backend), ("claude - 1".to_string(), true));
+
+    backend
+        .rename_terminal(&opened.session_id, &terminal_id, "parser")
+        .expect("expected the rename");
+
+    assert_eq!(run(&backend), ("parser".to_string(), true));
+    assert_eq!(
+        crate::moontasks::store::read_task(&fixture.root, TASK)
+            .expect("expected the task")
+            .resources[0]
+            .name
+            .as_deref(),
+        Some("parser"),
+        "the name is written on the task"
+    );
+
+    registry.remove(&terminal_id);
+    assert_eq!(
+        run(&backend),
+        ("parser".to_string(), false),
+        "and the card reads it after the shell is gone"
     );
 }

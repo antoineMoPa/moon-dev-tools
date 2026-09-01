@@ -206,6 +206,8 @@ impl App {
                 markdown_cache: Default::default(),
                 find: None,
                 terminal_with_keyboard: None,
+                terminal_names: HashMap::new(),
+                renaming_tab: None,
                 opened_project: None,
                 project_path: None,
                 adopt_shells_pending: false,

@@ -278,6 +278,20 @@ pub(crate) struct CommitRunStarted {
     pub(crate) terminal_id: String,
 }
 
+/// One shell as the server has it: which one, and what it is called.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TerminalView {
+    pub(crate) terminal_id: String,
+    /// What its tab reads, if it has been named - see `TerminalRegistry::name`.
+    pub(crate) name: Option<String>,
+}
+
+/// A shell being renamed: what it is to be called.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TerminalNameRequest {
+    pub(crate) name: String,
+}
+
 /// How a commit run ended. `None` while it is still going.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CommitRunOutcome {

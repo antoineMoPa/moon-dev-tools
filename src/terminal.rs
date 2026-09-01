@@ -21,7 +21,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
-use crate::api::{AgentKind, AppError, AppState};
+use crate::api::{AgentKind, AppError, AppState, TerminalNameRequest, TerminalView};
 
 const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
 /// How long the shell has to have printed nothing before [`TerminalSpec::type_ahead`] is
@@ -108,6 +108,10 @@ pub(crate) struct TerminalSpec {
     /// The task this shell belongs to, if any. An owned shell is the task's to list and to
     /// close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
+    /// What the shell is called - see [`TerminalSession::name`]. An agent's shell is given
+    /// its number by [`name_for_new_shell`], or the name its run already had when it is
+    /// resumed; a plain shell is given nothing.
+    pub(crate) name: Option<String>,
     /// Text typed into the shell once the program has come up, as if the user had typed it -
     /// exactly as given, down to whether it ends in a return.
     ///
@@ -121,14 +125,19 @@ pub(crate) struct TerminalSpec {
 }
 
 impl TerminalSpec {
-    /// A shell of the workspace's own: no program, no task.
-    pub(crate) fn shell(cwd: std::path::PathBuf, agent: Option<AgentKind>) -> Self {
+    /// A shell of the workspace's own: no task, and no program unless an agent was asked for.
+    pub(crate) fn shell(
+        cwd: std::path::PathBuf,
+        agent: Option<AgentKind>,
+        name: Option<String>,
+    ) -> Self {
         Self {
             cwd,
             program: TerminalProgram::of_agent(agent),
             args: Vec::new(),
             env: Vec::new(),
             owner: None,
+            name,
             type_ahead: None,
         }
     }
@@ -141,7 +150,7 @@ impl TerminalSpec {
     pub(crate) fn running(cwd: std::path::PathBuf, command: &str) -> Self {
         Self {
             type_ahead: Some(format!("{command}\r")),
-            ..Self::shell(cwd, None)
+            ..Self::shell(cwd, None, None)
         }
     }
 }
@@ -157,6 +166,13 @@ pub(crate) struct TerminalSession {
     /// two shells opened together tie, so the order is what actually sorts them.
     started_at_unix: u64,
     order: u64,
+    /// What the shell is called on its tab and on the board, if it has been named. An agent's
+    /// shell is named as it starts - `claude - 1`, `claude - 2` - so two runs of the same
+    /// agent can be told apart; a plain shell is not, and its tab reads whatever the program
+    /// in it sets. Either can be renamed from its tab. A task's run writes the name down on
+    /// the task as well, which is what outlives the shell - see
+    /// [`crate::moontasks::store::TaskResource::name`].
+    name: Mutex<Option<String>>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
@@ -250,6 +266,8 @@ impl Scrollback {
 /// One of a task's live shells, as the board needs it listed.
 pub(crate) struct OwnedShell {
     pub(crate) terminal_id: String,
+    /// What it was renamed to, if it was - see [`TerminalSession::name`].
+    pub(crate) name: Option<String>,
     pub(crate) started_at_unix: u64,
     /// Where it falls among the task's shells. Only meaningful against its siblings.
     pub(crate) order: u64,
@@ -277,6 +295,41 @@ impl TerminalRegistry {
 
     fn get(&self, terminal_id: &str) -> Option<Arc<TerminalSession>> {
         self.sessions.lock().unwrap().get(terminal_id).cloned()
+    }
+
+    /// What a shell is called, if it has been named - see [`TerminalSession::name`]. `None`
+    /// for a shell that has not been, and for one the server no longer has.
+    pub(crate) fn name(&self, terminal_id: &str) -> Option<String> {
+        self.get(terminal_id)?.name.lock().unwrap().clone()
+    }
+
+    /// The names of every shell the server has, whoever owns it.
+    pub(crate) fn live_names(&self) -> Vec<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|session| session.name.lock().unwrap().clone())
+            .collect()
+    }
+
+    /// The task a shell belongs to, if it is a task's. `None` for a workspace shell, and for
+    /// one the server no longer has.
+    pub(crate) fn owner(&self, terminal_id: &str) -> Option<String> {
+        self.get(terminal_id)?.owner.clone()
+    }
+
+    /// Call a shell something else. A blank name is refused: a tab has to read as something.
+    pub(crate) fn rename(&self, terminal_id: &str, name: &str) -> anyhow::Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            anyhow::bail!("a shell's name cannot be empty");
+        }
+        let session = self
+            .get(terminal_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
+        *session.name.lock().unwrap() = Some(name.to_string());
+        Ok(())
     }
 
     /// Attach the native window to a shell: everything it has printed so far, then
@@ -352,6 +405,7 @@ impl TerminalRegistry {
             })
             .map(|(terminal_id, session)| OwnedShell {
                 terminal_id: terminal_id.clone(),
+                name: session.name.lock().unwrap().clone(),
                 started_at_unix: session.started_at_unix,
                 order: session.order,
             })
@@ -437,6 +491,7 @@ impl TerminalRegistry {
         let terminal_id = format!("terminal-{}-{order}", self.run);
         let session = Arc::new(TerminalSession {
             owner: spec.owner,
+            name: Mutex::new(spec.name),
             program: spec.program.clone(),
             started_at_unix: crate::moontasks::store::now_unix(),
             order,
@@ -570,16 +625,73 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     let _ = writer.write_all(text.as_bytes());
 }
 
+/// The name an agent's new shell is given: the agent and one past the highest number any
+/// shell of that agent carries, live or written down on a task - `claude - 3` after
+/// `claude - 1` and `claude - 2`, whether or not those are still running. A name someone
+/// retyped counts for nothing here, whatever it says. A plain shell is given no name.
+pub(crate) fn numbered_name(agent: AgentKind, in_use: impl IntoIterator<Item = String>) -> String {
+    let prefix = format!("{} - ", agent.label().to_lowercase());
+    let highest = in_use
+        .into_iter()
+        .filter_map(|name| name.strip_prefix(&prefix)?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    format!("{prefix}{}", highest + 1)
+}
+
+/// The name to start a shell under: numbered for an agent's, nothing for a plain one. The
+/// numbers in use are read off every shell the server has and every run the repo's tasks
+/// have written down, so a number is not handed out twice while the run that had it is
+/// still on the board - however many times the server has been restarted in between.
+pub(crate) fn name_for_new_shell(
+    state: &AppState,
+    repo_path: &std::path::Path,
+    program: &TerminalProgram,
+) -> anyhow::Result<Option<String>> {
+    let Some(agent) = program.agent() else {
+        return Ok(None);
+    };
+    let mut in_use = state.terminals.live_names();
+    in_use.extend(crate::moontasks::store::recorded_run_names(repo_path)?);
+    Ok(Some(numbered_name(agent, in_use)))
+}
+
+/// Start a shell of the workspace's own in the reviewed repo, and answer with which.
+pub(crate) fn start_workspace_shell(
+    state: &AppState,
+    session_id: &str,
+    command: Option<AgentKind>,
+) -> anyhow::Result<String> {
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    let program = TerminalProgram::of_agent(command);
+    let name = name_for_new_shell(state, &repo_path, &program)?;
+    state
+        .terminals
+        .spawn(TerminalSpec::shell(repo_path, command, name))
+}
+
+/// Call a shell something else. A task's run is renamed on the task as well, so the name is
+/// still there once the shell is gone and a resumed run takes it back.
+pub(crate) fn rename(
+    state: &AppState,
+    session_id: &str,
+    terminal_id: &str,
+    name: &str,
+) -> anyhow::Result<()> {
+    state.terminals.rename(terminal_id, name)?;
+    if let Some(task_id) = state.terminals.owner(terminal_id) {
+        crate::moontasks::service::record_run_name(state, session_id, &task_id, terminal_id, name)?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn create_terminal(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let repo_path =
-        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    let terminal_id = state
-        .terminals
-        .spawn(TerminalSpec::shell(repo_path, request.command))?;
+    let terminal_id = start_workspace_shell(&state, &session_id, request.command)?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 
@@ -602,6 +714,29 @@ pub(crate) async fn close_terminal(
     Ok(Json(TerminalList {
         terminal_ids: state.terminals.terminal_ids(),
     }))
+}
+
+pub(crate) async fn terminal_view(
+    AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+    if !state.terminals.is_live(&terminal_id) {
+        return Err(AppError(anyhow::anyhow!("unknown terminal {terminal_id}")));
+    }
+    Ok(Json(TerminalView {
+        name: state.terminals.name(&terminal_id),
+        terminal_id,
+    }))
+}
+
+pub(crate) async fn rename_terminal(
+    AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TerminalNameRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    rename(&state, &session_id, &terminal_id, &request.name)?;
+    Ok("ok")
 }
 
 pub(crate) async fn terminal_socket(

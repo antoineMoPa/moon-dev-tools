@@ -75,6 +75,21 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         return;
     }
 
+    // A click on the board's own background - beside the columns, below the cards - takes the
+    // mark off the task being worked in, for someone done with it who does not want to close
+    // its tab. Registered before anything else on the board, so every card, heading and mark
+    // drawn after it sits on top and keeps its own click. The mark comes back the moment a
+    // task's tab is in front again - see `App::follow_worked_in_task`.
+    let background = ui.interact(
+        ui.available_rect_before_wrap(),
+        ui.id().with("board-background"),
+        egui::Sense::click(),
+    );
+    if background.clicked() {
+        app.worked_in_pane = None;
+        app.worked_in_task = None;
+    }
+
     // Over the columns rather than inside one: the query is asked of the whole board, and
     // every column answers it.
     filter::draw(app, ui, palette);

@@ -189,15 +189,36 @@ pub(crate) struct OpenAt {
     pub(crate) query: String,
 }
 
+impl App {
+    /// What a shell's tab reads: its name, for a shell that has one - see
+    /// [`Model::terminal_names`](crate::native::model::Model::terminal_names); failing that
+    /// the title the program in it set, the way a terminal's does; failing that what it was
+    /// opened as.
+    pub(crate) fn shell_tab_title(&self, pane: &Pane) -> String {
+        let Pane::Terminal { terminal_id, .. } = pane else {
+            panic!("only a shell's tab is titled by its shell");
+        };
+        if let Some(Some(name)) = self.model.terminal_names.get(terminal_id) {
+            return name.clone();
+        }
+        self.terminals
+            .get(terminal_id)
+            .and_then(egui_tty::Terminal::title)
+            .unwrap_or_else(|| pane.tab_title())
+    }
+}
+
 impl PaneView<Pane> for App {
     fn tab(&mut self, pane_id: PaneId, pane: &Pane) -> Tab {
-        // A shell's tab takes the title the running program set, the way a terminal does.
+        // A shell's name is asked for the first time its tab is drawn without one, so a tab
+        // that is never brought to the front - and so never attached - still reads it.
+        if let Pane::Terminal { terminal_id, .. } = pane
+            && !self.model.terminal_names.contains_key(terminal_id)
+        {
+            self.read_terminal_name(terminal_id);
+        }
         let title = match pane {
-            Pane::Terminal { terminal_id, .. } => self
-                .terminals
-                .get(terminal_id)
-                .and_then(egui_tty::Terminal::title)
-                .unwrap_or_else(|| pane.tab_title()),
+            Pane::Terminal { .. } => self.shell_tab_title(pane),
             // The task's title as the board has it now, so a task renamed after its start
             // window opened is renamed on the tab too.
             Pane::Start { task_id, .. } => self
@@ -215,16 +236,72 @@ impl PaneView<Pane> for App {
         let hover = match pane {
             Pane::File { file_path, .. } => file_path.clone(),
             Pane::Start { title, .. } => format!("Start something in {title}"),
+            // The title the program set, which the tab of a named shell does not show - a
+            // plain shell's directory, an agent's own status line - and how the tab is renamed.
+            Pane::Terminal { terminal_id, .. } => {
+                let program_title = self
+                    .terminals
+                    .get(terminal_id)
+                    .and_then(egui_tty::Terminal::title)
+                    .unwrap_or_else(|| title.clone());
+                format!("{program_title}\n\nDouble click to rename this tab")
+            }
             _ => title.clone(),
         };
+        let editing = self
+            .model
+            .renaming_tab
+            .as_ref()
+            .is_some_and(|rename| rename.pane_id == pane_id);
 
-        let mut tab = Tab::new(title).with_marker(unsaved).with_hover(hover);
+        let mut tab = Tab::new(title)
+            .with_marker(unsaved)
+            .with_hover(hover)
+            .editing(editing);
         // The chord that raises this tab, for tabs cmd+1..cmd+9 can reach - worked out in
         // `stamp_tab_shortcuts` before the strips are drawn.
         if let Some(shortcut) = self.tab_shortcuts.get(&pane_id) {
             tab = tab.with_indicator(shortcut.clone());
         }
         tab
+    }
+
+    /// The tab title being retyped. Enter and clicking away keep it, Escape throws it away -
+    /// the same shape a column's heading has.
+    fn tab_editor_ui(&mut self, ui: &mut Ui, pane_id: PaneId, pane: &Pane) {
+        let Some(rename) = self
+            .model
+            .renaming_tab
+            .as_mut()
+            .filter(|rename| rename.pane_id == pane_id)
+        else {
+            panic!("a tab is drawn editing only while it is the one being renamed");
+        };
+        let entry = ui.add_sized(
+            ui.available_size(),
+            egui::TextEdit::singleline(&mut rename.name)
+                .font(egui::FontId::proportional(theme::SMALL_SIZE + 1.0))
+                .margin(egui::Margin::symmetric(3, 1))
+                .hint_text("Tab name"),
+        );
+        if std::mem::take(&mut rename.focus) {
+            entry.request_focus();
+        }
+
+        let name = rename.name.clone();
+        let abandon = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        let keep = entry.lost_focus() && !abandon;
+        if !(keep || abandon) {
+            return;
+        }
+        self.model.renaming_tab = None;
+
+        let Pane::Terminal { terminal_id, .. } = pane else {
+            panic!("only a shell's tab is renamed");
+        };
+        if keep && !name.trim().is_empty() && name != self.shell_tab_title(pane) {
+            self.rename_terminal(terminal_id.clone(), name);
+        }
     }
 
     fn pane_ui(&mut self, ui: &mut Ui, pane_id: PaneId, pane: &Pane) {

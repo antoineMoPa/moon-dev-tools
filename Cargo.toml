@@ -33,7 +33,7 @@ egui_extras = { version = "0.36", features = ["image"] }
 # The tab, split and terminal widgets, kept as crates of their own: submodules under crates/,
 # published separately, and used here like any other dependency. egui_tty compiles libghostty-vt
 # from Ghostty source, so a Zig 0.15.x toolchain has to be on PATH to build this.
-egui_frames = { version = "0.2", path = "crates/egui_frames", features = ["serde"] }
+egui_frames = { version = "0.3", path = "crates/egui_frames", features = ["serde"] }
 egui_tty = { version = "0.2", path = "crates/egui_tty" }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }

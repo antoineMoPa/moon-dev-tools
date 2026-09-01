@@ -19,7 +19,7 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
         ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleView,
+        SubmoduleView, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -589,6 +589,21 @@ impl Backend for RemoteBackend {
         self.delete(&format!(
             "/api/session/{session_id}/terminals/{terminal_id}"
         ))
+    }
+
+    fn terminal_name(&self, session_id: &str, terminal_id: &str) -> Result<Option<String>> {
+        let view: TerminalView =
+            self.get(&format!("/api/session/{session_id}/terminals/{terminal_id}"))?;
+        Ok(view.name)
+    }
+
+    fn rename_terminal(&self, session_id: &str, terminal_id: &str, name: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/terminals/{terminal_id}/name"),
+            &TerminalNameRequest {
+                name: name.to_string(),
+            },
+        )
     }
 
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

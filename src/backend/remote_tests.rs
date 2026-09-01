@@ -298,3 +298,57 @@ fn a_linked_file_round_trips_over_http() {
         .expect("expected the file pane's read to find the linked file");
     assert!(content.content.contains("fn main()"));
 }
+
+/// A shell's name goes over HTTP like everything else: read on the way to attaching, and
+/// written when its tab's title is retyped.
+#[test]
+fn a_remote_shell_is_renamed_over_http() {
+    let served = serve_a_repo("shell-name");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let terminal_id = backend
+        .create_terminal(&opened.session_id, None)
+        .expect("expected a remote shell to start");
+    assert_eq!(
+        backend
+            .terminal_name(&opened.session_id, &terminal_id)
+            .expect("expected the shell's name"),
+        None,
+        "a plain shell starts unnamed"
+    );
+
+    backend
+        .rename_terminal(&opened.session_id, &terminal_id, "build")
+        .expect("expected the rename");
+    assert_eq!(
+        backend
+            .terminal_name(&opened.session_id, &terminal_id)
+            .expect("expected the shell's name")
+            .as_deref(),
+        Some("build")
+    );
+
+    assert!(
+        backend
+            .rename_terminal(&opened.session_id, &terminal_id, "  ")
+            .is_err(),
+        "a blank name is refused by the server"
+    );
+    assert!(
+        backend
+            .terminal_name(&opened.session_id, "terminal-nobody-0")
+            .is_err(),
+        "a shell the server does not have is an error rather than a nameless shell"
+    );
+
+    backend
+        .close_terminal(&opened.session_id, &terminal_id)
+        .expect("expected the remote shell to close");
+}

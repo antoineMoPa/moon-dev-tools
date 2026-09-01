@@ -24,7 +24,7 @@ pub(crate) mod theme;
 #[cfg(test)]
 mod commit_pane_tests;
 #[cfg(test)]
-mod ui_tests;
+pub(crate) mod ui_tests;
 pub(crate) mod widgets;
 pub(crate) mod workspace;
 

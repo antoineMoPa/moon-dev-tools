@@ -4,7 +4,7 @@
 //! list in both, from here: a row is a way back to what it names, and the marks that stop it,
 //! resume it, or take it off the task.
 
-use egui::{Align, Layout as UiLayout, RichText, Ui};
+use egui::{Align, CornerRadius, Layout as UiLayout, Rect, Response, RichText, Sense, Ui, UiBuilder, vec2};
 
 use crate::{
     api::AgentKind,
@@ -52,7 +52,11 @@ fn draw_resource(
         draw_file_resource(ui, task, resource, palette, actions);
         return;
     }
-    ui.horizontal(|ui| {
+    // A running shell is the way back to its tab; a run that has ended opens nothing, and
+    // its row says so by staying unlit.
+    let opens = resource.running && resource.terminal_id.is_some();
+    let row = draw_row(ui, palette, resource, opens);
+    draw_in_row(ui, row.rect, |ui| {
         running_dot(ui, resource.running, palette);
 
         match (&resource.terminal_id, resource.running) {
@@ -60,6 +64,7 @@ fn draw_resource(
                 if widgets::quiet_button(ui, &resource.label)
                     .on_hover_text("Open this shell in a tab")
                     .clicked()
+                    || row.clicked()
                 {
                     actions.push(BoardAction::OpenShell {
                         terminal_id: terminal_id.clone(),
@@ -132,6 +137,49 @@ fn draw_resource(
     });
 }
 
+/// How far a row's fill reaches past its contents on either side.
+const ROW_INSET: f32 = 3.0;
+
+/// The row a run or a file is listed on, taken before its contents are drawn: lit while the
+/// pointer is over it, when a click on it would open something, so what the click will do is
+/// plain before it is made. A row with nothing to open stays as it is. The row is a click of
+/// its own, on everything the marks at its right do not cover - the marks are drawn after it,
+/// so a click on one of them is the mark's and not the row's.
+fn draw_row(ui: &mut Ui, palette: &Palette, resource: &TaskResourceView, opens: bool) -> Response {
+    let (rect, row) = ui.allocate_exact_size(
+        vec2(ui.available_width(), ui.spacing().interact_size.y),
+        if opens {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    if opens && row.hovered() && ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(3), palette.row_hover_bg);
+    }
+    if opens {
+        row.on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(match resource.kind {
+                TaskResourceKind::File => "Open this file in a pane",
+                TaskResourceKind::Shell | TaskResourceKind::Agent => "Open this shell in a tab",
+            })
+    } else {
+        row
+    }
+}
+
+/// Draw a row's contents inside the space [`draw_row`] took for it, inset from its fill.
+fn draw_in_row(ui: &mut Ui, rect: Rect, contents: impl FnOnce(&mut Ui)) {
+    let inside = rect.shrink2(vec2(ROW_INSET, 0.0));
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(inside)
+            .layout(UiLayout::left_to_right(Align::Center)),
+        contents,
+    );
+}
+
 /// A file linked to the task: its path, which opens it, and the mark that takes it off the
 /// card again.
 ///
@@ -147,12 +195,14 @@ fn draw_file_resource(
     let Some(file_path) = resource.file_path.as_deref() else {
         panic!("linked file {} has no file path", resource.id);
     };
-    ui.horizontal(|ui| {
+    let row = draw_row(ui, palette, resource, true);
+    draw_in_row(ui, row.rect, |ui| {
         file_mark(ui, palette);
 
         if widgets::quiet_button(ui, &widgets::elide_path(file_path, FILE_PATH_CHARS))
             .on_hover_text(format!("Open {file_path} in a pane"))
             .clicked()
+            || row.clicked()
         {
             actions.push(BoardAction::OpenFile {
                 task_id: task.id.clone(),

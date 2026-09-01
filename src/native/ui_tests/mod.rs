@@ -20,6 +20,7 @@ mod shell_input;
 mod shell_lifecycle;
 mod sidebar_menu;
 mod submodules;
+mod tab_rename;
 
 use std::{
     fs,
