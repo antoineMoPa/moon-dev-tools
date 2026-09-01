@@ -4,7 +4,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -361,19 +361,164 @@ fn a_task_with_nothing_running_opens_its_start_window() {
     // tabs, and in front of them - a tab opened to be read now and closed in a moment is no
     // use at the far end of a long strip.
     //
-    // Stepped first: the shell's column took its share of the board's, and the cards are still
-    // walking to where that leaves them - a rect read mid-walk is a click that lands beside the
-    // card rather than on it.
+    // The shell's column took its share of the board's, and the cards are still walking to
+    // where that leaves them - a rect read mid-walk is a click that lands beside the card
+    // rather than on it. So the rect is read again and clicked again until one of them lands,
+    // rather than betting on the walk being over after some number of frames.
+    let mut landed = false;
+    for _ in 0..8 {
+        harness.run_steps(4);
+        let other_card = harness
+            .ctx
+            .read_response(crate::native::board::cards::card_drag_id(OTHER))
+            .expect("expected the other card to have been drawn")
+            .rect;
+        click_at(&mut harness, other_card.center());
+        harness.run_steps(4);
+        if opened_first.load(Ordering::Relaxed) {
+            landed = true;
+            break;
+        }
+    }
+    assert!(
+        landed,
+        "the start window should be the first tab of the frame the shell is in"
+    );
+}
+
+/// A shell started from a card is one of that task's tabs, so it joins the column beside the
+/// board - the one the start windows and the other tasks' shells are already in - rather than
+/// splitting the workspace again.
+///
+/// The column here holds a start window and nothing else, which is the case that used to be
+/// missed: a shell would only join a frame that already had a shell in it, so every agent
+/// started from the board while a task was open took a column of its own.
+#[test]
+fn a_shell_started_from_a_card_joins_the_column_beside_the_board() {
+    use egui_kittest::kittest::Queryable as _;
+
+    const TASK: &str = "write-the-parser-1111";
+    const OTHER: &str = "fix-the-login-page-2222";
+
+    let fixture = seeded_fixture("card-shell-column");
+    for (task_id, title) in [
+        (TASK, "Write the parser"),
+        (OTHER, "Fix the login page"),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let start_window_open = Arc::new(AtomicBool::new(false));
+    let start_window_open_in_ui = Arc::clone(&start_window_open);
+    // How many frames the workspace is split into, and whether the shell landed among the
+    // start window's tabs rather than beside them.
+    let frames = Arc::new(AtomicUsize::new(0));
+    let frames_in_ui = Arc::clone(&frames);
+    let shell_beside_the_window = Arc::new(AtomicBool::new(false));
+    let shell_beside_in_ui = Arc::clone(&shell_beside_the_window);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+
+            start_window_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(|pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK))
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+            frames_in_ui.store(app.model.layout.frame_count(), Ordering::Relaxed);
+            let frame_of = |wanted: fn(&Pane) -> bool| {
+                app.model
+                    .layout
+                    .find_pane(wanted)
+                    .and_then(|(pane, _)| app.model.layout.frame_of(pane))
+            };
+            let shell = frame_of(|pane| pane.kind() == crate::native::panes::PaneKind::Terminal);
+            let window = frame_of(|pane| pane.kind() == crate::native::panes::PaneKind::Start);
+            shell_beside_in_ui.store(shell.is_some() && shell == window, Ordering::Relaxed);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 2,
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the board never read the tasks out of .moontasks"
+    );
+
+    // One task open in a column of its own down the right, which is the workspace the shell is
+    // then started into.
+    let card = harness
+        .ctx
+        .read_response(crate::native::board::cards::card_drag_id(TASK))
+        .expect("expected the card to have been drawn")
+        .rect;
+    click_at(&mut harness, card.center());
+    assert!(
+        settle(&mut harness, || start_window_open.load(Ordering::Relaxed)),
+        "clicking the card should have opened the task's pane"
+    );
     harness.run_steps(4);
-    let other_card = harness
+    assert_eq!(
+        frames.load(Ordering::Relaxed),
+        2,
+        "the task's pane should have taken the column beside the board"
+    );
+
+    // The other task's own `[start]`, off its card rather than off the pane. The card is found
+    // by its title, which is what it is dragged by, and its button is the first one under that
+    // title in the same column of the board.
+    let other_title = harness
         .ctx
         .read_response(crate::native::board::cards::card_drag_id(OTHER))
         .expect("expected the other card to have been drawn")
         .rect;
-    click_at(&mut harness, other_card.center());
+    let start_button = harness
+        .get_all_by_label("[start]")
+        .map(|node| node.rect())
+        // Drawn under that title and within the card's own width - the button sits at the
+        // card's right-hand edge, so it is where it starts that is inside the card.
+        .filter(|button| {
+            button.top() > other_title.top() && other_title.x_range().contains(button.left())
+        })
+        .min_by(|one, other| one.top().total_cmp(&other.top()))
+        .expect("expected the other card to draw a [start] button")
+        .center();
+    click_at(&mut harness, start_button);
+    harness.run_steps(3);
+    let shell_row = harness.get_by_label("shell").rect().center();
+    click_at(&mut harness, shell_row);
+
     assert!(
-        settle(&mut harness, || opened_first.load(Ordering::Relaxed)),
-        "the start window should be the first tab of the frame the shell is in"
+        settle(&mut harness, || shell_beside_the_window
+            .load(Ordering::Relaxed)),
+        "the shell should have joined the column the task's pane is in"
+    );
+    assert_eq!(
+        frames.load(Ordering::Relaxed),
+        2,
+        "and the workspace should not have been split again for it"
     );
 }
 

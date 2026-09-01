@@ -21,7 +21,7 @@ in the repo straight away.
 | a running resource | click its name to bring its terminal back on screen |
 | a card drawn in the accent color | the task you are working in: the one whose tab was last in front |
 | a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |
-| the notes under the title | the first lines of the task's `notes.md` — click them to open the file in a pane down the right, ready to edit |
+| the notes under the title | the first lines of the task's `notes.md` — click them to open the task's own pane with the keyboard in its notes box, ready to write |
 | `[add notes]` | the same, on a task that has none yet |
 
 `[add notes]` and `[start]` are a card's offers: they fade up when the pointer comes onto the

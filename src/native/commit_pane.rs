@@ -200,8 +200,9 @@ impl CommitRun {
 }
 
 impl App {
-    /// Open the commit pane of a review, in a column down the right so the review it is
-    /// committing stays on screen. Deferred like every other pane opened from inside a pane.
+    /// Open the commit pane of a review, down the right so the review it is committing stays on
+    /// screen. Of that review: a changed submodule has its own repo, its own branch and its own
+    /// pane. Deferred like every other pane opened from inside a pane.
     pub(crate) fn open_commit_pane(&mut self, session_id: &str) {
         if self.pending_action.is_some() {
             return;
@@ -565,10 +566,27 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     // Set when `[use]` was pressed, and answered once the pane is drawn.
     let mut used_suggestion = false;
     let writing_message = app.tasks.is_busy(&App::suggestion_key(session_id));
+    // The repo this is committing, read off the review it belongs to: the pane may be one of
+    // several open on several repos - a changed submodule has its own review and its own
+    // commit pane - and the branch alone does not say which of them this one is.
+    let repo = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.payload.clone());
 
     egui::Panel::top(egui::Id::new(("commit-header", session_id)))
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(2, 4)))
-        .show(ui, |ui| draw_branch_line(ui, state.as_ref(), &palette));
+        .show(ui, |ui| {
+            draw_branch_line(
+                ui,
+                repo.as_ref().map(|payload| Repo {
+                    name: &payload.repo_name,
+                    path: &payload.repo_path,
+                }),
+                state.as_ref(),
+                &palette,
+            );
+        });
 
     if let Some(terminal_id) = &run_terminal {
         egui::Panel::bottom(egui::Id::new(("commit-run", session_id)))
@@ -770,13 +788,37 @@ pub(super) fn draw_suggested_message(
     false
 }
 
-fn draw_branch_line(ui: &mut Ui, state: Option<&CommitState>, palette: &Palette) {
+/// The repo a commit pane is committing, as its header names it. Read off the review the pane
+/// belongs to, so it is `None` only until that review's first answer arrives.
+struct Repo<'a> {
+    name: &'a str,
+    /// Where it is on the machine the backend reads, which the name is read in full on.
+    path: &'a str,
+}
+
+/// The header of the commit pane: which repo, on which branch, and how far that branch is from
+/// its upstream.
+///
+/// The repo comes first and the branch after it, the way the review's own header reads - the
+/// window can have a commit pane open on a repo and on each of its changed submodules, and
+/// `main` on the tab strip says nothing about which of them is about to be committed.
+fn draw_branch_line(
+    ui: &mut Ui,
+    repo: Option<Repo<'_>>,
+    state: Option<&CommitState>,
+    palette: &Palette,
+) {
     let Some(state) = state else {
         ui.label(RichText::new("reading the repo…").color(palette.muted));
         return;
     };
 
     ui.horizontal(|ui| {
+        if let Some(repo) = repo {
+            ui.label(RichText::new(repo.name).strong())
+                .on_hover_text(repo.path);
+            ui.label(RichText::new("·").color(palette.line));
+        }
         let branch = state.branch_name.as_deref().unwrap_or("detached HEAD");
         ui.label(RichText::new(branch).strong());
         match &state.upstream_ref {

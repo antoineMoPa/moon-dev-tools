@@ -32,9 +32,6 @@ pub(crate) enum BoardAction {
     Delete(String),
     Rename(String, String),
     CancelRename,
-    /// Open the task's `notes.md` in a pane down the right, making the file first if the
-    /// task has none yet.
-    OpenNotes(String),
     /// Turn the palette into the file finder, picking a file to put on this task's card.
     PickFile(String),
     /// Open a file linked to a card, in a pane down the right.
@@ -70,7 +67,21 @@ pub(crate) enum BoardAction {
     SaveNotes { task_id: String, notes: String },
     /// Open the task's own pane: its title and notes, what it has running, and what it can
     /// start.
-    OpenStart { task_id: String, title: String },
+    OpenStart {
+        task_id: String,
+        title: String,
+        opens_on: TaskPaneBox,
+    },
+}
+
+/// Which of the task pane's boxes the keyboard is in when the pane opens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskPaneBox {
+    /// Neither of them: the pane was opened to be read as much as written, from a click on the
+    /// card's title.
+    Neither,
+    /// The notes, for a click on the card's notes - which is someone about to write them.
+    Notes,
 }
 
 pub(crate) fn apply(app: &mut App, action: BoardAction) {
@@ -262,21 +273,6 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             });
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
-        BoardAction::OpenNotes(task_id) => {
-            let opened_from = task_id.clone();
-            app.tasks.spawn(
-                move |backend| backend.open_task_notes(&session_id, &task_id),
-                move |model, result| match result {
-                    Ok(file_path) => {
-                        model.board.opened_file = Some(OpenedFile {
-                            file_path,
-                            task_id: opened_from,
-                        })
-                    }
-                    Err(error) => model.error(format!("could not open the notes: {error}")),
-                },
-            );
-        }
         BoardAction::PickFile(task_id) => app.model.palette.show_files_for_task(task_id),
         BoardAction::OpenFile { task_id, file_path } => {
             app.model.board.opened_file = Some(OpenedFile { file_path, task_id })
@@ -338,7 +334,15 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 backend.write_file(&session_id, &file_path, &notes)
             });
         }
-        BoardAction::OpenStart { task_id, title } => {
+        BoardAction::OpenStart {
+            task_id,
+            title,
+            opens_on,
+        } => {
+            app.model.board.notes_focus = match opens_on {
+                TaskPaneBox::Notes => Some(task_id.clone()),
+                TaskPaneBox::Neither => None,
+            };
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TaskStart {
                 task_id,
                 title,

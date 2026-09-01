@@ -680,3 +680,83 @@ fn the_review_chord_opens_the_review_again_after_it_is_closed() {
         "the review that is open should be raised rather than duplicated"
     );
 }
+
+/// The same for a review asked for by its repo rather than by its session - which is what a
+/// submodule row and a card's `[start]` ask for. The repo names the session, so a repo that
+/// already has a review answers with that review: it is brought forward rather than opened a
+/// second time beside itself.
+#[test]
+fn a_review_of_a_repo_that_is_already_open_is_brought_forward() {
+    use crate::native::panes::OpenPaneRequest;
+
+    let fixture = seeded_fixture("review-by-repo");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let repo_path = fixture.root.display().to_string();
+    // The two steps the test drives, each taken once and only when the one before it has
+    // landed: the review is put behind another tab, and then asked for by its repo. Behind
+    // another tab, because a review already in front coming forward says nothing.
+    let mut step = 0;
+
+    let seen = Arc::new(Mutex::new((0_usize, None::<PaneKind>, Vec::<String>::new())));
+    let seen_in_ui = Arc::clone(&seen);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            let ready = matches!(app.model.stage, crate::native::model::Stage::Ready);
+            if step == 0 && ready {
+                app.open_pane(OpenPaneRequest::Agents);
+                step = 1;
+            } else if step == 1 && app.active_pane_kind() == Some(PaneKind::Agents) {
+                app.open_pane(OpenPaneRequest::ReviewRepo {
+                    repo_path: repo_path.clone(),
+                    title: "asked for again".to_string(),
+                });
+                step = 2;
+            }
+            app.draw(ui);
+            *seen_in_ui.lock().expect("poisoned") = (
+                app.model
+                    .layout
+                    .panes()
+                    .filter(|(_, pane)| pane.kind() == PaneKind::Review)
+                    .count(),
+                app.active_pane_kind(),
+                app.model
+                    .layout
+                    .panes()
+                    .map(|(_, pane)| pane.tab_title())
+                    .collect(),
+            );
+        });
+
+    let reviews = || seen.lock().expect("poisoned").0;
+    let in_front = || seen.lock().expect("poisoned").1;
+    let tabs = || seen.lock().expect("poisoned").2.clone();
+
+    assert!(
+        settle(&mut harness, || reviews() == 1),
+        "the window never opened on its review"
+    );
+    assert!(
+        settle(&mut harness, || in_front() == Some(PaneKind::Review)),
+        "asking for the repo's review should have brought it forward, tabs are {:?}",
+        tabs()
+    );
+    assert_eq!(
+        reviews(),
+        1,
+        "and it should not have opened a second review of the same repo, tabs are {:?}",
+        tabs()
+    );
+    assert!(
+        tabs().iter().any(|title| title == "review"),
+        "the review kept its own tab rather than being replaced, tabs are {:?}",
+        tabs()
+    );
+    assert!(
+        !tabs().iter().any(|title| title == "asked for again"),
+        "no second tab should have been opened for it, tabs are {:?}",
+        tabs()
+    );
+}

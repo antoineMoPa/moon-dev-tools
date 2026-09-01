@@ -106,9 +106,10 @@ impl App {
         ));
     }
 
-    /// Open a task's notes beside the board: in the frame the other file tabs are in, or a
-    /// new column down the right - the way a shell opens. It lands in the text editor rather
-    /// than the rendered page, because notes are opened to be written.
+    /// Open a file of a task's beside the board: in the frame the other file tabs are in, else
+    /// the column the rest of that task's tabs are in, else a new column down the right - the
+    /// way a shell opens. It lands in the text editor rather than the rendered page, because a
+    /// file opened off a card is opened to be written.
     pub(crate) fn open_notes_pane(
         &mut self,
         session_id: String,
@@ -143,6 +144,7 @@ impl App {
                     .model
                     .layout
                     .frame_holding(active, |pane| pane.kind() == PaneKind::File)
+                    .or_else(|| self.task_column())
                 {
                     Some(frame) => self.model.layout.add_pane(frame, pane, None),
                     None => self.model.layout.add_pane_against_edge(

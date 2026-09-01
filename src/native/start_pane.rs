@@ -119,6 +119,13 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
 /// allowed to take back what was just typed.
 fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
     let now = ui.input(|input| input.time);
+    // A pane opened by a click on the card's notes opens with the keyboard in that box, which
+    // is what the click was reaching for. Taken here rather than left set, so it is the one
+    // frame the pane opened on and not every frame it draws.
+    let notes_take_keyboard = app.model.board.notes_focus.as_deref() == Some(task.id.as_str());
+    if notes_take_keyboard {
+        app.model.board.notes_focus = None;
+    }
     let editor = app
         .model
         .board
@@ -172,12 +179,24 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
     }
 
     ui.add_space(LINE_GAP);
-    let notes = ui.add(
-        egui::TextEdit::multiline(&mut editor.notes)
-            .desired_width(f32::INFINITY)
-            .desired_rows(NOTES_ROWS)
-            .margin(egui::Margin::symmetric(6, 4)),
-    );
+    let mut written = egui::TextEdit::multiline(&mut editor.notes)
+        .desired_width(f32::INFINITY)
+        .desired_rows(NOTES_ROWS)
+        .margin(egui::Margin::symmetric(6, 4))
+        .show(ui);
+    if notes_take_keyboard {
+        written.response.request_focus();
+        // With the caret past what is already written, which is where writing more starts. A
+        // box handed the keyboard with the caret at the top would take the next sentence into
+        // the middle of the first one.
+        let end = egui::text::CCursor::new(editor.notes.chars().count());
+        written
+            .state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        written.state.clone().store(ui.ctx(), written.response.id);
+    }
+    let notes = written.response;
     if notes.changed() {
         editor.notes_typed_at = Some(now);
     }

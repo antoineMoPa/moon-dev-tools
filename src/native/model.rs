@@ -244,6 +244,10 @@ pub(crate) struct BoardState {
     /// The title and notes as they are being typed on a task's own pane, one for each pane
     /// open, so the board reading itself again does not overwrite a half-typed word.
     pub(crate) task_editors: HashMap<String, TaskEditor>,
+    /// The task whose pane is to open with the keyboard in its notes box: what a click on a
+    /// card's notes asks for, since that click is someone about to write them. Taken by the
+    /// pane on the first frame it draws.
+    pub(crate) notes_focus: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by

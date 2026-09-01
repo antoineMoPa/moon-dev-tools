@@ -14,11 +14,13 @@ use crate::native::{panes::Pane, theme::ThemeMode};
 
 use super::{app_for, press_key, seeded_fixture, settle, type_letter};
 
-/// A card's notes are its description: their first lines sit under the title and a click
-/// opens `notes.md` in a pane down the right, straight into the editor. A task with none
-/// offers `[add notes]` instead, and its first open is what makes the file real.
+/// A card's notes are its description: their first lines sit under the title, and a click
+/// opens the task's own pane with the keyboard already in its notes box - so the words go
+/// where the click was aimed without a file being opened beside the board. A task with none
+/// offers `[add notes]` instead, which is the same click, and what is typed there is what
+/// makes `notes.md` real.
 #[test]
-fn a_cards_notes_open_beside_the_board_ready_to_edit() {
+fn a_cards_notes_open_the_task_ready_to_write() {
     use egui_kittest::kittest::Queryable as _;
 
     let fixture = seeded_fixture("board-notes");
@@ -46,12 +48,16 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
     let opened_in_ui = Arc::clone(&opened);
     let ready = Arc::new(AtomicBool::new(false));
     let ready_in_ui = Arc::clone(&ready);
-    // The file panes the clicks end up opening, watched for from out here: the app is the
+    // The task whose pane the clicks end up opening, watched for from out here: the app is the
     // closure's from the moment the harness is built.
+    let task_pane: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let task_pane_in_ui = Arc::clone(&task_pane);
+    // The files open in the window, which the clicks must not add to any more: the notes are
+    // written on the task's pane rather than in a file beside it.
     let file_panes = Arc::new(Mutex::new(Vec::<String>::new()));
     let file_panes_in_ui = Arc::clone(&file_panes);
-    // The task the window is being worked in, which a file opened from a card moves: the notes
-    // of a task are that task's, so the board marks its card while they are in front.
+    // The task the window is being worked in: a task's pane is one of its tabs, so the board
+    // marks its card while that pane is in front.
     let worked_in: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let worked_in_in_ui = Arc::clone(&worked_in);
 
@@ -83,6 +89,12 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
                     })
                     .collect();
             }
+            if let Ok(mut open) = task_pane_in_ui.lock() {
+                *open = app.model.layout.panes().find_map(|(_, pane)| match pane {
+                    Pane::Start { task_id, .. } => Some(task_id.clone()),
+                    _ => None,
+                });
+            }
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -97,54 +109,64 @@ fn a_cards_notes_open_beside_the_board_ready_to_edit() {
     harness.run_steps(3);
 
     // The description shows on the one card, and the way to start one on the other.
-    let panes_open = || {
+    let pane_open = || task_pane.lock().expect("poisoned").clone();
+    let files_open = || {
         file_panes
             .lock()
             .map(|panes| panes.clone())
             .unwrap_or_default()
     };
-    let wait_for = |harness: &mut Harness<'_>, path: &str| {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < deadline && !panes_open().iter().any(|open| open == path) {
-            harness.step();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    };
-    harness
-        .get_by_label_contains("Ship it by Friday")
-        .click();
-    wait_for(&mut harness, ".moontasks/write-the-parser-1111/notes.md");
+
+    harness.get_by_label_contains("Ship it by Friday").click();
     assert!(
-        panes_open().contains(&".moontasks/write-the-parser-1111/notes.md".to_string()),
-        "clicking the description should have opened the notes, got {:?}",
-        panes_open()
+        settle(&mut harness, || pane_open().as_deref()
+            == Some("write-the-parser-1111")),
+        "clicking the description should have opened that task's pane, got {:?}",
+        pane_open()
     );
-    harness.run_steps(3);
-    // Straight into the editor: the way to the rendered page on screen says which mode this is.
+    // The keyboard is in the notes box already, with the caret past what is written there: the
+    // click was someone reaching for those words, so the next ones land after them.
+    harness.run_steps(2);
+    type_letter(&mut harness, egui::Key::A, "And test it.");
+    let notes = fixture.root.join(".moontasks/write-the-parser-1111/notes.md");
     assert!(
-        harness.query_by_label("[preview]").is_some(),
-        "the notes should have opened on the text, not the rendered page"
+        settle(&mut harness, || std::fs::read_to_string(&notes)
+            .is_ok_and(|written| written == "Ship it by Friday, working top down.\nAnd test it.")),
+        "the typing should have gone into the notes box, saw {:?}",
+        std::fs::read_to_string(&notes)
     );
 
+    // The other card, which has no notes to show and offers to start them instead: the same
+    // click, on a task whose `notes.md` is not there yet.
     harness.get_by_label("[add notes]").click();
-    wait_for(&mut harness, ".moontasks/fix-the-login-page-2222/notes.md");
     assert!(
-        panes_open().contains(&".moontasks/fix-the-login-page-2222/notes.md".to_string()),
-        "[add notes] should have opened the other task's notes, got {:?}",
-        panes_open()
+        settle(&mut harness, || pane_open().as_deref()
+            == Some("fix-the-login-page-2222")),
+        "[add notes] should have opened the other task's pane, got {:?}",
+        pane_open()
     );
+    harness.run_steps(2);
+    type_letter(&mut harness, egui::Key::S, "Start with the session cookie");
     let started = fixture
         .root
         .join(".moontasks/fix-the-login-page-2222/notes.md");
     assert!(
-        started.is_file(),
-        "opening the notes is what makes the file real"
+        settle(&mut harness, || std::fs::read_to_string(&started)
+            .is_ok_and(|written| written.contains("Start with the session cookie"))),
+        "writing the notes is what makes the file real, saw {:?}",
+        std::fs::read_to_string(&started)
     );
-    harness.run_steps(3);
+
+    // And neither click opened a file beside the board: the notes are written on the pane.
+    assert!(
+        files_open().is_empty(),
+        "the notes should not have opened as files, got {:?}",
+        files_open()
+    );
     assert_eq!(
         *worked_in.lock().expect("poisoned"),
         Some("fix-the-login-page-2222".to_string()),
-        "the notes are the second task's, so its card is the one marked"
+        "the pane is the second task's, so its card is the one marked"
     );
 }
 

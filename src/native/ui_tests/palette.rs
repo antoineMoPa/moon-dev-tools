@@ -494,6 +494,94 @@ fn clicking_outside_the_palette_puts_it_away() {
     );
 }
 
+/// The commit command is aimed at the review being read rather than at the window's own: a
+/// changed submodule is a review of its own repo, with its own branch to commit, so committing
+/// while reading one means that repo. With neither in front - a shell, the board - it falls
+/// back to the review the window was launched on.
+#[test]
+fn the_commit_command_commits_the_review_in_front() {
+    use crate::native::{
+        palette::{CommandAction, commands_for},
+        panes::{OpenPaneRequest, Pane},
+    };
+    use egui_frames::Layout;
+
+    const SUBMODULE: &str = "submodule-session";
+
+    let fixture = seeded_fixture("palette-commit-target");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let root = app.model.root_session_id.clone();
+
+    let would_commit = |app: &crate::native::app::App| {
+        match commands_for(app)
+            .into_iter()
+            .find(|command| command.title == "commit")
+            .map(|command| command.action)
+        {
+            Some(CommandAction::OpenPane(OpenPaneRequest::Commit { session_id })) => session_id,
+            _ => panic!("expected a commit command on the list"),
+        }
+    };
+    let review = |session_id: &str, title: &str| Pane::Review {
+        session_id: session_id.to_string(),
+        title: title.to_string(),
+    };
+
+    // The window as it stands with a submodule review opened beside the one it was launched on,
+    // the submodule in front.
+    app.model.layout = Layout::with_pane(review(&root, "review"));
+    let frame = app.model.layout.active_frame();
+    let root_review = app
+        .model
+        .layout
+        .find_pane(|pane| pane.reviews(&root))
+        .expect("expected the root review")
+        .0;
+    let submodule = app
+        .model
+        .layout
+        .add_pane(frame, review(SUBMODULE, "submodule"), None);
+
+    assert_eq!(
+        would_commit(&app),
+        SUBMODULE,
+        "the submodule is in front, so it is the repo the command would commit"
+    );
+
+    // A file of that submodule's review is still that review being read.
+    app.model.layout.add_pane(
+        frame,
+        Pane::File {
+            session_id: SUBMODULE.to_string(),
+            file_path: "src/lib.rs".to_string(),
+            task_id: None,
+        },
+        None,
+    );
+    assert_eq!(
+        would_commit(&app),
+        SUBMODULE,
+        "a file of the submodule is that submodule being read"
+    );
+
+    app.model.layout.focus_pane(root_review);
+    assert_eq!(
+        would_commit(&app),
+        root,
+        "and back on the window's own review it is that repo again"
+    );
+
+    // Nothing that belongs to a review in front: the window's own is the one that is meant.
+    app.model.layout.close_pane(submodule);
+    app.model.layout.close_pane(root_review);
+    app.model.layout.add_pane(frame, Pane::Agents, None);
+    assert_eq!(
+        would_commit(&app),
+        root,
+        "with no review in front the command falls back to the window's own"
+    );
+}
+
 /// A pane the workspace keeps one of stays on the list once it is open, and running it then
 /// brings that pane forward rather than opening a second one.
 #[test]

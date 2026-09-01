@@ -144,6 +144,19 @@ impl App {
                     },
                     move |model, result| match result {
                         Ok(opened) => {
+                            // A review of a repo already open is brought forward instead of
+                            // opened a second time - the same answer opening it by session
+                            // gives. The repo names the session: asking for one on a repo that
+                            // already has a session answers with that session rather than a
+                            // new one, so the two are the same review however it was reached,
+                            // whether from a submodule row or a card's `[start]`.
+                            if let Some((pane, _)) = model
+                                .layout
+                                .find_pane(|pane| pane.reviews(&opened.session_id))
+                            {
+                                model.layout.focus_pane(pane);
+                                return;
+                            }
                             model.review(&opened.session_id);
                             let frame = model
                                 .layout
@@ -231,6 +244,12 @@ impl App {
                 ) {
                     Some((pane, _)) => self.model.layout.focus_pane(pane),
                     None => {
+                        // A task's shell is one of that task's tabs, so it goes where the rest
+                        // of them go: the column beside the board. Left to `WithOtherShells` it
+                        // would only join a frame that already holds a shell, and the column
+                        // holding a start window or a task's notes and nothing else would be
+                        // split again for every agent started.
+                        let column = task_id.is_some().then(|| self.task_column()).flatten();
                         let shell = Pane::Terminal {
                             terminal_id: terminal_id.clone(),
                             command,
@@ -242,11 +261,16 @@ impl App {
                             Some(frame) => {
                                 self.model.layout.add_pane(frame, shell, standing_in);
                             }
-                            None => place_shell(
-                                &mut self.model.layout,
-                                &TerminalPlacement::WithOtherShells,
-                                shell,
-                            ),
+                            None => match column {
+                                Some(frame) => {
+                                    self.model.layout.add_pane(frame, shell, None);
+                                }
+                                None => place_shell(
+                                    &mut self.model.layout,
+                                    &TerminalPlacement::WithOtherShells,
+                                    shell,
+                                ),
+                            },
                         }
                         self.attach_terminal(&terminal_id);
                     }
@@ -282,8 +306,7 @@ impl App {
                 // and closed in a moment, and a tab that lands at the end of a long strip is
                 // one you have to go looking for.
                 let pane = Pane::Start { task_id, title };
-                match frame_at_the_right(&self.model.layout).filter(|frame| *frame != active_frame)
-                {
+                match self.task_column() {
                     Some(frame) => {
                         let first = self
                             .model
@@ -307,8 +330,17 @@ impl App {
                     return;
                 }
                 // Down the right of the workspace, so the review it is committing stays on
-                // screen beside it.
-                add_right_column(&mut self.model.layout, Pane::Commit { session_id });
+                // screen beside it - among the tabs already there rather than in a column of
+                // its own, which would take its width off a review that is being read while
+                // the message is written.
+                let column = self.column_beside(|open| open.reviews(&session_id));
+                let pane = Pane::Commit { session_id };
+                match column {
+                    Some(frame) => {
+                        self.model.layout.add_pane(frame, pane, None);
+                    }
+                    None => add_right_column(&mut self.model.layout, pane),
+                }
             }
             OpenPaneRequest::Project => {
                 // Read again on the way in: the file is one a person may also have edited by
@@ -721,6 +753,35 @@ impl App {
         self.worked_in_task.as_deref()
     }
 
+    /// The column down the right to open a pane into, given what that pane is opened to stand
+    /// beside - the board for a task's tabs, the review for the pane committing it.
+    ///
+    /// That is the frame at the right of the workspace, whatever is already in it: a window
+    /// that took a column of its own for every tab opened off the one on the left would be a
+    /// new column a minute, each of them narrower than the last.
+    ///
+    /// `None` when the frame at the right is the one holding what the pane stands beside - a
+    /// workspace that has not been split yet. A tab landing on top of what it was opened to sit
+    /// next to would put that out of sight, so a column is made for it instead.
+    fn column_beside(&self, stands_beside: impl Fn(&Pane) -> bool) -> Option<FrameId> {
+        let frame = frame_at_the_right(&self.model.layout)?;
+        let holds_it = self
+            .model
+            .layout
+            .frame(frame)?
+            .panes()
+            .iter()
+            .filter_map(|pane| self.model.layout.pane(*pane))
+            .any(stands_beside);
+        (!holds_it).then_some(frame)
+    }
+
+    /// The column a task's tabs share: its start window, the shells started from it, the files
+    /// opened off its card. They stand beside the board.
+    pub(crate) fn task_column(&self) -> Option<FrameId> {
+        self.column_beside(|pane| pane.kind() == PaneKind::Tasks)
+    }
+
     /// The start window open on this task, if one is.
     fn start_pane_of(&self, task_id: &str) -> Option<PaneId> {
         self.model
@@ -761,6 +822,24 @@ impl App {
         match self.active_pane()?.1 {
             Pane::Review { session_id, .. } => Some(session_id.clone()),
             _ => None,
+        }
+    }
+
+    /// The review a command aimed at "this review" means: the one the pane in front belongs to,
+    /// whether that is a review, a file of it, or its own commit pane. Else the review the
+    /// window was launched on.
+    ///
+    /// A window can have several reviews open at once: every changed submodule is a review of
+    /// its own repo, with its own branch to commit and push. Committing while reading one of
+    /// them is committing that repo, not the one the window was launched on.
+    pub(crate) fn review_in_front(&self) -> String {
+        match self.active_pane().map(|(_, pane)| pane) {
+            Some(
+                Pane::Review { session_id, .. }
+                | Pane::File { session_id, .. }
+                | Pane::Commit { session_id },
+            ) => session_id.clone(),
+            _ => self.model.root_session_id.clone(),
         }
     }
 

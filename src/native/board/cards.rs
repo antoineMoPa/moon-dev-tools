@@ -12,8 +12,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, CLOSE_MARK_SIZE, close_button, filter::Filter, resources,
-            slide_into_place, stamp_place, start,
+            Axis, BoardAction, CLOSE_MARK_SIZE, actions::TaskPaneBox, close_button,
+            filter::Filter, resources, slide_into_place, stamp_place, start,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -460,6 +460,7 @@ fn draw_title_handle(
         actions.push(BoardAction::OpenStart {
             task_id: task.id.clone(),
             title: task.title.clone(),
+            opens_on: TaskPaneBox::Neither,
         });
     }
 
@@ -512,8 +513,9 @@ fn draw_title_editor(
 const NOTES_ROWS: usize = 3;
 
 /// The first lines of the task's `notes.md` under the title - its description. A task with
-/// none offers the link that starts them. Either way a click opens the file in a column down
-/// the right, straight into the editor.
+/// none offers the link that starts them. Either way a click opens the task's own pane with
+/// the keyboard in its notes box, rather than the file beside it: the pane is where the notes
+/// are written now, and a file open on the same words is a second place for them to be typed.
 ///
 /// The offer is worth its row only while the pointer is on the card, but a card that dropped
 /// the row when it is not would change height under the pointer as it crossed the column. So
@@ -526,6 +528,12 @@ fn draw_notes_box(
     showing: f32,
     actions: &mut Vec<BoardAction>,
 ) {
+    let opens_the_notes = || BoardAction::OpenStart {
+        task_id: task.id.clone(),
+        title: task.title.clone(),
+        opens_on: TaskPaneBox::Notes,
+    };
+
     let notes = task.notes.trim();
     if notes.is_empty() {
         ui.scope(|ui| {
@@ -535,7 +543,7 @@ fn draw_notes_box(
                 .on_hover_text("Write this task's notes.md, shared with its agents")
                 .clicked()
             {
-                actions.push(BoardAction::OpenNotes(task.id.clone()));
+                actions.push(opens_the_notes());
             }
         });
         return;
@@ -556,10 +564,10 @@ fn draw_notes_box(
                 .sense(egui::Sense::click()),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Open this task's notes.md")
+        .on_hover_text("Open this task, with its notes ready to write")
         .clicked()
     {
-        actions.push(BoardAction::OpenNotes(task.id.clone()));
+        actions.push(opens_the_notes());
     }
 }
 

@@ -528,6 +528,74 @@ fn the_commit_pane_of_a_review_is_closed_by_the_session_it_belongs_to() {
     );
 }
 
+/// Where the pane lands: down the right of the workspace, so the review it is committing stays
+/// on screen - and among the tabs already down there rather than in a column of its own, which
+/// would take another slice off that review for a tab that closes when the commit is made.
+#[test]
+fn the_commit_pane_joins_the_column_already_down_the_right() {
+    use crate::native::panes::OpenPaneRequest;
+    use egui_frames::{DropSide, Layout};
+
+    let fixture = seeded_fixture("commit-pane-column");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let session_id = app.model.root_session_id.clone();
+    let review = Pane::Review {
+        session_id: session_id.clone(),
+        title: "review".to_string(),
+    };
+
+    let frame_of_commit = |app: &crate::native::app::App| {
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Commit)
+            .and_then(|(pane, _)| app.model.layout.frame_of(pane))
+    };
+
+    // A workspace that is only the review: the pane has to make the column it stands in, since
+    // joining the review's own tabs would put the review out of sight.
+    app.model.layout = Layout::with_pane(review.clone());
+    let review_frame = app.model.layout.active_frame();
+    app.open_pane(OpenPaneRequest::Commit {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.model.layout.frame_count(),
+        2,
+        "the first commit pane should have made a column beside the review"
+    );
+    assert_ne!(
+        frame_of_commit(&app),
+        Some(review_frame),
+        "and it should not have landed on top of the review it is committing"
+    );
+
+    // The same workspace with something already beside the review - a shell, a task, whatever
+    // the user has open down there. The pane joins those tabs.
+    app.model.layout = Layout::with_pane(review);
+    let beside = app.model.layout.add_pane_against_edge(
+        DropSide::Right,
+        egui_frames::DEFAULT_EDGE_SHARE,
+        Pane::Agents,
+    );
+    let column = app
+        .model
+        .layout
+        .frame_of(beside)
+        .expect("expected a column down the right");
+    app.open_pane(OpenPaneRequest::Commit { session_id });
+
+    assert_eq!(
+        frame_of_commit(&app),
+        Some(column),
+        "the commit pane should have joined the column already down the right"
+    );
+    assert_eq!(
+        app.model.layout.frame_count(),
+        2,
+        "and the workspace should not have been split again for it"
+    );
+}
+
 /// A pane restored from a saved arrangement is a commit pane like any other.
 #[test]
 fn a_commit_pane_names_its_tab() {

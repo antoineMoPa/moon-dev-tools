@@ -184,16 +184,21 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Project),
         None,
     ));
+    // Aimed at the review being read rather than at the window's own: a changed submodule is a
+    // review of its own repo, with its own branch to commit, and committing while reading one
+    // means that repo. The repo is named on the item, so the list says which one it will be.
+    let committing = app.review_in_front();
+    let committing_repo = repo_name_of(app, &committing);
     commands.push(single_pane_command(
         app.model
             .layout
-            .find_pane(|pane| pane.kind() == PaneKind::Commit)
+            .find_pane(|pane| pane.commits(&committing))
             .is_some(),
         "commit",
-        "Commit what is staged, and push it",
-        "Bring the commit pane forward",
+        &format!("Commit what is staged in {committing_repo}, and push it"),
+        &format!("Bring the {committing_repo} commit pane forward"),
         CommandAction::OpenPane(OpenPaneRequest::Commit {
-            session_id: root.clone(),
+            session_id: committing,
         }),
         None,
     ));
@@ -334,8 +339,14 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
 /// The name of the repo the window was launched on - the same name the review header shows.
 /// A window whose review has not loaded yet has no repo to name, and says "repo" until it has.
 fn root_repo_name(app: &App) -> String {
+    repo_name_of(app, &app.model.root_session_id)
+}
+
+/// The same, for any one review the window has open: the repo it is a review of. A review
+/// whose first answer has not arrived yet says "repo" until it has.
+fn repo_name_of(app: &App, session_id: &str) -> String {
     app.model
-        .review_ref(&app.model.root_session_id)
+        .review_ref(session_id)
         .and_then(|review| review.payload.as_ref())
         .map(|payload| payload.repo_name.clone())
         .unwrap_or_else(|| "repo".to_string())
