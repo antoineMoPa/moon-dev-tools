@@ -10,6 +10,7 @@ use egui_frames::{Layout, PaneId};
 
 use crate::{
     api::{AgentKind, AgentLogPayload, CommitView, HunkView, RepoStatusView, SessionPayload},
+    moontasks::ReviewRequestView,
     native::{panes::Pane, theme::ThemeMode},
     project::{ProjectCommand, ProjectCommands},
 };
@@ -534,6 +535,11 @@ pub(crate) struct Model {
     /// Set when the hub is opened or brought forward, so its box takes the keyboard: the
     /// hub is a list to find one submodule in, and typing is how it is found.
     pub(crate) submodule_filter_focus: bool,
+    /// Every repo the board's tasks have asked to have looked at, in deploy order - see
+    /// [`crate::moontasks::ReviewRequestView`]. Kept on the model rather than carried on a
+    /// [`crate::moontasks::TaskView`] because the commit pane reads it too, and it has to be
+    /// there whether or not a board is open.
+    pub(crate) review_requests: Vec<ReviewRequestView>,
     /// The shells the server says have something running in them, as of the last poll. What
     /// quitting would interrupt is these rather than every open shell, so this is what the
     /// quit warning is about - see `App::quit_would_kill_shells`.
@@ -642,6 +648,24 @@ impl ProjectEditor {
 }
 
 impl Model {
+    /// The repo the window was launched on, once its review has answered - which is the repo
+    /// the board's folder is in. `None` until then, and on a window that is still asking which
+    /// repo to open.
+    pub(crate) fn root_repo_path(&self) -> Option<std::path::PathBuf> {
+        let payload = self.review_ref(&self.root_session_id)?.payload.as_ref()?;
+        Some(std::path::PathBuf::from(&payload.repo_path))
+    }
+
+    /// How a repo the hub knows about is standing, by the path everything addresses it with.
+    /// `None` for a repo the hub has not answered about yet, or one that is neither the
+    /// reviewed repo nor a submodule of it.
+    pub(crate) fn repo_status(&self, repo_path: &str) -> Option<&RepoStatusView> {
+        self.root_repo_status
+            .iter()
+            .chain(self.submodules.iter())
+            .find(|repo| repo.repo_path == repo_path)
+    }
+
     pub(crate) fn review(&mut self, session_id: &str) -> &mut ReviewState {
         self.reviews
             .entry(session_id.to_string())

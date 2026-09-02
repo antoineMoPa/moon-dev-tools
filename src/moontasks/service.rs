@@ -889,6 +889,13 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     // Only made, never rewritten - it is the task's own record, unlike the brief.
     store::ensure_notes_file(repo_path, task_id)?;
 
+    // The format the brief sends the agent to read, written beside it for the same reason and
+    // rewritten for the same reason: it is ours, not the task's, and a task started today should
+    // be reading today's.
+    let path = dir.join(super::REVIEW_REQUEST_BRIEF_FILE_NAME);
+    std::fs::write(&path, crate::moontasks::review_request::REVIEW_REQUEST_BRIEF)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
     Ok(Fillings {
         values: vec![("{brief}", brief)],
     })

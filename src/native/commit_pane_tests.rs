@@ -687,6 +687,109 @@ fn a_written_message_goes_in_the_box_when_use_is_pressed() {
     );
 }
 
+/// A commit an agent already wrote is the one the pane opens with.
+///
+/// When a task's `request_for_review.txt` names this repo and says what to commit there, that
+/// message is in the box the moment the pane opens - no `opencode`, no run, nothing to press,
+/// and nothing staged yet either. It does not come from the diff, so it does not wait on one:
+/// what is about to be committed is readable while the hunks are still being picked next door.
+#[test]
+fn a_commit_a_task_asked_for_is_in_the_box_before_anything_is_staged() {
+    let fixture = seeded_fixture("commit-message-requested");
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        ".#ship-it // feat: add the extra module\n  The fixture gains a module the review is of.\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let panes_open = Arc::new(Mutex::new(Vec::<PaneKind>::new()));
+    let panes_in_ui = Arc::clone(&panes_open);
+    let message_left = Arc::new(Mutex::new(None::<String>));
+    let message_in_ui = Arc::clone(&message_left);
+    let staged_count = Arc::new(Mutex::new(None::<usize>));
+    let staged_in_ui = Arc::clone(&staged_count);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            let session_id = app.model.root_session_id.clone();
+            app.draw(ui);
+            *staged_in_ui.lock().expect("expected the lock") = app
+                .model
+                .commit_panes
+                .get(&session_id)
+                .and_then(|pane| pane.staged_count_for_test());
+            *panes_in_ui.lock().expect("expected the lock") = app
+                .model
+                .layout
+                .panes()
+                .map(|(_, pane)| pane.kind())
+                .collect();
+            *message_in_ui.lock().expect("expected the lock") = app
+                .model
+                .commit_panes
+                .get(&session_id)
+                .map(|pane| pane.message.clone());
+        });
+
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline
+        && !panes_open
+            .lock()
+            .expect("expected the lock")
+            .contains(&PaneKind::Commit)
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+        if harness.query_by_label("[commit]").is_some() {
+            harness.get_by_label("[commit]").click();
+        }
+    }
+
+    // The poll that reads the board's requests is a worker thread, so the message lands a few
+    // frames after the pane does. Nothing is pressed for it: it is in the box.
+    let written = "feat: add the extra module\n\nThe fixture gains a module the review is of.";
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline
+        && message_left.lock().expect("expected the lock").as_deref() != Some(written)
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        message_left.lock().expect("expected the lock").as_deref(),
+        Some(written),
+        "the commit the task asked for should be in the box with nothing staged"
+    );
+    assert!(
+        harness.query_by_label("use").is_none(),
+        "the message is in the box, so there is nothing to press to put it there"
+    );
+    // The pane's reading of the repo lands on its own clock, after the message did - so it is
+    // waited for before it is asked what was staged.
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline && staged_count.lock().expect("expected the lock").is_none() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        *staged_count.lock().expect("expected the lock"),
+        Some(0),
+        "and it got there without a thing being staged"
+    );
+
+    // The header says the branch asked for is not the one the repo is on.
+    harness.snapshot("commit-pane-requested");
+}
+
 /// The row with no message to show - on a machine without `opencode`, or before one has been
 /// written - is not a row at all: nothing to read and nothing to press.
 #[test]

@@ -14,6 +14,96 @@ use crate::native::{panes::Pane, theme::ThemeMode};
 
 use super::{app_for, press_key, seeded_fixture, settle, type_letter};
 
+/// The deploy list a task wrote sits under everything else on its card: a row per repo, in the
+/// order they are to be committed, and a click on one opens that repo's review.
+///
+/// Whether a row is still pending is the repo having changed files rather than anything written
+/// down, so the list ticks itself off as the repos are committed - here the fixture repo has
+/// changes and reads as pending.
+#[test]
+fn a_tasks_deploy_list_is_drawn_under_its_card() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("board-review-requests");
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        ". // chore: take the module forward\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let repo_name = fixture
+        .root
+        .file_name()
+        .expect("the fixture repo has a name")
+        .to_string_lossy()
+        .to_string();
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    // The reviews the window has open, and which pane is in front, watched from out here: the
+    // row's job is to put you in the review of the repo it names.
+    let reviews = Arc::new(Mutex::new(Vec::<String>::new()));
+    let reviews_in_ui = Arc::clone(&reviews);
+    let in_front = Arc::new(Mutex::new(None::<crate::native::panes::PaneKind>));
+    let in_front_in_ui = Arc::clone(&in_front);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *reviews_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter(|(_, pane)| pane.kind() == crate::native::panes::PaneKind::Review)
+                .map(|(_, pane)| pane.tab_title())
+                .collect();
+            *in_front_in_ui.lock().expect("poisoned") = app
+                .front_pane
+                .and_then(|id| app.model.layout.pane(id))
+                .map(|pane| pane.kind());
+        });
+
+    // The row waits on two answers from worker threads - the board, and the requests read off
+    // its task folders - so it is waited for rather than looked for on a fixed frame.
+    let row = format!("pending {repo_name} review");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && harness.query_by_label(row.as_str()).is_none() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(
+        harness.query_by_label(row.as_str()).is_some(),
+        "the card should list the repo the task asked to have reviewed"
+    );
+
+    // The line names the repo the board is in, whose review the window is already on, so the
+    // click brings that review forward rather than opening a second one of the same repo.
+    harness.get_by_label(row.as_str()).click();
+    assert!(
+        settle(&mut harness, || *in_front.lock().expect("poisoned")
+            == Some(crate::native::panes::PaneKind::Review)),
+        "clicking the row should put you in the review of the repo it names"
+    );
+    assert_eq!(
+        reviews.lock().expect("poisoned").len(),
+        1,
+        "the repo already had a review open, so no second one should have been made"
+    );
+}
+
 /// A card's notes are its description: their first lines sit under the title, and a click
 /// opens the task's own pane with the keyboard already in its notes box - so the words go
 /// where the click was aimed without a file being opened beside the board. A task with none

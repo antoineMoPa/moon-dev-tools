@@ -10,6 +10,7 @@ use egui_frames::PaneId;
 
 use crate::{
     api::OpenSessionRequest,
+    moontasks::review_request,
     native::{
         bindings::Action,
         board, find,
@@ -26,6 +27,10 @@ use super::{
     App, BACKGROUND_POLL_INTERVAL, BOARD_POLL_INTERVAL, POLL_INTERVAL, QUIT_CONFIRM_WINDOW,
     TabAction,
 };
+
+/// The key one read of the board's review requests runs under, which is also how the poll knows
+/// one is already going - see [`App::poll_review_requests`].
+const REVIEW_REQUESTS_KEY: &str = "review-requests";
 
 /// The key that keeps the project file to one write at a time - see [`App::save_project`].
 const PROJECT_SAVE: &str = "project-save";
@@ -263,6 +268,48 @@ impl App {
                 if let Ok(hub) = result {
                     model.root_repo_status = Some(hub.root);
                     model.submodules = hub.submodules;
+                }
+            },
+        );
+    }
+
+    /// Read what the board's tasks have asked to have looked at.
+    ///
+    /// Straight off the folder, on a worker thread, rather than through the server: these are a
+    /// few short files in a folder the window already knows, and going round the API for them
+    /// would be a route and three implementations to keep in step with the format.
+    ///
+    /// The files are watched by their write times, and only read when one of them has moved -
+    /// so the usual answer costs a `stat` per task and nothing else. It is on the board's clock
+    /// but not on the board being open: the commit pane reads the same answer to find the
+    /// message an agent wrote for the repo it is committing, and that pane is opened with no
+    /// board in sight.
+    pub(super) fn poll_review_requests(&mut self) {
+        if self.last_review_requests_poll.elapsed() < BOARD_POLL_INTERVAL {
+            return;
+        }
+        let Some(repo_path) = self.model.root_repo_path() else {
+            return;
+        };
+        // Asked before the write times are written down: a read still going would drop this one
+        // on its key, and the times would then say the folder had already been looked at.
+        if self.tasks.is_busy(REVIEW_REQUESTS_KEY) {
+            return;
+        }
+        self.last_review_requests_poll = Instant::now();
+
+        let written_at = review_request::written_at(&repo_path);
+        if written_at == self.review_requests_written_at {
+            return;
+        }
+        self.review_requests_written_at = written_at;
+
+        self.tasks.spawn_keyed(
+            Some(REVIEW_REQUESTS_KEY.to_string()),
+            move |_| Ok(review_request::list_for_repo(&repo_path)),
+            |model, result| {
+                if let Ok(requests) = result {
+                    model.review_requests = requests;
                 }
             },
         );

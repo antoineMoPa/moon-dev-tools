@@ -3,12 +3,14 @@
 //! [`store`] is the `.moontasks` folder on disk and [`service`] is everything the board
 //! do to it.
 
+pub(crate) mod review_request;
 pub(crate) mod service;
 pub(crate) mod store;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::AgentKind;
+use crate::{api::AgentKind, commit_suggestion::CommitSuggestion};
+pub(crate) use review_request::REVIEW_REQUEST_BRIEF_FILE_NAME;
 pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, TaskResourceKind};
 
 /// One task, as the board draws it.
@@ -46,6 +48,30 @@ pub(crate) struct TaskResourceView {
     /// been told its session id when it started.
     pub(crate) resumable: bool,
     pub(crate) started_at_unix: u64,
+}
+
+/// One repo a task's `request_for_review.txt` asks to have looked at, as the board draws it.
+///
+/// These are read off the file rather than out of `metadata.json`: the list is the agent's, and
+/// what it says is what the row says. They arrive in deploy order - task by task, and within a
+/// task in the order the lines are written.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ReviewRequestView {
+    pub(crate) task_id: String,
+    /// The repo as the line named it - `repos/turbocharger`. Empty for the board's own repo.
+    pub(crate) path_under_repo: String,
+    /// That path against the board's repo, which is the review the row opens. The same string
+    /// the submodule hub carries for the same repo, so the two lists agree about it.
+    pub(crate) repo_path: String,
+    /// The repo's directory name, which is what the row says.
+    pub(crate) name: String,
+    /// The branch the line asked the commit to be made on, if it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch: Option<String>,
+    /// The commit the agent wrote for that repo, which its commit pane offers instead of
+    /// starting an agent to write one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) suggestion: Option<CommitSuggestion>,
 }
 
 /// What starting a task's resource asked for.
@@ -205,7 +231,9 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
         "You are working on a task from moonreview's moontasks board.\n\
          \n\
          Task: {title}\n\
-         Task folder: {task_dir}"
+         Task folder: {task_dir}\n\
+         \n\
+         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME}"
     )
 }
 

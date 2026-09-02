@@ -284,7 +284,7 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
     groups
 }
 
-fn changes_label(repo: &RepoStatusView) -> String {
+pub(crate) fn changes_label(repo: &RepoStatusView) -> String {
     match repo.changed_files {
         0 => "no changes".to_string(),
         1 => "1 change".to_string(),

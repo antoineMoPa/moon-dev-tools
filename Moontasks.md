@@ -140,6 +140,8 @@ The board is a folder in the repo, which is the whole of its state:
     metadata.json     # title, column, place in the column, the agent runs and the linked files
     brief.md          # what the agents working here have been told
     notes.md          # the task's description and shared notes, shown on the card
+    request_review.md        # how to write the file below, for an agent about to
+    request_for_review.txt   # the repos this work touched, in deploy order, once there are any
     …                 # anything you or an agent puts here
 ```
 
@@ -169,6 +171,11 @@ folder loses the text rather than acting on it.
 If you get there first it types nothing at all. A title arriving in the middle of a sentence
 someone is writing is worse than no title, so the first keystroke of yours in that shell is
 the end of it.
+
+The brief also says where to write the deploy list - `request_for_review.txt`, above - in one
+line, pointing at `request_review.md`, which is written into the folder beside it and holds the
+format. It is a file rather than more of the brief because the brief is a system prompt on every
+run of every task, and the format is read once, by the agent that has work to hand over.
 
 The brief is worth its own file because it is the difference between an agent that knows which
 task it is on and one that has to be told twice.

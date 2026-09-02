@@ -14,6 +14,7 @@ use crate::{
     api::FileChangeKind,
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
+    moontasks::ReviewRequestView,
     native::{
         app::{App, AttachedTerminal, TerminalHolder},
         theme::{Palette, SMALL_SIZE},
@@ -139,6 +140,10 @@ pub(crate) struct CommitPane {
     /// for once and no more - staging happens a hunk at a time next door, and an agent run for
     /// every one of those would be a run for a commit that is still being put together.
     suggestion_asked: bool,
+    /// Whether the commit a board task wrote for this repo has been put in the box. Once, and
+    /// never again: a box someone has emptied is a message they are writing themselves, and
+    /// putting it back on the next frame would be arguing with them.
+    requested_commit_filled: bool,
     /// Set when a commit has just worked, and answered by the next reading of the repo: it is
     /// that reading which knows whether the review beside this pane has anything left to show.
     closes_review: bool,
@@ -157,6 +162,7 @@ impl CommitPane {
             suggestion: None,
             suggestion_error: None,
             suggestion_asked: false,
+            requested_commit_filled: false,
             closes_review: false,
             reached: Reached::Nothing,
         }
@@ -351,14 +357,48 @@ impl App {
         );
     }
 
+    /// What one of the board's tasks asked to have looked at in the repo this pane is
+    /// committing, if any of them did - see [`crate::moontasks::ReviewRequestView`].
+    ///
+    /// Found by the repo rather than by the task: a pane is opened on a repo, and which task
+    /// wrote the line that sent you there is not something it has to know.
+    pub(super) fn requested_review_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
+        let repo_path = &self.model.review_ref(session_id)?.payload.as_ref()?.repo_path;
+        self.model
+            .review_requests
+            .iter()
+            .find(|request| &request.repo_path == repo_path)
+    }
+
+    /// Put the commit a board task wrote for this repo in the box.
+    ///
+    /// Straight in the box rather than under it behind `[use]`: that gate is there for a message
+    /// a model guessed from the diff, and this one was written by whoever did the work, for this
+    /// repo, and is the message meant to be made. It is text like any other once it is there.
+    ///
+    /// Nothing to do with staging, unlike the message written from the diff - this one does not
+    /// come from the diff. It is in the box from the moment the pane opens, so what is about to
+    /// be committed is readable while the hunks are still being picked next door.
+    fn fill_in_the_requested_commit(&mut self, session_id: &str) {
+        let Some(written) = self
+            .requested_review_of(session_id)
+            .and_then(|request| request.suggestion.clone())
+        else {
+            return;
+        };
+        let pane = self.commit_pane(session_id);
+        // Only ever into an empty box, and only ever once - so a message someone is writing is
+        // never argued with, and neither is a box they have emptied on purpose.
+        if pane.requested_commit_filled || !pane.message.trim().is_empty() {
+            return;
+        }
+        pane.message = written.as_message();
+        pane.requested_commit_filled = true;
+    }
+
     /// The one time the pane asks on its own: something is staged, nothing has been written in
     /// the box, and no message has been asked for since there was last nothing to commit.
     fn auto_ask_for_commit_message(&mut self, session_id: &str) {
-        // The window asks the moment something is staged. A test stages a fixture, so under
-        // test it would start a real agent on it - there the pane asks only when pressed.
-        if cfg!(test) {
-            return;
-        }
         let pane = self.commit_pane(session_id);
         let Some(state) = &pane.state else {
             return;
@@ -371,11 +411,13 @@ impl App {
             pane.suggestion_asked = false;
             return;
         }
-        if pane.suggestion_asked
-            || !state.opencode_installed
-            || !pane.message.trim().is_empty()
-            || pane.is_running()
-        {
+        if pane.suggestion_asked || !pane.message.trim().is_empty() || pane.is_running() {
+            return;
+        }
+
+        // Writing one from the diff is an agent run. A test stages a fixture, so under test that
+        // would start a real agent on it - there the pane asks only when pressed.
+        if cfg!(test) || !state.opencode_installed {
             return;
         }
         self.ask_for_commit_message(session_id);
@@ -534,6 +576,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     app.commit_pane(session_id);
     app.refresh_commit_state(session_id);
     app.poll_commit_run(session_id);
+    app.fill_in_the_requested_commit(session_id);
     app.auto_ask_for_commit_message(session_id);
 
     // While git is going, the keyboard belongs to the pty: that is where pinentry asks for
@@ -573,6 +616,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
         .model
         .review_ref(session_id)
         .and_then(|review| review.payload.clone());
+    // The branch a task's `request_for_review.txt` asked this commit to be made on, when one
+    // did. Said beside the branch the repo is actually on, and no more than said - moving
+    // someone's HEAD under a commit they are about to make is not the pane's to do.
+    let asked_branch = app
+        .requested_review_of(session_id)
+        .and_then(|request| request.branch.clone());
 
     egui::Panel::top(egui::Id::new(("commit-header", session_id)))
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(2, 4)))
@@ -584,6 +633,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     path: &payload.repo_path,
                 }),
                 state.as_ref(),
+                asked_branch.as_deref(),
                 &palette,
             );
         });
@@ -806,6 +856,7 @@ fn draw_branch_line(
     ui: &mut Ui,
     repo: Option<Repo<'_>>,
     state: Option<&CommitState>,
+    asked_branch: Option<&str>,
     palette: &Palette,
 ) {
     let Some(state) = state else {
@@ -856,6 +907,21 @@ fn draw_branch_line(
                 palette.warn,
                 palette.status_neutral_bg,
             );
+        }
+        // Only when the two differ: a pane sitting on the branch that was asked for has nothing
+        // to say about it, and a line saying so on every commit is a line nobody reads.
+        let elsewhere =
+            asked_branch.filter(|asked| Some(*asked) != state.branch_name.as_deref());
+        if let Some(asked) = elsewhere {
+            widgets::pill(
+                ui,
+                &format!("asked for {asked}"),
+                palette.warn,
+                palette.status_neutral_bg,
+            )
+            .on_hover_text(format!(
+                "the task asking for this review means the commit for {asked}"
+            ));
         }
     });
 }
