@@ -162,7 +162,7 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
     // to the terminal, and the marks that stop it and take it off the task.
     assert!(
         harness
-            .get_all_by_label("shell")
+            .get_all_by_label("shell - 1")
             .any(|node| node.rect().center().x > BOARD_WIDTH),
         "the pane should list the task's shell the way its card does"
     );

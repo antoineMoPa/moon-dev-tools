@@ -259,6 +259,20 @@ pub(crate) fn place_column(
     store::write_board(&repo_path, &board)
 }
 
+/// A run's name as its own card writes it: the card is already the task, so the task's title
+/// comes off the front - `claude - 1` on the card for the `write the parser claude - 1` tab.
+/// A name that does not start with the title is written as it is, which is what a name
+/// someone retyped, and one written down before runs carried the title, look like.
+fn label_on_the_card(title: &str, name: String) -> String {
+    let Some(front) = crate::terminal::title_in_name(title) else {
+        return name;
+    };
+    match name.strip_prefix(&format!("{front} ")) {
+        Some(rest) => rest.to_string(),
+        None => name,
+    }
+}
+
 fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
     // Agent runs and linked files are the task's record and outlive the process; its shells
     // are only ever the ones open right now, so the two are listed from different places and
@@ -293,6 +307,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 label: resource
                     .name
                     .clone()
+                    .map(|name| label_on_the_card(&metadata.title, name))
                     .unwrap_or_else(|| resource.agent.label().to_lowercase()),
                 file_path: None,
                 running: resource
@@ -315,7 +330,10 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: shell.terminal_id.clone(),
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
-                label: shell.name.unwrap_or_else(|| "shell".to_string()),
+                label: shell
+                    .name
+                    .map(|name| label_on_the_card(&metadata.title, name))
+                    .unwrap_or_else(|| "shell".to_string()),
                 file_path: None,
                 running: true,
                 terminal_id: Some(shell.terminal_id),
@@ -507,7 +525,8 @@ pub(crate) fn start_resource(
     };
     let env = task_env(session_id, task_id, &repo_path);
     let program = TerminalProgram::of_agent(Some(agent));
-    let name = crate::terminal::name_for_new_shell(state, &repo_path, &program)?;
+    let name =
+        crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
@@ -515,7 +534,7 @@ pub(crate) fn start_resource(
         args,
         env,
         owner: Some(task_id.to_string()),
-        name: name.clone(),
+        name: Some(name.clone()),
         // An agent comes up with the card's title already written in its box, waiting on the
         // Enter that sends it. It is still the person who starts the work - the title is a
         // card's name and rarely the whole of what is wanted - but the common case, where it
@@ -534,7 +553,7 @@ pub(crate) fn start_resource(
             file_path: None,
             terminal_id: Some(terminal_id.clone()),
             agent_session_id,
-            name,
+            name: Some(name),
             started_at_unix: store::now_unix(),
         });
         store::write_task(&repo_path, task_id, &metadata)?;
@@ -584,8 +603,13 @@ pub(crate) fn resume_resource(
     let program = TerminalProgram::Agent(resource.agent);
     // The run keeps the name it had; one written down before runs had names is numbered now.
     let name = match resource.name {
-        Some(name) => Some(name),
-        None => crate::terminal::name_for_new_shell(state, &repo_path, &program)?,
+        Some(name) => name,
+        None => crate::terminal::name_for_new_shell(
+            state,
+            &repo_path,
+            Some(&metadata.title),
+            &program,
+        )?,
     };
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
@@ -593,14 +617,14 @@ pub(crate) fn resume_resource(
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
-        name: name.clone(),
+        name: Some(name.clone()),
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
         type_ahead: None,
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
-    metadata.resources[at].name = name;
+    metadata.resources[at].name = Some(name);
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
@@ -634,14 +658,15 @@ pub(crate) fn attach_resource(
     let fillings =
         write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
     let program = TerminalProgram::Agent(request.agent);
-    let name = crate::terminal::name_for_new_shell(state, &repo_path, &program)?;
+    let name =
+        crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
         program,
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
         owner: Some(task_id.to_string()),
-        name: name.clone(),
+        name: Some(name.clone()),
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
         type_ahead: None,
@@ -654,7 +679,7 @@ pub(crate) fn attach_resource(
         file_path: None,
         terminal_id: Some(terminal_id.clone()),
         agent_session_id: Some(agent_session_id.to_string()),
-        name,
+        name: Some(name),
         started_at_unix: store::now_unix(),
     });
     store::write_task(&repo_path, task_id, &metadata)?;

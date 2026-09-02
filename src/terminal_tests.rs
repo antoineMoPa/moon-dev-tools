@@ -354,30 +354,119 @@ fn a_shell_someone_has_typed_into_is_left_alone() {
     );
 }
 
-/// A new agent's shell is numbered one past the highest number in use for that agent,
-/// whether the shell carrying it is running or only written down on a task. A name someone
-/// retyped counts for nothing, and each agent counts on its own.
+/// A new shell is numbered one past the highest number in use for that same task and
+/// program, whether the shell carrying it is running or only written down on a task. A name
+/// someone retyped counts for nothing, and each program counts on its own.
 #[test]
-fn a_new_agent_shell_is_numbered_past_every_number_in_use() {
+fn a_new_shell_is_numbered_past_every_number_in_use() {
     let in_use = || {
         [
             "claude - 1",
             "claude - 3",
             "codex - 1",
+            "shell - 2",
             "parser",
             "claude - two",
         ]
         .map(str::to_string)
     };
+    let agent = |agent| TerminalProgram::Agent(agent);
 
-    assert_eq!(numbered_name(AgentKind::Claude, in_use()), "claude - 4");
-    assert_eq!(numbered_name(AgentKind::Codex, in_use()), "codex - 2");
-    assert_eq!(numbered_name(AgentKind::OpenCode, in_use()), "opencode - 1");
-    assert_eq!(numbered_name(AgentKind::Claude, []), "claude - 1");
+    assert_eq!(
+        numbered_name(None, &agent(AgentKind::Claude), in_use()),
+        "claude - 4"
+    );
+    assert_eq!(
+        numbered_name(None, &agent(AgentKind::Codex), in_use()),
+        "codex - 2"
+    );
+    assert_eq!(
+        numbered_name(None, &agent(AgentKind::OpenCode), in_use()),
+        "opencode - 1"
+    );
+    assert_eq!(
+        numbered_name(None, &TerminalProgram::LoginShell, in_use()),
+        "shell - 3",
+        "a plain shell is numbered the way an agent's is"
+    );
+    assert_eq!(
+        numbered_name(None, &agent(AgentKind::Claude), []),
+        "claude - 1"
+    );
 }
 
-/// A shell starts under the name it was given, and a plain shell under none: its tab reads
-/// what the program in it sets.
+/// A task's shell carries the front of the task's title, so a tab says which task it belongs
+/// to. Each task counts its own runs, and a task's numbers leave a workspace shell's alone.
+#[test]
+fn a_tasks_shell_is_named_after_the_task() {
+    let in_use = || {
+        [
+            "write the parser claude - 1",
+            "write the parser shell - 1",
+            "ship the release claude - 1",
+            "claude - 7",
+        ]
+        .map(str::to_string)
+    };
+    let claude = TerminalProgram::Agent(AgentKind::Claude);
+
+    assert_eq!(
+        numbered_name(Some("write the parser"), &claude, in_use()),
+        "write the parser claude - 2"
+    );
+    assert_eq!(
+        numbered_name(Some("write the parser"), &TerminalProgram::LoginShell, in_use()),
+        "write the parser shell - 2"
+    );
+    assert_eq!(
+        numbered_name(Some("ship the release"), &claude, in_use()),
+        "ship the release claude - 2",
+        "each task counts its own runs"
+    );
+    assert_eq!(
+        numbered_name(Some("start the engine"), &claude, in_use()),
+        "start the engine claude - 1",
+        "a task with nothing running starts at one"
+    );
+    assert_eq!(
+        numbered_name(None, &claude, in_use()),
+        "claude - 8",
+        "and a workspace shell counts only the shells of no task"
+    );
+}
+
+/// Only the front of a long title goes in the name: a tab has to show the program and the
+/// number after it. A title of nothing but spaces names nothing at all.
+#[test]
+fn a_long_title_is_cut_to_its_front() {
+    let claude = TerminalProgram::Agent(AgentKind::Claude);
+
+    assert_eq!(
+        numbered_name(Some("tab titles from task"), &claude, []),
+        "tab titles from task claude - 1",
+        "twenty characters fit whole"
+    );
+    assert_eq!(
+        numbered_name(
+            Some("rewrite the whole parser from scratch"),
+            &claude,
+            []
+        ),
+        "rewrite the whole pa claude - 1"
+    );
+    assert_eq!(
+        numbered_name(Some("ship the new parser tomorrow"), &claude, []),
+        "ship the new parser claude - 1",
+        "the space a cut lands on is trimmed"
+    );
+    assert_eq!(
+        numbered_name(Some("   "), &claude, []),
+        "claude - 1",
+        "a title of spaces names nothing"
+    );
+}
+
+/// A shell starts under the name it was given, and under none where nothing named it.
 #[cfg(unix)]
 #[test]
 fn a_shell_starts_under_the_name_it_was_given() {

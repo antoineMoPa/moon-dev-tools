@@ -95,6 +95,14 @@ impl TerminalProgram {
             _ => None,
         }
     }
+
+    /// What a shell of this program is called before its number - `claude`, `codex`, `shell`.
+    fn label(&self) -> String {
+        match self {
+            Self::LoginShell => "shell".to_string(),
+            Self::Agent(agent) => agent.label().to_lowercase(),
+        }
+    }
 }
 
 /// What to start a shell as. The plain case is a login shell in the reviewed repo; a task's
@@ -108,9 +116,9 @@ pub(crate) struct TerminalSpec {
     /// The task this shell belongs to, if any. An owned shell is the task's to list and to
     /// close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
-    /// What the shell is called - see [`TerminalSession::name`]. An agent's shell is given
-    /// its number by [`name_for_new_shell`], or the name its run already had when it is
-    /// resumed; a plain shell is given nothing.
+    /// What the shell is called - see [`TerminalSession::name`]. A shell being started is
+    /// given its name by [`name_for_new_shell`], or the name its run already had when it is
+    /// resumed. `None` only where nothing named it, which is a test spawning by hand.
     pub(crate) name: Option<String>,
     /// Text typed into the shell once the program has come up, as if the user had typed it -
     /// exactly as given, down to whether it ends in a return.
@@ -166,11 +174,11 @@ pub(crate) struct TerminalSession {
     /// two shells opened together tie, so the order is what actually sorts them.
     started_at_unix: u64,
     order: u64,
-    /// What the shell is called on its tab and on the board, if it has been named. An agent's
-    /// shell is named as it starts - `claude - 1`, `claude - 2` - so two runs of the same
-    /// agent can be told apart; a plain shell is not, and its tab reads whatever the program
-    /// in it sets. Either can be renamed from its tab. A task's run writes the name down on
-    /// the task as well, which is what outlives the shell - see
+    /// What the shell is called on its tab and on the board, if it has been named. A shell is
+    /// named as it starts - `write the parser claude - 1`, `shell - 2` - so the task it
+    /// belongs to and two runs of the same agent can be told apart. It can be renamed from
+    /// its tab. A task's run writes the name down on the task as well, which is what
+    /// outlives the shell - see
     /// [`crate::moontasks::store::TaskResource::name`].
     name: Mutex<Option<String>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -687,12 +695,38 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     let _ = writer.write_all(text.as_bytes());
 }
 
-/// The name an agent's new shell is given: the agent and one past the highest number any
-/// shell of that agent carries, live or written down on a task - `claude - 3` after
-/// `claude - 1` and `claude - 2`, whether or not those are still running. A name someone
-/// retyped counts for nothing here, whatever it says. A plain shell is given no name.
-pub(crate) fn numbered_name(agent: AgentKind, in_use: impl IntoIterator<Item = String>) -> String {
-    let prefix = format!("{} - ", agent.label().to_lowercase());
+/// How much of a task's title a shell of that task carries: enough to tell one task's shells
+/// from another's, short enough that the tab still shows the program and the number after it.
+const TITLE_IN_NAME_CHARS: usize = 20;
+
+/// The front of a task's title, as it appears in the names of that task's shells. `None` for
+/// a title that is nothing but spaces, which names nothing.
+pub(crate) fn title_in_name(title: &str) -> Option<String> {
+    let front: String = title.chars().take(TITLE_IN_NAME_CHARS).collect();
+    let front = front.trim();
+    (!front.is_empty()).then(|| front.to_string())
+}
+
+/// The prefix every shell of one task and one program shares - `write the parser claude - `,
+/// or `shell - ` for a shell of no task. The number that follows it is counted within it, so
+/// each task numbers its own runs.
+fn name_prefix(task_title: Option<&str>, program: &TerminalProgram) -> String {
+    match task_title.and_then(title_in_name) {
+        Some(title) => format!("{title} {} - ", program.label()),
+        None => format!("{} - ", program.label()),
+    }
+}
+
+/// The name a new shell is given: the task it is being started in, the program, and one past
+/// the highest number any shell of that same task and program carries, live or written down
+/// on a task - `claude - 3` after `claude - 1` and `claude - 2`, whether or not those are
+/// still running. A name someone retyped counts for nothing here, whatever it says.
+pub(crate) fn numbered_name(
+    task_title: Option<&str>,
+    program: &TerminalProgram,
+    in_use: impl IntoIterator<Item = String>,
+) -> String {
+    let prefix = name_prefix(task_title, program);
     let highest = in_use
         .into_iter()
         .filter_map(|name| name.strip_prefix(&prefix)?.parse::<u64>().ok())
@@ -701,21 +735,19 @@ pub(crate) fn numbered_name(agent: AgentKind, in_use: impl IntoIterator<Item = S
     format!("{prefix}{}", highest + 1)
 }
 
-/// The name to start a shell under: numbered for an agent's, nothing for a plain one. The
-/// numbers in use are read off every shell the server has and every run the repo's tasks
-/// have written down, so a number is not handed out twice while the run that had it is
-/// still on the board - however many times the server has been restarted in between.
+/// The name to start a shell under. The numbers in use are read off every shell the server
+/// has and every run the repo's tasks have written down, so a number is not handed out twice
+/// while the run that had it is still on the board - however many times the server has been
+/// restarted in between.
 pub(crate) fn name_for_new_shell(
     state: &AppState,
     repo_path: &std::path::Path,
+    task_title: Option<&str>,
     program: &TerminalProgram,
-) -> anyhow::Result<Option<String>> {
-    let Some(agent) = program.agent() else {
-        return Ok(None);
-    };
+) -> anyhow::Result<String> {
     let mut in_use = state.terminals.live_names();
     in_use.extend(crate::moontasks::store::recorded_run_names(repo_path)?);
-    Ok(Some(numbered_name(agent, in_use)))
+    Ok(numbered_name(task_title, program, in_use))
 }
 
 /// Start a shell of the workspace's own in the reviewed repo, and answer with which.
@@ -727,10 +759,11 @@ pub(crate) fn start_workspace_shell(
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
     let program = TerminalProgram::of_agent(command);
-    let name = name_for_new_shell(state, &repo_path, &program)?;
+    // A workspace shell belongs to no task, so its name is the program and the number alone.
+    let name = name_for_new_shell(state, &repo_path, None, &program)?;
     state
         .terminals
-        .spawn(TerminalSpec::shell(repo_path, command, name))
+        .spawn(TerminalSpec::shell(repo_path, command, Some(name)))
 }
 
 /// Call a shell something else. A task's run is renamed on the task as well, so the name is

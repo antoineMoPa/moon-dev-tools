@@ -319,9 +319,10 @@ fn a_remote_shell_is_renamed_over_http() {
     assert_eq!(
         backend
             .terminal_name(&opened.session_id, &terminal_id)
-            .expect("expected the shell's name"),
-        None,
-        "a plain shell starts unnamed"
+            .expect("expected the shell's name")
+            .as_deref(),
+        Some("shell - 1"),
+        "a plain shell starts numbered"
     );
 
     backend
