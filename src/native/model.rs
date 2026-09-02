@@ -656,16 +656,6 @@ impl Model {
         Some(std::path::PathBuf::from(&payload.repo_path))
     }
 
-    /// How a repo the hub knows about is standing, by the path everything addresses it with.
-    /// `None` for a repo the hub has not answered about yet, or one that is neither the
-    /// reviewed repo nor a submodule of it.
-    pub(crate) fn repo_status(&self, repo_path: &str) -> Option<&RepoStatusView> {
-        self.root_repo_status
-            .iter()
-            .chain(self.submodules.iter())
-            .find(|repo| repo.repo_path == repo_path)
-    }
-
     pub(crate) fn review(&mut self, session_id: &str) -> &mut ReviewState {
         self.reviews
             .entry(session_id.to_string())

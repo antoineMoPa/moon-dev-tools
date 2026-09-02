@@ -273,17 +273,16 @@ impl App {
         );
     }
 
-    /// Read what the board's tasks have asked to have looked at.
+    /// Read what the board's tasks have asked to have looked at, and how each of them stands.
     ///
     /// Straight off the folder, on a worker thread, rather than through the server: these are a
     /// few short files in a folder the window already knows, and going round the API for them
     /// would be a route and three implementations to keep in step with the format.
     ///
-    /// The files are watched by their write times, and only read when one of them has moved -
-    /// so the usual answer costs a `stat` per task and nothing else. It is on the board's clock
-    /// but not on the board being open: the commit pane reads the same answer to find the
-    /// message an agent wrote for the repo it is committing, and that pane is opened with no
-    /// board in sight.
+    /// Read whole on every tick rather than only when one of the files has been written. What a
+    /// row says is not only what the file says - a row is pending until its repo has nothing left
+    /// to commit, and that changes when someone commits, not when the file does. The same reason
+    /// the submodule hub is on a clock rather than on a watch.
     pub(super) fn poll_review_requests(&mut self) {
         if self.last_review_requests_poll.elapsed() < BOARD_POLL_INTERVAL {
             return;
@@ -291,23 +290,14 @@ impl App {
         let Some(repo_path) = self.model.root_repo_path() else {
             return;
         };
-        // Asked before the write times are written down: a read still going would drop this one
-        // on its key, and the times would then say the folder had already been looked at.
-        if self.tasks.is_busy(REVIEW_REQUESTS_KEY) {
-            return;
-        }
         self.last_review_requests_poll = Instant::now();
-
-        let written_at = review_request::written_at(&repo_path);
-        if written_at == self.review_requests_written_at {
-            return;
-        }
-        self.review_requests_written_at = written_at;
 
         self.tasks.spawn_keyed(
             Some(REVIEW_REQUESTS_KEY.to_string()),
             move |_| Ok(review_request::list_for_repo(&repo_path)),
             |model, result| {
+                // A failed read leaves the last answer standing, the way the hub's does: a list
+                // that is a poll out of date is worth more than an empty one.
                 if let Ok(requests) = result {
                     model.review_requests = requests;
                 }

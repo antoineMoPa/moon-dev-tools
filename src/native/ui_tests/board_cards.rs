@@ -33,7 +33,7 @@ fn a_tasks_deploy_list_is_drawn_under_its_card() {
     fixture.write(
         ".moontasks/deploy-the-thing-1111/request_for_review.txt",
         ". // chore: take the module forward\n\
-         vendor/turbocharger/#a-branch-with-a-long-name // chore: and again on a branch\n",
+         vendor/turbocharger/#moontask/show-moon-icons-in-bootscreens-59c3e24c // chore: on a branch\n",
     );
 
     let mut app = app_for(&fixture.root, ThemeMode::Dark);

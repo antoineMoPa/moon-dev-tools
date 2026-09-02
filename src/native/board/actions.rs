@@ -64,6 +64,13 @@ pub(crate) enum BoardAction {
     },
     /// Open the review of what the task has changed.
     OpenReview(String, String),
+    /// Change one line of a task's `request_for_review.txt`: take it out, or cross it off. The
+    /// file is the list, so both are written to it rather than kept beside it.
+    AmendReviewRequest {
+        task_id: String,
+        index: usize,
+        amend: crate::moontasks::review_request::Amend,
+    },
     /// Write what has been typed into a task's notes on its own pane.
     SaveNotes { task_id: String, notes: String },
     /// Open the task's own pane: its title and notes, what it has running, and what it can
@@ -352,6 +359,23 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 task_id,
                 title,
             }));
+        }
+        BoardAction::AmendReviewRequest {
+            task_id,
+            index,
+            amend,
+        } => {
+            let Some(repo_path) = app.model.root_repo_path() else {
+                return;
+            };
+            // Straight to the file on a worker thread, the way the requests are read - see
+            // `App::poll_review_requests`, which picks the change up on its next tick.
+            app.tasks.spawn(
+                move |_| {
+                    crate::moontasks::review_request::amend(&repo_path, &task_id, index, amend)
+                },
+                |model, result| model.report(result, "could not change the review request"),
+            );
         }
         BoardAction::OpenReview(repo_path, title) => {
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {

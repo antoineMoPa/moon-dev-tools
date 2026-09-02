@@ -8,7 +8,9 @@ use egui::{Align, CornerRadius, Layout as UiLayout, Rect, Response, RichText, Se
 
 use crate::{
     api::AgentKind,
-    moontasks::{ReviewRequestView, TaskResourceKind, TaskResourceView, TaskView},
+    moontasks::{
+        ReviewRequestView, TaskResourceKind, TaskResourceView, TaskView, review_request::Amend,
+    },
     native::{
         app::App,
         board::{BoardAction, close_button, file_mark, gesture::Controls, running_dot},
@@ -43,57 +45,52 @@ pub(crate) fn draw_list(
         .iter()
         .filter(|request| request.task_id == task.id)
     {
-        draw_review_request(app, ui, request, card, palette, actions);
+        draw_review_request(ui, request, card, palette, actions);
     }
 }
 
-/// How tall the line under a pending review is - the branch it names, in small type. Shorter
-/// than a row of its own: it is the second half of the row above it, not another entry.
-const BRANCH_LINE_HEIGHT: f32 = 15.0;
-/// How far that line is indented, so it starts under the words rather than under the dot.
+/// How far the line under a pending review is indented, so it starts under the words rather
+/// than under the dot.
 const BRANCH_LINE_INDENT: f32 = 12.0;
+/// How much of a branch name that line shows. A branch made for a task can run to a slug and a
+/// uuid, which would set the width of every card on the board; the front of it is what says
+/// which branch it is, and the whole of it is on the row's hover. As much as fits a card at the
+/// small size, which is most real branch names whole.
+const BRANCH_NAME_CHARS: usize = 38;
 
 /// One repo a task's `request_for_review.txt` asks to have looked at.
 ///
 /// Whether it is still pending is not written down anywhere: it is the repo having changed files,
 /// which the submodule hub's answer already says. So the list ticks itself off as the repos are
-/// committed, and there is nothing on the row to press to say it is done.
+/// committed, and there is nothing on the row to press to say it is done - only the menu that
+/// takes the line out of the file, for a review that turned out not to be wanted.
 ///
 /// A branch goes on a line of its own under the name. Three things - what to review, which
 /// branch, how much has changed - do not fit across a card, and a branch name is the longest and
-/// the least often there, so it is the one that moves down.
+/// the least often there, so it is the one that moves down. The row is drawn first and measured
+/// after, so it is exactly as tall as what is in it and the card grows by the same amount.
 fn draw_review_request(
-    app: &App,
     ui: &mut Ui,
     request: &ReviewRequestView,
     card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    let status = app.model.repo_status(&request.repo_path);
-    // A repo the hub has said nothing about yet is taken to be pending: the row is what the
-    // agent asked for, and it should not read as dealt with because a poll has not landed.
-    let pending = status.is_none_or(|repo| repo.changed_files > 0);
+    // Two ways to be finished with: the repo has nothing left to commit, which the board can see
+    // for itself, or someone crossed the line off - work that is committed and pushed and wants
+    // no more looking at, which it cannot.
+    let pending = !request.done && request.changed_files > 0;
 
-    let height = ui.spacing().interact_size.y
-        + request.branch.as_ref().map_or(0.0, |_| BRANCH_LINE_HEIGHT);
-    let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
-    if row.hovered() && ui.is_rect_visible(rect) {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(3), palette.row_hover_bg);
-    }
-    let row = row
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Open the review of this repo");
-    let row_pressed = card.pressed(&row);
+    // Kept back so the fill can be painted behind contents that have not been drawn yet: how
+    // tall the row is is only known once they have been.
+    let fill = ui.painter().add(egui::Shape::Noop);
+    let mut opens = false;
 
-    let mut opens = row_pressed;
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(rect.shrink2(vec2(ROW_INSET, 0.0)))
-            .layout(UiLayout::top_down(Align::Min)),
+    let drawn = ui.scope_builder(
+        UiBuilder::new().layout(UiLayout::top_down(Align::Min)),
         |ui| {
             ui.horizontal(|ui| {
+                ui.add_space(ROW_INSET);
                 ui.set_min_height(ui.spacing().interact_size.y);
                 running_dot(ui, pending, palette);
 
@@ -114,29 +111,97 @@ fn draw_review_request(
                 opens |= card.pressed(&name);
 
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                    if let Some(status) = status {
-                        ui.label(
-                            RichText::new(changes_label(status))
-                                .size(SMALL_SIZE)
-                                .color(palette.muted),
-                        );
-                    }
+                    ui.add_space(ROW_INSET);
+                    ui.label(
+                        RichText::new(changes_label(request.changed_files))
+                            .size(SMALL_SIZE)
+                            .color(palette.muted),
+                    );
                 });
             });
 
             if let Some(branch) = &request.branch {
                 ui.horizontal(|ui| {
-                    ui.add_space(BRANCH_LINE_INDENT);
+                    ui.add_space(ROW_INSET + BRANCH_LINE_INDENT);
                     ui.label(
-                        RichText::new(format!("#{branch}"))
-                            .size(SMALL_SIZE)
-                            .color(palette.muted),
+                        RichText::new(format!(
+                            "#{}",
+                            widgets::elide_end(branch, BRANCH_NAME_CHARS)
+                        ))
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
                     )
-                    .on_hover_text("The branch the agent means this commit to be made on");
+                    .on_hover_text(format!(
+                        "#{branch}\nthe branch this commit belongs on - the review opens \
+                         wherever it is checked out"
+                    ));
                 });
             }
         },
     );
+
+    // The whole of what was drawn is one target, taken after it so it covers both lines. The
+    // marks inside it were interacted with as they were drawn, so a click on one is theirs.
+    let rect = drawn.response.rect;
+    let row = ui.interact(
+        rect,
+        ui.make_persistent_id(("review-request", &request.task_id, request.index)),
+        Sense::click(),
+    );
+    if row.hovered() && ui.is_rect_visible(rect) {
+        ui.painter().set(
+            fill,
+            egui::epaint::RectShape::filled(rect, CornerRadius::same(3), palette.row_hover_bg),
+        );
+    }
+    let row = row
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open the review of this repo");
+    opens |= card.pressed(&row);
+
+    // Taking a line out of the file is the one thing done to a request, and it is not something
+    // to press by accident on a row whose whole job is to be clicked - so it lives on the menu.
+    egui::Popup::context_menu(&row)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let mut amend = |ui: &mut Ui, label: &str, hover: &str, amend: Amend| {
+                if widgets::clickable(ui.button(label))
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    actions.push(BoardAction::AmendReviewRequest {
+                        task_id: request.task_id.clone(),
+                        index: request.index,
+                        amend,
+                    });
+                    ui.close();
+                }
+            };
+
+            // Crossing off keeps the line, because it stays true that this repo was part of the
+            // work; dismissing says the line should not have been written, so it goes.
+            match request.done {
+                false => amend(
+                    ui,
+                    "mark as completed",
+                    "Cross this line off - the work is committed and wants no more looking at",
+                    Amend::Done(true),
+                ),
+                true => amend(
+                    ui,
+                    "mark as pending",
+                    "Put this line back on the list",
+                    Amend::Done(false),
+                ),
+            }
+            ui.separator();
+            amend(
+                ui,
+                "dismiss",
+                "Take this line out of the task's request_for_review.txt",
+                Amend::Dismiss,
+            );
+        });
 
     if opens {
         actions.push(BoardAction::OpenReview(

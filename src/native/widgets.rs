@@ -230,6 +230,16 @@ pub(crate) fn elide_path(path: &str, max_chars: usize) -> String {
     format!("{start}…{end}")
 }
 
+/// Elides the end of a name that is read from the front - a branch, say, which is recognised by
+/// how it starts and often trails off into an id nobody reads.
+pub(crate) fn elide_end(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
 /// `1,234` - thousands separated, so large diff counts stay readable.
 pub(crate) fn grouped(value: usize) -> String {
     let digits = value.to_string();
@@ -259,6 +269,18 @@ mod tests {
         assert!(elided.chars().count() <= 25, "got {elided}");
         assert!(elided.ends_with("Thing.tsx"), "got {elided}");
         assert!(elided.starts_with("packa"), "got {elided}");
+    }
+
+    /// A branch is recognised by how it starts, so that is the end that is kept - unlike a path,
+    /// which is recognised by the file name at its end.
+    #[test]
+    fn long_names_keep_their_front() {
+        assert_eq!(elide_end("main", 20), "main");
+        assert_eq!(elide_end("exactly-twenty-chars", 20), "exactly-twenty-chars");
+
+        let elided = elide_end("moontask/show-moon-icons-in-bootscreens-59c3e24c", 20);
+        assert_eq!(elided, "moontask/show-moon-…");
+        assert_eq!(elided.chars().count(), 20);
     }
 
     #[test]

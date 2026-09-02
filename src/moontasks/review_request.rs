@@ -14,6 +14,8 @@
 //! trait method and two implementations of it would be four places to change every time a line
 //! of the format does.
 
+use anyhow::{Context, Result};
+
 use std::path::{Path, PathBuf};
 
 use crate::{commit_suggestion::CommitSuggestion, moontasks::ReviewRequestView, moontasks::store};
@@ -55,18 +57,27 @@ repos/flux_capacitor/
 ```
 
 The order is the deploy order, top to bottom. A line whose repo has nothing left to commit reads
-as done on the board, so the list ticks itself off as the person works down it - you do not mark
-anything, and nothing but you writes the file. Take a line out when it no longer needs saying.
+as done on the board, so the list ticks itself off as the person works down it. Take a line out
+when it no longer needs saying.
+
+A line starting `x ` has been crossed off by the person - work that is committed and wants no
+more looking at. Leave those alone; they are their record, not yours.
 ";
 
 /// What separates the repo a line names from the commit it suggests for it.
 const SUGGESTION_MARK: &str = "//";
 /// What separates a repo's path from the branch the commit belongs on.
 const BRANCH_MARK: char = '#';
+/// What an entry that has been dealt with carries at the front of its line, the way a checklist
+/// crosses one off. Written by the person, from the row's menu - the board can tell that a repo
+/// has nothing left to commit, but not that work already committed and pushed is finished with.
+const DONE_MARK: &str = "x ";
 
 /// One line of the file: a repo to review, and what to commit there.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct ReviewRequest {
+    /// Whether the line is crossed off - see [`DONE_MARK`].
+    pub(crate) done: bool,
     /// The repo as the line named it - `repos/turbocharger/`. Empty for the board's own repo,
     /// which is how `.` and `/` are written down as well.
     pub(crate) path_under_repo: String,
@@ -99,33 +110,74 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
         requests.extend(
             parse(&contents)
                 .into_iter()
-                .map(|request| view_of(repo_path, &task_id, request)),
+                .enumerate()
+                .map(|(index, request)| view_of(repo_path, &task_id, index, request)),
         );
     }
     requests
 }
 
-/// When each of the board's request files was last written, which is what says whether the list
-/// has to be read again.
+/// What is being done to one entry of a task's file.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Amend {
+    /// Take the line out - a review that turned out not to be wanted.
+    Dismiss,
+    /// Cross it off, or put it back. The line stays, because it is still true that the repo was
+    /// part of this work; it just no longer wants looking at.
+    Done(bool),
+}
+
+/// Change one entry of a task's file, by where it sits in it.
 ///
-/// A file per task, and one `stat` each: cheap enough to do on the board's clock, so a line an
-/// agent appends is on the cards within a poll of it being written. A task with no file has no
-/// entry, so a file appearing or going is a change like any other.
-pub(crate) fn written_at(repo_path: &Path) -> Vec<(String, std::time::SystemTime)> {
-    let Ok(task_ids) = store::list_task_ids(repo_path) else {
-        return Vec::new();
-    };
-    task_ids
-        .into_iter()
-        .filter_map(|task_id| {
-            let dir = store::task_dir(repo_path, &task_id).ok()?;
-            let written = std::fs::metadata(dir.join(REVIEW_REQUEST_FILE_NAME))
-                .ok()?
-                .modified()
-                .ok()?;
-            Some((task_id, written))
-        })
-        .collect()
+/// Both of the things that can be done to a request are written to the file, because the file is
+/// the list and there is nowhere else for a row to have gone. Dismissing is the same act the
+/// brief asks agents to do - take a line out when it no longer needs saying. An agent that writes
+/// a line again means it again, and the row comes back, which is right.
+///
+/// The file is read again here rather than worked from what the board last saw: it may have been
+/// written since, and the entry to change is the one at this place in it now.
+pub(crate) fn amend(repo_path: &Path, task_id: &str, index: usize, amend: Amend) -> Result<()> {
+    let dir = store::task_dir(repo_path, task_id)?;
+    let path = dir.join(REVIEW_REQUEST_FILE_NAME);
+    let contents =
+        std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+
+    let mut kept = String::new();
+    let mut entry = 0usize;
+    // Everything that is not part of the entry being changed is written back exactly as it was -
+    // the file is the agent's, and changing one line is not a licence to reformat the rest of it.
+    let mut dropping = false;
+    for line in contents.lines() {
+        let opens_entry = !line.trim().is_empty()
+            && !line.starts_with([' ', '\t'])
+            && parse_entry(line).is_some();
+        if opens_entry {
+            let is_the_one = entry == index;
+            entry += 1;
+            dropping = is_the_one && amend == Amend::Dismiss;
+            if is_the_one && let Amend::Done(done) = amend {
+                let bare = strip_done_mark(line).unwrap_or(line);
+                kept.push_str(&match done {
+                    true => format!("{DONE_MARK}{bare}"),
+                    false => bare.to_string(),
+                });
+                kept.push('\n');
+                continue;
+            }
+        }
+        if !dropping {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+
+    // A file with nothing left in it is taken away rather than left empty: there is no list any
+    // more, and an empty file reads as one that has not been written yet, which it has not.
+    if kept.trim().is_empty() {
+        return std::fs::remove_file(&path)
+            .with_context(|| format!("failed to remove {}", path.display()));
+    }
+    std::fs::write(&path, kept).with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// One line of a task's file, against the repo the board belongs to.
@@ -134,7 +186,12 @@ pub(crate) fn written_at(repo_path: &Path) -> Vec<(String, std::time::SystemTime
 /// row for the same repo carry the same string and can be told to be the same repo. A path that
 /// resolves to no repo is kept as it was written: the row is still worth drawing, and opening it
 /// is what says what is wrong with it.
-fn view_of(repo_path: &Path, task_id: &str, request: ReviewRequest) -> ReviewRequestView {
+fn view_of(
+    repo_path: &Path,
+    task_id: &str,
+    index: usize,
+    request: ReviewRequest,
+) -> ReviewRequestView {
     let joined = repo_path.join(&request.path_under_repo);
     let repo = crate::git::canonicalize_repo(&joined).unwrap_or(joined);
     // The row is named after the repo, not after wherever its branch is checked out: a worktree
@@ -148,7 +205,13 @@ fn view_of(repo_path: &Path, task_id: &str, request: ReviewRequest) -> ReviewReq
 
     ReviewRequestView {
         task_id: task_id.to_string(),
+        index,
         path_under_repo: request.path_under_repo,
+        // A path that is not a repo at all cannot be counted, and reads as changed: the row is
+        // what the agent asked for, and it should not read as dealt with because nothing could
+        // be read there.
+        changed_files: crate::git::changed_file_count(&reviewed).unwrap_or(1),
+        done: request.done,
         repo_path: reviewed.display().to_string(),
         name,
         branch: request.branch,
@@ -240,6 +303,10 @@ fn close_paragraph(requests: &mut [ReviewRequest], gathered: &mut Vec<String>) {
 
 /// One line at the left margin, as an entry - or `None` for a line that names no repo at all.
 fn parse_entry(line: &str) -> Option<ReviewRequest> {
+    let (done, line) = match strip_done_mark(line) {
+        Some(rest) => (true, rest),
+        None => (false, line),
+    };
     let (repo, subject) = match line.split_once(SUGGESTION_MARK) {
         Some((repo, subject)) => (repo, Some(subject.trim())),
         None => (line, None),
@@ -259,10 +326,18 @@ fn parse_entry(line: &str) -> Option<ReviewRequest> {
         });
 
     Some(ReviewRequest {
+        done,
         path_under_repo,
         branch: branch.filter(|branch| !branch.is_empty()).map(str::to_string),
         suggestion,
     })
+}
+
+/// The line with its crossed-off mark taken off, or `None` for one that has none. Either case
+/// of the letter, because it is typed by hand as often as it is written from the menu.
+fn strip_done_mark(line: &str) -> Option<&str> {
+    line.strip_prefix(DONE_MARK)
+        .or_else(|| line.strip_prefix(&DONE_MARK.to_uppercase()))
 }
 
 /// The repo part of a line as a path under the board's repo: no leading or trailing slash, and
@@ -413,11 +488,6 @@ mod tests {
         assert_eq!(requests[0].repo_path, requests[1].repo_path);
         assert_eq!(requests[1].path_under_repo, "");
         assert_eq!(requests[1].branch, None);
-
-        // The write times are what the window watches, so a file that is there has one.
-        let written = written_at(&repo);
-        assert_eq!(written.len(), 1);
-        assert_eq!(written[0].0, "deploy-the-thing-1111");
     }
 
     /// The example in the file the brief sends agents to read has to parse as it says it does.
@@ -447,6 +517,98 @@ mod tests {
         assert_eq!(requests[2].suggestion, None);
         // And the one that names the repo the board is in.
         assert_eq!(requests[3].path_under_repo, "");
+    }
+
+    /// Dismissing takes out the one line it was asked about, its paragraph with it, and leaves
+    /// everything else in the file exactly as it was.
+    #[test]
+    fn dismissing_takes_one_entry_out_of_the_file() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-dismiss");
+        let repo = fixture.root.clone();
+        let dir = repo.join(".moontasks/deploy-the-thing-1111");
+        std::fs::create_dir_all(&dir).expect("failed to make the fixture task");
+        std::fs::write(dir.join("metadata.json"), "{}\n").expect("failed to write the task");
+        let path = dir.join(REVIEW_REQUEST_FILE_NAME);
+        let written = |path: &std::path::Path| std::fs::read_to_string(path).expect("the file");
+
+        std::fs::write(
+            &path,
+            "# deploy in this order\n\
+             repos/one/ // fix: one\n\
+             \x20 about one\n\
+             repos/two/ // fix: two\n\
+             \x20 about two\n\
+             repos/three/ // fix: three\n",
+        )
+        .expect("failed to write the fixture request");
+
+        amend(&repo, "deploy-the-thing-1111", 1, Amend::Dismiss).expect("failed to dismiss");
+
+        assert_eq!(
+            written(&path),
+            "# deploy in this order\n\
+             repos/one/ // fix: one\n\
+             \x20 about one\n\
+             repos/three/ // fix: three\n",
+            "the entry and its paragraph go, and nothing else is touched"
+        );
+
+        // The last two go as well. What someone wrote around them stays: it is their file, and
+        // a line that was never an entry is not one to take out.
+        amend(&repo, "deploy-the-thing-1111", 1, Amend::Dismiss).expect("failed to dismiss");
+        amend(&repo, "deploy-the-thing-1111", 0, Amend::Dismiss).expect("failed to dismiss");
+        assert_eq!(written(&path), "# deploy in this order\n");
+        assert!(list_for_repo(&repo).is_empty(), "and nothing is asked for");
+
+        // A file left holding nothing at all is taken away instead: an empty file reads as one
+        // nobody has written yet, which is not what happened.
+        std::fs::write(&path, "repos/only/ // fix: only\n").expect("failed to rewrite");
+        amend(&repo, "deploy-the-thing-1111", 0, Amend::Dismiss).expect("failed to dismiss");
+        assert!(!path.exists(), "a list with nothing left in it is taken away");
+    }
+
+    /// Crossing a line off keeps it and marks it; dismissing takes it away. Both leave the rest
+    /// of the file exactly as it was, and crossing off goes back the way it came.
+    #[test]
+    fn a_line_can_be_crossed_off_and_put_back() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-done");
+        let repo = fixture.root.clone();
+        let dir = repo.join(".moontasks/deploy-the-thing-1111");
+        std::fs::create_dir_all(&dir).expect("failed to make the fixture task");
+        std::fs::write(dir.join("metadata.json"), "{}\n").expect("failed to write the task");
+        let path = dir.join(REVIEW_REQUEST_FILE_NAME);
+        let written = || std::fs::read_to_string(&path).expect("the file");
+        std::fs::write(
+            &path,
+            "repos/one/ // fix: one\n\
+             \x20 about one\n\
+             repos/two/ // fix: two\n",
+        )
+        .expect("failed to write the fixture request");
+
+        amend(&repo, "deploy-the-thing-1111", 0, Amend::Done(true)).expect("failed to cross off");
+        assert_eq!(
+            written(),
+            "x repos/one/ // fix: one\n\
+             \x20 about one\n\
+             repos/two/ // fix: two\n",
+            "the line is marked where it stands, paragraph and all left alone"
+        );
+
+        let requests = list_for_repo(&repo);
+        assert!(requests[0].done, "and reads back as crossed off");
+        assert_eq!(
+            requests[0].path_under_repo, "repos/one",
+            "the mark is not part of the path"
+        );
+        assert!(!requests[1].done);
+
+        // Crossing off twice does not stack marks, and it goes back the way it came.
+        amend(&repo, "deploy-the-thing-1111", 0, Amend::Done(true)).expect("failed to cross off");
+        assert!(written().starts_with("x repos/one/"));
+        amend(&repo, "deploy-the-thing-1111", 0, Amend::Done(false)).expect("failed to put back");
+        assert!(written().starts_with("repos/one/"));
+        assert!(!list_for_repo(&repo)[0].done);
     }
 
     /// A line naming a branch is reviewed where that branch is checked out.
@@ -493,6 +655,46 @@ mod tests {
         assert_eq!(working_copy_of(&repo, None), repo);
     }
 
+    /// A row stops being pending when the place it reviews has nothing left to commit - and that
+    /// has to hold for a worktree too.
+    ///
+    /// This is why the count is taken here rather than off the submodule hub: the hub knows the
+    /// repo and its submodules, and a worktree beside one is none of those. A row it could not
+    /// be told about would read as pending however long ago the work was committed and pushed,
+    /// leaving nothing to do but dismiss it by hand.
+    #[test]
+    fn a_committed_worktree_stops_reading_as_pending() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-pending");
+        let repo = fixture.root.clone();
+        let dir = repo.join(".moontasks/deploy-the-thing-1111");
+        std::fs::create_dir_all(&dir).expect("failed to make the fixture task");
+        std::fs::write(dir.join("metadata.json"), "{}\n").expect("failed to write the task");
+
+        let beside = repo.join("../work-on-the-parser");
+        crate::git::run_git_no_output(
+            &repo,
+            &["worktree", "add", "-b", "write-the-parser", &beside.display().to_string()],
+        )
+        .expect("failed to add the fixture worktree");
+        std::fs::write(dir.join(REVIEW_REQUEST_FILE_NAME), ".#write-the-parser // feat: it\n")
+            .expect("failed to write the fixture request");
+
+        // Work in the worktree, which is what the line is asking to have looked at.
+        std::fs::write(beside.join("parser.rs"), "pub fn parse() {}\n").expect("failed to write");
+        let pending = |repo: &std::path::Path| list_for_repo(repo)[0].changed_files > 0;
+        assert!(pending(&repo), "work waiting in the worktree is pending");
+
+        crate::git::run_git_no_output(&beside, &["add", "-A"]).expect("failed to stage");
+        assert!(pending(&repo), "staged and not committed is still pending");
+
+        crate::git::run_git_no_output(&beside, &["commit", "-m", "feat: it"])
+            .expect("failed to commit");
+        assert!(
+            !pending(&repo),
+            "committed in the worktree, so there is nothing left to review there"
+        );
+    }
+
     /// Most repos have no board at all, and every repo with one has tasks that have asked for
     /// nothing. Neither is a failure - they have asked for nothing, which is an empty list.
     #[test]
@@ -500,6 +702,5 @@ mod tests {
         let fixture = crate::native::ui_tests::Fixture::new("review-request-none");
 
         assert!(list_for_repo(&fixture.root).is_empty());
-        assert_eq!(written_at(&fixture.root), []);
     }
 }

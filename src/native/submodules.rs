@@ -8,7 +8,6 @@
 use egui::{Align, CornerRadius, Key, Layout, Modifiers, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
-    api::RepoStatusView,
     native::{
         app::App,
         palette::CommandAction,
@@ -252,7 +251,7 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
                     session_id: app.model.root_session_id.clone(),
                     title: "review".to_string(),
                 },
-                changes: changes_label(root),
+                changes: changes_label(root.changed_files),
                 changed: root.changed_files > 0,
             }],
         });
@@ -270,7 +269,7 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
                 repo_path: submodule.repo_path.clone(),
                 title: submodule.name.clone(),
             },
-            changes: changes_label(submodule),
+            changes: changes_label(submodule.changed_files),
             changed: submodule.changed_files > 0,
         };
         match groups.last_mut() {
@@ -284,8 +283,8 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
     groups
 }
 
-pub(crate) fn changes_label(repo: &RepoStatusView) -> String {
-    match repo.changed_files {
+pub(crate) fn changes_label(changed_files: usize) -> String {
+    match changed_files {
         0 => "no changes".to_string(),
         1 => "1 change".to_string(),
         count => format!("{} changes", widgets::grouped(count)),

@@ -58,6 +58,9 @@ pub(crate) struct TaskResourceView {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ReviewRequestView {
     pub(crate) task_id: String,
+    /// Where the line sits in its task's file, counting entries from the top. What a dismiss
+    /// names, so it takes out the line it was asked about and no other like it.
+    pub(crate) index: usize,
     /// The repo as the line named it - `repos/turbocharger`. Empty for the board's own repo.
     pub(crate) path_under_repo: String,
     /// That path against the board's repo, which is the review the row opens. The same string
@@ -72,6 +75,15 @@ pub(crate) struct ReviewRequestView {
     /// starting an agent to write one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) suggestion: Option<CommitSuggestion>,
+    /// How many files are changed where this is reviewed, which is what says whether it is still
+    /// pending. Counted here rather than taken off the submodule hub: the hub knows repos, and
+    /// this may be a worktree beside one - and a row that could not be told about would read as
+    /// pending for ever, however long ago it was committed.
+    pub(crate) changed_files: usize,
+    /// Whether the line has been crossed off by hand. The board can tell that a repo has nothing
+    /// left to commit; it cannot tell that work already committed and pushed is finished with, so
+    /// that is said from the row's menu and written on the line.
+    pub(crate) done: bool,
 }
 
 /// What starting a task's resource asked for.

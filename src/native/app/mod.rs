@@ -95,11 +95,8 @@ pub(crate) struct App {
     last_board_poll: Instant,
     /// When the window last asked which shells have something running in them.
     last_running_shells_poll: Instant,
-    /// When the board's `request_for_review.txt` files were last looked at, and what their write
-    /// times were then - see [`App::poll_review_requests`]. The list is only read again when one
-    /// of those times has moved.
+    /// When the board's review requests were last read - see [`App::poll_review_requests`].
     last_review_requests_poll: Instant,
-    review_requests_written_at: Vec<(String, std::time::SystemTime)>,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
@@ -243,7 +240,6 @@ impl App {
             last_review_requests_poll: Instant::now()
                 .checked_sub(BOARD_POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
-            review_requests_written_at: Vec::new(),
             pending_action: None,
             pending_close: None,
             pending_tab_action: None,
