@@ -939,15 +939,28 @@ mod tests {
 
         let args = fillings().fill_all(launch.attach.iter());
 
-        assert!(args.is_empty(), "expected no dangling --resume: {args:?}");
+        assert!(
+            !args.iter().any(|arg| arg == "--resume"),
+            "expected no dangling --resume: {args:?}"
+        );
+        // What is left is a fresh run that still knows the task, which is the best that can be
+        // done with a session that turned out not to be there.
+        assert_eq!(args, ["--append-system-prompt", "the brief"]);
     }
 
     /// Attaching opens the exact session that was picked, whichever agent it belongs to.
+    ///
+    /// Claude is handed the brief with it: a session resumed comes back with the system prompt it
+    /// was opened on, so without this a run started before the board asked for anything would
+    /// never hear that it can.
     #[test]
     fn an_attached_session_is_opened_by_its_own_id() {
         let session = "11111111-2222-4333-8444-555555555555";
         let expected: &[(AgentKind, &[&str])] = &[
-            (AgentKind::Claude, &["--resume", session]),
+            (
+                AgentKind::Claude,
+                &["--resume", session, "--append-system-prompt", "the brief"],
+            ),
             (AgentKind::Codex, &["resume", session]),
             (AgentKind::OpenCode, &["--session", session]),
         ];

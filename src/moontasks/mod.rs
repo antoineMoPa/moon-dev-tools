@@ -209,8 +209,17 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
             "--append-system-prompt",
             "{brief}",
         ],
-        resume: &[],
-        attach: &["--resume", "{session}"],
+        // The brief again on both, because a resumed session comes back with the system prompt
+        // it was opened on and never hears anything new - so a run resumed today would be
+        // working from whatever the brief said the day it started, and one attached from the
+        // agent's own records would never have had one at all.
+        resume: &["--append-system-prompt", "{brief}"],
+        attach: &[
+            "--resume",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+        ],
     },
     AgentLaunch {
         kind: AgentKind::Codex,

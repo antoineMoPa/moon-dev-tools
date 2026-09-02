@@ -41,12 +41,18 @@ turbocharger review` - and the commit pane of each repo offers the message you w
 One line is:
 
 ```
-<path under the repo>#<branch> // <conventional commit subject>
+<path to the repo, from the board's repo>#<branch> // <conventional commit subject>
   <the commit's paragraph, on one or more indented lines>
 ```
 
 The branch after `#`, the `//` and the subject after it, and the indented paragraph are each
 optional: a line may name a repo and nothing else. Write `.` for the repo the board is in.
+
+Write the line when the work is there to be looked at, committed or not - the person reviews it
+and makes the commit, using the message you wrote. The branch after `#` is the branch the commit
+belongs on: name the one you worked on, which you create if you are working on a branch at all.
+The review opens wherever that branch is checked out, so a worktree you made is where it goes,
+and nobody's checkout is moved to reach it.
 
 ```
 repos/retro_encabulator/#fix-the-races // fix(encabulator): put the bearing races back
