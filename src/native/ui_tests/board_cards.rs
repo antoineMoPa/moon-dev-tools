@@ -73,7 +73,7 @@ fn a_cards_notes_open_the_task_ready_to_write() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             app.draw(ui);
-            *worked_in_in_ui.lock().expect("poisoned") = app.worked_in_task().map(str::to_string);
+            *worked_in_in_ui.lock().expect("poisoned") = super::marked_task(&app);
             ready_in_ui.store(
                 app.model.board.loaded && app.model.board.tasks.len() == 2,
                 Ordering::Relaxed,

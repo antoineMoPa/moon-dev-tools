@@ -172,14 +172,14 @@ impl Backend for LocalBackend {
         moontasks::service::create_task(&self.state, session_id, request)
     }
 
-    fn place_task(
+    fn place_tasks(
         &self,
         session_id: &str,
-        task_id: &str,
+        task_ids: &[String],
         status: ColumnId,
         position: usize,
     ) -> Result<()> {
-        moontasks::service::place_task(&self.state, session_id, task_id, status, position)
+        moontasks::service::place_tasks(&self.state, session_id, task_ids, status, position)
     }
 
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {

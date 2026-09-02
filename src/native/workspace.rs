@@ -90,7 +90,7 @@ impl App {
         // keeps its single frame: that is a state rather than a leftover.
         self.model.layout.drop_empty_frames();
         self.follow_front_tab(ui.ctx());
-        self.follow_worked_in_task();
+        self.follow_task_in_front();
         self.stamp_tab_shortcuts();
         *self.frames.style_mut() = self.palette_of().frames_style();
 
@@ -837,16 +837,6 @@ impl App {
         self.frames.pane_rect(pane_id)
     }
 
-    /// The task the window is being worked in: the one whose tab was last in front, for as
-    /// long as that tab is open.
-    ///
-    /// The board draws this card apart from the others, which is where the question is asked
-    /// from - a column of cards says nothing about which of them the agent in the next tab is
-    /// working on.
-    pub(crate) fn worked_in_task(&self) -> Option<&str> {
-        self.worked_in_task.as_deref()
-    }
-
     /// The column down the right to open a pane into, given what that pane is opened to stand
     /// beside - the board for a task's tabs, the review for the pane committing it.
     ///
@@ -884,31 +874,36 @@ impl App {
             .map(|(pane, _)| pane)
     }
 
-    /// Work out which task the window is being worked in, before the frame is drawn.
+    /// Let the board's mark follow the tab in front, before the frame is drawn.
     ///
-    /// A task's own tabs are what say so - its shell, its pane, a file opened from its card -
-    /// and the last of them to be in front is the answer, for as long as it is open. It is
-    /// remembered rather than read off whatever is in front right now, because the board is
-    /// where the mark is read: a mark that went out the moment you clicked onto the board
-    /// would be gone exactly when you were looking for it. Held as the pane rather than as the
-    /// task, so a tab that is closed takes the mark with it and nothing has to clear it.
+    /// A task's own tab coming forward - its page, a shell started in it, a file opened off its
+    /// card - is that task being worked in, and the board marks its card for it: the same mark
+    /// a click on the card makes, because it means the same thing.
     ///
-    /// The task is read off that pane here rather than by the board, because the arrangement is
+    /// Only when the tab in front changes, so the marks made on the board afterwards are not
+    /// undone frame by frame by the tab that opened the first of them.
+    ///
+    /// The task is read off the pane here rather than by the board, because the arrangement is
     /// lent out to the workspace widget for the length of the draw - see [`Self::draw_workspace`]
     /// - and the board could not ask it anything while it is out.
-    fn follow_worked_in_task(&mut self) {
+    fn follow_task_in_front(&mut self) {
         let front = self.active_pane_id();
-        if front
-            .and_then(|pane| self.model.layout.pane(pane))
-            .is_some_and(|pane| pane.task_id().is_some())
-        {
-            self.worked_in_pane = front;
+        if front == self.front_pane {
+            return;
         }
-        self.worked_in_task = self
-            .worked_in_pane
+        self.front_pane = front;
+
+        // Something that is nobody's task came forward - the board itself, a review. The marks
+        // are left alone: they are read on the board, and clicking onto the board to look at
+        // them would otherwise be what took them off.
+        let Some(task_id) = front
             .and_then(|pane| self.model.layout.pane(pane))
             .and_then(Pane::task_id)
-            .map(str::to_string);
+            .map(str::to_string)
+        else {
+            return;
+        };
+        crate::native::board::selection::mark_only(&mut self.model.board, task_id);
     }
 
     /// The review in the frontmost pane of the active frame, if that pane is a review.

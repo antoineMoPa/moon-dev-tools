@@ -9,15 +9,15 @@ pub(crate) mod cards;
 pub(crate) mod columns;
 pub(crate) mod filter;
 pub(crate) mod actions;
+pub(crate) mod gesture;
 pub(crate) mod resources;
+pub(crate) mod selection;
 pub(crate) mod start;
 
 pub(super) use actions::BoardAction;
 use actions::apply;
 
-use cards::{
-    CARD_SPACING, DraggedTask, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in,
-};
+use cards::{CARD_SPACING, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in};
 
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, vec2};
 
@@ -26,8 +26,8 @@ use crate::{
     moontasks::{BoardColumn, ColumnEnd, ColumnId},
     native::{
         app::App,
-        model::{PendingColumnPlace, PendingPlace, TaskDropped, TaskLanding},
-        panes::PaneKind,
+        model::{PendingColumnPlace, PendingPlace, TaskLanding},
+        panes::{Pane, PaneKind},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -56,10 +56,129 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
         .show(ui, |ui| draw_board(app, ui, &palette, &mut actions));
 
     attach::draw(app, ui.ctx(), &palette, &mut actions);
+    settle_gesture(app, ui, &mut actions);
 
     for action in actions {
         apply(app, action);
     }
+}
+
+/// What the press on the board turned out to be, once the button comes back up - and the cards
+/// it picks up on the way there.
+///
+/// Read after the columns have drawn, so a card has had its chance to claim the press and the
+/// column under the pointer has had its chance to take a drop.
+fn settle_gesture(app: &mut App, ui: &Ui, actions: &mut Vec<BoardAction>) {
+    // Carrying begins once the press has carried far enough to be a card being picked up. What
+    // it carries is settled then and there, from the keys that were held when it went down.
+    if app.model.board.carrying.is_none()
+        && let Some((task_id, modifiers)) = gesture::grabbed(&app.model.board)
+    {
+        let task_id = task_id.to_string();
+        app.model.board.carrying =
+            Some(selection::carried_by(&mut app.model.board, &task_id, modifiers));
+    }
+    if app.model.board.carrying.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+
+    let Some(ended) = ui.input(|input| gesture::settle(&mut app.model.board, input)) else {
+        return;
+    };
+    let gesture::Ended::Click {
+        on,
+        on_title,
+        on_a_button,
+        modifiers,
+    } = ended
+    else {
+        // Dropped: the column it was let go of over has already made the move.
+        app.model.board.carrying = None;
+        app.model.board.landing = None;
+        return;
+    };
+
+    // A press that went down on one of the card's own buttons and stayed there is that
+    // button's: it has already done whatever it does.
+    if on_a_button {
+        return;
+    }
+
+    // A second click on a title opens the box that renames it, rather than opening the task
+    // again - the first of the two has already opened it.
+    let renaming = on_title
+        && ui.input(|input| {
+            input
+                .pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        });
+    if renaming && let Some(task_id) = on {
+        open_rename(app, &task_id);
+        return;
+    }
+
+    if let Some(task_id) = selection::clicked(&mut app.model.board, on.as_deref(), modifiers) {
+        let title = app
+            .model
+            .board
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| task.title.clone())
+            .unwrap_or_default();
+        actions.push(BoardAction::OpenStart {
+            task_id,
+            title,
+            opens_on: actions::TaskPaneBox::Neither,
+        });
+    }
+}
+
+/// Put away the pages of the cards a click has let go of.
+///
+/// A card marked is a task to read and its page is what reads it, so the two keep each other:
+/// opening a page marks the card, and letting the card go - Escape, a click on the board beside
+/// the cards, another card marked instead - puts the page away. Only the page: a shell started
+/// in the task, or a file opened off its card, is a tab of yours and stays until you close it.
+///
+/// Called after the window has drawn, because a pane is never closed while the tree that holds
+/// it is being drawn.
+pub(crate) fn close_pages_let_go_of(app: &mut App) {
+    for task_id in std::mem::take(&mut app.model.board.pages_to_close) {
+        let page = app
+            .model
+            .layout
+            .find_pane(|pane| matches!(pane, Pane::Start { task_id: on, .. } if *on == task_id))
+            .map(|(pane, _)| pane);
+        if let Some(page) = page {
+            app.close_pane(page);
+        }
+    }
+}
+
+/// Open the box that renames a card, on the second click of a double one.
+fn open_rename(app: &mut App, task_id: &str) {
+    let Some(task) = app
+        .model
+        .board
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .cloned()
+    else {
+        return;
+    };
+    // The first of the two clicks opened the task's tab and promised it the keyboard. The box
+    // being opened here is what the keyboard was reached for, so the promise is taken back - a
+    // shell that is still attaching would otherwise take it frames later, out of a box that has
+    // been typed into by then.
+    app.pane_taking_keyboard = None;
+    app.model.board.renaming = Some(crate::native::model::TaskRename {
+        task_id: task.id,
+        title: task.title,
+        focus: true,
+        title_rect: egui::Rect::NOTHING,
+    });
 }
 
 fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<BoardAction>) {
@@ -75,29 +194,32 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         return;
     }
 
-    // A click on the board's own background - beside the columns, below the cards - takes the
-    // mark off the task being worked in, for someone done with it who does not want to close
-    // its tab. Registered before anything else on the board, so every card, heading and mark
-    // drawn after it sits on top and keeps its own click. The mark comes back the moment a
-    // task's tab is in front again - see `App::follow_worked_in_task`.
-    let background = ui.interact(
-        ui.available_rect_before_wrap(),
-        ui.id().with("board-background"),
-        egui::Sense::click(),
-    );
-    if background.clicked() {
-        app.worked_in_pane = None;
-        app.worked_in_task = None;
+    // Escape lets the marks go, for a hand already on the keyboard. Only while there are marks
+    // to let go of, so the key is still the filter box's and the palette's the rest of the
+    // time, and not while a box is being typed into, where Escape means what that box says.
+    if !app.model.board.marked.is_empty()
+        && !ui.ctx().text_edit_focused()
+        && !app.model.palette.open
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        selection::let_go_of_all(&mut app.model.board);
     }
 
     // Over the columns rather than inside one: the query is asked of the whole board, and
     // every column answers it.
     filter::draw(app, ui, palette);
 
+    // A press beside the columns is a press on the board too. Claimed after the columns have
+    // drawn, at the foot of this function, so a card or a column has first refusal.
+    let board_rect = ui.available_rect_before_wrap();
+    // And nothing outside this is the board's at all, however far a column's cards are laid
+    // out past it.
+    app.model.board.showing = Some(board_rect);
+
     // The columns are as tall as the pane, and the board scrolls sideways to reach the ones
     // that do not fit - measured before the scroll area, which has no height of its own.
     let height = ui.available_height();
-    ScrollArea::horizontal()
+    let columns = ScrollArea::horizontal()
         .id_salt("moontasks-columns")
         // Dragging is how a column is moved, so it must not also mean "scroll the board".
         .scroll_source(egui::containers::scroll_area::ScrollSource {
@@ -106,7 +228,31 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
         })
         .show(ui, |ui| {
             ui.horizontal_top(|ui| draw_column_row(app, ui, height, palette, actions));
-        });
+            ui.min_rect()
+        })
+        .inner;
+
+    // Beside or below the columns, where nothing of the board's is drawn. A press in a column
+    // that no card wanted has already been claimed by the column itself; this is the rest of
+    // the board, and a press on the board is the marks being let go of.
+    let beside_the_columns = egui::Rect::from_min_max(
+        egui::pos2(board_rect.left().max(columns.right()), board_rect.top()),
+        board_rect.max,
+    );
+    let under_the_columns = egui::Rect::from_min_max(
+        egui::pos2(board_rect.left(), board_rect.top().max(columns.bottom())),
+        board_rect.max,
+    );
+    for empty in [beside_the_columns, under_the_columns] {
+        gesture::claim(
+            &mut app.model.board,
+            ui,
+            empty,
+            None,
+            egui::Rect::NOTHING,
+            false,
+        );
+    }
 }
 
 /// The row of columns, and the drag that reorders it.
@@ -183,6 +329,7 @@ fn draw_composer(
     ui: &mut Ui,
     column: &ColumnId,
     joins: ColumnEnd,
+    controls: &mut gesture::Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -221,6 +368,9 @@ fn draw_composer(
                     .hint_text("Task title")
                     .desired_width(f32::INFINITY),
             );
+            // The box and its buttons are the column's own: a press in here is not a press on
+            // the board beside the cards.
+            controls.pressed(&entry);
             // The box opened because the user asked to type in it, so it takes the keyboard.
             if std::mem::take(&mut app.model.board.composer_focus) {
                 entry.request_focus();
@@ -247,16 +397,15 @@ fn draw_composer(
                 }
 
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                    if close_button(ui, palette)
-                        .on_hover_text("Discard this task")
-                        .clicked()
-                    {
+                    let discard =
+                        close_button(ui, palette).on_hover_text("Discard this task");
+                    if controls.pressed(&discard) {
                         actions.push(BoardAction::CloseComposer);
                     }
-                    if widgets::clickable(ui.add_enabled(ready, egui::Button::new("create")))
-                        .on_hover_text("Create the task and start the agent on it")
-                        .clicked()
-                    {
+                    let create =
+                        widgets::clickable(ui.add_enabled(ready, egui::Button::new("create")))
+                            .on_hover_text("Create the task and start the agent on it");
+                    if controls.pressed(&create) {
                         actions.push(BoardAction::Create(column.clone(), joins, agent));
                     }
                 });
@@ -403,9 +552,8 @@ fn draw_column(
     actions: &mut Vec<BoardAction>,
 ) -> egui::Rect {
     let status = column.id.clone();
-    let carried = egui::DragAndDrop::payload::<DraggedTask>(ui.ctx());
-    let dragged_id = carried.as_deref().map(|carried| carried.0.clone());
-    let tasks = column_cards(app, &status, dragged_id.as_deref());
+    let carrying = app.model.board.carrying.clone();
+    let tasks = column_cards(app, &status);
 
     // A column stacks its cards, whatever layout the row of columns is in.
     ui.allocate_ui_with_layout(
@@ -433,6 +581,9 @@ fn draw_column(
             // the pointer over a card cannot bounce between two answers.
             let mut cards: Vec<egui::Rect> = Vec::new();
             let mut slot = 0.0;
+            // The column's own buttons - its new-task box, the `+` under its last card. A
+            // press on one of them is theirs, the way a card's buttons are the card's.
+            let mut controls = gesture::Controls::new(ui);
             let mut zone = egui::Frame::new()
                 .corner_radius(CornerRadius::same(8))
                 .inner_margin(egui::Margin::same(4))
@@ -441,35 +592,64 @@ fn draw_column(
                 let ui = &mut zone.content_ui;
                 ScrollArea::vertical()
                     .id_salt(format!("moontasks-column-{status}"))
+                    // Dragging is how a card is moved, so it must not also mean "scroll the
+                    // column" - the same reason the board's own scroll area says it.
+                    .scroll_source(egui::containers::scroll_area::ScrollSource {
+                        drag: egui::containers::scroll_area::DragScroll::Never,
+                        ..Default::default()
+                    })
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         // What a card's place is measured against, so scrolling the column is not
                         // read as every card in it having moved.
                         let origin = ui.min_rect().top();
                         if composing == Some(ColumnEnd::Top) {
-                            draw_composer(app, ui, &status, ColumnEnd::Top, palette, actions);
+                            draw_composer(
+                                app,
+                                ui,
+                                &status,
+                                ColumnEnd::Top,
+                                &mut controls,
+                                palette,
+                                actions,
+                            );
                         }
                         for task in &tasks {
                             let card = draw_card(app, ui, task, origin, palette, actions);
-                            if Some(task.id.as_str()) == dragged_id.as_deref() {
-                                draw_empty_slot(ui, card, palette);
-                                slot = card.height() + CARD_SPACING;
-                            } else {
-                                cards.push(card.translate(vec2(0.0, -slot)));
+                            // A card being carried is the space being held for the drop rather
+                            // than a place the drop could be aimed at, so it is counted out of
+                            // the slots and its height taken back off the cards below it. The
+                            // one on the cursor leaves a hole here; the others are drawn faint
+                            // where they are going.
+                            match carrying.as_ref().filter(|c| c.carries(&task.id)) {
+                                Some(carrying) => {
+                                    if carrying.primary == task.id {
+                                        draw_empty_slot(ui, card, palette);
+                                    }
+                                    slot += card.height() + CARD_SPACING;
+                                }
+                                None => cards.push(card.translate(vec2(0.0, -slot))),
                             }
                             ui.add_space(CARD_SPACING);
                         }
                         if composing == Some(ColumnEnd::Bottom) {
-                            draw_composer(app, ui, &status, ColumnEnd::Bottom, palette, actions);
+                            draw_composer(
+                                app,
+                                ui,
+                                &status,
+                                ColumnEnd::Bottom,
+                                &mut controls,
+                                palette,
+                                actions,
+                            );
                         } else if !tasks.is_empty() {
                             // Under the last card, where a card added here will appear. Only
                             // once there are cards: an empty column's own `+` is already the
                             // one under its last card.
                             ui.vertical_centered(|ui| {
-                                if plus_button(ui, palette)
-                                    .on_hover_text("New task at the bottom")
-                                    .clicked()
-                                {
+                                let plus = plus_button(ui, palette)
+                                    .on_hover_text("New task at the bottom");
+                                if controls.pressed(&plus) {
                                     actions.push(BoardAction::OpenComposer(
                                         status.clone(),
                                         ColumnEnd::Bottom,
@@ -491,13 +671,26 @@ fn draw_column(
                     });
             }
             let response = zone.allocate_space(ui);
+            // A press in the column that no card claimed - the space under the last card, the
+            // gap between two of them - is a press on the board, and what a press on the board
+            // does is let the marks go.
+            if !controls.took_the_press() {
+                gesture::claim(
+                    &mut app.model.board,
+                    ui,
+                    response.rect,
+                    None,
+                    egui::Rect::NOTHING,
+                    false,
+                );
+            }
 
             // Which column the pointer is in, worked out from the pointer rather than taken from
             // the response: egui hit-tests a frame behind, on the widgets the last frame drew, and
-            // a column that has just taken the dragged card in is not the column it hit-tested.
-            let ghost = dragged_id
-                .as_deref()
-                .map(|task_id| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(task_id)));
+            // a column that has just taken the carried cards in is not the column it hit-tested.
+            let ghost = carrying
+                .as_ref()
+                .map(|carrying| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(&carrying.primary)));
             let over = ghost.is_some() && pointer_over(ui, &response, ghost);
             let landing = over
                 .then(|| ui.ctx().pointer_interact_pos())
@@ -514,46 +707,47 @@ fn draw_column(
             }
             zone.paint(ui);
 
-            if let Some(at) = landing {
-                // Read by the next frame, which draws the card in this slot rather than in the
-                // one it was picked up from.
-                app.model.board.landing = Some(TaskLanding {
-                    status: status.clone(),
-                    index: at,
-                });
-
-                if ui.input(|input| input.pointer.any_released())
-                    && let Some(dragged) = egui::DragAndDrop::take_payload::<DraggedTask>(ui.ctx())
-                {
-                    // The card is already drawn where it landed; this marks it there for a
-                    // moment, because one let go of between two others is hard to pick back out.
-                    app.model.board.dropped = Some(TaskDropped {
-                        task_id: dragged.0.clone(),
-                        at: ui.input(|input| input.time),
-                    });
-                    app.model.board.landing = None;
-                    // `at` counts the cards the filter is showing; the place the card is going
-                    // to is a place in the column itself.
-                    let into = cards::column_index_of(
-                        &app.model.board.tasks,
-                        &filter::Filter::of(&app.model.board.filter),
-                        &status,
-                        &dragged.0,
-                        at,
-                    );
-                    // The board is redrawn from the server's answer, which is a worker thread and
-                    // a poll away: the move is made here as well, and held over every answer
-                    // until one of them agrees, so the card stays where it was put rather than
-                    // springing back and landing a second time.
-                    app.model.board.pending_place = Some(PendingPlace {
-                        task_id: dragged.0.clone(),
-                        status: status.clone(),
-                        index: into,
-                    });
-                    place_in(&mut app.model.board.tasks, &dragged.0, &status, into);
-                    actions.push(BoardAction::Place(dragged.0.clone(), status.clone(), into));
-                }
+            let (Some(at), Some(carrying)) = (landing, carrying) else {
+                return;
+            };
+            // Read by the next frame, which draws the cards in this slot rather than in the
+            // ones they were picked up from.
+            app.model.board.landing = Some(TaskLanding {
+                status: status.clone(),
+                index: at,
+            });
+            if !ui.input(|input| input.pointer.any_released()) {
+                return;
             }
+
+            // The cards are already drawn where they landed, and they are the marked ones -
+            // which is how a run let go of between two others is picked back out.
+            app.model.board.landing = None;
+            // `at` counts the cards the filter is showing; the place they are going to is a
+            // place in the column itself.
+            let into = cards::column_index_of(
+                &app.model.board.tasks,
+                &filter::Filter::of(&app.model.board.filter),
+                &status,
+                &carrying.task_ids,
+                at,
+            );
+            // The board is redrawn from the server's answer, which is a worker thread and a
+            // poll away: the move is made here as well, and held over every answer until one of
+            // them agrees, so the cards stay where they were put rather than springing back and
+            // landing a second time.
+            app.model.board.pending_place = Some(PendingPlace {
+                task_ids: carrying.task_ids.clone(),
+                status: status.clone(),
+                index: into,
+            });
+            place_in(
+                &mut app.model.board.tasks,
+                &carrying.task_ids,
+                &status,
+                into,
+            );
+            actions.push(BoardAction::Place(carrying.task_ids, status.clone(), into));
         },
     )
     .response

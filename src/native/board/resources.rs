@@ -11,7 +11,7 @@ use crate::{
     moontasks::{TaskResourceKind, TaskResourceView, TaskView},
     native::{
         app::App,
-        board::{BoardAction, close_button, file_mark, running_dot},
+        board::{BoardAction, close_button, file_mark, gesture::Controls, running_dot},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -22,6 +22,7 @@ pub(crate) fn draw_list(
     app: &App,
     ui: &mut Ui,
     task: &TaskView,
+    card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -30,7 +31,7 @@ pub(crate) fn draw_list(
     let removing = app.model.board.pending_resource_delete.clone();
     for resource in &task.resources {
         let pending = removing.as_deref() == Some(resource.id.as_str());
-        draw_resource(ui, task, resource, pending, palette, actions);
+        draw_resource(ui, task, resource, card, pending, palette, actions);
     }
 }
 
@@ -44,27 +45,28 @@ fn draw_resource(
     ui: &mut Ui,
     task: &TaskView,
     resource: &TaskResourceView,
+    card: &mut Controls,
     pending_delete: bool,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
     if resource.kind == TaskResourceKind::File {
-        draw_file_resource(ui, task, resource, palette, actions);
+        draw_file_resource(ui, task, resource, card, palette, actions);
         return;
     }
     // A running shell is the way back to its tab; a run that has ended opens nothing, and
     // its row says so by staying unlit.
     let opens = resource.running && resource.terminal_id.is_some();
     let row = draw_row(ui, palette, resource, opens);
+    let row_pressed = card.pressed(&row);
     draw_in_row(ui, row.rect, |ui| {
         running_dot(ui, resource.running, palette);
 
         match (&resource.terminal_id, resource.running) {
             (Some(terminal_id), true) => {
-                if widgets::quiet_button(ui, &resource.label)
-                    .on_hover_text("Open this shell in a tab")
-                    .clicked()
-                    || row.clicked()
+                let name = widgets::quiet_button(ui, &resource.label)
+                    .on_hover_text("Open this shell in a tab");
+                if card.pressed(&name) || row_pressed
                 {
                     actions.push(BoardAction::OpenShell {
                         terminal_id: terminal_id.clone(),
@@ -109,29 +111,26 @@ fn draw_resource(
                 }
                 return;
             }
-            if close_button(ui, palette)
-                .on_hover_text(match (is_shell, resource.running) {
-                    (true, _) => "Close this shell",
-                    (false, true) => "End this run and take it off the task",
-                    (false, false) => "Take this run off the task",
-                })
-                .clicked()
-            {
+            let close = close_button(ui, palette).on_hover_text(match (is_shell, resource.running) {
+                (true, _) => "Close this shell",
+                (false, true) => "End this run and take it off the task",
+                (false, false) => "Take this run off the task",
+            });
+            if card.pressed(&close) {
                 actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
             }
             if resource.running && !is_shell {
-                if widgets::quiet_button_colored(ui, "stop", palette.muted)
-                    .on_hover_text("End this shell, keeping the run to come back to")
-                    .clicked()
-                {
+                let stop = widgets::quiet_button_colored(ui, "stop", palette.muted)
+                    .on_hover_text("End this shell, keeping the run to come back to");
+                if card.pressed(&stop) {
                     actions.push(BoardAction::Stop(task.id.clone(), resource.id.clone()));
                 }
-            } else if resource.resumable
-                && widgets::quiet_button_colored(ui, "resume", palette.accent)
-                    .on_hover_text("Start this agent again where it left off")
-                    .clicked()
-            {
-                actions.push(BoardAction::Resume(task.id.clone(), resource.id.clone()));
+            } else if resource.resumable {
+                let resume = widgets::quiet_button_colored(ui, "resume", palette.accent)
+                    .on_hover_text("Start this agent again where it left off");
+                if card.pressed(&resume) {
+                    actions.push(BoardAction::Resume(task.id.clone(), resource.id.clone()));
+                }
             }
         });
     });
@@ -189,6 +188,7 @@ fn draw_file_resource(
     ui: &mut Ui,
     task: &TaskView,
     resource: &TaskResourceView,
+    card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -196,14 +196,13 @@ fn draw_file_resource(
         panic!("linked file {} has no file path", resource.id);
     };
     let row = draw_row(ui, palette, resource, true);
+    let row_pressed = card.pressed(&row);
     draw_in_row(ui, row.rect, |ui| {
         file_mark(ui, palette);
 
-        if widgets::quiet_button(ui, &widgets::elide_path(file_path, FILE_PATH_CHARS))
-            .on_hover_text(format!("Open {file_path} in a pane"))
-            .clicked()
-            || row.clicked()
-        {
+        let path = widgets::quiet_button(ui, &widgets::elide_path(file_path, FILE_PATH_CHARS))
+            .on_hover_text(format!("Open {file_path} in a pane"));
+        if card.pressed(&path) || row_pressed {
             actions.push(BoardAction::OpenFile {
                 task_id: task.id.clone(),
                 file_path: file_path.to_string(),
@@ -211,10 +210,9 @@ fn draw_file_resource(
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            if close_button(ui, palette)
-                .on_hover_text("Take this file off the task")
-                .clicked()
-            {
+            let unlink =
+                close_button(ui, palette).on_hover_text("Take this file off the task");
+            if card.pressed(&unlink) {
                 actions.push(BoardAction::DeleteResource(
                     task.id.clone(),
                     resource.id.clone(),

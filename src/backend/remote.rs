@@ -366,16 +366,20 @@ impl Backend for RemoteBackend {
         self.post_json(&format!("/api/session/{session_id}/tasks"), request)
     }
 
-    fn place_task(
+    fn place_tasks(
         &self,
         session_id: &str,
-        task_id: &str,
+        task_ids: &[String],
         status: ColumnId,
         position: usize,
     ) -> Result<()> {
         self.post(
-            &format!("/api/session/{session_id}/tasks/{task_id}/placement"),
-            &TaskPlacementRequest { status, position },
+            &format!("/api/session/{session_id}/tasks/placement"),
+            &TaskPlacementRequest {
+                task_ids: task_ids.to_vec(),
+                status,
+                position,
+            },
         )
     }
 

@@ -287,8 +287,8 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
 
     served
         .client
-        .post(format!("{tasks_url}/{task_id}/placement"))
-        .json(&serde_json::json!({ "status": "done", "position": 0 }))
+        .post(format!("{tasks_url}/placement"))
+        .json(&serde_json::json!({ "task_ids": [&task_id], "status": "done", "position": 0 }))
         .send()
         .expect("failed to move the task")
         .error_for_status()
@@ -417,11 +417,11 @@ fn cards_are_dropped_where_they_are_let_go_of() {
             })
             .collect()
     };
-    let place = |task_id: &str, status: &str, position: usize| {
+    let place = |task_ids: &[&str], status: &str, position: usize| {
         served
             .client
-            .post(format!("{tasks_url}/{task_id}/placement"))
-            .json(&serde_json::json!({ "status": status, "position": position }))
+            .post(format!("{tasks_url}/placement"))
+            .json(&serde_json::json!({ "task_ids": task_ids, "status": status, "position": position }))
             .send()
             .expect("failed to move the task")
             .error_for_status()
@@ -434,12 +434,12 @@ fn cards_are_dropped_where_they_are_let_go_of() {
     // Until one is moved they read in the order they were made, newest at the top.
     assert_eq!(column("todo"), ["third", "second", "first"]);
 
-    place(&third, "todo", 1);
+    place(&[&third], "todo", 1);
     assert_eq!(column("todo"), ["second", "third", "first"]);
-    place(&third, "todo", 0);
+    place(&[&third], "todo", 0);
     assert_eq!(column("todo"), ["third", "second", "first"]);
     // Past the end is the end, which is what dropping below the last card means.
-    place(&third, "todo", 9);
+    place(&[&third], "todo", 9);
     assert_eq!(column("todo"), ["second", "first", "third"]);
 
     // The order survives being read back off disk rather than only holding in this process.
@@ -456,13 +456,20 @@ fn cards_are_dropped_where_they_are_let_go_of() {
         "the card's place should be written down, got: {metadata}"
     );
 
-    place(&second, "in_progress", 0);
+    place(&[&second], "in_progress", 0);
     assert_eq!(column("todo"), ["first", "third"]);
     assert_eq!(column("in_progress"), ["second"]);
 
     // A card dropped past the end of another column joins the end of it.
-    place(&third, "in_progress", 9);
+    place(&[&third], "in_progress", 9);
     assert_eq!(column("in_progress"), ["second", "third"]);
+
+    // A drag made with a selection carries every card in it, and they land as a run in the
+    // order the board already had them - whichever of them the pointer had hold of, which is
+    // what puts them here the other way round.
+    place(&[&third, &second], "todo", 0);
+    assert_eq!(column("todo"), ["second", "third", "first"]);
+    assert_eq!(column("in_progress"), Vec::<String>::new());
 }
 
 /// The columns are the board's own: they can be added, renamed, reordered and removed, and a

@@ -106,8 +106,8 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
         .route(
-            "/api/session/{session_id}/tasks/{task_id}/placement",
-            post(place_task),
+            "/api/session/{session_id}/tasks/placement",
+            post(place_tasks),
         )
         .route(
             "/api/session/{session_id}/columns",
@@ -698,16 +698,16 @@ async fn place_column(
     Ok("ok")
 }
 
-async fn place_task(
-    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+async fn place_tasks(
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
     Json(request): Json<TaskPlacementRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    moontasks::service::place_task(
+    moontasks::service::place_tasks(
         &state,
         &session_id,
-        &task_id,
+        &request.task_ids,
         request.status,
         request.position,
     )?;

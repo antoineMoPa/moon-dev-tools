@@ -10,7 +10,7 @@ use crate::{
     moontasks::{StartResourceRequest, TaskResourceKind, TaskView},
     native::{
         app::App,
-        board::{BoardAction, agent_label, available_agents},
+        board::{BoardAction, agent_label, available_agents, gesture::Controls},
         widgets,
     },
 };
@@ -26,6 +26,7 @@ pub(crate) fn draw_button(
     app: &App,
     ui: &mut Ui,
     task: &TaskView,
+    card: &mut Controls,
     actions: &mut Vec<BoardAction>,
 ) -> bool {
     let agents: Vec<AgentKind> = available_agents(app)
@@ -103,6 +104,6 @@ pub(crate) fn draw_button(
                 }
             });
 
-    widgets::clickable(button);
+    card.pressed(&widgets::clickable(button));
     menu.is_some()
 }

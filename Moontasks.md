@@ -9,7 +9,10 @@ in the repo straight away.
 | --- | --- |
 | the box over the columns | filter the board: every column shows the cards whose title or notes hold what you typed, and hides the rest |
 | `⌘F` on the board | put the keyboard in that box; Escape empties it |
-| drag a card by its title | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
+| drag a card | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
+| `cmd+click` a card | mark it, or take the mark off - anywhere on the card, buttons and all |
+| `shift+click` a card | mark the run of cards between it and the last one clicked |
+| Escape, or a click on the board beside the cards | let the marks go |
 | drag a column by its heading | move the column, cards and all |
 | click a card's title | open the task's own pane: its title and notes, and what it can start |
 | double click a card's title | rename the task |
@@ -19,7 +22,7 @@ in the repo straight away.
 | `+` at the right-hand end | add a column |
 | `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
 | a running resource | click its name to bring its terminal back on screen |
-| a card drawn in the accent color | the task you are working in: the one whose tab was last in front |
+| a card drawn in the accent color | a marked card: one you clicked, or the task whose tab was last in front, which is the same thing said twice |
 | a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the task's own pane with the keyboard in its notes box, ready to write |
 | `[add notes]` | the same, on a task that has none yet |
@@ -38,8 +41,41 @@ board rather than behind a filter that was typed before it existed.
 
 A card being dragged leaves the place it came from and takes up the one it is being held over,
 which the cards around it move aside for, so the drop changes nothing that was not already on
-screen. It stays marked for a moment after it lands, which is how you find it again among the
-ones it landed between. A column being dragged does the same thing sideways.
+screen. What was carried is marked where it lands, which is how you find it again among the
+cards it landed between - and it stays marked, rather than flashing and fading, because that
+mark is the same one everything else on the board is picked out by. A column being dragged does
+the same thing sideways.
+
+## Marks, and cards moved together
+
+There is one mark on the board and it means one thing: this card is picked out. A click on a
+card marks it and opens its page - and the two keep each other, so a card let go of takes its
+page with it. Only the page: a shell started in the task, or a file opened off its card, is a
+tab of yours and stays until you close it. `cmd+click` marks another beside it. `shift+click` marks the
+run between that card and the last one clicked, read down the column the two are in - among the
+cards the filter is showing, so what is taken is what the eye sees between them. And a task's
+own tab coming to the front marks its card, because that is the same thing said another way:
+this is the task being worked in. One card marked is a task to read; several are a group to
+drag. Escape, or a click on the board beside the cards, lets them go - and puts away the pages
+they had open.
+
+The two keys do two jobs: `shift` is the run key, `cmd` the one-card key - which is how a card
+in the middle of a run is taken back out of it. While either is held the whole card is one
+thing to click: a card is a stack of buttons, and a click meant to mark it must not press
+whichever of them it landed on.
+
+Picking up any marked card carries all of them, and they land in the column they are dropped on
+as one run, in the order the board already had them. The card on the cursor says how many it is
+bringing; the others are drawn where they are going, faint, as it is carried. A card picked up
+with cmd or shift held joins the marks rather than replacing them - the keys that gather cards
+are held down over the gesture that takes them somewhere. A card picked up with nothing held
+and no mark on it goes alone, and becomes the mark itself.
+
+A card is picked up anywhere on it, buttons included: a press that carries the card is the card
+being moved, and one that stays where it went down is a click - on the card, or on the button
+it landed on. That is measured in distance rather than time, so a slow, careful click is still
+a click. A drag carries cards only when it began on one that was showing: a press on the board
+beside them lets the marks go, wherever it wanders afterwards.
 
 ## Files on a card
 

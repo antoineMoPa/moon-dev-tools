@@ -12,7 +12,10 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{app_for, seeded_fixture, drag_from_to};
+use super::{
+    app_for, board_of, click_like_a_hand, drag_from_to, drag_like_a_hand, notes_of,
+    press_modifiers, seeded_fixture, settle, title_of,
+};
 
 /// Dragging a card is how a column is put in order, so where it is let go of has to be where
 /// it lands - not merely which column it landed in.
@@ -369,5 +372,166 @@ fn dragging_a_heading_moves_the_column_and_its_cards() {
     assert_eq!(
         after.card_status, "todo",
         "the card should have travelled with its column, unchanged"
+    );
+}
+
+/// Cards are marked with cmd+click and dragged as one: picking up any of them carries the
+/// rest, and they land in the column they are dropped on as a run.
+///
+/// cmd stays down from the first click to the drop, because that is how the gesture is made -
+/// the key gathers the cards and the same hand drags them.
+#[test]
+fn cards_marked_with_cmd_are_dragged_together() {
+    let (mut harness, seen, _repo) = board_of("board-marks-drag", &[]);
+    let read = || seen.lock().expect("poisoned").clone();
+
+    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
+    for task_id in ["fix-the-login-page-2222", "drop-the-old-api-3333"] {
+        let at = title_of(&harness, task_id);
+        click_like_a_hand(&mut harness, at, egui::Modifiers::COMMAND);
+    }
+    assert_eq!(read().marked.len(), 2, "cmd+click should mark both cards");
+    assert!(
+        !read().page_open,
+        "and it should open nothing: marking is not reading"
+    );
+
+    // One of the two picked up and carried a column to the right, cmd still down.
+    let from = title_of(&harness, "fix-the-login-page-2222");
+    drag_like_a_hand(
+        &mut harness,
+        from,
+        from + egui::vec2(COLUMN_STRIDE, 40.0),
+        egui::Modifiers::COMMAND,
+    );
+    press_modifiers(&mut harness, egui::Modifiers::NONE);
+
+    assert!(
+        settle(&mut harness, || {
+            let seen = read();
+            seen.column_of("fix-the-login-page-2222") == "in_progress"
+                && seen.column_of("drop-the-old-api-3333") == "in_progress"
+        }),
+        "both marked cards should have moved, got {:?}",
+        read().columns
+    );
+    assert_eq!(
+        read().column_of("write-the-parser-1111"),
+        "todo",
+        "and the card that was not marked should have stayed where it was"
+    );
+}
+
+/// A marked card is dragged by any part of it, with nothing held: the keys are how a group is
+/// gathered, not how it is carried, and the card's own description is as good a place to take
+/// hold of it as its title.
+#[test]
+fn a_marked_card_is_dragged_by_any_part_of_it() {
+    let (mut harness, seen, _repo) = board_of("board-grab-anywhere", &["fix-the-login-page-2222"]);
+    let read = || seen.lock().expect("poisoned").clone();
+
+    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
+    for task_id in ["write-the-parser-1111", "fix-the-login-page-2222"] {
+        let at = title_of(&harness, task_id);
+        click_like_a_hand(&mut harness, at, egui::Modifiers::COMMAND);
+    }
+    press_modifiers(&mut harness, egui::Modifiers::NONE);
+    assert_eq!(read().marked.len(), 2);
+
+    let from = notes_of(&harness, "fix-the-login-page-2222");
+    drag_like_a_hand(
+        &mut harness,
+        from,
+        from + egui::vec2(COLUMN_STRIDE, 40.0),
+        egui::Modifiers::NONE,
+    );
+
+    assert!(
+        settle(&mut harness, || {
+            let seen = read();
+            seen.column_of("fix-the-login-page-2222") == "in_progress"
+                && seen.column_of("write-the-parser-1111") == "in_progress"
+        }),
+        "the card should have been dragged by its description and taken the other with it, \
+         got {:?}",
+        read().columns
+    );
+    assert!(
+        !read().page_open,
+        "and the press that carried the card should not also have opened it"
+    );
+}
+
+/// A card picked up with nothing held and no mark on it goes alone - the way dragging one icon
+/// out of a selected group does in a file manager - and becomes the mark itself, which is what
+/// shows where it landed.
+#[test]
+fn an_unmarked_card_is_dragged_alone_and_becomes_the_mark() {
+    let (mut harness, seen, _repo) = board_of("board-drag-unmarked", &[]);
+    let read = || seen.lock().expect("poisoned").clone();
+
+    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
+    let marked = title_of(&harness, "write-the-parser-1111");
+    click_like_a_hand(&mut harness, marked, egui::Modifiers::COMMAND);
+    press_modifiers(&mut harness, egui::Modifiers::NONE);
+
+    let from = title_of(&harness, "drop-the-old-api-3333");
+    drag_like_a_hand(
+        &mut harness,
+        from,
+        from + egui::vec2(COLUMN_STRIDE, 40.0),
+        egui::Modifiers::NONE,
+    );
+
+    assert!(
+        settle(&mut harness, || read().column_of("drop-the-old-api-3333")
+            == "in_progress"),
+        "the card that was picked up should have moved"
+    );
+    assert_eq!(
+        read().column_of("write-the-parser-1111"),
+        "todo",
+        "and the marked card should have stayed where it was"
+    );
+    assert_eq!(
+        read().marked,
+        vec!["drop-the-old-api-3333".to_string()],
+        "and the card that was carried is the one marked, where it landed"
+    );
+}
+
+/// A drag carries cards only when it began on one. A press on the board beside the cards is
+/// the marks being let go of, however far it is carried afterwards.
+#[test]
+fn a_drag_that_began_on_no_card_carries_nothing() {
+    let (mut harness, seen, _repo) = board_of("board-drag-from-nowhere", &[]);
+    let read = || seen.lock().expect("poisoned").clone();
+
+    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
+    for task_id in ["write-the-parser-1111", "fix-the-login-page-2222"] {
+        let at = title_of(&harness, task_id);
+        click_like_a_hand(&mut harness, at, egui::Modifiers::COMMAND);
+    }
+    press_modifiers(&mut harness, egui::Modifiers::NONE);
+    assert_eq!(read().marked.len(), 2);
+
+    // Below the cards, where the board has nothing drawn, carried across two columns.
+    let below = title_of(&harness, "drop-the-old-api-3333") + egui::vec2(0.0, 260.0);
+    drag_like_a_hand(
+        &mut harness,
+        below,
+        below + egui::vec2(COLUMN_STRIDE * 2.0, 0.0),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(5);
+
+    assert!(
+        read().columns.iter().all(|(_, status)| status == "todo"),
+        "nothing should have moved, got {:?}",
+        read().columns
+    );
+    assert!(
+        read().marked.is_empty(),
+        "and a press on the board beside the cards lets the marks go"
     );
 }

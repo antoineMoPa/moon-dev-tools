@@ -84,12 +84,13 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The moontasks board of the repo this session reviews, and what running it.
     fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>>;
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
-    /// Put a task in a column, at a place among the cards already there, which is what a
-    /// drag on the board does, and the only way a card moves.
-    fn place_task(
+    /// Put tasks in a column, at a place among the cards already there, which is what a
+    /// drag on the board does, and the only way a card moves. More than one is a card
+    /// dragged with others selected, which land as a run in the order they were in.
+    fn place_tasks(
         &self,
         session_id: &str,
-        task_id: &str,
+        task_ids: &[String],
         status: ColumnId,
         position: usize,
     ) -> Result<()>;

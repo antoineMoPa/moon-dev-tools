@@ -84,12 +84,19 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
                                         app,
                                         ui,
                                         &task,
+                                        &mut board::gesture::Controls::elsewhere(),
                                         &palette,
                                         &mut actions,
                                     );
                                 }
                                 ui.add_space(LINE_GAP);
-                                board::start::draw_button(app, ui, &task, &mut actions);
+                                board::start::draw_button(
+                                    app,
+                                    ui,
+                                    &task,
+                                    &mut board::gesture::Controls::elsewhere(),
+                                    &mut actions,
+                                );
                             });
                         });
                     });

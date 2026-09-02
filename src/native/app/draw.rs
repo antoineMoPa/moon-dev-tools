@@ -356,6 +356,9 @@ impl App {
             self.close_pane(pane_id);
         }
         self.close_tabs_of_exited_shells(ctx);
+        // A task's page is open while its card is marked, so a card let go of by a click on
+        // the board takes its page with it - here, where the tree is no longer being drawn.
+        crate::native::board::close_pages_let_go_of(self);
 
         // Closing the last tab closes the window: an empty workspace has nothing to show and
         // no way back other than the palette.

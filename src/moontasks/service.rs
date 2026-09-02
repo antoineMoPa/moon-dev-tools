@@ -59,14 +59,16 @@ fn place_of(metadata: &TaskMetadata) -> (u32, u64) {
     (metadata.position, metadata.created_at_unix)
 }
 
-/// Move a task to a column and to a place in it, renumbering that column from the top.
+/// Move tasks to a column and to a place in it, renumbering that column from the top.
 ///
-/// `position` is counted among the column's other cards, so it is where the card lands rather
-/// than where it was aimed: a number past the end puts it at the bottom.
-pub(crate) fn place_task(
+/// `position` is counted among the column's other cards, so it is where the first of them
+/// lands rather than where it was aimed: a number past the end puts them at the bottom. More
+/// than one task is a card dragged with others selected - they land as a run, in the order
+/// the board already had them.
+pub(crate) fn place_tasks(
     state: &AppState,
     session_id: &str,
-    task_id: &str,
+    task_ids: &[String],
     status: ColumnId,
     position: usize,
 ) -> Result<()> {
@@ -76,27 +78,37 @@ pub(crate) fn place_task(
         bail!("{status} is not a column of this board");
     }
 
-    let mut moved = store::read_task(&repo_path, task_id)?;
-    release_a_finished_task(state, &board, task_id, &mut moved, &status);
-    moved.status = status.clone();
+    let mut moving: Vec<(String, TaskMetadata)> = Vec::new();
+    for task_id in task_ids {
+        let mut metadata = store::read_task(&repo_path, task_id)?;
+        release_a_finished_task(state, &board, task_id, &mut metadata, &status);
+        metadata.status = status.clone();
+        moving.push((task_id.clone(), metadata));
+    }
+    // The order they were in before the drag, which is the order they keep: the board hands
+    // them over that way, and a board read another way round would otherwise reorder them.
+    moving.sort_by_key(|(_, metadata)| place_of(metadata));
 
     // The cards already in that column, in the order the board draws them.
     let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(&repo_path)?
         .into_iter()
-        .filter(|other| other != task_id)
+        .filter(|other| !task_ids.contains(other))
         .filter_map(|other| {
             let metadata = store::read_task(&repo_path, &other).ok()?;
             (metadata.status == status).then_some((other, metadata))
         })
         .collect();
     column.sort_by_key(|(_, metadata)| place_of(metadata));
-    column.insert(position.min(column.len()), (task_id.to_string(), moved));
+    let at = position.min(column.len());
+    for (offset, moved) in moving.into_iter().enumerate() {
+        column.insert(at + offset, moved);
+    }
 
     for (index, (id, mut metadata)) in column.into_iter().enumerate() {
         let position = index as u32;
-        // The card that moved is written whatever its number came out as - it is the one
-        // whose column may have changed.
-        if metadata.position == position && id != task_id {
+        // A card that moved is written whatever its number came out as - it is one whose
+        // column may have changed.
+        if metadata.position == position && !task_ids.contains(&id) {
             continue;
         }
         metadata.position = position;

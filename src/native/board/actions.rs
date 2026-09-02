@@ -20,8 +20,9 @@ pub(crate) enum BoardAction {
     /// Create the typed task at the end of this column the composer is standing at, and start
     /// the picked agent on it.
     Create(ColumnId, ColumnEnd, AgentKind),
-    /// A card let go of in a column, at the place among its cards it was dropped.
-    Place(String, ColumnId, usize),
+    /// Cards let go of in a column, at the place among its cards they were dropped - one for
+    /// an ordinary drag, the whole run of marks for a drag made with several.
+    Place(Vec<String>, ColumnId, usize),
     /// A column let go of on the board, at the place among the others it was dropped.
     PlaceColumn(ColumnId, usize),
     AddColumn(String),
@@ -121,9 +122,9 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 backend.create_task(&session_id, &request).map(|_| ())
             });
         }
-        BoardAction::Place(task_id, status, position) => {
+        BoardAction::Place(task_ids, status, position) => {
             app.tasks.spawn(
-                move |backend| backend.place_task(&session_id, &task_id, status, position),
+                move |backend| backend.place_tasks(&session_id, &task_ids, status, position),
                 |model, result| {
                     // A move the server would not make is not one to keep drawing.
                     if result.is_err() {
@@ -339,6 +340,10 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             title,
             opens_on,
         } => {
+            // Opening a task's page marks its card: one card marked is a task to read, and
+            // this is the reading. It is also what keeps the page and the mark together, so
+            // letting the card go puts the page away - see `board::close_pages_of_unmarked`.
+            super::selection::mark_only(&mut app.model.board, task_id.clone());
             app.model.board.notes_focus = match opens_on {
                 TaskPaneBox::Notes => Some(task_id.clone()),
                 TaskPaneBox::Neither => None,

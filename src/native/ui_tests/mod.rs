@@ -8,7 +8,7 @@ mod board;
 mod board_cards;
 mod board_drag;
 mod board_task_pane;
-mod board_worked_in;
+mod board_selection;
 mod diff_comments;
 mod diff_selection;
 mod files;
@@ -38,7 +38,7 @@ use crate::{
     api::OpenSessionRequest,
     backend::local::LocalBackend,
     git::run_git_no_output,
-    native::{Launch, app::App, theme::ThemeMode},
+    native::{Launch, app::App, panes::Pane, theme::ThemeMode},
 };
 
 /// Where the window drew its frames this pass.
@@ -275,6 +275,145 @@ fn click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
     harness.run_steps(2);
 }
 
+/// The three cards the marking and dragging tests below all start from, in TODO.
+const CARDS: [(&str, &str, u64); 3] = [
+    ("write-the-parser-1111", "Write the parser", 1700000000),
+    ("fix-the-login-page-2222", "Fix the login page", 1700000001),
+    ("drop-the-old-api-3333", "Drop the old API", 1700000002),
+];
+
+/// What those tests read back out of the window on every frame: where each card is, what is
+/// marked, and whether a task's own page has opened.
+#[derive(Clone, Default)]
+struct Seen {
+    columns: Vec<(String, String)>,
+    marked: Vec<String>,
+    /// Whether any task's own page is open, and the tasks whose pages those are.
+    page_open: bool,
+    pages_open: Vec<String>,
+}
+
+impl Seen {
+    fn column_of(&self, task_id: &str) -> String {
+        self.columns
+            .iter()
+            .find(|(id, _)| id == task_id)
+            .map(|(_, status)| status.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// A window open on a board of those three cards, read on every frame, with `notes_on` naming
+/// the cards that have notes - which is what makes a card's description a thing to click.
+///
+/// The repo comes back with it: it is a folder that lives as long as the value holding it, and
+/// a board whose repo has been swept up under it reads as a board with nothing on it.
+fn board_of(name: &str, notes_on: &[&str]) -> (Harness<'static>, Arc<Mutex<Seen>>, Fixture) {
+    let fixture = seeded_fixture(name);
+    for (task_id, title, created) in CARDS {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                 \"created_at_unix\": {created},\n  \"resources\": []\n}}\n"
+            ),
+        );
+        if notes_on.contains(&task_id) {
+            fixture.write(
+                &format!(".moontasks/{task_id}/notes.md"),
+                "Something worth writing down.\n",
+            );
+        }
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+
+            let mut seen = seen_in_ui.lock().expect("poisoned");
+            seen.columns = app
+                .model
+                .board
+                .tasks
+                .iter()
+                .map(|task| (task.id.clone(), task.status.to_string()))
+                .collect();
+            seen.marked = marked_tasks(&app);
+            seen.pages_open = CARDS
+                .iter()
+                .map(|(task_id, ..)| task_id)
+                .filter(|wanted| {
+                    app.model
+                        .layout
+                        .find_pane(|pane| {
+                            matches!(pane, Pane::Start { task_id, .. } if task_id == *wanted)
+                        })
+                        .is_some()
+                })
+                .map(|task_id| task_id.to_string())
+                .collect();
+            seen.page_open = !seen.pages_open.is_empty();
+        });
+
+    let read = Arc::clone(&seen);
+    assert!(
+        settle(&mut harness, || read.lock().expect("poisoned").columns.len() == 3),
+        "the board never read the three tasks"
+    );
+    harness.run_steps(3);
+    (harness, seen, fixture)
+}
+
+/// Where a card's title is drawn, which is the middle of the card as far as a hand is
+/// concerned.
+fn title_of(harness: &Harness<'_>, task_id: &str) -> egui::Pos2 {
+    harness
+        .ctx
+        .read_response(crate::native::board::cards::card_drag_id(task_id))
+        .expect("expected the card to have been drawn")
+        .rect
+        .center()
+}
+
+/// Just under a card's title, where its description is - a click there opens the task, so a
+/// press that carries from there is a card being picked up by something that is not a handle.
+fn notes_of(harness: &Harness<'_>, task_id: &str) -> egui::Pos2 {
+    let title = harness
+        .ctx
+        .read_response(crate::native::board::cards::card_drag_id(task_id))
+        .expect("expected the card to have been drawn")
+        .rect;
+    egui::pos2(title.center().x, title.bottom() + 18.0)
+}
+
+/// The cards the board has marked, in a settled order.
+fn marked_tasks(app: &crate::native::app::App) -> Vec<String> {
+    let mut marked: Vec<String> = app.model.board.marked.iter().cloned().collect();
+    marked.sort();
+    marked
+}
+
+/// The one card the board has marked, for the tests that only ever mark one.
+fn marked_task(app: &crate::native::app::App) -> Option<String> {
+    let mut marked = marked_tasks(app);
+    assert!(marked.len() <= 1, "expected one card marked, got {marked:?}");
+    marked.pop()
+}
+
 /// Step frames until the condition holds, which is how a background task's result is waited on.
 fn settle(harness: &mut Harness<'_>, mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -315,6 +454,86 @@ fn press_key(harness: &mut Harness<'_>, key: egui::Key, modifiers: egui::Modifie
         modifiers,
     });
     harness.step();
+    harness.run_steps(2);
+}
+
+/// A click the way a hand makes one: the pointer arrives, settles for a frame or two, the
+/// button goes down, is held a moment, and comes back up.
+///
+/// Every step is its own frame, because that is how a window is told about a click - and a
+/// press and a release crammed into one frame is a gesture no hand ever made, which is what
+/// makes it worth writing this out.
+fn click_like_a_hand(harness: &mut Harness<'_>, at: egui::Pos2, modifiers: egui::Modifiers) {
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(at));
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers,
+    });
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    harness.run_steps(2);
+}
+
+/// The same, carried somewhere before the button comes up: the pointer arrives, presses,
+/// travels in steps, and lets go where it ends.
+fn drag_like_a_hand(
+    harness: &mut Harness<'_>,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    modifiers: egui::Modifiers,
+) {
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(from));
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers,
+    });
+    harness.run_steps(2);
+
+    for step in 1..=6 {
+        let towards = from + (to - from) * (step as f32 / 6.0);
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(towards));
+        harness.step();
+    }
+    // A few frames held where it ends: the slot a card is over is worked out at the end of a
+    // frame and taken up by the next, and the cards making room for it walk there.
+    harness.run_steps(8);
+
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    harness.run_steps(2);
+}
+
+/// Hold modifier keys down, or let them up again - they stay as they are put until the next
+/// call, the way a key held over a whole gesture does.
+fn press_modifiers(harness: &mut Harness<'_>, modifiers: egui::Modifiers) {
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::ModifiersChanged(modifiers));
     harness.run_steps(2);
 }
 

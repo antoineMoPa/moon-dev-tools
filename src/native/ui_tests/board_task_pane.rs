@@ -82,7 +82,7 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
                     .is_some(),
                 Ordering::Relaxed,
             );
-            *worked_in_in_ui.lock().expect("poisoned") = app.worked_in_task().map(str::to_string);
+            *worked_in_in_ui.lock().expect("poisoned") = super::marked_task(&app);
             *renaming_in_ui.lock().expect("poisoned") = app
                 .model
                 .board
@@ -282,7 +282,7 @@ fn a_task_with_nothing_running_opens_its_start_window() {
                     .is_some(),
                 Ordering::Relaxed,
             );
-            *worked_in_in_ui.lock().expect("poisoned") = app.worked_in_task().map(str::to_string);
+            *worked_in_in_ui.lock().expect("poisoned") = super::marked_task(&app);
             opened_first_in_ui.store(
                 app.model
                     .layout

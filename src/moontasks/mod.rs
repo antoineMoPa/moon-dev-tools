@@ -99,10 +99,11 @@ pub(crate) struct TaskNotesPayload {
     pub(crate) file_path: String,
 }
 
-/// Where a dragged card was let go of: the column, and how many of that column's other cards
-/// are above it.
+/// Where dragged cards were let go of: which cards, the column, and how many of that
+/// column's other cards are above them. More than one card is a drag made with a selection.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskPlacementRequest {
+    pub(crate) task_ids: Vec<String>,
     pub(crate) status: ColumnId,
     pub(crate) position: usize,
 }

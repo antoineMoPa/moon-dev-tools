@@ -223,7 +223,9 @@ mod platform {
                     ),
                     (
                         ProjectCommand::BuildAndRun,
-                        Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyR),
+                        // Off `R` and beside `build`, because `cmd+alt+R` and the review's
+                        // `cmd+shift+R` were one hand's reach and one letter apart.
+                        Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyB),
                     ),
                 ]
                 .into_iter()

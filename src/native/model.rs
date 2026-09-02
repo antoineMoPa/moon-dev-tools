@@ -250,13 +250,32 @@ pub(crate) struct BoardState {
     pub(crate) notes_focus: Option<String>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
+    /// The cards the board has marked. One is a task to read - its page opens with it -
+    /// and several are a group to drag. See [`crate::native::board::selection`].
+    pub(crate) marked: HashSet<String>,
+    /// The card a shift+click measures its run from: the last one clicked.
+    pub(crate) mark_anchor: Option<String>,
+    /// The tasks whose pages are to be put away, because a click on the board let their cards
+    /// go. Drained once the window has drawn - a pane is never closed while the tree that
+    /// holds it is being drawn.
+    pub(crate) pages_to_close: Vec<String>,
+    /// The press the pointer is making on the board, if it is making one. The board works out
+    /// what a press was from where it began and how far it carried, rather than asking egui,
+    /// because what it is asking about is cards - see [`crate::native::board::gesture`].
+    pub(crate) press: Option<crate::native::board::gesture::Press>,
+    /// The cards a drag is carrying, once the press has carried far enough to be one.
+    pub(crate) carrying: Option<Carrying>,
+    /// Where the board itself was drawn last frame. A column lays out every card it has and
+    /// the board lays out every column, room for them or not, so a card's place carries on past
+    /// the board's edge and under whatever pane is next to it - and a press over there is not
+    /// that card's. This is the whole of where the board's cards can be pressed.
+    ///
+    /// `None` until the board has been drawn once, which is a board with nowhere to press.
+    pub(crate) showing: Option<egui::Rect>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
     /// the next one, which is what lets the board draw the card where it is going instead of
     /// where it came from.
     pub(crate) landing: Option<TaskLanding>,
-    /// The card that was just dropped, and the moment it was, so it can be marked for long
-    /// enough to find it again among the ones it landed between.
-    pub(crate) dropped: Option<TaskDropped>,
     /// A drop the server has not confirmed yet, kept so every board read until then can be
     /// answered with the card where it was put. Without it a read that was already on its way
     /// when the card was dropped puts it back where it came from for a moment.
@@ -299,9 +318,26 @@ pub(crate) struct AttachPicker {
     pub(crate) manual_agent: Option<crate::api::AgentKind>,
 }
 
+/// The cards a drag is carrying: the one on the cursor, and the run it is bringing with it -
+/// the marks, or the one card alone.
+#[derive(Clone)]
+pub(crate) struct Carrying {
+    pub(crate) primary: String,
+    /// Every card being carried, in the order the board holds them.
+    pub(crate) task_ids: Vec<String>,
+}
+
+impl Carrying {
+    pub(crate) fn carries(&self, task_id: &str) -> bool {
+        self.task_ids.iter().any(|carried| carried == task_id)
+    }
+}
+
 /// A drop that has been made on the board being drawn and not yet seen in one being read.
+///
+/// A drop carries every card that was picked up, and they land as a run from `index`.
 pub(crate) struct PendingPlace {
-    pub(crate) task_id: String,
+    pub(crate) task_ids: Vec<String>,
     pub(crate) status: crate::moontasks::ColumnId,
     pub(crate) index: usize,
 }
@@ -335,13 +371,6 @@ pub(crate) struct TabRename {
     pub(crate) name: String,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) focus: bool,
-}
-
-/// A card that has just been dropped, marked until [`Self::at`] is that long ago.
-pub(crate) struct TaskDropped {
-    pub(crate) task_id: String,
-    /// egui's clock rather than a wall clock: it is what the fade is drawn against.
-    pub(crate) at: f64,
 }
 
 /// A card's title, open for editing after a double click.
