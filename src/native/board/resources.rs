@@ -47,11 +47,21 @@ pub(crate) fn draw_list(
     }
 }
 
+/// How tall the line under a pending review is - the branch it names, in small type. Shorter
+/// than a row of its own: it is the second half of the row above it, not another entry.
+const BRANCH_LINE_HEIGHT: f32 = 15.0;
+/// How far that line is indented, so it starts under the words rather than under the dot.
+const BRANCH_LINE_INDENT: f32 = 12.0;
+
 /// One repo a task's `request_for_review.txt` asks to have looked at.
 ///
 /// Whether it is still pending is not written down anywhere: it is the repo having changed files,
 /// which the submodule hub's answer already says. So the list ticks itself off as the repos are
 /// committed, and there is nothing on the row to press to say it is done.
+///
+/// A branch goes on a line of its own under the name. Three things - what to review, which
+/// branch, how much has changed - do not fit across a card, and a branch name is the longest and
+/// the least often there, so it is the one that moves down.
 fn draw_review_request(
     app: &App,
     ui: &mut Ui,
@@ -65,50 +75,75 @@ fn draw_review_request(
     // agent asked for, and it should not read as dealt with because a poll has not landed.
     let pending = status.is_none_or(|repo| repo.changed_files > 0);
 
-    let row = draw_row(ui, palette, true, "Open the review of this repo");
+    let height = ui.spacing().interact_size.y
+        + request.branch.as_ref().map_or(0.0, |_| BRANCH_LINE_HEIGHT);
+    let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    if row.hovered() && ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(3), palette.row_hover_bg);
+    }
+    let row = row
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open the review of this repo");
     let row_pressed = card.pressed(&row);
-    draw_in_row(ui, row.rect, |ui| {
-        running_dot(ui, pending, palette);
 
-        let name = match pending {
-            true => widgets::quiet_button(ui, &format!("pending {} review", request.name)),
-            false => widgets::quiet_button_colored(
-                ui,
-                &format!("{} reviewed", request.name),
-                palette.muted,
-            ),
-        };
-        // What the agent wrote for the repo says what the review is about, which is more than
-        // the row has room for.
-        let name = match &request.suggestion {
-            Some(suggestion) => name.on_hover_text(&suggestion.subject),
-            None => name,
-        };
-        if card.pressed(&name) || row_pressed {
-            actions.push(BoardAction::OpenReview(
-                request.repo_path.clone(),
-                request.name.clone(),
-            ));
-        }
+    let mut opens = row_pressed;
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(rect.shrink2(vec2(ROW_INSET, 0.0)))
+            .layout(UiLayout::top_down(Align::Min)),
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_height(ui.spacing().interact_size.y);
+                running_dot(ui, pending, palette);
 
-        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            if let Some(status) = status {
-                ui.label(
-                    RichText::new(changes_label(status))
-                        .size(SMALL_SIZE)
-                        .color(palette.muted),
-                );
-            }
+                let name = match pending {
+                    true => widgets::quiet_button(ui, &format!("pending {} review", request.name)),
+                    false => widgets::quiet_button_colored(
+                        ui,
+                        &format!("{} reviewed", request.name),
+                        palette.muted,
+                    ),
+                };
+                // What the agent wrote for the repo says what the review is about, which is more
+                // than the row has room for.
+                let name = match &request.suggestion {
+                    Some(suggestion) => name.on_hover_text(&suggestion.subject),
+                    None => name,
+                };
+                opens |= card.pressed(&name);
+
+                ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+                    if let Some(status) = status {
+                        ui.label(
+                            RichText::new(changes_label(status))
+                                .size(SMALL_SIZE)
+                                .color(palette.muted),
+                        );
+                    }
+                });
+            });
+
             if let Some(branch) = &request.branch {
-                ui.label(
-                    RichText::new(format!("#{branch}"))
-                        .size(SMALL_SIZE)
-                        .color(palette.muted),
-                )
-                .on_hover_text("The branch the agent means this commit to be made on");
+                ui.horizontal(|ui| {
+                    ui.add_space(BRANCH_LINE_INDENT);
+                    ui.label(
+                        RichText::new(format!("#{branch}"))
+                            .size(SMALL_SIZE)
+                            .color(palette.muted),
+                    )
+                    .on_hover_text("The branch the agent means this commit to be made on");
+                });
             }
-        });
-    });
+        },
+    );
+
+    if opens {
+        actions.push(BoardAction::OpenReview(
+            request.repo_path.clone(),
+            request.name.clone(),
+        ));
+    }
 }
 
 /// How many characters of a linked file's path the card shows before the middle is cut out.

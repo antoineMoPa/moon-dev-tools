@@ -250,6 +250,29 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Where a branch of this repo is checked out, when that is a worktree beside it rather than
+/// the repo itself - the way an agent works on a branch without moving anyone's HEAD.
+///
+/// Only ever asked about a branch the repo is not itself on, which matters: `git worktree list`
+/// run inside a submodule names the main worktree by its gitdir under `.git/modules`, which is
+/// not where its files are. Every other entry is a linked worktree, whose path is real.
+pub(crate) fn worktree_on_branch(repo_path: &Path, branch: &str) -> Result<Option<PathBuf>> {
+    let listing = run_git(repo_path, &["worktree", "list", "--porcelain"])?;
+    let wanted = format!("refs/heads/{branch}");
+    let mut path = None;
+
+    // Blocks of `worktree <path>` … `branch <ref>`, one blank line between them. The path comes
+    // first in its block, so the one held when the branch matches is that block's.
+    for line in listing.lines() {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            path = Some(PathBuf::from(rest));
+        } else if line.strip_prefix("branch ") == Some(wanted.as_str()) {
+            return Ok(path);
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn branch_commits_since_default(
     repo_path: &Path,
 ) -> Result<(Option<String>, Vec<CommitView>)> {

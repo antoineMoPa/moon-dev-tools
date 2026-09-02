@@ -14,7 +14,7 @@
 //! trait method and two implementations of it would be four places to change every time a line
 //! of the format does.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{commit_suggestion::CommitSuggestion, moontasks::ReviewRequestView, moontasks::store};
 
@@ -136,20 +136,51 @@ pub(crate) fn written_at(repo_path: &Path) -> Vec<(String, std::time::SystemTime
 /// is what says what is wrong with it.
 fn view_of(repo_path: &Path, task_id: &str, request: ReviewRequest) -> ReviewRequestView {
     let joined = repo_path.join(&request.path_under_repo);
-    let resolved = crate::git::canonicalize_repo(&joined).unwrap_or(joined);
-    let name = resolved
+    let repo = crate::git::canonicalize_repo(&joined).unwrap_or(joined);
+    // The row is named after the repo, not after wherever its branch is checked out: a worktree
+    // is a directory named after a task, and `pending moon-dev-tools review` is what the person
+    // is looking for on the card.
+    let name = repo
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| resolved.display().to_string());
+        .unwrap_or_else(|| repo.display().to_string());
+    let reviewed = working_copy_of(&repo, request.branch.as_deref());
 
     ReviewRequestView {
         task_id: task_id.to_string(),
         path_under_repo: request.path_under_repo,
-        repo_path: resolved.display().to_string(),
+        repo_path: reviewed.display().to_string(),
         name,
         branch: request.branch,
         suggestion: request.suggestion,
     }
+}
+
+/// Where the work a line names actually is - which is what its review, its commit and its push
+/// are of.
+///
+/// A line naming a branch means the commit belongs on that branch, not that anyone should be
+/// moved onto it. An agent working on a branch usually made a worktree to do it in, precisely so
+/// that nobody's HEAD had to move; so that worktree is where the review goes, and committing and
+/// pushing there are already on the right branch with nothing checked out and nothing switched.
+///
+/// The repo itself, when it is the thing on that branch or the line named none. And the repo
+/// again when the branch is checked out nowhere - there is nothing better to offer, and the
+/// commit pane is what says the branch is not the one that was asked for.
+fn working_copy_of(repo: &Path, branch: Option<&str>) -> PathBuf {
+    let Some(branch) = branch else {
+        return repo.to_path_buf();
+    };
+    // Asked first, and not only as a shortcut: `git worktree list` inside a submodule names the
+    // main worktree by its gitdir under `.git/modules`, which is not where its files are. Every
+    // path the listing is trusted for below belongs to a linked worktree, which is a real one.
+    if crate::git::current_branch_name(repo).ok().flatten().as_deref() == Some(branch) {
+        return repo.to_path_buf();
+    }
+    crate::git::worktree_on_branch(repo, branch)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| repo.to_path_buf())
 }
 
 /// Read the file.
@@ -416,6 +447,50 @@ mod tests {
         assert_eq!(requests[2].suggestion, None);
         // And the one that names the repo the board is in.
         assert_eq!(requests[3].path_under_repo, "");
+    }
+
+    /// A line naming a branch is reviewed where that branch is checked out.
+    ///
+    /// An agent working on a branch makes a worktree for it so that nobody's HEAD has to move.
+    /// The line says which branch the commit belongs on; this is what turns that into the place
+    /// the review, the commit and the push happen - with the repo left on whatever it was on.
+    #[test]
+    fn a_branch_is_reviewed_in_the_worktree_it_is_checked_out_in() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-worktree");
+        let repo = fixture.root.clone();
+        let beside = repo.join("../work-on-the-parser");
+        crate::git::run_git_no_output(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "write-the-parser",
+                &beside.display().to_string(),
+            ],
+        )
+        .expect("failed to add the fixture worktree");
+        let beside = beside.canonicalize().expect("the worktree is on disk");
+
+        let on_the_branch = working_copy_of(&repo, Some("write-the-parser"));
+        assert_eq!(
+            on_the_branch, beside,
+            "a branch checked out in a worktree is reviewed there"
+        );
+        assert_eq!(
+            crate::git::current_branch_name(&repo)
+                .expect("failed to read the branch")
+                .as_deref(),
+            Some("main"),
+            "and the repo is left on the branch it was on"
+        );
+
+        // The branch the repo is itself on is the repo, not whatever the listing calls it - which
+        // for a submodule is a path under `.git/modules` with no files in it.
+        assert_eq!(working_copy_of(&repo, Some("main")), repo);
+        // A branch checked out nowhere, and a line naming no branch, are both the repo.
+        assert_eq!(working_copy_of(&repo, Some("never-made")), repo);
+        assert_eq!(working_copy_of(&repo, None), repo);
     }
 
     /// Most repos have no board at all, and every repo with one has tasks that have asked for
