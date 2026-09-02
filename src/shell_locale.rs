@@ -1,4 +1,5 @@
-//! The locale a shell is started in, which is what decides the characters it can print.
+//! The locale this window runs in, which is what decides the characters its children can
+//! read and write.
 //!
 //! A window started from a desktop launcher inherits no locale at all: macOS sets one for
 //! processes it launches from Terminal.app and from a login shell, but not for an app bundle.
@@ -6,15 +7,38 @@
 //! bytes of anything else rather than the character - `git log` writes an em dash as
 //! `<E2><80><94>`, and a tool drawing a box in line-drawing characters writes those out too.
 //!
-//! So a shell is started in the user's own locale, spelled with a UTF-8 charset, the way a
-//! terminal application does.
+//! It cuts the other way too, and that is the worse half: a tool that is handed UTF-8 and
+//! finds no locale reads it in whatever the platform falls back to. On macOS that is
+//! MacRoman, so `pbcopy` puts three characters on the pasteboard where an em dash went in,
+//! and text copied out of a shell or an agent comes back mangled wherever it is pasted.
+//!
+//! So the window adopts the user's own locale, spelled with a UTF-8 charset, the way a
+//! terminal application does - and adopts it into its own environment rather than onto each
+//! command, so that everything it starts inherits it: the shells and the agents in them, the
+//! agents it runs headless, `git`, the searcher, and whatever those run in turn.
 
 use std::{env, process::Command, sync::OnceLock};
 
-/// What `LANG` is set to for a shell, or `None` when the environment already says.
+/// Put that locale in this process's own environment, where every child inherits it.
+///
+/// Called from `run` before this program has started a thread, which is the only time
+/// writing to the environment is sound.
+pub(crate) fn adopt_utf8_locale() {
+    let Some(lang) = shell_lang() else {
+        return;
+    };
+    // SAFETY: `run` is the first thing either executable does, and nothing here has started
+    // a thread yet, so no other thread can be reading the environment.
+    unsafe { env::set_var("LANG", lang) };
+}
+
+/// What `LANG` is set to, or `None` when the environment already says.
 ///
 /// A locale the user set for themselves is left alone, UTF-8 or not: `LC_ALL=C` is a choice
 /// someone makes, and a window is not the place to overrule it.
+///
+/// The answer is worked out once and kept, so a shell started after [`adopt_utf8_locale`]
+/// still names the locale it was started under rather than reading back the one just set.
 pub(crate) fn shell_lang() -> Option<&'static str> {
     static LANG: OnceLock<Option<String>> = OnceLock::new();
     LANG.get_or_init(|| {

@@ -566,6 +566,50 @@ fn a_shell_reads_as_running_a_command_only_while_one_runs() {
     registry.remove(&terminal_id);
 }
 
+/// The other half of the same bug, and the one that survives a copy: a tool handed UTF-8
+/// with no locale to read it in falls back to the platform's own encoding - on macOS that is
+/// MacRoman, and `pbcopy` puts the three characters it reads an em dash as on the pasteboard
+/// rather than the dash. `locale charmap` is what every one of those tools resolves, so it is
+/// what is asked here; the pasteboard itself is the developer's and is left alone.
+#[test]
+#[cfg(unix)]
+fn a_shell_reads_utf8_input_as_utf8() {
+    // Nothing to fix on a machine with no UTF-8 locale to start a shell in - see
+    // `crate::shell_locale::shell_lang`.
+    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|name| {
+        std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8"))
+    });
+    if !inherits_utf8 && crate::shell_locale::shell_lang().is_none() {
+        return;
+    }
+
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = registry
+        .spawn(TerminalSpec::running(
+            std::env::temp_dir(),
+            "locale charmap",
+        ))
+        .expect("expected the shell to start");
+    let session = registry.get(&terminal_id).expect("expected the session");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut printed = String::new();
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+        if printed.contains("UTF-8") || printed.contains("US-ASCII") {
+            break;
+        }
+    }
+
+    registry.remove(&terminal_id);
+
+    assert!(
+        printed.contains("UTF-8"),
+        "a shell should read its input as UTF-8, its locale charmap printed {printed:?}"
+    );
+}
+
 /// The `<E2><80><94>` bug: a window started from a desktop launcher has no locale, and the
 /// pager git hands its output to draws every byte of an em dash as its own hex escape. What
 /// a shell is started in is a UTF-8 locale, so the character is drawn as itself.

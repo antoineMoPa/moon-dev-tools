@@ -136,6 +136,11 @@ impl Frame {
 }
 
 pub(crate) fn run(frame: Frame) -> Result<()> {
+    // Before anything starts a thread or a child: a window launched from the Dock has no
+    // locale, and every tool it runs would read and write bytes outside ASCII as something
+    // other than UTF-8 - see `crate::shell_locale`.
+    crate::shell_locale::adopt_utf8_locale();
+
     match parse_cli_args(env::args().skip(1).collect::<Vec<_>>(), frame)? {
         CliCommand::Help => {
             print_help(frame);

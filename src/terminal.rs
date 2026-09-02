@@ -523,9 +523,10 @@ impl TerminalRegistry {
         // The agent is started by name, so it has to be looked up on the PATH the user's shell
         // has rather than the one a desktop launcher hands this process.
         command.env("PATH", crate::shell_path::installed_tools_path());
-        // Which characters the tools in the shell can print. A window started from a desktop
-        // launcher has no locale of its own, and a tool that finds none prints anything
-        // outside ASCII as its bytes - `git log` writes an em dash as `<E2><80><94>`.
+        // Which characters the tools in the shell can read and write - see
+        // `crate::shell_locale`. A window has already adopted this into its own environment,
+        // so the shell would inherit it either way; a test's registry never goes through
+        // `run`, and this is what starts its shells in the same locale a window's are.
         if let Some(lang) = crate::shell_locale::shell_lang() {
             command.env("LANG", lang);
         }
