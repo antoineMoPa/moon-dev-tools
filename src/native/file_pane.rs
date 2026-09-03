@@ -381,10 +381,20 @@ pub(crate) fn matches_in(text: &str, query: &str) -> Vec<std::ops::Range<usize>>
         return Vec::new();
     }
 
-    (0..=haystack.len() - needle.len())
-        .filter(|start| haystack[*start..start + needle.len()] == needle[..])
-        .map(|start| start..start + needle.len())
-        .collect()
+    // Stepped past each match rather than to the next start, so a query that overlaps
+    // itself (like ".." over "...") doesn't turn up two matches sharing a character - which
+    // would hand the layout job in `marked_text` a pair of ranges out of order.
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start + needle.len() <= haystack.len() {
+        if haystack[start..start + needle.len()] == needle[..] {
+            matches.push(start..start + needle.len());
+            start += needle.len();
+        } else {
+            start += 1;
+        }
+    }
+    matches
 }
 
 /// About the measure GitHub lays a readme out at. Prose in a full-width pane puts a whole
@@ -788,6 +798,18 @@ mod tests {
     fn case_is_not_what_a_search_is_about() {
         assert_eq!(matches_in("Cargo.toml", "cargo").len(), 1);
         assert_eq!(matches_in("Cargo.toml", "CARGO").len(), 1);
+    }
+
+    /// A query that overlaps itself, over a run of characters it can overlap with, used to
+    /// turn up matches that shared a character - "target_env'..." searched for ".." found the
+    /// first two dots and then the last two, one byte apart. `marked_text` cuts the text at
+    /// each match in turn, so a pair like that put its second cut behind the first and
+    /// panicked slicing the text - which is what closed the window the bar was open over.
+    #[test]
+    fn a_self_overlapping_query_does_not_turn_up_overlapping_matches() {
+        let found = matches_in("target_env'...\" >&2", "..");
+
+        assert_eq!(found, vec![11..13]);
     }
 
     /// A match past the first line has to count the newline, or the editor would put the
