@@ -15,7 +15,7 @@ use crate::{
     native::{
         app::{App, AttachedTerminal, TerminalHolder},
         bindings,
-        model::TabRename,
+        model::{PendingCard, TabRename},
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
     project::ProjectCommand,
@@ -288,37 +288,44 @@ impl App {
                     self.model.layout.focus_pane(pane);
                     return;
                 }
-                // And one in the window at a time: every card clicked leaving its own tab
-                // behind would fill the strip with tasks nobody is looking at any more.
-                let others: Vec<PaneId> = self
+                self.open_beside_the_board(Pane::Start { task_id, title });
+            }
+            OpenPaneRequest::NewTask {
+                column,
+                joins,
+                draft_id,
+            } => {
+                // One new-task pane at a time, and the `+` pressed again brings it forward with
+                // what is already written on it: a half-named task is not something to sweep up
+                // behind the person writing it.
+                if let Some((pane, open)) = self
                     .model
                     .layout
-                    .panes()
-                    .filter(|(_, pane)| pane.kind() == PaneKind::Start)
-                    .map(|(pane, _)| pane)
-                    .collect();
-                for pane in others {
-                    self.close_pane(pane);
-                }
-                // Into whatever is already down the right of the board, and only into a column
-                // of its own when there is nothing there yet: a window that split itself again
-                // for every card clicked would be a new column a minute.
-                //
-                // First among that frame's tabs rather than last: it is opened to be read now
-                // and closed in a moment, and a tab that lands at the end of a long strip is
-                // one you have to go looking for.
-                let pane = Pane::Start { task_id, title };
-                match self.task_column() {
-                    Some(frame) => {
-                        let first = self
-                            .model
-                            .layout
-                            .frame(frame)
-                            .and_then(|frame| frame.panes().first().copied());
-                        self.model.layout.add_pane(frame, pane, first);
+                    .find_pane(|pane| matches!(pane, Pane::NewTask { .. }))
+                {
+                    // The empty card stays where the pane that is open is writing it, not where
+                    // the `+` just pressed would have put one.
+                    if let Pane::NewTask { column, joins, .. } = open {
+                        self.model.board.card_being_written = Some(PendingCard {
+                            column: column.clone(),
+                            joins: *joins,
+                        });
                     }
-                    None => add_right_column(&mut self.model.layout, pane),
+                    self.model.board.drafts.remove(&draft_id);
+                    self.model.layout.focus_pane(pane);
+                    return;
                 }
+                // The column draws an empty card at that end for as long as the pane is open,
+                // so the task has its place on the board while it is being written.
+                self.model.board.card_being_written = Some(PendingCard {
+                    column: column.clone(),
+                    joins,
+                });
+                self.open_beside_the_board(Pane::NewTask {
+                    column,
+                    joins,
+                    draft_id,
+                });
             }
             OpenPaneRequest::Commit { session_id } => {
                 // One commit pane a review: opening it again brings it forward, with whatever
@@ -717,6 +724,14 @@ impl App {
             );
         }
 
+        // A new-task pane takes its writing with it and makes nothing: `[create]` is what makes
+        // a task, and closing the tab without pressing it is saying no to the task. The empty
+        // card it was standing for goes off the board with it.
+        if let Some(Pane::NewTask { draft_id, .. }) = &closed {
+            self.model.board.drafts.remove(draft_id);
+            self.model.board.card_being_written = None;
+        }
+
         // Closing a shell's tab ends the shell: the tab is the only window it had.
         //
         // A task's shell is the exception. It belongs to the task rather than to the tab, and
@@ -864,6 +879,43 @@ impl App {
     /// opened off its card. They stand beside the board.
     pub(crate) fn task_column(&self) -> Option<FrameId> {
         self.column_beside(|pane| pane.kind() == PaneKind::Tasks)
+    }
+
+    /// Put a task's pane down the right of the board, in place of whatever task's pane was
+    /// there.
+    ///
+    /// One in the window at a time: every card clicked leaving its own tab behind would fill
+    /// the strip with tasks nobody is looking at any more. A new-task pane is not one of them:
+    /// what is on it is being written rather than read, and only its own `[create]` or its own
+    /// close mark puts it away.
+    ///
+    /// It goes into whatever is already down the right of the board, and only into a column of
+    /// its own when there is nothing there yet: a window that split itself again for every card
+    /// clicked would be a new column a minute. First among that frame's tabs rather than last:
+    /// it is opened to be read now and closed in a moment, and a tab that lands at the end of a
+    /// long strip is one you have to go looking for.
+    fn open_beside_the_board(&mut self, pane: Pane) {
+        let others: Vec<PaneId> = self
+            .model
+            .layout
+            .panes()
+            .filter(|(_, open)| matches!(open, Pane::Start { .. }))
+            .map(|(pane, _)| pane)
+            .collect();
+        for other in others {
+            self.close_pane(other);
+        }
+        match self.task_column() {
+            Some(frame) => {
+                let first = self
+                    .model
+                    .layout
+                    .frame(frame)
+                    .and_then(|frame| frame.panes().first().copied());
+                self.model.layout.add_pane(frame, pane, first);
+            }
+            None => add_right_column(&mut self.model.layout, pane),
+        }
     }
 
     /// The start window open on this task, if one is.

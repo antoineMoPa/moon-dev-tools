@@ -221,27 +221,6 @@ impl App {
         });
     }
 
-    /// Open the page of a task the board just created: its notes and what it can start, so a
-    /// card made from a one-line title is somewhere to keep writing.
-    pub(super) fn open_page_of_the_new_task(&mut self) {
-        let Some(opened) = self.model.board.opened_task.take() else {
-            return;
-        };
-        // The same as opening a task from its card: the page and the card's mark keep each
-        // other, so letting the card go puts the page away.
-        crate::native::board::selection::mark_only(&mut self.model.board, opened.task_id.clone());
-        // With the keyboard in the title: the composer took a name to make the card with, and
-        // the pane is where that name is settled on.
-        self.model.board.task_box_focus = Some((
-            opened.task_id.clone(),
-            crate::native::board::actions::TaskPaneBox::Title,
-        ));
-        self.open_pane(OpenPaneRequest::TaskStart {
-            task_id: opened.task_id,
-            title: opened.title,
-        });
-    }
-
     /// Open the file the board just readied - a task's notes, or a file linked to a card - in
     /// a pane down the right.
     ///

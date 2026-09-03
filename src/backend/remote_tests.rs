@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    api::{AgentKind, OpenSessionRequest},
+    api::OpenSessionRequest,
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
@@ -210,7 +210,6 @@ fn task_notes_round_trip_over_http() {
             &opened.session_id,
             &CreateTaskRequest {
                 title: "Fix the login page".to_string(),
-                agent: AgentKind::None,
                 status: ColumnId::new("todo"),
                 joins: ColumnEnd::Top,
             },
@@ -270,7 +269,6 @@ fn a_linked_file_round_trips_over_http() {
             &opened.session_id,
             &CreateTaskRequest {
                 title: "Fix the login page".to_string(),
-                agent: AgentKind::None,
                 status: ColumnId::new("todo"),
                 joins: ColumnEnd::Top,
             },

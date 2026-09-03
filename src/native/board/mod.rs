@@ -17,7 +17,10 @@ pub(crate) mod start;
 pub(super) use actions::BoardAction;
 use actions::apply;
 
-use cards::{CARD_SPACING, card_drag_id, column_cards, draw_card, draw_empty_slot, place_in};
+use cards::{
+    CARD_SPACING, card_drag_id, column_cards, draw_card, draw_empty_slot, draw_pending_card,
+    place_in,
+};
 
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, vec2};
 
@@ -325,108 +328,6 @@ fn draw_column_row(
     }
 }
 
-/// The new-task box, which either of a column's two `+`s opens.
-///
-/// It is a card in the column it will add to, in the place the new card will appear, rather
-/// than a row over the whole board: what is being written is a card. `joins` is the end it is
-/// standing at, so the box is drawn where its card is about to be.
-fn draw_composer(
-    app: &mut App,
-    ui: &mut Ui,
-    column: &ColumnId,
-    joins: ColumnEnd,
-    controls: &mut gesture::Controls,
-    palette: &Palette,
-    actions: &mut Vec<BoardAction>,
-) {
-    let available = available_agents(app);
-    // What the box offers first: the choice already made in this box, else the agent the
-    // column's last task was created with (the board's own file remembers it), else the
-    // machine-wide one the review's selector holds. An agent that has since left this
-    // machine would silently start nothing.
-    let remembered = app
-        .model
-        .board
-        .columns
-        .iter()
-        .find(|candidate| candidate.id == *column)
-        .and_then(|candidate| candidate.default_agent);
-    let mut agent = app
-        .model
-        .board
-        .composer_agent
-        .or(remembered)
-        .unwrap_or_else(|| app.selected_agent());
-    if !available.contains(&agent) {
-        agent = AgentKind::None;
-    }
-
-    egui::Frame::new()
-        .fill(palette.composer_bg)
-        .stroke(egui::Stroke::new(1.0, palette.accent))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(8, 7))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-
-            let entry = ui.add(
-                egui::TextEdit::singleline(&mut app.model.board.new_title)
-                    .hint_text("Task title")
-                    .desired_width(f32::INFINITY),
-            );
-            // The box and its buttons are the column's own: a press in here is not a press on
-            // the board beside the cards.
-            controls.pressed(&entry);
-            // The box opened because the user asked to type in it, so it takes the keyboard.
-            if std::mem::take(&mut app.model.board.composer_focus) {
-                entry.request_focus();
-            }
-            let submitted =
-                entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            ui.add_space(4.0);
-
-            let ready = !app.model.board.new_title.trim().is_empty();
-            ui.horizontal(|ui| {
-                let mut picked = agent;
-                egui::ComboBox::from_id_salt("moontasks-new-agent")
-                    .selected_text(agent_label(agent))
-                    .width(104.0)
-                    .show_ui(ui, |ui| {
-                        for option in &available {
-                            ui.selectable_value(&mut picked, *option, agent_label(*option));
-                        }
-                    });
-                // The pick belongs to this box: the column it creates into remembers it once
-                // the task is created, and the review's own selector is left alone.
-                if picked != agent {
-                    app.model.board.composer_agent = Some(picked);
-                }
-
-                ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                    let discard =
-                        close_button(ui, palette).on_hover_text("Discard this task");
-                    if controls.pressed(&discard) {
-                        actions.push(BoardAction::CloseComposer);
-                    }
-                    let create =
-                        widgets::clickable(ui.add_enabled(ready, egui::Button::new("create")))
-                            .on_hover_text("Create the task and start the agent on it");
-                    if controls.pressed(&create) {
-                        actions.push(BoardAction::Create(column.clone(), joins, agent));
-                    }
-                });
-            });
-
-            if submitted && ready {
-                actions.push(BoardAction::Create(column.clone(), joins, agent));
-            }
-            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                actions.push(BoardAction::CloseComposer);
-            }
-        });
-    ui.add_space(5.0);
-}
-
 /// The part of this frame's scroll the board is not letting through, taken out of the input
 /// while the columns draw and put back afterwards.
 ///
@@ -627,18 +528,23 @@ fn draw_column(
             );
             ui.add_space(3.0);
 
-            // Which end of this column the new-task box is standing at, if it is this column's
-            // box that is open at all.
-            let composing = (app.model.board.composer_in.as_ref() == Some(&column.id))
-                .then_some(app.model.board.composer_at);
+            // Which end of this column the card being written on the new-task pane will join,
+            // if it is this column it is joining at all.
+            let pending = app
+                .model
+                .board
+                .card_being_written
+                .as_ref()
+                .filter(|pending| pending.column == status)
+                .map(|pending| pending.joins);
 
             // Where a drop would land, counted against the cards it would be put among - so the
             // slot the dragged card is standing in is taken back out of the reckoning, and moving
             // the pointer over a card cannot bounce between two answers.
             let mut cards: Vec<egui::Rect> = Vec::new();
             let mut slot = 0.0;
-            // The column's own buttons - its new-task box, the `+` under its last card. A
-            // press on one of them is theirs, the way a card's buttons are the card's.
+            // The column's own buttons - the `+` at either end of it. A press on one of them
+            // is theirs, the way a card's buttons are the card's.
             let mut controls = gesture::Controls::new(ui);
             let mut zone = egui::Frame::new()
                 .corner_radius(CornerRadius::same(8))
@@ -659,30 +565,20 @@ fn draw_column(
                         // What a card's place is measured against, so scrolling the column is not
                         // read as every card in it having moved.
                         let origin = ui.min_rect().top();
-                        if composing == Some(ColumnEnd::Top) {
-                            draw_composer(
-                                app,
-                                ui,
-                                &status,
-                                ColumnEnd::Top,
-                                &mut controls,
-                                palette,
-                                actions,
-                            );
-                        } else {
-                            // Over the first card, where a card added here will appear - the
-                            // twin of the `+` under the last one, drawn the same way so the
-                            // two ends of the column read as the same offer.
-                            ui.vertical_centered(|ui| {
-                                let plus =
-                                    plus_button(ui, palette).on_hover_text("New task at the top");
-                                if controls.pressed(&plus) {
-                                    actions.push(BoardAction::OpenComposer(
-                                        status.clone(),
-                                        ColumnEnd::Top,
-                                    ));
-                                }
-                            });
+                        // Over the first card, where a card added here will appear - the twin
+                        // of the `+` under the last one, drawn the same way so the two ends of
+                        // the column read as the same offer.
+                        ui.vertical_centered(|ui| {
+                            let plus =
+                                plus_button(ui, palette).on_hover_text("New task at the top");
+                            if controls.pressed(&plus) {
+                                actions
+                                    .push(BoardAction::OpenNewTask(status.clone(), ColumnEnd::Top));
+                            }
+                        });
+                        ui.add_space(CARD_SPACING);
+                        if pending == Some(ColumnEnd::Top) {
+                            draw_pending_card(ui, palette);
                             ui.add_space(CARD_SPACING);
                         }
                         for task in &tasks {
@@ -703,17 +599,11 @@ fn draw_column(
                             }
                             ui.add_space(CARD_SPACING);
                         }
-                        if composing == Some(ColumnEnd::Bottom) {
-                            draw_composer(
-                                app,
-                                ui,
-                                &status,
-                                ColumnEnd::Bottom,
-                                &mut controls,
-                                palette,
-                                actions,
-                            );
-                        } else if !tasks.is_empty() {
+                        if pending == Some(ColumnEnd::Bottom) {
+                            draw_pending_card(ui, palette);
+                            ui.add_space(CARD_SPACING);
+                        }
+                        if !tasks.is_empty() {
                             // Under the last card, where a card added here will appear. Only
                             // once there are cards: in an empty column the `+` above would be
                             // the same offer twice over.
@@ -721,14 +611,14 @@ fn draw_column(
                                 let plus = plus_button(ui, palette)
                                     .on_hover_text("New task at the bottom");
                                 if controls.pressed(&plus) {
-                                    actions.push(BoardAction::OpenComposer(
+                                    actions.push(BoardAction::OpenNewTask(
                                         status.clone(),
                                         ColumnEnd::Bottom,
                                     ));
                                 }
                             });
                         }
-                        if tasks.is_empty() && composing.is_none() {
+                        if tasks.is_empty() && pending.is_none() {
                             // A column emptied by the filter still holds its cards, so it says
                             // that rather than "nothing here", which would read as a column
                             // with nothing in it.

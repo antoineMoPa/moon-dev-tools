@@ -319,7 +319,6 @@ impl App {
         self.poll_review_requests();
         self.poll_running_shells();
         self.poll_board();
-        self.open_page_of_the_new_task();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
         if std::mem::take(&mut self.model.project_pending) {

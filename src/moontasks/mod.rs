@@ -108,10 +108,8 @@ pub(crate) struct AttachResourceRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CreateTaskRequest {
     pub(crate) title: String,
-    /// The agent to start on the task straight away. `None` leaves the task sitting in its
-    /// column with nothing running.
-    pub(crate) agent: AgentKind,
-    /// The column the new card joins - the one whose `+` opened the composer.
+    /// The column the new card joins - the one whose `+` opened the pane the title was
+    /// written on.
     pub(crate) status: ColumnId,
     /// Which end of that column it joins, which is the `+` that was pressed: the one on the
     /// heading puts the card on top, the one under the last card puts it at the bottom.

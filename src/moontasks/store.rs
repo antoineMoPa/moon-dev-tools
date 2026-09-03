@@ -56,11 +56,6 @@ impl std::fmt::Display for ColumnId {
 pub(crate) struct BoardColumn {
     pub(crate) id: ColumnId,
     pub(crate) label: String,
-    /// The agent the last task created in this column was started with. The new-task box
-    /// offers it first, so a column that always goes to the same agent only has to be told
-    /// once. Absent until a task has been created in the column.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) default_agent: Option<AgentKind>,
     /// Which end of this column a card moved in from another one goes to, whatever place it
     /// was dropped at. Absent is where it was dropped, which is how a column of work in hand
     /// wants to behave; a column that is a record rather than a queue - DONE - is set to the
@@ -115,7 +110,6 @@ impl Default for BoardConfig {
                 .map(|(id, label, arrivals)| BoardColumn {
                     id: ColumnId::new(*id),
                     label: (*label).to_string(),
-                    default_agent: None,
                     arrivals: *arrivals,
                 })
                 .collect(),
@@ -780,13 +774,11 @@ mod tests {
                 BoardColumn {
                     id: ColumnId::new("todo"),
                     label: "BACKLOG".to_string(),
-                    default_agent: Some(AgentKind::Claude),
                     arrivals: None,
                 },
                 BoardColumn {
                     id: ColumnId::new("shipped"),
                     label: "SHIPPED".to_string(),
-                    default_agent: None,
                     arrivals: Some(ColumnEnd::Top),
                 },
             ],

@@ -2,8 +2,8 @@
 
 `moontasks` opens a sprint board over the repo. `moonreview` and `moonshell` reach the same
 board from the command palette, in a tab of their own.
-Each card is a task with an agent behind it: name a task, pick an agent, and it starts working
-in the repo straight away.
+Each card is a task with an agent behind it: name a task, and `[start]` puts an agent to work
+on it in the repo.
 
 | | |
 | --- | --- |
@@ -17,8 +17,8 @@ in the repo straight away.
 | click a card's title | open the task's own pane: its title and notes, and what it can start |
 | double click a card's title | rename the task |
 | double click a heading | rename the column |
-| `+` on a column's heading | a new task at the top of it |
-| `+` under a column's last card | a new task at the bottom of it |
+| `+` on a column's heading | write a new task, for the top of that column; `[create]` on that pane makes the card |
+| `+` under a column's last card | the same, for the bottom of it |
 | `+` at the right-hand end | add a column |
 | `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
 | a running resource | click its name to bring its terminal back on screen |
@@ -101,9 +101,24 @@ is called — every card in it stays in it. A column still holding cards will no
 it is the only record of where those cards are, so the board says to move them out first
 rather than choosing somewhere for them.
 
-The new-task box stands where its card will be — under the heading for the `+` on it, under
-the last card for the `+` down there — so you can see where the task is about to land while
-you name it.
+A `+` opens a pane to write the new task on rather than a box on the board: the same pane a
+card opens, with its title and notes empty and `[create]` standing where that task's `[start]`
+will. `[create]` — or Enter in the title box — makes the card, and that very pane becomes the
+new task's own, with its notes already written. Nothing is created before it is pressed, and
+closing the tab instead makes nothing: a task's folder under `.moontasks` is named after its
+title and keeps that name for good, so there is no task until there is a name for it. The `+`
+that was pressed is the end of the column the card joins — the heading's puts it on top, the
+one under the last card puts it at the bottom.
+
+The column holds the place while you write: an empty card stands at that end of it from the
+moment the `+` is pressed until `[create]` fills it in, outlined the way the hole a dragged card
+leaves is, because it means the same thing — a card is going here. So the task is written with
+its place on the board already in front of you, rather than turning up somewhere once it is
+made.
+
+One new-task pane is open at a time: pressing `+` again brings the one you are writing forward
+rather than starting a second, and a card clicked while it is open opens beside it rather than
+sweeping it away.
 
 A card changes column only when you move it. Nothing the board or an agent does moves a card:
 starting an agent, resuming one, attaching a session, an agent exiting - the card stays where

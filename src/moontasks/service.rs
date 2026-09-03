@@ -178,7 +178,6 @@ pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Res
     let column = BoardColumn {
         id,
         label: label.to_string(),
-        default_agent: None,
         arrivals: None,
     };
     board.columns.push(column.clone());
@@ -451,34 +450,6 @@ pub(crate) fn create_task(
 ) -> Result<TaskView> {
     let repo_path = repo_of(state, session_id)?;
     let task_id = store::create_task(&repo_path, &request.title, &request.status, request.joins)?;
-
-    // The column remembers the agent this task was created with - including "none" - so the
-    // next task created in it starts from the same choice.
-    let mut board = store::read_board(&repo_path);
-    if let Some(column) = board
-        .columns
-        .iter_mut()
-        .find(|column| column.id == request.status)
-        && column.default_agent != Some(request.agent)
-    {
-        column.default_agent = Some(request.agent);
-        store::write_board(&repo_path, &board)?;
-    }
-
-    // A task created with an agent starts working straight away, which is the whole point of
-    // creating it here rather than making the folder by hand.
-    if request.agent != AgentKind::None {
-        start_resource(
-            state,
-            session_id,
-            &task_id,
-            StartResourceRequest {
-                kind: TaskResourceKind::Agent,
-                agent: request.agent,
-            },
-        )?;
-    }
-
     let metadata = store::read_task(&repo_path, &task_id)?;
     Ok(view_of(state, &repo_path, &task_id, &metadata))
 }

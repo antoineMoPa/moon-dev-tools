@@ -102,7 +102,8 @@ Run any of them inside a git repository. The other tools remain one command-pale
 
 ### Moontasks
 
-Create a card for a piece of work, choose an agent, and Moontasks starts it in the repo. Cards
+Write a card for a piece of work, pick an agent from `[start]`, and Moontasks starts it in the
+repo. Cards
 group the task brief, shared notes, agent runs, shells and the files the task is about in one
 place. Drag cards and columns
 to make the board match your workflow.

@@ -145,6 +145,7 @@ pub(crate) fn card_drag_id(task_id: &str) -> egui::Id {
 /// was, so the drop is made again on top of it - until an answer comes back with the card
 /// where it was put, which is the server having caught up.
 pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
+    close_the_pages_of_deleted_tasks(model, &tasks);
     let Some(pending) = &model.board.pending_place else {
         model.board.tasks = tasks;
         return;
@@ -175,6 +176,27 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
         place_in(&mut tasks, &task_ids, &status, index);
     }
     model.board.tasks = tasks;
+}
+
+/// A task the board had and no longer has has been deleted - here, or in `.moontasks` by hand -
+/// and its page goes with it: a tab standing there saying the task is gone is a tab you have to
+/// close yourself.
+///
+/// Read against the answer before it rather than against the tab: a task created a moment ago
+/// is in no answer yet, and a page opened on it must not be closed for the read that was
+/// already on its way when it was made.
+fn close_the_pages_of_deleted_tasks(model: &mut Model, tasks: &[TaskView]) {
+    let deleted: Vec<String> = model
+        .board
+        .tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .filter(|task_id| !tasks.iter().any(|task| task.id == *task_id))
+        .collect();
+    // Queued rather than closed here, the way a card let go of queues its page: the answer is
+    // taken while the window is being drawn, and a pane is never closed while the tree that
+    // holds it is being drawn.
+    model.board.pages_to_close.extend(deleted);
 }
 
 /// Make the move on the board being drawn, ahead of the server being told about it.
@@ -229,6 +251,22 @@ pub(super) fn draw_empty_slot(ui: &Ui, slot: egui::Rect, palette: &Palette) {
         egui::StrokeKind::Inside,
     );
 }
+
+/// The card being written on the new-task pane, in the place it will take once `[create]` is
+/// pressed: an empty card, outlined the way the hole a dragged card leaves is, because it means
+/// the same thing - a card is going here.
+///
+/// It stands at whichever end of the column the `+` that opened the pane was, so a task is
+/// written with its place on the board already in front of you rather than appearing somewhere
+/// once it is made. Nothing is drawn in it: what would be in it is being typed on the pane.
+pub(super) fn draw_pending_card(ui: &mut Ui, palette: &Palette) {
+    let (_, slot) = ui.allocate_space(vec2(ui.available_width(), PENDING_CARD_HEIGHT));
+    draw_empty_slot(ui, slot, palette);
+}
+
+/// How tall the empty card is: about what a card with a title of one line and nothing else on
+/// it comes out at, so the space it holds is the space the card will want.
+const PENDING_CARD_HEIGHT: f32 = 78.0;
 
 /// One card: what it shows, the press it claims, and the drag that carries it.
 ///

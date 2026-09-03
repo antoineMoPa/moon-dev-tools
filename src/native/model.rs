@@ -217,17 +217,13 @@ pub(crate) struct BoardState {
     /// Set when the filter box is to take the keyboard next frame, which is how cmd+F over the
     /// board reaches it.
     pub(crate) filter_focus: bool,
-    /// The column the new-task box is open in, and the title being typed into it.
-    pub(crate) composer_in: Option<crate::moontasks::ColumnId>,
-    /// Which end of that column the box is standing at, which is the `+` that opened it. The
-    /// box is drawn there, so it is where the card it becomes will appear.
-    pub(crate) composer_at: crate::moontasks::ColumnEnd,
-    /// The agent picked in the open new-task box, overriding the column's remembered
-    /// default. Cleared when the box opens or closes: each column offers its own memory.
-    pub(crate) composer_agent: Option<crate::api::AgentKind>,
-    /// Set when the box has just opened, so it takes the keyboard once.
-    pub(crate) composer_focus: bool,
-    pub(crate) new_title: String,
+    /// The tasks being written on a pane of their own before they exist, one for each new-task
+    /// pane open, under the draft id that pane carries.
+    pub(crate) drafts: HashMap<String, TaskDraft>,
+    /// Where the card being written on the new-task pane will land, while it is being written.
+    /// The column draws an empty card there, so what is being written has its place on the
+    /// board from the moment the `+` is pressed.
+    pub(crate) card_being_written: Option<PendingCard>,
     /// Set when something changed the board, so the next frame refetches rather than waiting
     /// out the poll interval.
     pub(crate) refresh_requested: bool,
@@ -239,19 +235,17 @@ pub(crate) struct BoardState {
     /// A shell a board action just started, waiting for the window to open a tab on it. The
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
-    /// A task the board just created, waiting for the window to open its page the way an
-    /// opened shell waits for its tab.
-    pub(crate) opened_task: Option<OpenedTask>,
     /// A file a board action just readied - the task's notes, made sure to exist, or a file
     /// just linked to a card - waiting for the window the same way an opened shell does.
     pub(crate) opened_file: Option<OpenedFile>,
     /// The title and notes as they are being typed on a task's own pane, one for each pane
     /// open, so the board reading itself again does not overwrite a half-typed word.
     pub(crate) task_editors: HashMap<String, TaskEditor>,
-    /// The task whose pane is to open with the keyboard in one of its boxes, and which box:
-    /// the notes for a click on a card's notes, since that click is someone about to write
-    /// them, and the title for a task just created, which is where its name is finished.
-    /// Taken by the pane on the first frame it draws.
+    /// The pane that is to open with the keyboard in one of its boxes, and which box: the
+    /// notes for a click on a card's notes, since that click is someone about to write them,
+    /// and the title for a new-task pane, which is what the `+` was pressed to write. Named by
+    /// the task the pane is of, or by the draft id of one that has no task yet. Taken by the
+    /// pane on the first frame it draws.
     pub(crate) task_box_focus: Option<(String, crate::native::board::actions::TaskPaneBox)>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
@@ -418,11 +412,25 @@ pub(crate) struct OpenedFile {
     pub(crate) task_id: String,
 }
 
-/// A task the board has just created and wants opened, so what was written on the card can be
-/// carried on with straight away.
-pub(crate) struct OpenedTask {
-    pub(crate) task_id: String,
+/// Where the card being written on the new-task pane is going: the column the `+` belonged to,
+/// and which of its two ends it was.
+pub(crate) struct PendingCard {
+    pub(crate) column: crate::moontasks::ColumnId,
+    pub(crate) joins: crate::moontasks::ColumnEnd,
+}
+
+/// A task being written on a new-task pane, before there is a task to write it on.
+///
+/// The `+` on a column opens the pane and nothing else: the folder under `.moontasks` is named
+/// after the title and keeps that name for the rest of the task's life, so the task is not
+/// created until there is a title to name it after.
+#[derive(Default)]
+pub(crate) struct TaskDraft {
     pub(crate) title: String,
+    pub(crate) notes: String,
+    /// Set while the task is being created, so leaving the title box again on the way out does
+    /// not create a second task.
+    pub(crate) creating: bool,
 }
 
 /// A shell the board started and wants shown.

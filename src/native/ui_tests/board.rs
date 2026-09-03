@@ -46,14 +46,13 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     let ready_in_ui = Arc::clone(&ready);
     let opened = Arc::new(AtomicBool::new(false));
     let opened_in_ui = Arc::clone(&opened);
-    // The new-task box is opened rather than clicked for: where the `+` lands depends on the
-    // column, and what this checks is the box it opens.
+    // The new-task pane is opened rather than clicked for: where the `+` lands depends on the
+    // column, and what this shows is the pane it opens.
     let compose = Arc::new(AtomicBool::new(false));
     let compose_in_ui = Arc::clone(&compose);
-    // Which end of the column that box is standing at, which is the `+` that would have been
-    // pressed to open it.
-    let at_bottom = Arc::new(AtomicBool::new(false));
-    let at_bottom_in_ui = Arc::clone(&at_bottom);
+    // And put away again, so the pictures after it are of the workspace as it usually stands.
+    let close_draft = Arc::new(AtomicBool::new(false));
+    let close_draft_in_ui = Arc::clone(&close_draft);
     let open_shell = Arc::new(AtomicBool::new(false));
     let open_shell_in_ui = Arc::clone(&open_shell);
     let shell_requested = Arc::new(AtomicBool::new(false));
@@ -75,15 +74,22 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
-            if compose_in_ui.load(Ordering::Relaxed) {
-                app.model.board.composer_in = Some(crate::moontasks::ColumnId::new("todo"));
-                app.model.board.composer_at = if at_bottom_in_ui.load(Ordering::Relaxed) {
-                    crate::moontasks::ColumnEnd::Bottom
-                } else {
-                    crate::moontasks::ColumnEnd::Top
-                };
-            } else {
-                app.model.board.composer_in = None;
+            if compose_in_ui.swap(false, Ordering::Relaxed) {
+                crate::native::board::actions::apply(
+                    &mut app,
+                    crate::native::board::BoardAction::OpenNewTask(
+                        crate::moontasks::ColumnId::new("todo"),
+                        crate::moontasks::ColumnEnd::Top,
+                    ),
+                );
+            }
+            if close_draft_in_ui.swap(false, Ordering::Relaxed)
+                && let Some((pane, _)) = app
+                    .model
+                    .layout
+                    .find_pane(|pane| matches!(pane, Pane::NewTask { .. }))
+            {
+                app.close_pane(pane);
             }
             if open_shell_in_ui.load(Ordering::Relaxed)
                 && !shell_requested_in_ui.swap(true, Ordering::Relaxed)
@@ -204,7 +210,8 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         .push(egui::Event::PointerMoved(egui::pos2(1200.0, 600.0)));
     harness.run_steps(3);
 
-    // And the new-task box the `+` on the TODO column opens, standing where its card will go.
+    // And the pane the `+` on the TODO column opens, where the task is written before there is
+    // a task to write it on.
     compose.store(true, Ordering::Relaxed);
     // Its title box has focus, and a blinking caret would make the image differ run to run.
     harness
@@ -213,15 +220,10 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     harness.run_steps(3);
     harness.snapshot("moontasks-new-task");
 
-    // And the same box opened by the `+` under the last card, standing at the bottom, where a
-    // card added from there will appear.
-    at_bottom.store(true, Ordering::Relaxed);
-    harness.run_steps(3);
-    harness.snapshot("moontasks-new-task-at-the-bottom");
-
     // The main workspace: the board stays visible while a task's shell works beside it, and
     // the card of the task that shell is in is marked.
-    compose.store(false, Ordering::Relaxed);
+    close_draft.store(true, Ordering::Relaxed);
+    harness.run_steps(2);
     open_shell.store(true, Ordering::Relaxed);
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {

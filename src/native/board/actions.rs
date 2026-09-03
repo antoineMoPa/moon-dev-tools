@@ -5,21 +5,20 @@ use crate::{
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
-        model::{OpenedFile, OpenedShell, OpenedTask},
+        model::{OpenedFile, OpenedShell, TaskDraft, TaskEditor},
         palette::CommandAction,
-        panes::OpenPaneRequest,
+        panes::{OpenPaneRequest, Pane},
     },
 };
 
 /// What a click on the board asked for. Collected while drawing and acted on afterwards, so
 /// nothing changes the pane tree or the task list while either is being read.
 pub(crate) enum BoardAction {
-    /// Open the new-task box at one end of this column - the end whose `+` was pressed.
-    OpenComposer(ColumnId, ColumnEnd),
-    CloseComposer,
-    /// Create the typed task at the end of this column the composer is standing at, and start
-    /// the picked agent on it.
-    Create(ColumnId, ColumnEnd, AgentKind),
+    /// Open a pane to write a new task on, joining this column at the end whose `+` was
+    /// pressed. Nothing is created until that pane has a title - see [`BoardAction::Create`].
+    OpenNewTask(ColumnId, ColumnEnd),
+    /// Make the task a new-task pane has been named, and turn that pane into its own.
+    Create(CreateFromDraft),
     /// Cards let go of in a column, at the place among its cards they were dropped - one for
     /// an ordinary drag, the whole run of marks for a drag made with several.
     Place(Vec<String>, ColumnId, usize),
@@ -97,54 +96,134 @@ pub(crate) enum TaskPaneBox {
     Title,
 }
 
+/// A new-task pane that has been named: everything the task is made from, and what the pane
+/// does once it exists.
+pub(crate) struct CreateFromDraft {
+    /// The draft the pane is writing, which is how the pane is found again when the task comes
+    /// back - and how the writing is thrown away once it has.
+    pub(crate) draft_id: String,
+    pub(crate) column: ColumnId,
+    pub(crate) joins: ColumnEnd,
+    pub(crate) title: String,
+    pub(crate) notes: String,
+    /// Whether the keyboard goes on to the notes box once the task is made: it does for a
+    /// title answered for with Enter, and not for one that was clicked away from.
+    pub(crate) keyboard_goes_to_notes: bool,
+}
+
 pub(crate) fn apply(app: &mut App, action: BoardAction) {
     let session_id = app.model.root_session_id.clone();
 
     match action {
-        BoardAction::OpenComposer(column_id, joins) => {
-            app.model.board.composer_in = Some(column_id);
-            app.model.board.composer_at = joins;
-            app.model.board.composer_focus = true;
-            // Each column's box starts from that column's own remembered agent.
-            app.model.board.composer_agent = None;
+        BoardAction::OpenNewTask(column, joins) => {
+            // The board's marks go with it: what is in front is a task being written, not one
+            // of the cards being read.
+            super::selection::let_go_of_all(&mut app.model.board);
+            let draft_id = format!("draft-{}", crate::moontasks::store::new_uuid());
+            app.model
+                .board
+                .drafts
+                .insert(draft_id.clone(), TaskDraft::default());
+            // With the keyboard in the title box, which is what the `+` was pressed to write.
+            app.model.board.task_box_focus = Some((draft_id.clone(), TaskPaneBox::Title));
+            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::NewTask {
+                column,
+                joins,
+                draft_id,
+            }));
         }
-        BoardAction::CloseComposer => {
-            app.model.board.composer_in = None;
-            app.model.board.new_title.clear();
-            app.model.board.composer_agent = None;
-        }
-        BoardAction::Create(column_id, joins, agent) => {
+        BoardAction::Create(draft) => {
+            let CreateFromDraft {
+                draft_id,
+                column,
+                joins,
+                title,
+                notes,
+                keyboard_goes_to_notes,
+            } = draft;
+            // The pane keeps drawing what was typed while the folder is being made, and stops
+            // asking for it a second time. The draft is gone already when the pane was closed
+            // on what it had written - see [`App::close_pane`] - and the task is still made.
+            if let Some(writing) = app.model.board.drafts.get_mut(&draft_id) {
+                writing.creating = true;
+            }
+            // The filter goes, so the new card is on the board rather than behind a query that
+            // was asked before it existed and says nothing about it.
+            app.model.board.filter.clear();
             let request = CreateTaskRequest {
-                title: app.model.board.new_title.trim().to_string(),
-                agent,
-                status: column_id,
+                title,
+                status: column,
                 joins,
             };
-            if request.title.is_empty() {
-                return;
-            }
-            // The box closes on the way out: the card it was standing in for is on its way.
-            app.model.board.new_title.clear();
-            app.model.board.composer_in = None;
-            app.model.board.composer_agent = None;
-            // And the filter goes with it, so the new card is on the board rather than behind
-            // a query that was asked before it existed and says nothing about it.
-            app.model.board.filter.clear();
             app.tasks.spawn(
-                move |backend| backend.create_task(&session_id, &request),
-                |model, result| {
+                move |backend| {
+                    let task = backend.create_task(&session_id, &request)?;
+                    // The notes written on the pane before the task existed are written to the
+                    // task's own file now that it has one, through the same path the pane
+                    // saves them by afterwards.
+                    if !notes.is_empty() {
+                        let file_path = backend.open_task_notes(&session_id, &task.id)?;
+                        backend.write_file(&session_id, &file_path, &notes)?;
+                    }
+                    Ok((task, notes))
+                },
+                move |model, result| {
                     model.board.refresh_requested = true;
-                    match result {
-                        // A title is rarely the whole of what is wanted, so the new task's own
-                        // page opens with it - the notes and what it can start, there to be
-                        // written while the thought is still in hand.
-                        Ok(task) => {
-                            model.board.opened_task = Some(OpenedTask {
-                                task_id: task.id,
-                                title: task.title,
-                            })
+                    let (task, notes) = match result {
+                        Ok(made) => made,
+                        Err(error) => {
+                            // The pane keeps what was typed, so the name can be answered for
+                            // again rather than written out a second time.
+                            if let Some(writing) = model.board.drafts.get_mut(&draft_id) {
+                                writing.creating = false;
+                            }
+                            model.error(format!("could not create the task: {error}"));
+                            return;
                         }
-                        Err(error) => model.error(format!("could not create the task: {error}")),
+                    };
+                    let pane = model
+                        .layout
+                        .find_pane(|pane| {
+                            matches!(pane, Pane::NewTask { draft_id: on, .. } if *on == draft_id)
+                        })
+                        .map(|(pane, _)| pane);
+                    model.board.drafts.remove(&draft_id);
+                    // The empty card standing for this one comes off the board: the card it
+                    // was standing for is on its way, and the read that brings it is asked for
+                    // above.
+                    model.board.card_being_written = None;
+                    // What was typed carries on in the task's own boxes: the notes as they
+                    // stand here, against the empty ones the board will report until the write
+                    // above has been read back.
+                    model.board.task_editors.insert(
+                        task.id.clone(),
+                        TaskEditor {
+                            title: task.title.clone(),
+                            notes,
+                            said_title: task.title.clone(),
+                            said_notes: String::new(),
+                            notes_typed_at: None,
+                        },
+                    );
+                    // The pane the task was written on becomes the task's own, in the tab it is
+                    // already in. Gone, if the tab was closed on the way: the task is made and
+                    // its card is on the board, which is what the writing was for.
+                    let Some(pane) = pane else {
+                        return;
+                    };
+                    if let Some(open) = model.layout.pane_mut(pane) {
+                        *open = Pane::Start {
+                            task_id: task.id.clone(),
+                            title: task.title.clone(),
+                        };
+                    }
+                    // And its card is marked, the way it is for a page opened from the board.
+                    super::selection::mark_only(&mut model.board, task.id.clone());
+                    // The title was answered for with Enter, so the keyboard goes on to the
+                    // notes - the next thing to say about a task you have just named. A title
+                    // merely clicked away from leaves the keyboard where the click put it.
+                    if keyboard_goes_to_notes {
+                        model.board.task_box_focus = Some((task.id, TaskPaneBox::Notes));
                     }
                 },
             );

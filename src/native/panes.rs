@@ -28,7 +28,8 @@ pub(crate) enum PaneKind {
     Terminal,
     File,
     Tasks,
-    /// One task: what it has running, and what it can start.
+    /// One task: what it has running, and what it can start - or one being written before it
+    /// exists, which is the same pane with nothing to run in it yet.
     Start,
     Commit,
     Submodules,
@@ -66,6 +67,17 @@ pub(crate) enum Pane {
     /// under is only the name for the tab until the board answers - the task's own is what the
     /// pane reads and writes.
     Start { task_id: String, title: String },
+    /// A task being written before it exists: what a column's `+` opens. It becomes the task's
+    /// own pane, in this very tab, the moment the title box is answered for - see
+    /// [`crate::native::start_pane`].
+    NewTask {
+        /// The column the card will join, and which end of it: the `+` that was pressed.
+        column: crate::moontasks::ColumnId,
+        joins: crate::moontasks::ColumnEnd,
+        /// What the half-written title and notes are kept under in
+        /// [`crate::native::model::BoardState::drafts`], since there is no task to key them by.
+        draft_id: String,
+    },
     /// Committing what one review has staged, and pushing it.
     Commit { session_id: String },
     /// Every submodule of the repo, and a way into a review of the changed ones.
@@ -82,7 +94,7 @@ impl Pane {
             Self::Terminal { .. } => PaneKind::Terminal,
             Self::File { .. } => PaneKind::File,
             Self::Tasks => PaneKind::Tasks,
-            Self::Start { .. } => PaneKind::Start,
+            Self::Start { .. } | Self::NewTask { .. } => PaneKind::Start,
             Self::Commit { .. } => PaneKind::Commit,
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
@@ -108,6 +120,7 @@ impl Pane {
             Self::Tasks => "moontasks".to_string(),
             // The task's own name: the tab is that task's, and what it offers is on the pane.
             Self::Start { title, .. } => title.clone(),
+            Self::NewTask { .. } => "new task".to_string(),
             Self::Commit { .. } => "commit".to_string(),
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
@@ -170,6 +183,12 @@ pub(crate) enum OpenPaneRequest {
     TaskStart {
         task_id: String,
         title: String,
+    },
+    /// A pane to write a new task on, for the `+` of this column and end.
+    NewTask {
+        column: crate::moontasks::ColumnId,
+        joins: crate::moontasks::ColumnEnd,
+        draft_id: String,
     },
     /// Committing what one review has staged.
     Commit {
@@ -236,6 +255,7 @@ impl PaneView<Pane> for App {
         let hover = match pane {
             Pane::File { file_path, .. } => file_path.clone(),
             Pane::Start { title, .. } => format!("Start something in {title}"),
+            Pane::NewTask { .. } => "Name this task to make its card".to_string(),
             // The title the program set, which the tab of a named shell does not show - a
             // plain shell's directory, an agent's own status line - and how the tab is renamed.
             Pane::Terminal { terminal_id, .. } => {
@@ -325,9 +345,17 @@ impl PaneView<Pane> for App {
                 self.draw_file_pane(ui, pane_id, &session_id, &file_path);
             }
             Pane::Tasks => crate::native::board::draw(self, ui),
-            Pane::Start { task_id, title } => {
-                let (task_id, title) = (task_id.clone(), title.clone());
-                crate::native::start_pane::draw(self, ui, &task_id, &title);
+            Pane::Start { task_id, .. } => {
+                let task_id = task_id.clone();
+                crate::native::start_pane::draw(self, ui, &task_id);
+            }
+            Pane::NewTask {
+                column,
+                joins,
+                draft_id,
+            } => {
+                let (column, joins, draft_id) = (column.clone(), *joins, draft_id.clone());
+                crate::native::start_pane::draw_new_task(self, ui, &column, joins, &draft_id);
             }
             Pane::Commit { session_id } => {
                 let session_id = session_id.clone();

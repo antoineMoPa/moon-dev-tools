@@ -13,12 +13,16 @@
 use egui::{Key, Modifiers, RichText, Ui, vec2};
 
 use crate::{
-    moontasks::TaskView,
+    moontasks::{ColumnEnd, ColumnId, TaskView},
     native::{
         app::App,
-        board::{self, actions::{BoardAction, TaskPaneBox}},
+        board::{
+            self,
+            actions::{BoardAction, CreateFromDraft, TaskPaneBox},
+        },
         model::TaskEditor,
         theme::{Palette, SMALL_SIZE},
+        widgets,
     },
 };
 
@@ -37,7 +41,7 @@ const NOTES_ROWS: usize = 8;
 /// keeps what was said.
 const NOTES_SETTLE: f64 = 0.8;
 
-pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
     let palette = app.palette_of();
 
     egui::Frame::new()
@@ -51,7 +55,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
                 .find(|task| task.id == task_id)
                 .cloned()
             else {
-                draw_missing(app, ui, title, &palette);
+                draw_while_the_board_is_read(ui, &palette);
                 return;
             };
 
@@ -106,6 +110,133 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
                 board::actions::apply(app, action);
             }
         });
+}
+
+/// The pane a new task is written on, before there is a task to write it on: the same two
+/// boxes, with `[create]` standing where the task's `[start]` will.
+///
+/// `[create]` makes the task and turns this very pane into that task's own, in the tab it is
+/// already in. Nothing is created before it is pressed - not by leaving the boxes, not by
+/// closing the tab: the folder under `.moontasks` is named after the title and keeps that name
+/// for the rest of the task's life, so a task created to be named later would be a folder
+/// called nothing for the rest of its life.
+pub(crate) fn draw_new_task(
+    app: &mut App,
+    ui: &mut Ui,
+    column: &ColumnId,
+    joins: ColumnEnd,
+    draft_id: &str,
+) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(9, 7))
+        .show(ui, |ui| {
+            let mut created = None;
+            let width = (ui.available_width() - ui.spacing().scroll.bar_width).min(COLUMN_WIDTH);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .id_salt("new-task-pane")
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(TOP_GAP);
+                        ui.allocate_ui(vec2(width, 0.0), |ui| {
+                            ui.vertical(|ui| {
+                                created = draw_draft(app, ui, column, joins, draft_id);
+                            });
+                        });
+                    });
+                });
+
+            if let Some(create) = created {
+                board::actions::apply(app, BoardAction::Create(create));
+            }
+        });
+}
+
+/// The two boxes of a new-task pane and the `[create]` under them: `Some` once the button has
+/// been pressed, or Enter answered for a title, with something in the title box.
+///
+/// The button stands where the task's `[start]` will, so the pane keeps its shape as it becomes
+/// the task's own. Escape clears the title rather than putting one back, because there is no
+/// title yet to put back.
+fn draw_draft(
+    app: &mut App,
+    ui: &mut Ui,
+    column: &ColumnId,
+    joins: ColumnEnd,
+    draft_id: &str,
+) -> Option<CreateFromDraft> {
+    // The keyboard the `+` promised this pane, taken on the frame it opened on rather than
+    // asked for again on every frame it draws.
+    let takes_keyboard = app
+        .model
+        .board
+        .task_box_focus
+        .as_ref()
+        .is_some_and(|(id, which)| id == draft_id && *which == TaskPaneBox::Title);
+    if takes_keyboard {
+        app.model.board.task_box_focus = None;
+    }
+    let draft = app
+        .model
+        .board
+        .drafts
+        .entry(draft_id.to_string())
+        .or_default();
+    // Nothing is answered for twice: the task is already being made from what is in the boxes.
+    let creating = draft.creating;
+
+    let title_id = ui.id().with("new-task-title");
+    // Taken before the box is drawn, so the box never sees it and never adds the line.
+    let entered = ui.memory(|memory| memory.has_focus(title_id))
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+    let title = ui.add(
+        egui::TextEdit::multiline(&mut draft.title)
+            .id(title_id)
+            .hint_text("Task title")
+            .desired_width(f32::INFINITY)
+            .desired_rows(1)
+            .margin(egui::Margin::symmetric(6, 4)),
+    );
+    if takes_keyboard {
+        title.request_focus();
+    }
+    if title.has_focus() && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+        draft.title.clear();
+    }
+
+    ui.add_space(LINE_GAP);
+    ui.add(
+        egui::TextEdit::multiline(&mut draft.notes)
+            .hint_text("Notes")
+            .desired_width(f32::INFINITY)
+            .desired_rows(NOTES_ROWS)
+            .margin(egui::Margin::symmetric(6, 4)),
+    );
+    let title = draft.title.trim().to_string();
+    let notes = draft.notes.clone();
+
+    ui.add_space(LINE_GAP);
+    // Off while the box is empty - a task is its title - and while the one that was written is
+    // already being made, so the button cannot ask for the same task twice.
+    let ready = !title.is_empty() && !creating;
+    let create = widgets::clickable(
+        ui.add_enabled(ready, egui::Button::new("[create]").frame(false)),
+    )
+    .on_hover_text("Make this task's card, and open it here");
+
+    if !ready || !(entered || create.clicked()) {
+        return None;
+    }
+    Some(CreateFromDraft {
+        draft_id: draft_id.to_string(),
+        column: column.clone(),
+        joins,
+        title,
+        notes,
+        // Enter is someone still writing: the notes are what they write next. The button is
+        // pressed with the hand, which has left the keyboard where it was.
+        keyboard_goes_to_notes: entered,
+    })
 }
 
 /// The task's title and its notes, open for editing.
@@ -235,19 +366,16 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
     }
 }
 
-/// Either the board has not been read yet or the task has been deleted from under the tab.
-/// Nothing can be started on a task the board does not have, so this is the whole pane - named,
-/// because the tab may be one of several.
-fn draw_missing(app: &App, ui: &mut Ui, title: &str, palette: &Palette) {
+/// What the pane is while the board has no answer about this task: the first read of the board,
+/// or the moment between a task being created and the read that first has it. There is nothing
+/// to draw about a task nobody has heard of, and the read is a moment away.
+///
+/// A task the board did have and no longer has has been deleted, and that closes the tab rather
+/// than leaving it standing here - see [`crate::native::board::cards::accept_board`].
+fn draw_while_the_board_is_read(ui: &mut Ui, palette: &Palette) {
     ui.label(
-        RichText::new(if app.model.board.loaded {
-            format!("{title} is no longer on the board")
-        } else {
-            "reading the board…".to_string()
-        })
-        .size(SMALL_SIZE)
-        .color(palette.muted),
+        RichText::new("reading the board…")
+            .size(SMALL_SIZE)
+            .color(palette.muted),
     );
 }
-
-
