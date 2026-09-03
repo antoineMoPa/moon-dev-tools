@@ -471,9 +471,16 @@ fn a_click_reaches_a_widget_inside_a_frame() {
         "every file starts expanded"
     );
 
-    // A file heading sits deep inside the diff pane, which is what the swallowing overlay
-    // used to cover.
-    harness.get_by_label("\u{23F7} src/lib.rs").click();
+    // The arrow beside a file's name sits deep inside the diff pane, which is what the
+    // swallowing overlay used to cover.
+    // The arrow is its own button beside the file's name - the name itself is a label, so it
+    // can be selected and copied - so the one to click is the arrow on that name's line.
+    let heading = harness.get_by_label("src/lib.rs").rect();
+    harness
+        .get_all_by_label("\u{23F7}")
+        .find(|arrow| arrow.rect().center().y == heading.center().y)
+        .expect("expected an arrow beside src/lib.rs")
+        .click();
     harness.run_steps(2);
 
     assert!(

@@ -239,16 +239,20 @@ pub(crate) struct BoardState {
     /// A shell a board action just started, waiting for the window to open a tab on it. The
     /// backend call finishes on a worker thread, which is in no position to touch the panes.
     pub(crate) opened_shell: Option<OpenedShell>,
+    /// A task the board just created, waiting for the window to open its page the way an
+    /// opened shell waits for its tab.
+    pub(crate) opened_task: Option<OpenedTask>,
     /// A file a board action just readied - the task's notes, made sure to exist, or a file
     /// just linked to a card - waiting for the window the same way an opened shell does.
     pub(crate) opened_file: Option<OpenedFile>,
     /// The title and notes as they are being typed on a task's own pane, one for each pane
     /// open, so the board reading itself again does not overwrite a half-typed word.
     pub(crate) task_editors: HashMap<String, TaskEditor>,
-    /// The task whose pane is to open with the keyboard in its notes box: what a click on a
-    /// card's notes asks for, since that click is someone about to write them. Taken by the
-    /// pane on the first frame it draws.
-    pub(crate) notes_focus: Option<String>,
+    /// The task whose pane is to open with the keyboard in one of its boxes, and which box:
+    /// the notes for a click on a card's notes, since that click is someone about to write
+    /// them, and the title for a task just created, which is where its name is finished.
+    /// Taken by the pane on the first frame it draws.
+    pub(crate) task_box_focus: Option<(String, crate::native::board::actions::TaskPaneBox)>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
     /// The cards the board has marked. One is a task to read - its page opens with it -
@@ -273,6 +277,10 @@ pub(crate) struct BoardState {
     ///
     /// `None` until the board has been drawn once, which is a board with nowhere to press.
     pub(crate) showing: Option<egui::Rect>,
+    /// Which way this scrolling gesture is moving the board: sideways across the columns, or
+    /// up and down inside one. Settled on the first frame of the gesture and let go of when
+    /// the scrolling stops - see [`crate::native::board::hold_the_off_axis`].
+    pub(crate) scroll_axis: Option<crate::native::board::Axis>,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
     /// the next one, which is what lets the board draw the card where it is going instead of
     /// where it came from.
@@ -408,6 +416,13 @@ pub(crate) struct OpenedFile {
     /// Relative to the repo, which is how a file pane opens one.
     pub(crate) file_path: String,
     pub(crate) task_id: String,
+}
+
+/// A task the board has just created and wants opened, so what was written on the card can be
+/// carried on with straight away.
+pub(crate) struct OpenedTask {
+    pub(crate) task_id: String,
+    pub(crate) title: String,
 }
 
 /// A shell the board started and wants shown.

@@ -198,6 +198,15 @@ impl Backend for LocalBackend {
         moontasks::service::rename_column(&self.state, session_id, column_id, label)
     }
 
+    fn set_column_arrivals(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        arrivals: Option<crate::moontasks::ColumnEnd>,
+    ) -> Result<()> {
+        moontasks::service::set_column_arrivals(&self.state, session_id, column_id, arrivals)
+    }
+
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
         moontasks::service::delete_column(&self.state, session_id, column_id)
     }

@@ -12,8 +12,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark, plus_button,
-            slide_into_place, stamp_place,
+            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark,
+            plus_button, slide_into_place, stamp_place,
         },
         model::ColumnRename,
         theme::{Palette, SMALL_SIZE},
@@ -112,7 +112,7 @@ pub(super) fn draw_heading(
         if editing {
             draw_heading_editor(app, ui, column, actions);
         } else {
-            draw_heading_handle(app, ui, column, palette);
+            draw_heading_handle(app, ui, column, palette, actions);
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
@@ -145,15 +145,6 @@ pub(super) fn draw_heading(
                     app.model.board.pending_column_delete = Some(column.id.clone());
                 }
 
-                // Every column offers a new task, and the card joins the column whose `+`
-                // asked for it. The heading's own `+` puts it on top; the one under the last
-                // card puts it at the bottom.
-                if plus_button(ui, palette)
-                    .on_hover_text("New task at the top")
-                    .clicked()
-                {
-                    actions.push(BoardAction::OpenComposer(column.id.clone(), ColumnEnd::Top));
-                }
                 ui.label(
                     RichText::new(cards.to_string())
                         .size(SMALL_SIZE - 1.0)
@@ -164,9 +155,15 @@ pub(super) fn draw_heading(
     });
 }
 
-/// The heading as it usually reads: what the column is dragged by, and what a double click
-/// opens for renaming.
-fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette: &Palette) {
+/// The heading as it usually reads: what the column is dragged by, what a double click opens
+/// for renaming, and what a right click offers about the column itself.
+fn draw_heading_handle(
+    app: &mut App,
+    ui: &mut Ui,
+    column: &BoardColumn,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
     let laid_out = ui
         .add(
             egui::Label::new(
@@ -195,6 +192,49 @@ fn draw_heading_handle(app: &mut App, ui: &mut Ui, column: &BoardColumn, palette
             focus: true,
         });
     }
+
+    draw_heading_menu(&handle, column, actions);
+}
+
+/// What a column can be told about itself: where cards moved into it land. A menu rather than
+/// a mark on the heading, because it is set once for a column and then left alone.
+fn draw_heading_menu(handle: &egui::Response, column: &BoardColumn, actions: &mut Vec<BoardAction>) {
+    egui::Popup::context_menu(handle)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.label(
+                RichText::new("a card moved in from another column goes")
+                    .size(SMALL_SIZE - 1.0),
+            );
+            // Written out rather than derived: these are the three answers, and each says
+            // plainly what the column will do with what is dropped on it.
+            for (label, hover, arrivals) in [
+                (
+                    "where it is dropped",
+                    "the drop decides, the way an ordinary column behaves",
+                    None,
+                ),
+                (
+                    "to the top",
+                    "what arrived last is what the column shows first - what DONE wants",
+                    Some(ColumnEnd::Top),
+                ),
+                (
+                    "to the bottom",
+                    "the column is a queue, and an arrival joins the back of it",
+                    Some(ColumnEnd::Bottom),
+                ),
+            ] {
+                let chosen = column.arrivals == arrivals;
+                if widgets::clickable(ui.selectable_label(chosen, label))
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    actions.push(BoardAction::SetColumnArrivals(column.id.clone(), arrivals));
+                    ui.close();
+                }
+            }
+        });
 }
 
 /// The heading being renamed. Enter and clicking away keep it, Escape throws it away - the

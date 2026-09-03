@@ -954,24 +954,41 @@ fn draw_staged_files(
         .id_salt(("commit-staged", session_id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for file in &state.staged_files {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(change_mark(file.change_kind))
-                            .color(change_ink(file.change_kind, palette))
-                            .monospace()
-                            .size(SMALL_SIZE),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&file.file_path)
-                                .color(palette.ink)
-                                .size(SMALL_SIZE),
-                        )
-                        .truncate(),
+            for (directory, files) in widgets::by_directory(state.staged_files.iter(), |file| file.file_path.as_str()) {
+                // The directory once, over the names in it: a commit is usually a handful of
+                // files in two or three places, and repeating the path on every row buries the
+                // names under it.
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&directory)
+                            .color(palette.muted)
+                            .size(SMALL_SIZE - 1.0),
                     )
-                    .on_hover_text(&file.file_path);
-                });
+                    .truncate(),
+                )
+                .on_hover_text(&directory);
+
+                for file in files {
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(change_mark(file.change_kind))
+                                .color(change_ink(file.change_kind, palette))
+                                .monospace()
+                                .size(SMALL_SIZE),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(widgets::file_name_of(&file.file_path))
+                                    .color(palette.ink)
+                                    .size(SMALL_SIZE),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&file.file_path);
+                    });
+                }
             }
         });
 }

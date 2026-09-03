@@ -14,7 +14,8 @@ use crate::{
         AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView,
         TaskView, agent_launch,
         store::{
-            self, BoardColumn, BoardConfig, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
+            self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource,
+            TaskResourceKind,
         },
     },
     terminal::{TerminalProgram, TerminalSpec},
@@ -79,9 +80,13 @@ pub(crate) fn place_tasks(
     }
 
     let mut moving: Vec<(String, TaskMetadata)> = Vec::new();
+    // Whether any of them is arriving from another column, which is what the column's own
+    // `arrivals` end is about: cards shuffled about within a column go where they were put.
+    let mut arriving = false;
     for task_id in task_ids {
         let mut metadata = store::read_task(&repo_path, task_id)?;
         release_a_finished_task(state, &board, task_id, &mut metadata, &status);
+        arriving |= metadata.status != status;
         metadata.status = status.clone();
         moving.push((task_id.clone(), metadata));
     }
@@ -99,7 +104,13 @@ pub(crate) fn place_tasks(
         })
         .collect();
     column.sort_by_key(|(_, metadata)| place_of(metadata));
-    let at = position.min(column.len());
+    // A column that says which end arrivals go to takes them there instead of where the drop
+    // landed - see [`store::BoardColumn::arrivals`].
+    let at = match board.arrivals_end(&status).filter(|_| arriving) {
+        Some(ColumnEnd::Top) => 0,
+        Some(ColumnEnd::Bottom) => column.len(),
+        None => position.min(column.len()),
+    };
     for (offset, moved) in moving.into_iter().enumerate() {
         column.insert(at + offset, moved);
     }
@@ -168,6 +179,7 @@ pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Res
         id,
         label: label.to_string(),
         default_agent: None,
+        arrivals: None,
     };
     board.columns.push(column.clone());
     store::write_board(&repo_path, &board)?;
@@ -196,6 +208,27 @@ pub(crate) fn rename_column(
         bail!("{column_id} is not a column of this board");
     };
     column.label = label.to_string();
+    store::write_board(&repo_path, &board)
+}
+
+/// Say which end of a column cards moved in from elsewhere go to, or let the drop decide
+/// again - see [`store::BoardColumn::arrivals`].
+pub(crate) fn set_column_arrivals(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    arrivals: Option<ColumnEnd>,
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut board = store::read_board(&repo_path);
+    let Some(column) = board
+        .columns
+        .iter_mut()
+        .find(|column| column.id == *column_id)
+    else {
+        bail!("{column_id} is not a column of this board");
+    };
+    column.arrivals = arrivals;
     store::write_board(&repo_path, &board)
 }
 
@@ -259,20 +292,6 @@ pub(crate) fn place_column(
     store::write_board(&repo_path, &board)
 }
 
-/// A run's name as its own card writes it: the card is already the task, so the task's title
-/// comes off the front - `claude - 1` on the card for the `write the parser claude - 1` tab.
-/// A name that does not start with the title is written as it is, which is what a name
-/// someone retyped, and one written down before runs carried the title, look like.
-fn label_on_the_card(title: &str, name: String) -> String {
-    let Some(front) = crate::terminal::title_in_name(title) else {
-        return name;
-    };
-    match name.strip_prefix(&format!("{front} ")) {
-        Some(rest) => rest.to_string(),
-        None => name,
-    }
-}
-
 fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
     // Agent runs and linked files are the task's record and outlive the process; its shells
     // are only ever the ones open right now, so the two are listed from different places and
@@ -301,13 +320,13 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: resource.id.clone(),
                 kind: resource.kind,
                 agent: resource.agent,
-                // What the run's shell is called - `claude - 2`, or whatever it was renamed
-                // to - which the run keeps once the shell is gone. The agent alone for a run
-                // written down before runs had names.
+                // What the run's shell is called - `write the parser claude - 2`, or whatever
+                // it was renamed to - which the run keeps once the shell is gone. The name in
+                // full, so the row on the card reads as the tab the run is open in. The agent
+                // alone for a run written down before runs had names.
                 label: resource
                     .name
                     .clone()
-                    .map(|name| label_on_the_card(&metadata.title, name))
                     .unwrap_or_else(|| resource.agent.label().to_lowercase()),
                 file_path: None,
                 running: resource
@@ -330,10 +349,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 id: shell.terminal_id.clone(),
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
-                label: shell
-                    .name
-                    .map(|name| label_on_the_card(&metadata.title, name))
-                    .unwrap_or_else(|| "shell".to_string()),
+                label: shell.name.unwrap_or_else(|| "shell".to_string()),
                 file_path: None,
                 running: true,
                 terminal_id: Some(shell.terminal_id),

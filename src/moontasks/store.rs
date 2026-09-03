@@ -61,6 +61,12 @@ pub(crate) struct BoardColumn {
     /// once. Absent until a task has been created in the column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) default_agent: Option<AgentKind>,
+    /// Which end of this column a card moved in from another one goes to, whatever place it
+    /// was dropped at. Absent is where it was dropped, which is how a column of work in hand
+    /// wants to behave; a column that is a record rather than a queue - DONE - is set to the
+    /// top, so the most recently finished card is the one being looked at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) arrivals: Option<ColumnEnd>,
 }
 
 /// Which end of a column a new card joins.
@@ -76,11 +82,14 @@ pub(crate) enum ColumnEnd {
     Bottom,
 }
 
-/// The columns a board starts with, left to right.
-pub(crate) const DEFAULT_COLUMNS: &[(&str, &str)] = &[
-    ("todo", "TODO"),
-    ("in_progress", "IN PROGRESS"),
-    ("done", "DONE"),
+/// The columns a board starts with, left to right, and which end of each one a card moved in
+/// from another column goes to.
+pub(crate) const DEFAULT_COLUMNS: &[(&str, &str, Option<ColumnEnd>)] = &[
+    ("todo", "TODO", None),
+    ("in_progress", "IN PROGRESS", None),
+    // What was finished last is what one wants to see, so DONE reads newest first however far
+    // down the column a card was dropped.
+    ("done", "DONE", Some(ColumnEnd::Top)),
 ];
 
 /// The one column the board itself acts on, by the id it has on a board that started from the
@@ -103,10 +112,11 @@ impl Default for BoardConfig {
         Self {
             columns: DEFAULT_COLUMNS
                 .iter()
-                .map(|(id, label)| BoardColumn {
+                .map(|(id, label, arrivals)| BoardColumn {
                     id: ColumnId::new(*id),
                     label: (*label).to_string(),
                     default_agent: None,
+                    arrivals: *arrivals,
                 })
                 .collect(),
         }
@@ -120,6 +130,14 @@ impl BoardConfig {
 
     pub(crate) fn has(&self, id: &ColumnId) -> bool {
         self.position_of(id).is_some()
+    }
+
+    /// Which end of a column a card arriving from another column goes to, if that column says.
+    pub(crate) fn arrivals_end(&self, id: &ColumnId) -> Option<ColumnEnd> {
+        self.columns
+            .iter()
+            .find(|column| column.id == *id)?
+            .arrivals
     }
 
     /// The column one of the board's own rules points at, if it is still on the board.
@@ -763,11 +781,13 @@ mod tests {
                     id: ColumnId::new("todo"),
                     label: "BACKLOG".to_string(),
                     default_agent: Some(AgentKind::Claude),
+                    arrivals: None,
                 },
                 BoardColumn {
                     id: ColumnId::new("shipped"),
                     label: "SHIPPED".to_string(),
                     default_agent: None,
+                    arrivals: Some(ColumnEnd::Top),
                 },
             ],
         };

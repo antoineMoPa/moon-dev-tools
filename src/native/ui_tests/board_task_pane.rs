@@ -159,10 +159,12 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
         "the pane should have read the board again and stopped saying nothing is running"
     );
     // And what it says instead is the card's own row for that shell, on the pane: the way back
-    // to the terminal, and the marks that stop it and take it off the task.
+    // to the terminal, and the marks that stop it and take it off the task. Under the name the
+    // shell's own tab carries, task title and all, so the row and the tab read as the same
+    // thing.
     assert!(
         harness
-            .get_all_by_label("shell - 1")
+            .get_all_by_label("Write the parser shell - 1")
             .any(|node| node.rect().center().x > BOARD_WIDTH),
         "the pane should list the task's shell the way its card does"
     );
@@ -519,6 +521,85 @@ fn a_shell_started_from_a_card_joins_the_column_beside_the_board() {
         frames.load(Ordering::Relaxed),
         2,
         "and the workspace should not have been split again for it"
+    );
+}
+
+/// A task created from a column's `+` opens its own pane, with the keyboard in the title box:
+/// the composer takes a name to make the card with, and the rest of the naming happens there.
+#[test]
+fn a_new_task_opens_its_pane_with_the_keyboard_in_the_title() {
+    const BOARD_WIDTH: f32 = 640.0;
+
+    let fixture = seeded_fixture("new-task-pane");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let create = Arc::new(AtomicBool::new(false));
+    let create_in_ui = Arc::clone(&create);
+    let pane_open = Arc::new(AtomicBool::new(false));
+    let pane_open_in_ui = Arc::clone(&pane_open);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            // The box is filled in and answered for rather than typed into and clicked: what
+            // this is about is what happens once the card exists.
+            if create_in_ui.swap(false, Ordering::Relaxed) {
+                app.model.board.new_title = "Write the parser".to_string();
+                crate::native::board::actions::apply(
+                    &mut app,
+                    crate::native::board::BoardAction::Create(
+                        crate::moontasks::ColumnId::new("todo"),
+                        crate::moontasks::ColumnEnd::Top,
+                        crate::api::AgentKind::None,
+                    ),
+                );
+            }
+            app.draw(ui);
+            pane_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(|pane| pane.kind() == crate::native::panes::PaneKind::Start)
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+            loaded_in_ui.store(app.model.board.loaded, Ordering::Relaxed);
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the board never read .moontasks"
+    );
+    create.store(true, Ordering::Relaxed);
+    assert!(
+        settle(&mut harness, || pane_open.load(Ordering::Relaxed)),
+        "creating a task should have opened its pane"
+    );
+    harness.run_steps(2);
+
+    // The title box is the upper of the pane's two multiline boxes, and it is the one the
+    // keyboard is in - so what is typed next goes into the name rather than nowhere.
+    use egui_kittest::kittest::Queryable as _;
+    let mut boxes: Vec<_> = harness
+        .get_all_by_role(egui::accesskit::Role::MultilineTextInput)
+        .map(|node| (node.rect(), node.is_focused()))
+        .filter(|(rect, _)| rect.center().x > BOARD_WIDTH)
+        .collect();
+    boxes.sort_by(|one, other| one.0.center().y.total_cmp(&other.0.center().y));
+    assert!(
+        boxes
+            .first()
+            .expect("expected the new task's pane to draw a title box")
+            .1,
+        "the title box should have the keyboard"
     );
 }
 

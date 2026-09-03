@@ -409,6 +409,18 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn set_column_arrivals(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        arrivals: Option<crate::moontasks::ColumnEnd>,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/{column_id}/arrivals"),
+            &crate::moontasks::ColumnArrivalsRequest { arrivals },
+        )
+    }
+
     fn project_commands(&self, session_id: &str) -> Result<ProjectCommands> {
         self.get(&format!("/api/session/{session_id}/project"))
     }

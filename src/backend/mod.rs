@@ -140,6 +140,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>>;
     fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn>;
     fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()>;
+    /// Which end of a column a card moved in from another column goes to. `None` puts it where
+    /// it was dropped, which is what a column says by saying nothing.
+    fn set_column_arrivals(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        arrivals: Option<crate::moontasks::ColumnEnd>,
+    ) -> Result<()>;
     /// Take an empty column off the board. One still holding cards is refused rather than
     /// taking them with it.
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()>;

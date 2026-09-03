@@ -219,6 +219,11 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     // The columns are as tall as the pane, and the board scrolls sideways to reach the ones
     // that do not fit - measured before the scroll area, which has no height of its own.
     let height = ui.available_height();
+    // One wheel or trackpad gesture moves the board sideways or a column up and down, never
+    // both at once: a nested pair of scroll areas would otherwise take a component each and
+    // send the board off diagonally. Held for the length of the gesture, so a flick that
+    // starts across does not swap axis halfway through as the fingers drift.
+    let held_back = hold_the_off_axis(app, ui);
     let columns = ScrollArea::horizontal()
         .id_salt("moontasks-columns")
         // Dragging is how a column is moved, so it must not also mean "scroll the board".
@@ -231,6 +236,7 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
             ui.min_rect()
         })
         .inner;
+    held_back.give_it_back(ui);
 
     // Beside or below the columns, where nothing of the board's is drawn. A press in a column
     // that no card wanted has already been claimed by the column itself; this is the rest of
@@ -421,6 +427,56 @@ fn draw_composer(
     ui.add_space(5.0);
 }
 
+/// The part of this frame's scroll the board is not letting through, taken out of the input
+/// while the columns draw and put back afterwards.
+///
+/// The board is a horizontal scroll area with a vertical one in every column, and egui hands
+/// the same delta to both, so an unlocked gesture scrolls the board and a column at once. The
+/// axis is settled on the first frame of a gesture and kept until the scrolling stops.
+struct HeldBack(egui::Vec2);
+
+impl HeldBack {
+    /// Put the held part back, so panes drawn after the board see the gesture as it came in.
+    fn give_it_back(self, ui: &Ui) {
+        ui.input_mut(|input| input.smooth_scroll_delta += self.0);
+    }
+}
+
+/// Which way a gesture is moving the board: the axis it was already settled on, or - on the
+/// first frame of one - whichever of the two the delta is mostly along. Nothing while nothing
+/// is scrolling, which is what ends a gesture and lets the next one pick for itself.
+///
+/// Sticky on purpose: fingers drift on a trackpad, and an axis worked out afresh every frame
+/// would swap halfway through a flick.
+fn scroll_axis(settled: Option<Axis>, along: egui::Vec2) -> Option<Axis> {
+    if along == egui::Vec2::ZERO {
+        return None;
+    }
+    Some(settled.unwrap_or(if along.x.abs() > along.y.abs() {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    }))
+}
+
+fn hold_the_off_axis(app: &mut App, ui: &Ui) -> HeldBack {
+    let along = ui.input(|input| input.smooth_scroll_delta);
+    let Some(axis) = scroll_axis(app.model.board.scroll_axis, along) else {
+        // The gesture is over, and the next one picks its own axis.
+        app.model.board.scroll_axis = None;
+        return HeldBack(egui::Vec2::ZERO);
+    };
+    app.model.board.scroll_axis = Some(axis);
+
+    // What the columns are allowed to see is the chosen axis alone; the rest is held here.
+    let held = HeldBack(match axis {
+        Axis::Horizontal => vec2(0.0, along.y),
+        Axis::Vertical => vec2(along.x, 0.0),
+    });
+    ui.input_mut(|input| input.smooth_scroll_delta -= held.0);
+    held
+}
+
 /// How long a card takes to walk to a new place in its column. Long enough to be followed by
 /// eye, short enough that the board is never waiting on it.
 const CARD_SLIDE: f32 = 0.12;
@@ -430,7 +486,7 @@ const CARD_SLIDE: f32 = 0.12;
 /// Cards stack down a column and columns run across the board, and both make room for one
 /// being dragged in exactly the same way - so the animation is written once and told which
 /// axis it is on.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Axis {
     Vertical,
     Horizontal,
@@ -613,6 +669,21 @@ fn draw_column(
                                 palette,
                                 actions,
                             );
+                        } else {
+                            // Over the first card, where a card added here will appear - the
+                            // twin of the `+` under the last one, drawn the same way so the
+                            // two ends of the column read as the same offer.
+                            ui.vertical_centered(|ui| {
+                                let plus =
+                                    plus_button(ui, palette).on_hover_text("New task at the top");
+                                if controls.pressed(&plus) {
+                                    actions.push(BoardAction::OpenComposer(
+                                        status.clone(),
+                                        ColumnEnd::Top,
+                                    ));
+                                }
+                            });
+                            ui.add_space(CARD_SPACING);
                         }
                         for task in &tasks {
                             let card = draw_card(app, ui, task, origin, palette, actions);
@@ -644,8 +715,8 @@ fn draw_column(
                             );
                         } else if !tasks.is_empty() {
                             // Under the last card, where a card added here will appear. Only
-                            // once there are cards: an empty column's own `+` is already the
-                            // one under its last card.
+                            // once there are cards: in an empty column the `+` above would be
+                            // the same offer twice over.
                             ui.vertical_centered(|ui| {
                                 let plus = plus_button(ui, palette)
                                     .on_hover_text("New task at the bottom");
@@ -710,6 +781,14 @@ fn draw_column(
             let (Some(at), Some(carrying)) = (landing, carrying) else {
                 return;
             };
+            // A column that takes arrivals to one end takes them there while they are still in
+            // the air: the gap opens at that end however far down the column they are held, so
+            // what is shown is where they are going rather than somewhere they will not stay.
+            let at = match arrivals_end(app, &status, &carrying.task_ids) {
+                Some(ColumnEnd::Top) => 0,
+                Some(ColumnEnd::Bottom) => cards.len(),
+                None => at,
+            };
             // Read by the next frame, which draws the cards in this slot rather than in the
             // ones they were picked up from.
             app.model.board.landing = Some(TaskLanding {
@@ -732,6 +811,11 @@ fn draw_column(
                 &carrying.task_ids,
                 at,
             );
+            // A column may say which end cards arriving from elsewhere go to, and it is the
+            // server that will put them there - so the board works out the same place now.
+            // Without this the drop would be drawn where it landed and held there for ever,
+            // because the answer it is waiting to agree with never comes.
+            let into = arrivals_place(app, &status, &carrying.task_ids).unwrap_or(into);
             // The board is redrawn from the server's answer, which is a worker thread and a
             // poll away: the move is made here as well, and held over every answer until one of
             // them agrees, so the cards stay where they were put rather than springing back and
@@ -752,6 +836,44 @@ fn draw_column(
     )
     .response
     .rect
+}
+
+/// Which end a column insists cards go to, if it insists at all and if these cards are
+/// arriving from another column rather than being shuffled about within this one.
+///
+/// See [`crate::moontasks::store::BoardColumn::arrivals`]. Asked both while a drag is over the
+/// column, so the gap opens at the end the cards will actually go to, and when they are let go
+/// of, so the board draws the drop where the server's answer will put it.
+fn arrivals_end(app: &App, status: &ColumnId, task_ids: &[String]) -> Option<ColumnEnd> {
+    let arriving = app
+        .model
+        .board
+        .tasks
+        .iter()
+        .any(|task| task.status != *status && task_ids.contains(&task.id));
+    if !arriving {
+        return None;
+    }
+    app.model
+        .board
+        .columns
+        .iter()
+        .find(|column| column.id == *status)?
+        .arrivals
+}
+
+/// Where in the column itself those cards will land, counted the way the server counts it.
+fn arrivals_place(app: &App, status: &ColumnId, task_ids: &[String]) -> Option<usize> {
+    Some(match arrivals_end(app, status, task_ids)? {
+        ColumnEnd::Top => 0,
+        ColumnEnd::Bottom => app
+            .model
+            .board
+            .tasks
+            .iter()
+            .filter(|task| task.status == *status && !task_ids.contains(&task.id))
+            .count(),
+    })
 }
 
 /// Whether the pointer is inside a column with nothing but the dragged card's own ghost over
@@ -856,4 +978,38 @@ pub(crate) fn is_open(app: &App) -> bool {
         .layout
         .find_pane(|pane| matches!(pane.kind(), PaneKind::Tasks | PaneKind::Start))
         .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Axis, scroll_axis};
+    use egui::vec2;
+
+    /// A gesture picks its axis once and keeps it, so a flick that starts across the board and
+    /// drifts downwards goes on moving the board across rather than turning into a column
+    /// scroll partway through.
+    #[test]
+    fn a_scrolling_gesture_keeps_the_axis_it_started_on() {
+        assert_eq!(scroll_axis(None, vec2(0.0, 0.0)), None, "nothing is scrolling");
+        assert_eq!(
+            scroll_axis(None, vec2(-30.0, 4.0)),
+            Some(Axis::Horizontal),
+            "mostly sideways is the board moving across"
+        );
+        assert_eq!(
+            scroll_axis(None, vec2(4.0, -30.0)),
+            Some(Axis::Vertical),
+            "mostly up and down is a column"
+        );
+        assert_eq!(
+            scroll_axis(Some(Axis::Horizontal), vec2(2.0, -30.0)),
+            Some(Axis::Horizontal),
+            "the drift of a gesture already under way does not turn it"
+        );
+        assert_eq!(
+            scroll_axis(Some(Axis::Horizontal), vec2(0.0, 0.0)),
+            None,
+            "the gesture ends when the scrolling stops, and the next one picks again"
+        );
+    }
 }

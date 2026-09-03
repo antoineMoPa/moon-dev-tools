@@ -157,6 +157,13 @@ pub(crate) struct ColumnLabelRequest {
     pub(crate) label: String,
 }
 
+/// Which end of a column cards moved into it go to, or nothing for wherever they were dropped.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ColumnArrivalsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) arrivals: Option<ColumnEnd>,
+}
+
 /// Where a dragged column was let go of: how many of the other columns are to its left.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ColumnPlacementRequest {

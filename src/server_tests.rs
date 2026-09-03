@@ -472,6 +472,100 @@ fn cards_are_dropped_where_they_are_let_go_of() {
     assert_eq!(column("in_progress"), Vec::<String>::new());
 }
 
+/// A column can say which end cards moved into it go to, whatever place the drop named. DONE
+/// says the top out of the box, so what was finished last is what the column shows first.
+#[test]
+fn a_column_can_say_which_end_arrivals_go_to() {
+    let served = serve("column-arrivals");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let create = |title: &str| -> String {
+        let created: serde_json::Value = served
+            .client
+            .post(&tasks_url)
+            .json(&serde_json::json!({ "title": title, "agent": "none", "status": "todo", "joins": "top" }))
+            .send()
+            .expect("failed to create a task")
+            .error_for_status()
+            .expect("the server refused to create a task")
+            .json()
+            .expect("failed to decode the task");
+        created["id"]
+            .as_str()
+            .expect("expected a task id")
+            .to_string()
+    };
+    let column = |status: &str| -> Vec<String> {
+        let board: serde_json::Value = served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board");
+        board
+            .as_array()
+            .expect("expected an array")
+            .iter()
+            .filter(|task| task["status"] == status)
+            .map(|task| {
+                task["title"]
+                    .as_str()
+                    .expect("expected a title")
+                    .to_string()
+            })
+            .collect()
+    };
+    let place = |task_id: &str, status: &str, position: usize| {
+        served
+            .client
+            .post(format!("{tasks_url}/placement"))
+            .json(&serde_json::json!({ "task_ids": [task_id], "status": status, "position": position }))
+            .send()
+            .expect("failed to move the task")
+            .error_for_status()
+            .expect("the server refused to move the task");
+    };
+    let arrivals = |column_id: &str, end: Option<&str>| {
+        served
+            .client
+            .post(format!(
+                "{}/api/session/{session_id}/columns/{column_id}/arrivals",
+                served.base_url
+            ))
+            .json(&serde_json::json!({ "arrivals": end }))
+            .send()
+            .expect("failed to set the column's arrivals")
+            .error_for_status()
+            .expect("the server refused to set the column's arrivals");
+    };
+
+    let first = create("first");
+    let second = create("second");
+
+    // Dropped at the bottom of DONE, and drawn at the top of it anyway.
+    place(&first, "done", 9);
+    place(&second, "done", 9);
+    assert_eq!(column("done"), ["second", "first"]);
+
+    // Within the column the drop still decides: this is about arriving, not about ordering.
+    place(&second, "done", 1);
+    assert_eq!(column("done"), ["first", "second"]);
+
+    // And a column told to let the drop decide behaves like every other column again.
+    arrivals("done", None);
+    place(&first, "todo", 0);
+    place(&first, "done", 9);
+    assert_eq!(column("done"), ["second", "first"]);
+
+    // The other way round for a column read as a queue: an arrival joins the back of it.
+    arrivals("todo", Some("bottom"));
+    let _third = create("third");
+    place(&first, "todo", 0);
+    assert_eq!(column("todo"), ["third", "first"]);
+}
+
 /// The columns are the board's own: they can be added, renamed, reordered and removed, and a
 /// board nobody has touched answers with its three defaults.
 #[test]

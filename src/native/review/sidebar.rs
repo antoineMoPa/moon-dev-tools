@@ -21,6 +21,10 @@ use crate::{
 /// One line, the same for every file in the list.
 const ROW_HEIGHT: f32 = 20.0;
 
+/// How much of a directory's path the heading over its files shows before the middle of it is
+/// cut out. The sidebar is narrow, and a deep path would otherwise wrap onto a second line.
+const DIRECTORY_CHARS: usize = 34;
+
 /// The staging dot of a file row, which is also the control that stages it.
 pub(crate) fn stage_dot_id(file_path: &str) -> egui::Id {
     egui::Id::new(("moonreview-stage-dot", file_path))
@@ -98,8 +102,26 @@ fn draw_files_section(
         return;
     }
 
-    for file in files {
-        draw_file_row(app, ui, session_id, file, read_only, is_commit_review, palette);
+    // The directory once, over the names in it: a review is usually a handful of files in two
+    // or three places, and the same prefix on every row buries the names under it. The rows
+    // themselves already read as names alone.
+    for (directory, files) in widgets::by_directory(files, |file| file.file_path.as_str()) {
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(widgets::elide_path(&directory, DIRECTORY_CHARS))
+                        .size(SMALL_SIZE - 1.0)
+                        .color(palette.muted),
+                )
+                .selectable(false),
+            )
+            .on_hover_text(&directory);
+        });
+        for file in files {
+            draw_file_row(app, ui, session_id, file, read_only, is_commit_review, palette);
+        }
     }
 }
 

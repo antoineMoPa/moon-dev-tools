@@ -130,6 +130,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(rename_column),
         )
         .route(
+            "/api/session/{session_id}/columns/{column_id}/arrivals",
+            post(set_column_arrivals),
+        )
+        .route(
             "/api/session/{session_id}/columns/{column_id}/placement",
             post(place_column),
         )
@@ -670,6 +674,21 @@ async fn rename_column(
         &session_id,
         &ColumnId::new(column_id),
         &request.label,
+    )?;
+    Ok("ok")
+}
+
+async fn set_column_arrivals(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::ColumnArrivalsRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_column_arrivals(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        request.arrivals,
     )?;
     Ok("ok")
 }

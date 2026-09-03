@@ -271,7 +271,7 @@ fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &s
 
     ui.horizontal(|ui| {
         let arrow = if collapsed { "\u{23F5}" } else { "\u{23F7}" };
-        if widgets::quiet_button_colored(ui, &format!("{arrow} {file_path}"), palette.ink).clicked() {
+        if widgets::quiet_button_colored(ui, arrow, palette.ink).clicked() {
             let review = app.model.review(session_id);
             if collapsed {
                 review.collapsed_files.remove(file_path);
@@ -279,6 +279,10 @@ fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &s
                 review.collapsed_files.insert(file_path.to_string());
             }
         }
+        // The path is a label rather than part of the button, so it can be selected and
+        // copied - which is most of what one wants a file's name for while reading a diff.
+        // The arrow beside it is what folds the file away.
+        ui.add(egui::Label::new(RichText::new(file_path).color(palette.ink)).selectable(true));
     });
 }
 

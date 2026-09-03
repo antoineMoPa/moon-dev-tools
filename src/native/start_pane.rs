@@ -16,7 +16,7 @@ use crate::{
     moontasks::TaskView,
     native::{
         app::App,
-        board::{self, actions::BoardAction},
+        board::{self, actions::{BoardAction, TaskPaneBox}},
         model::TaskEditor,
         theme::{Palette, SMALL_SIZE},
     },
@@ -127,12 +127,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str, title: &str) {
 fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
     let now = ui.input(|input| input.time);
     // A pane opened by a click on the card's notes opens with the keyboard in that box, which
-    // is what the click was reaching for. Taken here rather than left set, so it is the one
-    // frame the pane opened on and not every frame it draws.
-    let notes_take_keyboard = app.model.board.notes_focus.as_deref() == Some(task.id.as_str());
-    if notes_take_keyboard {
-        app.model.board.notes_focus = None;
+    // is what the click was reaching for; one opened for a task just created opens in the
+    // title, which is what is still being written. Taken here rather than left set, so it is
+    // the one frame the pane opened on and not every frame it draws.
+    let takes_keyboard = app
+        .model
+        .board
+        .task_box_focus
+        .as_ref()
+        .filter(|(task_id, _)| task_id == &task.id)
+        .map(|(_, which)| *which);
+    if takes_keyboard.is_some() {
+        app.model.board.task_box_focus = None;
     }
+    let notes_take_keyboard = takes_keyboard == Some(TaskPaneBox::Notes);
     let editor = app
         .model
         .board
@@ -166,6 +174,9 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
             .desired_rows(1)
             .margin(egui::Margin::symmetric(6, 4)),
     );
+    if takes_keyboard == Some(TaskPaneBox::Title) {
+        title.request_focus();
+    }
     // Escape throws the typing away rather than leaving a title on that is not the task's;
     // egui takes the keyboard off the box with the same press, which is what `lost_focus` is
     // below, so the key is taken here before that is read.

@@ -240,6 +240,43 @@ pub(crate) fn elide_end(text: &str, max_chars: usize) -> String {
     format!("{kept}…")
 }
 
+/// The name at the end of a path - `main.rs` of `src/main.rs`.
+pub(crate) fn file_name_of(file_path: &str) -> &str {
+    match file_path.rsplit_once('/') {
+        Some((_, name)) => name,
+        None => file_path,
+    }
+}
+
+/// The directory a path is in, and `.` for a file at the top of the repo - so every file has a
+/// heading over it rather than some of them sitting under a blank one.
+pub(crate) fn directory_of(file_path: &str) -> &str {
+    match file_path.rsplit_once('/') {
+        Some((directory, _)) => directory,
+        None => ".",
+    }
+}
+
+/// Rows gathered under the directory each one is in, in the order the directories first appear
+/// - which is the order the rows were already in, so a list keeps the shape it had.
+///
+/// A list of paths is easier to read as a few directories with names under them than as the
+/// same prefix typed out on every line.
+pub(crate) fn by_directory<T>(
+    rows: impl IntoIterator<Item = T>,
+    path_of: impl Fn(&T) -> &str,
+) -> Vec<(String, Vec<T>)> {
+    let mut grouped: Vec<(String, Vec<T>)> = Vec::new();
+    for row in rows {
+        let directory = directory_of(path_of(&row)).to_string();
+        match grouped.iter_mut().find(|(under, _)| *under == directory) {
+            Some((_, under)) => under.push(row),
+            None => grouped.push((directory, vec![row])),
+        }
+    }
+    grouped
+}
+
 /// `1,234` - thousands separated, so large diff counts stay readable.
 pub(crate) fn grouped(value: usize) -> String {
     let digits = value.to_string();
@@ -269,6 +306,23 @@ mod tests {
         assert!(elided.chars().count() <= 25, "got {elided}");
         assert!(elided.ends_with("Thing.tsx"), "got {elided}");
         assert!(elided.starts_with("packa"), "got {elided}");
+    }
+
+    #[test]
+    fn files_are_gathered_under_the_directory_they_are_in() {
+        let paths = ["src/native/board.rs", "README.md", "src/native/cards.rs"];
+
+        assert_eq!(
+            by_directory(paths, |path| *path),
+            [
+                (
+                    "src/native".to_string(),
+                    vec!["src/native/board.rs", "src/native/cards.rs"]
+                ),
+                (".".to_string(), vec!["README.md"]),
+            ],
+            "the directories come in the order they first appear, and the repo root is `.`"
+        );
     }
 
     /// A branch is recognised by how it starts, so that is the end that is kept - unlike a path,

@@ -5,7 +5,7 @@ use crate::{
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest, StartResourceRequest},
     native::{
         app::App,
-        model::{OpenedFile, OpenedShell},
+        model::{OpenedFile, OpenedShell, OpenedTask},
         palette::CommandAction,
         panes::OpenPaneRequest,
     },
@@ -27,6 +27,8 @@ pub(crate) enum BoardAction {
     PlaceColumn(ColumnId, usize),
     AddColumn(String),
     RenameColumn(ColumnId, String),
+    /// Which end of a column a card moved into it goes to, or `None` for where it was dropped.
+    SetColumnArrivals(ColumnId, Option<ColumnEnd>),
     CancelColumnRename,
     DeleteColumn(ColumnId),
     CloseColumnComposer,
@@ -90,6 +92,9 @@ pub(crate) enum TaskPaneBox {
     Neither,
     /// The notes, for a click on the card's notes - which is someone about to write them.
     Notes,
+    /// The title, for a task just created: the composer takes a name off the person to make
+    /// the card, and the rest of the naming happens here.
+    Title,
 }
 
 pub(crate) fn apply(app: &mut App, action: BoardAction) {
@@ -125,9 +130,24 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             // And the filter goes with it, so the new card is on the board rather than behind
             // a query that was asked before it existed and says nothing about it.
             app.model.board.filter.clear();
-            act(app, "could not create the task", move |backend| {
-                backend.create_task(&session_id, &request).map(|_| ())
-            });
+            app.tasks.spawn(
+                move |backend| backend.create_task(&session_id, &request),
+                |model, result| {
+                    model.board.refresh_requested = true;
+                    match result {
+                        // A title is rarely the whole of what is wanted, so the new task's own
+                        // page opens with it - the notes and what it can start, there to be
+                        // written while the thought is still in hand.
+                        Ok(task) => {
+                            model.board.opened_task = Some(OpenedTask {
+                                task_id: task.id,
+                                title: task.title,
+                            })
+                        }
+                        Err(error) => model.error(format!("could not create the task: {error}")),
+                    }
+                },
+            );
         }
         BoardAction::Place(task_ids, status, position) => {
             app.tasks.spawn(
@@ -303,6 +323,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 backend.rename_column(&session_id, &column_id, &label)
             });
         }
+        BoardAction::SetColumnArrivals(column_id, arrivals) => {
+            act(app, "could not change the column", move |backend| {
+                backend.set_column_arrivals(&session_id, &column_id, arrivals)
+            });
+        }
         BoardAction::CancelColumnRename => app.model.board.renaming_column = None,
         BoardAction::DeleteColumn(column_id) => {
             app.model.board.pending_column_delete = None;
@@ -351,10 +376,8 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             // this is the reading. It is also what keeps the page and the mark together, so
             // letting the card go puts the page away - see `board::close_pages_of_unmarked`.
             super::selection::mark_only(&mut app.model.board, task_id.clone());
-            app.model.board.notes_focus = match opens_on {
-                TaskPaneBox::Notes => Some(task_id.clone()),
-                TaskPaneBox::Neither => None,
-            };
+            app.model.board.task_box_focus = (opens_on != TaskPaneBox::Neither)
+                .then(|| (task_id.clone(), opens_on));
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TaskStart {
                 task_id,
                 title,
