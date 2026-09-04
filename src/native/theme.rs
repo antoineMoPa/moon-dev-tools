@@ -2,7 +2,7 @@
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
-use crate::native::workspace_color::WorkspaceColor;
+use crate::native::{fonts, workspace_color::WorkspaceColor};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeMode {
@@ -283,7 +283,9 @@ impl Palette {
     /// here, so all it takes from the palette is which way round they run.
     pub(crate) fn terminal_style(&self) -> egui_tty::TerminalStyle {
         egui_tty::TerminalStyle {
-            font: FontId::monospace(CODE_SIZE),
+            font: code_font(CodeFace::Regular),
+            bold_font: Some(code_font(CodeFace::Bold)),
+            italic_font: Some(code_font(CodeFace::Italic)),
             scheme: match self.mode {
                 ThemeMode::Light => egui_tty::ColorScheme::Light,
                 ThemeMode::Dark => egui_tty::ColorScheme::Dark,
@@ -301,6 +303,27 @@ impl Palette {
 pub(crate) const CODE_SIZE: f32 = 12.0;
 pub(crate) const UI_SIZE: f32 = 13.0;
 pub(crate) const SMALL_SIZE: f32 = 11.0;
+
+/// The faces code comes in. All three are Hack, and all three have the same advance, so a
+/// word in one sits in the same columns as it would in another - see `native::fonts`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CodeFace {
+    Regular,
+    Bold,
+    Italic,
+}
+
+/// The code font, in one of its faces, at [`CODE_SIZE`].
+pub(crate) fn code_font(face: CodeFace) -> FontId {
+    FontId::new(
+        CODE_SIZE,
+        match face {
+            CodeFace::Regular => FontFamily::Monospace,
+            CodeFace::Bold => fonts::bold(),
+            CodeFace::Italic => fonts::italic(),
+        },
+    )
+}
 
 pub(crate) fn tiny_style() -> TextStyle {
     TextStyle::Name("tiny".into())

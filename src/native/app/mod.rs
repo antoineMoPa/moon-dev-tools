@@ -137,7 +137,8 @@ pub(crate) struct App {
     /// Whether the context being drawn into has egui's image loaders. Installing them twice
     /// would stack a second copy of each, so this is set once and never cleared.
     loaders_installed: bool,
-    /// The same, for the system fonts a shell's output needs to draw its boxes and spinners.
+    /// The same, for the bold and italic faces code is set in and the system fonts a
+    /// shell's output needs to draw its boxes and spinners.
     fonts_installed: bool,
     /// Whether the workspace has ever held a pane. An empty one means the last tab was
     /// closed and the window is done; before the first review opens it means nothing yet.

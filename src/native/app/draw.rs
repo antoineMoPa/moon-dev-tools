@@ -249,6 +249,12 @@ impl App {
         if !self.fonts_installed {
             fonts::install(ctx);
             self.fonts_installed = true;
+            // The faces land at the start of the next pass, and anything set in one of the
+            // app's own - a shell's bold - would have nothing to be laid out in before then.
+            // So this pass is thrown away rather than drawn: egui runs another at once, on
+            // the same input, with the fonts in place.
+            ctx.request_discard("fonts installed");
+            return;
         }
         self.tasks.drain(&mut self.model);
         self.remember_opened_project();
