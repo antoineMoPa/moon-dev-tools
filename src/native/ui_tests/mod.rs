@@ -140,6 +140,15 @@ impl Fixture {
             .expect("failed to run git commit");
         assert!(status.success(), "failed to commit the fixture");
     }
+
+    /// Move the fixture onto a branch of that name, making it where it does not exist.
+    ///
+    /// `git init` takes the branch name from whatever the machine's `init.defaultBranch` says,
+    /// so a test that is about which branch the repo is on says which one itself.
+    pub(crate) fn checkout_branch(&self, branch: &str) {
+        run_git_no_output(&self.root, &["checkout", "-B", branch])
+            .expect("failed to check out the fixture branch");
+    }
 }
 
 impl Drop for Fixture {

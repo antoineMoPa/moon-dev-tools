@@ -95,6 +95,19 @@ pub(crate) const DEFAULT_COLUMNS: &[(&str, &str, Option<ColumnEnd>)] = &[
 /// this rule, and deleting it turns the rule off rather than picking a column nobody chose.
 pub(crate) const RELEASES_SHELLS_IN: &str = "done";
 
+/// The column a task stops asking for reviews in, by the same reckoning: a card let go of here
+/// is finished, and every repo its `request_for_review.txt` names reads as reviewed whether or
+/// not the lines were crossed off one at a time.
+///
+/// Its own rule rather than a second reading of [`RELEASES_SHELLS_IN`], though both point at the
+/// same column on a board that started from the defaults: they are two things the board does,
+/// and a board that keeps one of them and not the other is a board that deleted one column.
+///
+/// Nothing is written to the file for it. The lines are the agent's record of what the work
+/// touched, and a card dragged back out of this column is being worked on again - so it comes
+/// back asking for exactly what it was asking for before.
+pub(crate) const CLOSES_REVIEWS_IN: &str = "done";
+
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
 /// not here has nowhere to be drawn.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

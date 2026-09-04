@@ -362,12 +362,65 @@ impl App {
     ///
     /// Found by the repo rather than by the task: a pane is opened on a repo, and which task
     /// wrote the line that sent you there is not something it has to know.
+    ///
+    /// Several tasks can name the same repo, so the branch decides between them: the line asking
+    /// for the branch the pane is on is the one about this commit. When none of them names it -
+    /// which is the case the header's `asked for` pill is drawn for - the first line for the repo
+    /// answers, because the pill has something to say either way and there is nothing better to
+    /// say it about.
+    ///
+    /// A line on a task that has been finished is not answered with at all, not even for the
+    /// pill: the card being in that column is the person saying the work is behind them, and a
+    /// commit pane opened afterwards has nothing to hear from it.
     pub(super) fn requested_review_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
         let repo_path = &self.model.review_ref(session_id)?.payload.as_ref()?.repo_path;
+        let branch = self.branch_of_commit_pane(session_id);
+        let for_this_repo = || {
+            self.model
+                .review_requests
+                .iter()
+                .filter(|request| &request.repo_path == repo_path && !request.task_finished)
+        };
+        for_this_repo()
+            .find(|request| request.branch.is_some() && request.branch.as_deref() == branch)
+            .or_else(|| for_this_repo().next())
+    }
+
+    /// The line whose commit this pane is about to make, which is the one whose message goes in
+    /// the box.
+    ///
+    /// Narrower than [`Self::requested_review_of`], which answers for the header: a message is
+    /// put in someone's box, so the line has to be about this commit and not merely about this
+    /// repo.
+    ///
+    /// A line naming a branch the pane is not on is about work that lives somewhere else. Most
+    /// often it is work already committed and merged: the branch is checked out nowhere any
+    /// more, so the line resolves back onto the main checkout, where the next piece of work is
+    /// now being written - and the message for the finished branch would land on it. A line
+    /// crossed off by hand is finished with too, whatever branch it names.
+    fn requested_commit_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
+        let request = self.requested_review_of(session_id)?;
+        if request.done {
+            return None;
+        }
+        match &request.branch {
+            Some(branch) => (Some(branch.as_str()) == self.branch_of_commit_pane(session_id))
+                .then_some(request),
+            None => Some(request),
+        }
+    }
+
+    /// The branch the pane's repo is on, once the pane has read it. `None` while that read is
+    /// still going, and for a detached HEAD - neither of which is a branch a line can have asked
+    /// for, so both hold the message back rather than letting the wrong one through.
+    fn branch_of_commit_pane(&self, session_id: &str) -> Option<&str> {
         self.model
-            .review_requests
-            .iter()
-            .find(|request| &request.repo_path == repo_path)
+            .commit_panes
+            .get(session_id)?
+            .state
+            .as_ref()?
+            .branch_name
+            .as_deref()
     }
 
     /// Put the commit a board task wrote for this repo in the box.
@@ -377,11 +430,12 @@ impl App {
     /// repo, and is the message meant to be made. It is text like any other once it is there.
     ///
     /// Nothing to do with staging, unlike the message written from the diff - this one does not
-    /// come from the diff. It is in the box from the moment the pane opens, so what is about to
-    /// be committed is readable while the hunks are still being picked next door.
+    /// come from the diff. It is in the box from the moment the pane has read which branch it is
+    /// on, so what is about to be committed is readable while the hunks are still being picked
+    /// next door.
     fn fill_in_the_requested_commit(&mut self, session_id: &str) {
         let Some(written) = self
-            .requested_review_of(session_id)
+            .requested_commit_of(session_id)
             .and_then(|request| request.suggestion.clone())
         else {
             return;
@@ -909,7 +963,9 @@ fn draw_branch_line(
             );
         }
         // Only when the two differ: a pane sitting on the branch that was asked for has nothing
-        // to say about it, and a line saying so on every commit is a line nobody reads.
+        // to say about it, and a line saying so on every commit is a line nobody reads. When they
+        // do differ this is also what says why the box is empty - the message written for that
+        // branch is held back from a commit being made somewhere else.
         let elsewhere =
             asked_branch.filter(|asked| Some(*asked) != state.branch_name.as_deref());
         if let Some(asked) = elsewhere {
@@ -920,7 +976,8 @@ fn draw_branch_line(
                 palette.status_neutral_bg,
             )
             .on_hover_text(format!(
-                "the task asking for this review means the commit for {asked}"
+                "the task asking for this review means the commit for {asked}, \
+                 so the message it wrote is not put in the box here"
             ));
         }
     });

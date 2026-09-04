@@ -105,6 +105,84 @@ fn a_tasks_deploy_list_is_drawn_under_its_card() {
     );
 }
 
+/// A card in the column that finishes a task has nothing left pending on it.
+///
+/// The repo still has changes and no line was crossed off, so under any other column both rows
+/// would read as pending. Finishing the card is the person saying the work is behind them, and it
+/// finishes what the card was asking for all at once - without writing a word to the file, so a
+/// card dragged back out asks for it again.
+#[test]
+fn a_finished_cards_deploy_list_reads_as_reviewed() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("board-review-requests-finished");
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        &format!(
+            "{{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"{}\",\n  \
+             \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n",
+            crate::moontasks::store::CLOSES_REVIEWS_IN
+        ),
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        ". // chore: take the module forward\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let repo_name = fixture
+        .root
+        .file_name()
+        .expect("the fixture repo has a name")
+        .to_string_lossy()
+        .to_string();
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    // Waited for the same way the pending row is: the board and the requests read off its task
+    // folders are both worker threads, and the row is drawn once both have answered.
+    let reviewed = format!("{repo_name} reviewed");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && harness.query_by_label(reviewed.as_str()).is_none() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(
+        harness.query_by_label(reviewed.as_str()).is_some(),
+        "a finished card's row should read as reviewed"
+    );
+    assert!(
+        harness
+            .query_by_label(format!("pending {repo_name} review").as_str())
+            .is_none(),
+        "and not as pending, though the repo still has changes to commit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            fixture
+                .root
+                .join(".moontasks/deploy-the-thing-1111/request_for_review.txt"),
+        )
+        .expect("the file should still be there"),
+        ". // chore: take the module forward\n",
+        "nothing is written to the file, so moving the card back asks for it again"
+    );
+}
+
 /// A card's notes are its description: their first lines sit under the title, and a click
 /// opens the task's own pane with the keyboard already in its notes box - so the words go
 /// where the click was aimed without a file being opened beside the board. A task with none

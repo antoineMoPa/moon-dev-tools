@@ -52,7 +52,10 @@ Write the line when the work is there to be looked at, committed or not - the pe
 and makes the commit, using the message you wrote. The branch after `#` is the branch the commit
 belongs on: name the one you worked on, which you create if you are working on a branch at all.
 The review opens wherever that branch is checked out, so a worktree you made is where it goes,
-and nobody's checkout is moved to reach it.
+and nobody's checkout is moved to reach it. It is also how one task's commit is told from
+another's: the message you wrote is offered on that branch and nowhere else, so a line naming a
+branch that has been merged and left behind cannot hand its message to the next piece of work in
+the same repo.
 
 ```
 repos/retro_encabulator/#fix-the-races // fix(encabulator): put the bearing races back
@@ -67,7 +70,9 @@ as done on the board, so the list ticks itself off as the person works down it. 
 when it no longer needs saying.
 
 A line starting `x ` has been crossed off by the person - work that is committed and wants no
-more looking at. Leave those alone; they are their record, not yours.
+more looking at. Leave those alone; they are their record, not yours. Moving the card to the
+board's DONE column does the same to every line on it at once, and writes nothing here - so a
+file that still reads as asking for everything may be asking for nothing.
 ";
 
 /// What separates the repo a line names from the commit it suggests for it.
@@ -104,6 +109,9 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
     let Ok(task_ids) = store::list_task_ids(repo_path) else {
         return Vec::new();
     };
+    // Read once for the whole board rather than per task: the column that finishes a task is a
+    // property of the board, and the rule is off on a board that has no such column.
+    let finished_column = store::read_board(repo_path).role(store::CLOSES_REVIEWS_IN);
     let mut requests = Vec::new();
 
     for task_id in task_ids {
@@ -113,11 +121,19 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
         let Ok(contents) = std::fs::read_to_string(dir.join(REVIEW_REQUEST_FILE_NAME)) else {
             continue;
         };
+        // Only for a task that asked for something: most tasks have no file, and reading their
+        // metadata to find out where a list they do not have sits would be a read each per tick.
+        // A task whose metadata cannot be read is somewhere unknown, which is not the finished
+        // column - the same way an unreadable line reads as still wanting a look.
+        let finished = finished_column.as_ref().is_some_and(|column| {
+            store::read_task(repo_path, &task_id)
+                .is_ok_and(|metadata| &metadata.status == column)
+        });
         requests.extend(
             parse(&contents)
                 .into_iter()
                 .enumerate()
-                .map(|(index, request)| view_of(repo_path, &task_id, index, request)),
+                .map(|(index, request)| view_of(repo_path, &task_id, index, finished, request)),
         );
     }
     requests
@@ -196,6 +212,7 @@ fn view_of(
     repo_path: &Path,
     task_id: &str,
     index: usize,
+    task_finished: bool,
     request: ReviewRequest,
 ) -> ReviewRequestView {
     let joined = repo_path.join(&request.path_under_repo);
@@ -218,6 +235,7 @@ fn view_of(
         // be read there.
         changed_files: crate::git::changed_file_count(&reviewed).unwrap_or(1),
         done: request.done,
+        task_finished,
         repo_path: reviewed.display().to_string(),
         name,
         branch: request.branch,
@@ -494,6 +512,84 @@ mod tests {
         assert_eq!(requests[0].repo_path, requests[1].repo_path);
         assert_eq!(requests[1].path_under_repo, "");
         assert_eq!(requests[1].branch, None);
+    }
+
+    /// Finishing the card finishes what it was asking for, without touching a line of the file.
+    ///
+    /// Moving a card to the column that finishes a task is the person saying the work is behind
+    /// them - so every repo it still names reads as reviewed at once, rather than being crossed
+    /// off one at a time. Dragging it back out is them saying it is not, and the file it never
+    /// wrote to is still there to say what it was asking for.
+    #[test]
+    fn a_task_in_the_finished_column_asks_for_nothing_until_it_is_moved_back() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-finished");
+        let repo = fixture.root.clone();
+        let task_dir = repo.join(".moontasks/deploy-the-thing-1111");
+        std::fs::create_dir_all(&task_dir).expect("failed to make the fixture task");
+        let request_file = task_dir.join(REVIEW_REQUEST_FILE_NAME);
+        let line = ". // chore: take the submodule forward
+";
+        std::fs::write(&request_file, line).expect("failed to write the fixture request");
+        let card_in = |column: &str| {
+            std::fs::write(
+                task_dir.join("metadata.json"),
+                format!(
+                    "{{\"title\": \"Deploy the thing\", \"status\": \"{column}\", \
+                     \"created_at_unix\": 1700000000}}\n"
+                ),
+            )
+            .expect("failed to write the fixture task");
+            let requests = list_for_repo(&repo);
+            assert_eq!(requests.len(), 1, "the line is read whichever column it is in");
+            requests[0].task_finished
+        };
+
+        assert!(!card_in("in_progress"), "a card being worked on still asks");
+        assert!(card_in(store::CLOSES_REVIEWS_IN), "a card finished does not");
+        assert_eq!(
+            std::fs::read_to_string(&request_file).expect("the file should still be there"),
+            line,
+            "finishing the card writes nothing, so moving it back asks for the same thing again"
+        );
+        assert!(!card_in("todo"), "and moving it back does ask again");
+    }
+
+    /// A board with no such column has no such rule - the same way a board with no column to
+    /// release shells in releases none.
+    #[test]
+    fn a_board_without_the_finished_column_finishes_nothing() {
+        let fixture = crate::native::ui_tests::Fixture::new("review-request-no-column");
+        let repo = fixture.root.clone();
+        let task_dir = repo.join(".moontasks/deploy-the-thing-1111");
+        std::fs::create_dir_all(&task_dir).expect("failed to make the fixture task");
+        std::fs::write(
+            task_dir.join("metadata.json"),
+            format!(
+                "{{\"title\": \"Deploy the thing\", \"status\": \"{}\", \
+                 \"created_at_unix\": 1700000000}}\n",
+                store::CLOSES_REVIEWS_IN
+            ),
+        )
+        .expect("failed to write the fixture task");
+        std::fs::write(
+            task_dir.join(REVIEW_REQUEST_FILE_NAME),
+            ". // chore: take the submodule forward
+",
+        )
+        .expect("failed to write the fixture request");
+        std::fs::write(
+            repo.join(".moontasks/board.json"),
+            "{\"columns\": [{\"id\": \"todo\", \"label\": \"TODO\"}]}\n",
+        )
+        .expect("failed to write the fixture board");
+
+        let requests = list_for_repo(&repo);
+
+        assert_eq!(requests.len(), 1);
+        assert!(
+            !requests[0].task_finished,
+            "with the column gone the rule is off, whatever a card's status still says"
+        );
     }
 
     /// The example in the file the brief sends agents to read has to parse as it says it does.
