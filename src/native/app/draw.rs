@@ -367,6 +367,9 @@ impl App {
         // A task's page is open while its card is marked, so a card let go of by a click on
         // the board takes its page with it - here, where the tree is no longer being drawn.
         crate::native::board::close_pages_let_go_of(self);
+        // And the cross on the empty card of a task being written puts its pane away, here for
+        // the same reason.
+        crate::native::board::close_the_new_task_page(self);
 
         // Closing the last tab closes the window: an empty workspace has nothing to show and
         // no way back other than the palette.

@@ -258,6 +258,10 @@ pub(crate) struct BoardState {
     /// go. Drained once the window has drawn - a pane is never closed while the tree that
     /// holds it is being drawn.
     pub(crate) pages_to_close: Vec<String>,
+    /// Whether the cross on the empty card standing for a task being written has been pressed:
+    /// the pane it is being written on is to be put away, and put away it is once the window
+    /// has drawn, for the same reason the pages above are.
+    pub(crate) new_task_let_go_of: bool,
     /// The press the pointer is making on the board, if it is making one. The board works out
     /// what a press was from where it began and how far it carried, rather than asking egui,
     /// because what it is asking about is cards - see [`crate::native::board::gesture`].

@@ -159,6 +159,25 @@ pub(crate) fn close_pages_let_go_of(app: &mut App) {
     }
 }
 
+/// Put away the pane a new task was being written on, when the cross on the empty card
+/// standing for it says no to the task.
+///
+/// Closing the pane is the whole of it: the draft it was written on and the empty card holding
+/// its place both go with it - see [`crate::native::app::App::close_pane`].
+pub(crate) fn close_the_new_task_page(app: &mut App) {
+    if !std::mem::take(&mut app.model.board.new_task_let_go_of) {
+        return;
+    }
+    let page = app
+        .model
+        .layout
+        .find_pane(|pane| matches!(pane, Pane::NewTask { .. }))
+        .map(|(page, _)| page);
+    if let Some(page) = page {
+        app.close_pane(page);
+    }
+}
+
 /// Open the box that renames a card, on the second click of a double one.
 fn open_rename(app: &mut App, task_id: &str) {
     let Some(task) = app
@@ -578,7 +597,7 @@ fn draw_column(
                         });
                         ui.add_space(CARD_SPACING);
                         if pending == Some(ColumnEnd::Top) {
-                            draw_pending_card(ui, palette);
+                            draw_pending_card(ui, palette, &mut controls, actions);
                             ui.add_space(CARD_SPACING);
                         }
                         for task in &tasks {
@@ -600,7 +619,7 @@ fn draw_column(
                             ui.add_space(CARD_SPACING);
                         }
                         if pending == Some(ColumnEnd::Bottom) {
-                            draw_pending_card(ui, palette);
+                            draw_pending_card(ui, palette, &mut controls, actions);
                             ui.add_space(CARD_SPACING);
                         }
                         if !tasks.is_empty() {

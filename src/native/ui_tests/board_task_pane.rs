@@ -1108,3 +1108,126 @@ fn triple_clicking_the_title_selects_all_of_it() {
         "a letter typed after the triple click should replace the whole title"
     );
 }
+
+/// The empty card standing for a task being written carries the same cross a made card does,
+/// and pressing it says no to the task: the pane it is being written on goes, and the board is
+/// left as it was.
+///
+/// The cross is the only way to call the new task off from the board itself - the pane it is
+/// written on is over on the right, and the card is what is in front of you.
+#[test]
+fn the_empty_card_of_a_new_task_is_deleted_by_its_cross() {
+    const TASK: &str = "write-the-parser-1111";
+
+    let fixture = seeded_fixture("new-task-cross");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let compose = Arc::new(AtomicBool::new(false));
+    let compose_in_ui = Arc::clone(&compose);
+    let draft_open = Arc::new(AtomicBool::new(false));
+    let draft_open_in_ui = Arc::clone(&draft_open);
+    let card_held = Arc::new(AtomicBool::new(false));
+    let card_held_in_ui = Arc::clone(&card_held);
+    let tasks = Arc::new(AtomicUsize::new(0));
+    let tasks_in_ui = Arc::clone(&tasks);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            if compose_in_ui.swap(false, Ordering::Relaxed) {
+                crate::native::board::actions::apply(
+                    &mut app,
+                    crate::native::board::BoardAction::OpenNewTask(
+                        crate::moontasks::ColumnId::new("todo"),
+                        crate::moontasks::ColumnEnd::Top,
+                    ),
+                );
+            }
+            app.draw(ui);
+            draft_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(|pane| matches!(pane, Pane::NewTask { .. }))
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+            card_held_in_ui.store(
+                app.model.board.card_being_written.is_some(),
+                Ordering::Relaxed,
+            );
+            tasks_in_ui.store(app.model.board.tasks.len(), Ordering::Relaxed);
+            loaded_in_ui.store(app.model.board.loaded, Ordering::Relaxed);
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)
+            && tasks.load(Ordering::Relaxed) == 1),
+        "the board never read the task it was seeded with"
+    );
+    compose.store(true, Ordering::Relaxed);
+    assert!(
+        settle(&mut harness, || draft_open.load(Ordering::Relaxed)),
+        "the `+` should have opened a pane to write the new task on"
+    );
+    harness.run_steps(2);
+    assert!(
+        card_held.load(Ordering::Relaxed),
+        "the column should be holding an empty card where this one will land"
+    );
+
+    let cross = pending_cross_over(&harness, TASK);
+    click_at(&mut harness, cross);
+    harness.run_steps(3);
+    assert!(
+        !draft_open.load(Ordering::Relaxed),
+        "the cross should have closed the pane the task was being written on"
+    );
+    assert!(
+        !card_held.load(Ordering::Relaxed),
+        "and taken the empty card standing for it off the board"
+    );
+    assert_eq!(
+        tasks.load(Ordering::Relaxed),
+        1,
+        "and made nothing: the board is left with the card it had"
+    );
+}
+
+/// The cross on the empty card drawn above `below`, worked out from that card's title: the two
+/// cards are laid out the same way, so the mark stands at the same place across from a title
+/// one card up the column.
+fn pending_cross_over(harness: &Harness<'_>, below: &str) -> egui::Pos2 {
+    use crate::native::{board::cards, widgets::CLOSE_MARK_SIZE};
+
+    let title = harness
+        .ctx
+        .read_response(cards::card_drag_id(below))
+        .expect("expected the card under the empty one to have been drawn")
+        .rect;
+    egui::pos2(
+        title.right()
+            + harness
+                .ctx
+                .style_of(egui::Theme::Dark)
+                .spacing
+                .item_spacing
+                .x
+            + CLOSE_MARK_SIZE / 2.0,
+        title.top() - cards::PENDING_CARD_HEIGHT,
+    )
+}

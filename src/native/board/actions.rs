@@ -19,6 +19,8 @@ pub(crate) enum BoardAction {
     OpenNewTask(ColumnId, ColumnEnd),
     /// Make the task a new-task pane has been named, and turn that pane into its own.
     Create(CreateFromDraft),
+    /// Say no to the task being written: the cross on the empty card standing for it.
+    CancelNewTask,
     /// Cards let go of in a column, at the place among its cards they were dropped - one for
     /// an ordinary drag, the whole run of marks for a drag made with several.
     Place(Vec<String>, ColumnId, usize),
@@ -131,6 +133,14 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 joins,
                 draft_id,
             }));
+        }
+        BoardAction::CancelNewTask => {
+            // Closing the pane is what throws the writing away - it is where the writing is,
+            // and it takes the empty card off the board with it. Asked for rather than done
+            // here: the pane tree is out of the model while the board is being drawn, so the
+            // pane is found and closed once the window has drawn, in
+            // [`super::close_the_new_task_page`].
+            app.model.board.new_task_let_go_of = true;
         }
         BoardAction::Create(draft) => {
             let CreateFromDraft {

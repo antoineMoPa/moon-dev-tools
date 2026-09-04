@@ -259,14 +259,41 @@ pub(super) fn draw_empty_slot(ui: &Ui, slot: egui::Rect, palette: &Palette) {
 /// It stands at whichever end of the column the `+` that opened the pane was, so a task is
 /// written with its place on the board already in front of you rather than appearing somewhere
 /// once it is made. Nothing is drawn in it: what would be in it is being typed on the pane.
-pub(super) fn draw_pending_card(ui: &mut Ui, palette: &Palette) {
+pub(super) fn draw_pending_card(
+    ui: &mut Ui,
+    palette: &Palette,
+    controls: &mut gesture::Controls,
+    actions: &mut Vec<BoardAction>,
+) {
     let (_, slot) = ui.allocate_space(vec2(ui.available_width(), PENDING_CARD_HEIGHT));
     draw_empty_slot(ui, slot, palette);
+
+    // The cross a made card carries, in the place it sits there: the empty card is the task
+    // as it stands, and this is how it is said no to without going looking for the tab it is
+    // being written on. Nothing has been made yet, so it asks nothing first - what goes is
+    // the writing on the pane.
+    let mark = egui::Rect::from_min_size(
+        slot.right_top()
+            + vec2(
+                -CLOSE_MARK_SIZE - f32::from(CARD_MARGIN.right),
+                f32::from(CARD_MARGIN.top),
+            ),
+        vec2(CLOSE_MARK_SIZE, CLOSE_MARK_SIZE),
+    );
+    let mut mark_ui = ui.new_child(egui::UiBuilder::new().max_rect(mark));
+    let cross = widgets::close_button(&mut mark_ui, palette).on_hover_text("Discard this task");
+    if controls.pressed(&cross) {
+        actions.push(BoardAction::CancelNewTask);
+    }
 }
 
 /// How tall the empty card is: about what a card with a title of one line and nothing else on
 /// it comes out at, so the space it holds is the space the card will want.
-const PENDING_CARD_HEIGHT: f32 = 78.0;
+pub(crate) const PENDING_CARD_HEIGHT: f32 = 78.0;
+
+/// The inside margin a card's frame keeps. The empty card has no frame of its own, and places
+/// its cross by this so the mark stands where a made card's does.
+const CARD_MARGIN: egui::Margin = egui::Margin::symmetric(8, 7);
 
 /// One card: what it shows, the press it claims, and the drag that carries it.
 ///
@@ -412,7 +439,7 @@ fn draw_card_body(
         .fill(fill)
         .stroke(card_stroke(app, task, palette))
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(8, 7))
+        .inner_margin(CARD_MARGIN)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             // What a card offers to start is only drawn while the pointer is on the card,
