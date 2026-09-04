@@ -76,10 +76,11 @@ fn draw_review_request(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    // Two ways to be finished with: the repo has nothing left to commit, which the board can see
-    // for itself, or someone crossed the line off - work that is committed and pushed and wants
-    // no more looking at, which it cannot.
-    let pending = !request.done && request.changed_files > 0;
+    // Three ways to be finished with: the repo has nothing left to commit, which the board can
+    // see for itself; someone crossed the line off - work that is committed and pushed and wants
+    // no more looking at, which it cannot; or the card was moved to the column that finishes a
+    // task, which finishes everything it was still asking for at once.
+    let pending = !request.done && !request.task_finished && request.changed_files > 0;
 
     // Kept back so the fill can be painted behind contents that have not been drawn yet: how
     // tall the row is is only known once they have been.

@@ -84,6 +84,11 @@ pub(crate) struct ReviewRequestView {
     /// left to commit; it cannot tell that work already committed and pushed is finished with, so
     /// that is said from the row's menu and written on the line.
     pub(crate) done: bool,
+    /// Whether the task this line is on has been moved to the column that finishes a task - see
+    /// [`crate::moontasks::store::CLOSES_REVIEWS_IN`]. Finishing the card finishes its reviews
+    /// without crossing a single line off, so this is read off where the card sits rather than
+    /// off the file, and a card dragged back out asks again.
+    pub(crate) task_finished: bool,
 }
 
 /// What starting a task's resource asked for.

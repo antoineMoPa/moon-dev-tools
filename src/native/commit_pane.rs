@@ -369,13 +369,17 @@ impl App {
     /// and the line that named that branch is the one that wrote the commit for it. Only when
     /// no line named it does the first line for the repo stand, which is the single-line case
     /// and the one where there is nothing better to offer.
+    ///
+    /// A line on a task that has been finished is not among them at all, not even for the
+    /// header's `asked for` pill: the card being in that column is the person saying the work is
+    /// behind them, and a commit pane opened afterwards has nothing to hear from it.
     pub(super) fn requested_review_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
         let repo_path = &self.model.review_ref(session_id)?.payload.as_ref()?.repo_path;
         let mut for_this_repo = self
             .model
             .review_requests
             .iter()
-            .filter(|request| &request.repo_path == repo_path);
+            .filter(|request| &request.repo_path == repo_path && !request.task_finished);
         let first = for_this_repo.next()?;
         let Some(branch) = self.branch_of_commit_pane(session_id) else {
             return Some(first);
@@ -384,6 +388,31 @@ impl App {
             .chain(for_this_repo)
             .find(|request| request.branch.as_deref() == Some(branch))
             .or(Some(first))
+    }
+
+    /// The line whose commit this pane is about to make, which is the one whose message goes in
+    /// the box.
+    ///
+    /// Narrower than [`Self::requested_review_of`], which answers for the header: a message is
+    /// put in someone's box, so the line has to be about this commit and not merely about this
+    /// repo. Where no line named the branch, that one answers with the first line for the repo
+    /// and this one answers with nothing.
+    ///
+    /// A line naming a branch the pane is not on is about work that lives somewhere else. Most
+    /// often it is work already committed and merged: the branch is checked out nowhere any
+    /// more, so the line resolves back onto the main checkout, where the next piece of work is
+    /// now being written - and the message for the finished branch would land on it. A line
+    /// crossed off by hand is finished with too, whatever branch it names.
+    fn requested_commit_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
+        let request = self.requested_review_of(session_id)?;
+        if request.done {
+            return None;
+        }
+        match &request.branch {
+            Some(branch) => (Some(branch.as_str()) == self.branch_of_commit_pane(session_id))
+                .then_some(request),
+            None => Some(request),
+        }
     }
 
     /// The branch the repo a pane is committing is on, once git has been asked. `None` until
@@ -415,7 +444,7 @@ impl App {
             return;
         }
         let Some(written) = self
-            .requested_review_of(session_id)
+            .requested_commit_of(session_id)
             .and_then(|request| request.suggestion.clone())
         else {
             return;
@@ -943,7 +972,9 @@ fn draw_branch_line(
             );
         }
         // Only when the two differ: a pane sitting on the branch that was asked for has nothing
-        // to say about it, and a line saying so on every commit is a line nobody reads.
+        // to say about it, and a line saying so on every commit is a line nobody reads. When they
+        // do differ this is also what says why the box is empty - the message written for that
+        // branch is held back from a commit being made somewhere else.
         let elsewhere =
             asked_branch.filter(|asked| Some(*asked) != state.branch_name.as_deref());
         if let Some(asked) = elsewhere {
@@ -954,7 +985,8 @@ fn draw_branch_line(
                 palette.status_neutral_bg,
             )
             .on_hover_text(format!(
-                "the task asking for this review means the commit for {asked}"
+                "the task asking for this review means the commit for {asked}, \
+                 so the message it wrote is not put in the box here"
             ));
         }
     });
