@@ -790,6 +790,95 @@ fn a_commit_a_task_asked_for_is_in_the_box_before_anything_is_staged() {
     harness.snapshot("commit-pane-requested");
 }
 
+/// The commit that lands in the box is the one written for the branch the repo is on.
+///
+/// Several tasks name the same repo, and a line naming a branch that is checked out nowhere
+/// resolves to that repo all the same - so every one of them points at this one working copy.
+/// The branch is what tells them apart: the pane is committing the work of the task whose branch
+/// is out, and it is that task's message that belongs in the box, wherever its line sits among
+/// the others.
+#[test]
+fn the_commit_in_the_box_is_the_one_written_for_the_branch_that_is_out() {
+    let fixture = seeded_fixture("commit-message-by-branch");
+    run_git_no_output(&fixture.root, &["checkout", "-b", "ship-it"])
+        .expect("failed to put the fixture on the branch");
+    // Alphabetically first, so it is the line the repo alone would find - and it was written for
+    // a branch that is checked out nowhere.
+    fixture.write(
+        ".moontasks/another-thing-0000/metadata.json",
+        "{\n  \"title\": \"Another thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/another-thing-0000/request_for_review.txt",
+        ".#some-other-work // feat: the other task's commit\n  Which is not the work that is out.\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        ".#ship-it // feat: add the extra module\n  The fixture gains a module the review is of.\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let panes_open = Arc::new(Mutex::new(Vec::<PaneKind>::new()));
+    let panes_in_ui = Arc::clone(&panes_open);
+    let message_left = Arc::new(Mutex::new(None::<String>));
+    let message_in_ui = Arc::clone(&message_left);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            let session_id = app.model.root_session_id.clone();
+            app.draw(ui);
+            *panes_in_ui.lock().expect("expected the lock") = app
+                .model
+                .layout
+                .panes()
+                .map(|(_, pane)| pane.kind())
+                .collect();
+            *message_in_ui.lock().expect("expected the lock") = app
+                .model
+                .commit_panes
+                .get(&session_id)
+                .map(|pane| pane.message.clone());
+        });
+
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline
+        && !panes_open
+            .lock()
+            .expect("expected the lock")
+            .contains(&PaneKind::Commit)
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+        if harness.query_by_label("[commit]").is_some() {
+            harness.get_by_label("[commit]").click();
+        }
+    }
+
+    let written = "feat: add the extra module\n\nThe fixture gains a module the review is of.";
+    let deadline = Instant::now() + GIT_DEADLINE;
+    while Instant::now() < deadline
+        && message_left.lock().expect("expected the lock").as_deref() != Some(written)
+    {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        message_left.lock().expect("expected the lock").as_deref(),
+        Some(written),
+        "the commit written for the branch that is out should be the one in the box"
+    );
+}
+
 /// The row with no message to show - on a machine without `opencode`, or before one has been
 /// written - is not a row at all: nothing to read and nothing to press.
 #[test]

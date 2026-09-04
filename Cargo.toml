@@ -34,6 +34,9 @@ egui_extras = { version = "0.36", features = ["image"] }
 # published separately, and used here like any other dependency. egui_tty compiles libghostty-vt
 # from Ghostty source, so a Zig 0.15.x toolchain has to be on PATH to build this.
 egui_frames = { version = "0.3", path = "crates/egui_frames", features = ["serde"] }
+# The code editor a file tab holds: the buffer, the fringe of line numbers, and the marks a
+# search draws into the text.
+egui_moon_editor = { version = "0.1", path = "crates/egui_moon_editor" }
 egui_tty = { version = "0.2", path = "crates/egui_tty" }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }

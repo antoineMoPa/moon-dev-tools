@@ -297,6 +297,22 @@ impl Palette {
             ..egui_tty::TerminalStyle::default()
         }
     }
+
+    /// The same, for a file tab. The editor draws its own text and the fringe of line numbers
+    /// beside it, and the marks a find bar asks it to lay into the text.
+    pub(crate) fn editor_style(&self) -> egui_moon_editor::EditorStyle {
+        egui_moon_editor::EditorStyle {
+            font: code_font(CodeFace::Regular),
+            ink: self.ink,
+            line_number_font: FontId::new(CODE_SIZE - 1.0, FontFamily::Monospace),
+            fringe_ink: self.muted,
+            // The same tint a match gets in a review, which is strong enough to pick one out
+            // of the code without hiding it.
+            mark_ink: self.accent.linear_multiply(0.35),
+            current_mark_ink: self.accent,
+            ..egui_moon_editor::EditorStyle::default()
+        }
+    }
 }
 
 /// Text roles the app uses. `TextStyle::Name` keeps them addressable from any widget.

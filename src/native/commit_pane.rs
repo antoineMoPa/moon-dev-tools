@@ -362,12 +362,40 @@ impl App {
     ///
     /// Found by the repo rather than by the task: a pane is opened on a repo, and which task
     /// wrote the line that sent you there is not something it has to know.
+    ///
+    /// Several tasks can name the same repo, and their lines all resolve to the same working
+    /// copy when the branches they name are checked out nowhere - so the repo alone does not
+    /// pick one. The branch the repo is actually on does: that is the work sitting in the pane,
+    /// and the line that named that branch is the one that wrote the commit for it. Only when
+    /// no line named it does the first line for the repo stand, which is the single-line case
+    /// and the one where there is nothing better to offer.
     pub(super) fn requested_review_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
         let repo_path = &self.model.review_ref(session_id)?.payload.as_ref()?.repo_path;
-        self.model
+        let mut for_this_repo = self
+            .model
             .review_requests
             .iter()
-            .find(|request| &request.repo_path == repo_path)
+            .filter(|request| &request.repo_path == repo_path);
+        let first = for_this_repo.next()?;
+        let Some(branch) = self.branch_of_commit_pane(session_id) else {
+            return Some(first);
+        };
+        std::iter::once(first)
+            .chain(for_this_repo)
+            .find(|request| request.branch.as_deref() == Some(branch))
+            .or(Some(first))
+    }
+
+    /// The branch the repo a pane is committing is on, once git has been asked. `None` until
+    /// then, and on a detached HEAD.
+    fn branch_of_commit_pane(&self, session_id: &str) -> Option<&str> {
+        self.model
+            .commit_panes
+            .get(session_id)?
+            .state
+            .as_ref()?
+            .branch_name
+            .as_deref()
     }
 
     /// Put the commit a board task wrote for this repo in the box.
@@ -377,9 +405,15 @@ impl App {
     /// repo, and is the message meant to be made. It is text like any other once it is there.
     ///
     /// Nothing to do with staging, unlike the message written from the diff - this one does not
-    /// come from the diff. It is in the box from the moment the pane opens, so what is about to
-    /// be committed is readable while the hunks are still being picked next door.
+    /// come from the diff. It is in the box as soon as git has said which branch the repo is on,
+    /// so what is about to be committed is readable while the hunks are still being picked next
+    /// door. Not before that: which line wrote this commit is answered by the branch, and the
+    /// box is filled once and never again - so filling it a frame early would be filling it with
+    /// another task's message and keeping it there.
     fn fill_in_the_requested_commit(&mut self, session_id: &str) {
+        if self.commit_pane(session_id).state.is_none() {
+            return;
+        }
         let Some(written) = self
             .requested_review_of(session_id)
             .and_then(|request| request.suggestion.clone())

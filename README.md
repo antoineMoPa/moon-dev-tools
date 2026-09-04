@@ -190,13 +190,16 @@ Closing the window ends the process, server included. A standalone `serve` stops
 
 ## Crates
 
-Two pieces of the window are libraries in their own right, kept as submodules under
+Three pieces of the window are libraries in their own right, kept as submodules under
 `crates/` and published separately:
 
 - [**egui_frames**](crates/egui_frames) - tabs, splits and draggable panes for egui. The
   arrangement the Moon tools workspace is made of, with nothing product-specific in it.
 - [**egui_tty**](crates/egui_tty) - a terminal emulator widget for egui, on Ghostty's VT engine.
   What a shell tab holds.
+- [**egui_moon_editor**](crates/egui_moon_editor) - a code editor widget for egui: a text
+  buffer, a fringe of line numbers that scrolls with the code, and marks drawn into the text.
+  What a file tab holds.
 
 After cloning, pull them in:
 

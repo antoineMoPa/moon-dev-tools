@@ -6,3 +6,7 @@
 	path = crates/egui_tty
 	url = git@github.com:antoineMoPa/egui_tty.git
 	branch = main
+[submodule "crates/egui_moon_editor"]
+	path = crates/egui_moon_editor
+	url = git@github.com:antoineMoPa/egui_moon_editor.git
+	branch = main

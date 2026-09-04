@@ -1212,6 +1212,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_moon_editor"
+version = "0.1.0"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui_tty"
 version = "0.2.0"
 dependencies = [
@@ -2483,6 +2490,7 @@ dependencies = [
  "egui_extras",
  "egui_frames",
  "egui_kittest",
+ "egui_moon_editor",
  "egui_tty",
  "futures",
  "image",
