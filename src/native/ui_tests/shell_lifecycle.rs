@@ -581,6 +581,122 @@ fn a_shell_can_draw_the_glyphs_its_tools_animate_with() {
     );
 }
 
+/// The bold and italic faces have to keep step with the regular one: the terminal's grid is
+/// one advance of the regular face wide per cell, and the file pane paints its line numbers
+/// where the laid-out rows fell. A face a hair wider or taller would put a bold word out of
+/// its columns and the numbers off their lines.
+#[test]
+fn every_code_face_has_the_same_advance_and_line_height() {
+    let mut harness = Harness::builder().build_ui(|_ui| {});
+    harness.run();
+    crate::native::fonts::install(&harness.ctx);
+    harness.run();
+
+    let regular = crate::native::theme::code_font(crate::native::theme::CodeFace::Regular);
+    let mut out_of_step = Vec::new();
+    harness.ctx.fonts_mut(|fonts| {
+        for face in [
+            crate::native::theme::CodeFace::Bold,
+            crate::native::theme::CodeFace::Italic,
+        ] {
+            let font = crate::native::theme::code_font(face);
+            if fonts.row_height(&font) != fonts.row_height(&regular) {
+                out_of_step.push(format!("{face:?} line height"));
+            }
+            for glyph in ('!'..='~').chain(SHELL_GLYPHS.chars()) {
+                if fonts.glyph_width(&font, glyph) != fonts.glyph_width(&regular, glyph) {
+                    out_of_step.push(format!("{face:?} {glyph:?}"));
+                }
+            }
+        }
+    });
+    assert!(
+        out_of_step.is_empty(),
+        "these are laid out differently from the regular face: {out_of_step:?}"
+    );
+}
+
+/// The three faces, set one over the other: the bold and italic have to be real faces, and
+/// the columns have to line up down the page. A snapshot, so the faces are looked at rather
+/// than only measured.
+#[test]
+fn code_is_set_in_a_real_bold_and_a_real_italic() {
+    // The faces are installed from inside the first pass, the way the app installs them,
+    // and land at the start of the next; that first pass is discarded, as the app's is.
+    let mut installed = false;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(420.0, 96.0))
+        .build_ui(move |ui| {
+            if !installed {
+                crate::native::fonts::install(ui.ctx());
+                installed = true;
+                ui.ctx().request_discard("fonts installed");
+                return;
+            }
+            let ink = egui::Color32::WHITE;
+            let mut job = egui::text::LayoutJob::default();
+            for (face, line) in [
+                (
+                    crate::native::theme::CodeFace::Regular,
+                    "fn main() { let quick = brown(fox); } // regular\n",
+                ),
+                (
+                    crate::native::theme::CodeFace::Bold,
+                    "fn main() { let quick = brown(fox); } // bold\n",
+                ),
+                (
+                    crate::native::theme::CodeFace::Italic,
+                    "fn main() { let quick = brown(fox); } // italic\n",
+                ),
+            ] {
+                job.append(
+                    line,
+                    0.0,
+                    egui::TextFormat::simple(crate::native::theme::code_font(face), ink),
+                );
+            }
+            job.append(
+                "\u{2502} \u{2500}\u{2500} \u{2588}\u{2588} \u{28fe} in every face",
+                0.0,
+                egui::TextFormat::simple(
+                    crate::native::theme::code_font(crate::native::theme::CodeFace::Bold),
+                    ink,
+                ),
+            );
+            ui.label(job);
+        });
+    harness.run();
+    harness.snapshot("code-faces");
+}
+
+/// A bold run draws its tables and spinners from the same borrowed font a regular one does.
+#[test]
+fn a_bold_or_italic_run_can_still_draw_the_glyphs_its_tools_animate_with() {
+    let mut harness = Harness::builder().build_ui(|_ui| {});
+    harness.run();
+    crate::native::fonts::install(&harness.ctx);
+    harness.run();
+
+    let mut missing = String::new();
+    harness.ctx.fonts_mut(|fonts| {
+        for face in [
+            crate::native::theme::CodeFace::Bold,
+            crate::native::theme::CodeFace::Italic,
+        ] {
+            let font = crate::native::theme::code_font(face);
+            for glyph in SHELL_GLYPHS.chars() {
+                if !fonts.has_glyph(&font, glyph) && !missing.contains(glyph) {
+                    missing.push(glyph);
+                }
+            }
+        }
+    });
+    assert!(
+        missing.is_empty(),
+        "these would render as empty boxes in a bold or italic run: {missing:?}"
+    );
+}
+
 /// Switching the theme to light and back must leave a shell readable. It did not: the colours
 /// the pane paints with came back identical, so every line was text the colour of its own
 /// background.
