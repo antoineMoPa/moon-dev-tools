@@ -15,6 +15,7 @@ mod files;
 mod launch;
 mod layout;
 mod palette;
+mod workspace_color;
 mod project;
 mod shell_input;
 mod shell_lifecycle;

@@ -154,23 +154,6 @@ is a new place to work rather than a second view of this one; `moontasks --pick`
 thing from a shell. Everywhere else those live in the command palette, which also has them on
 macOS.
 
-## Settings
-
-What belongs to you rather than to a repo or a window is kept in one file:
-
-```
-~/.moonreview/settings.json
-```
-
-Right now that is which agent Moonreview hands comments to - the selector at the top right.
-Pick one and the next window comes up on it. The file is meant to be readable and editable:
-
-```json
-{
-  "selected_agent": "claude"
-}
-```
-
 ### Working on another machine
 
 Run the server where the repo is:

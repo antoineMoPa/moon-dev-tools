@@ -27,6 +27,7 @@ mod commit_pane_tests;
 pub(crate) mod ui_tests;
 pub(crate) mod widgets;
 pub(crate) mod workspace;
+pub(crate) mod workspace_color;
 
 use std::{
     sync::{Arc, Mutex},

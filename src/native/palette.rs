@@ -65,6 +65,8 @@ pub(crate) struct Command {
 pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
     ToggleTheme,
+    /// Paint this window's ground, so it is told from the other windows open beside it.
+    MarkWorkspace(crate::native::workspace_color::WorkspaceColor),
     InstallLaunchers,
     /// Another window of one of the three programs, on its launch screen.
     NewWindow(crate::cli::Frame),
@@ -305,6 +307,22 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::ToggleTheme,
         shortcut: bindings::chord_of(Action::ToggleTheme),
     });
+
+    // One entry per color rather than a cycling command: with several windows open, the
+    // point is to give this one a color that is not the color of the others, which means
+    // picking it rather than stepping through until it comes round.
+    for color in crate::native::workspace_color::ALL
+        .into_iter()
+        .filter(|color| *color != app.model.workspace_color)
+    {
+        commands.push(Command {
+            title: format!("workspace color: {}", color.label()),
+            description: "Paint this window's background, so it is told from the others"
+                .to_string(),
+            action: CommandAction::MarkWorkspace(color),
+            shortcut: None,
+        });
+    }
 
     // Changed submodules are further reviews the user can open beside this one.
     for submodule in app

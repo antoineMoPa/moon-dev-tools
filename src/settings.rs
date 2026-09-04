@@ -5,12 +5,12 @@
 //! That is a preference, it outlives both, and it is kept somewhere a person can open and
 //! edit - one file, in the obvious place, in a format they can read.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::api::AgentKind;
+use crate::{api::AgentKind, native::workspace_color::WorkspaceColor};
 
 const SETTINGS_DIR_NAME: &str = ".moonreview";
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -27,6 +27,15 @@ pub(crate) struct Settings {
     /// The projects opened before, most recent first, offered again by the launch screen.
     #[serde(default)]
     pub(crate) recent_projects: Vec<String>,
+    /// The color each project's window is marked with, by the project's path. Which color a
+    /// window is belongs to whoever is looking at it rather than to the repo, so it is kept
+    /// here rather than in the repo's `.moonreview.json` - and a repo read over a connection
+    /// to another machine can be marked without writing anything to that machine.
+    ///
+    /// A project that is not in the map is one nobody has marked, which is
+    /// [`WorkspaceColor::Plain`]. Ordered so the file reads the same twice running.
+    #[serde(default)]
+    pub(crate) workspace_colors: BTreeMap<String, WorkspaceColor>,
 }
 
 impl Settings {
@@ -42,6 +51,32 @@ impl Settings {
         self.recent_projects.retain(|recent| recent != path);
         self.recent_projects.insert(0, path.to_string());
         self.recent_projects.truncate(RECENT_PROJECTS_KEPT);
+        true
+    }
+
+    /// The color the window on this project is painted, which for an unmarked project is
+    /// the palette's own ground.
+    pub(crate) fn workspace_color(&self, project_path: &str) -> WorkspaceColor {
+        self.workspace_colors
+            .get(project_path)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Mark this project's window. Returns whether anything changed, so setting the color a
+    /// project already has does not rewrite the file.
+    ///
+    /// Going back to plain takes the project out of the map rather than writing `plain` into
+    /// it: the map is the projects somebody marked, and one entry per project ever opened
+    /// would be a file that only grows.
+    pub(crate) fn mark_workspace(&mut self, project_path: &str, color: WorkspaceColor) -> bool {
+        if self.workspace_color(project_path) == color {
+            return false;
+        }
+        match color {
+            WorkspaceColor::Plain => self.workspace_colors.remove(project_path),
+            color => self.workspace_colors.insert(project_path.to_string(), color),
+        };
         true
     }
 }
@@ -148,13 +183,57 @@ mod tests {
         let encoded = serde_json::to_string(&Settings {
             selected_agent: AgentKind::Claude,
             recent_projects: Vec::new(),
+            workspace_colors: BTreeMap::new(),
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[]}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{}}"#
         );
+    }
+
+    #[test]
+    fn an_unmarked_project_is_plain() {
+        let settings: Settings = serde_json::from_str("{}").expect("expected the defaults");
+
+        assert!(settings.workspace_colors.is_empty());
+        assert_eq!(settings.workspace_color("/repos/anything"), WorkspaceColor::Plain);
+    }
+
+    #[test]
+    fn a_marked_project_reads_back_the_color_it_was_marked() {
+        let mut settings = Settings::default();
+
+        assert!(settings.mark_workspace("/repos/one", WorkspaceColor::Teal));
+
+        let text = serde_json::to_string(&settings).expect("expected json");
+        let read: Settings = serde_json::from_str(&text).expect("expected the settings back");
+
+        assert_eq!(read.workspace_color("/repos/one"), WorkspaceColor::Teal);
+        assert_eq!(read.workspace_color("/repos/two"), WorkspaceColor::Plain);
+    }
+
+    /// The map is the projects somebody marked, so unmarking one takes it out again rather
+    /// than leaving `plain` behind for every project ever opened.
+    #[test]
+    fn marking_a_project_plain_takes_it_out_of_the_file() {
+        let mut settings = Settings::default();
+        settings.mark_workspace("/repos/one", WorkspaceColor::Ember);
+
+        assert!(settings.mark_workspace("/repos/one", WorkspaceColor::Plain));
+
+        assert!(settings.workspace_colors.is_empty());
+    }
+
+    /// What keeps a window that is already the right color from rewriting the file.
+    #[test]
+    fn marking_a_project_the_color_it_already_is_changes_nothing() {
+        let mut settings = Settings::default();
+        settings.mark_workspace("/repos/one", WorkspaceColor::Moss);
+
+        assert!(!settings.mark_workspace("/repos/one", WorkspaceColor::Moss));
+        assert!(!settings.mark_workspace("/repos/two", WorkspaceColor::Plain));
     }
 
     #[test]

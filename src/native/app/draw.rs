@@ -235,7 +235,7 @@ impl App {
         // necessarily the one the app was built with. Image loaders go the same way: without
         // them on this context, every image diff draws as a load error.
         if self.needs_style {
-            theme::apply(ctx, self.model.theme);
+            theme::apply(ctx, self.model.theme, self.model.workspace_color);
             self.needs_style = false;
         }
         if self.window_theme_frames > 0 {
@@ -252,6 +252,7 @@ impl App {
         }
         self.tasks.drain(&mut self.model);
         self.remember_opened_project();
+        self.follow_project_color();
         self.update_window_title(ctx);
         self.drain_attachments();
         self.model

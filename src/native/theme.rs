@@ -2,6 +2,8 @@
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
+use crate::native::workspace_color::WorkspaceColor;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeMode {
     Light,
@@ -85,6 +87,37 @@ fn rgba(hex: u32, alpha: u8) -> Color32 {
         (hex & 0xff) as u8,
         alpha,
     )
+}
+
+/// How far a workspace color moves the palette's surfaces: the difference between the
+/// ground the theme has of its own and the ground the color asks for, per channel.
+///
+/// Added rather than blended, so it is a move of the whole ladder rather than a wash over
+/// it: two surfaces a step apart before are the same step apart after.
+#[derive(Clone, Copy)]
+struct Step {
+    red: i16,
+    green: i16,
+    blue: i16,
+}
+
+impl Step {
+    fn between(from: Color32, to: Color32) -> Self {
+        Self {
+            red: to.r() as i16 - from.r() as i16,
+            green: to.g() as i16 - from.g() as i16,
+            blue: to.b() as i16 - from.b() as i16,
+        }
+    }
+
+    fn applied_to(self, color: Color32) -> Color32 {
+        let moved = |channel: u8, step: i16| (channel as i16 + step).clamp(0, 255) as u8;
+        Color32::from_rgb(
+            moved(color.r(), self.red),
+            moved(color.g(), self.green),
+            moved(color.b(), self.blue),
+        )
+    }
 }
 
 fn light() -> Palette {
@@ -177,6 +210,37 @@ impl Palette {
         }
     }
 
+    /// The same palette, re-hued to the color the workspace is marked with.
+    ///
+    /// A palette's surfaces - the ground, a frame's fill, a header, a control, a code
+    /// background - are a ladder of shades of one hue. A workspace color names where that
+    /// ladder sits: [`WorkspaceColor::bg`] is the ground it wants, and every other surface
+    /// moves by the same per-channel step the ground took. The step is small and the same
+    /// for all of them, so the ladder keeps its rungs exactly - a frame stands off its
+    /// ground by what it always did - and the window is recognizably one color rather than
+    /// a neutral window with a colored margin around it.
+    ///
+    /// Only the surfaces move. Ink, the muted ink, borders, accents, and every diff and
+    /// status color are the theme's throughout, so nothing a person reads changes color.
+    pub(crate) fn of_workspace(mode: ThemeMode, color: WorkspaceColor) -> Self {
+        let mut palette = Self::of(mode);
+        let step = Step::between(WorkspaceColor::Plain.bg(mode), color.bg(mode));
+        for surface in [
+            &mut palette.bg,
+            &mut palette.panel,
+            &mut palette.header_bg,
+            &mut palette.control_bg,
+            &mut palette.control_active_bg,
+            &mut palette.row_hover_bg,
+            &mut palette.code_bg,
+            &mut palette.composer_bg,
+            &mut palette.batch_bg,
+        ] {
+            *surface = step.applied_to(*surface);
+        }
+        palette
+    }
+
     /// Foreground for a diff line, by its leading character.
     pub(crate) fn diff_line_ink(&self, prefix: char) -> Color32 {
         match prefix {
@@ -246,8 +310,8 @@ pub(crate) fn strong_style() -> TextStyle {
     TextStyle::Name("strong".into())
 }
 
-pub(crate) fn apply(ctx: &egui::Context, mode: ThemeMode) {
-    let palette = Palette::of(mode);
+pub(crate) fn apply(ctx: &egui::Context, mode: ThemeMode, color: WorkspaceColor) {
+    let palette = Palette::of_workspace(mode, color);
     let mut style = egui::Style::default();
 
     style.text_styles = [

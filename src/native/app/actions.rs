@@ -387,6 +387,7 @@ impl App {
         match action {
             CommandAction::OpenPane(request) => self.open_pane(request),
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
+            CommandAction::MarkWorkspace(color) => self.set_workspace_color(color),
             CommandAction::InstallLaunchers => self.install_launchers(),
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
             CommandAction::RestartWindow => self.restart_window(ctx),

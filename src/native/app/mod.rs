@@ -27,6 +27,7 @@ use crate::{
         review::diff::{DiffLine, build_diff_lines},
         tasks::Tasks,
         theme::{self, Palette, ThemeMode},
+        workspace_color::WorkspaceColor,
     },
 };
 
@@ -184,6 +185,8 @@ impl App {
             model: Model {
                 stage,
                 theme,
+                // Marked once the project is known, which the review opening is what says.
+                workspace_color: WorkspaceColor::default(),
                 layout: Layout::new(),
                 root_session_id: String::new(),
                 last_shell_session_id: None,
@@ -288,11 +291,47 @@ impl App {
     }
 
     pub(crate) fn palette_of(&self) -> Palette {
-        Palette::of(self.model.theme)
+        Palette::of_workspace(self.model.theme, self.model.workspace_color)
     }
 
     pub(crate) fn set_theme(&mut self, theme: ThemeMode) {
         self.model.theme = theme;
+        self.needs_style = true;
+    }
+
+    /// Mark this window's project with a color, and keep `settings.json` in step.
+    ///
+    /// A window that is on no project yet - the launch screen - has nothing to mark: the
+    /// color is remembered against the project's path, so there is nowhere to put it.
+    pub(crate) fn set_workspace_color(&mut self, color: WorkspaceColor) {
+        self.model.workspace_color = color;
+        // The ground is baked into the style, so the whole window has to be restyled.
+        self.needs_style = true;
+
+        let Some(project_path) = self.model.project_path.clone() else {
+            return;
+        };
+        if !self.settings.mark_workspace(&project_path, color) {
+            return;
+        }
+        if let Err(error) = crate::settings::store(&self.settings) {
+            // Worth saying once, but not worth a toast: the window is that color either way.
+            eprintln!("[moonreview] could not save settings: {error}");
+        }
+    }
+
+    /// Paint the window in the color its project was last marked with. The project arrives a
+    /// moment after the window does - opening a review is a round trip - so this runs each
+    /// frame and does nothing until the path it is waiting for is there.
+    fn follow_project_color(&mut self) {
+        let Some(project_path) = self.model.project_path.as_deref() else {
+            return;
+        };
+        let color = self.settings.workspace_color(project_path);
+        if color == self.model.workspace_color {
+            return;
+        }
+        self.model.workspace_color = color;
         self.needs_style = true;
     }
 
@@ -348,7 +387,9 @@ impl eframe::App for App {
     /// app's own palette is used rather than the visuals handed in, which lag behind it on
     /// the first frames.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        theme::Palette::of(self.model.theme).bg.to_normalized_gamma_f32()
+        theme::Palette::of_workspace(self.model.theme, self.model.workspace_color)
+            .bg
+            .to_normalized_gamma_f32()
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

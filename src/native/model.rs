@@ -11,7 +11,7 @@ use egui_frames::{Layout, PaneId};
 use crate::{
     api::{AgentKind, AgentLogPayload, CommitView, HunkView, RepoStatusView, SessionPayload},
     moontasks::ReviewRequestView,
-    native::{panes::Pane, theme::ThemeMode},
+    native::{panes::Pane, theme::ThemeMode, workspace_color::WorkspaceColor},
     project::{ProjectCommand, ProjectCommands},
 };
 
@@ -540,6 +540,11 @@ pub(crate) enum Stage {
 pub(crate) struct Model {
     pub(crate) stage: Stage,
     pub(crate) theme: ThemeMode,
+    /// The color this window's ground is painted, which is how one window is told from
+    /// another. Read from the settings once the project is known - see
+    /// `App::follow_project_color` - and changed by the palette's commands or the project
+    /// pane's swatches.
+    pub(crate) workspace_color: WorkspaceColor,
     /// The panes, and the frames and splits they are arranged in.
     pub(crate) layout: Layout<Pane>,
     /// The review the window was launched on. Submodule reviews are opened beside it.
@@ -645,19 +650,11 @@ pub(crate) struct ProjectEditor {
 impl ProjectEditor {
     /// The box one of the menu's commands is typed in. The one place a command is paired
     /// with its box, so the pane draws the two rows from the same list it reads them by.
-    pub(crate) fn text(&self, which: ProjectCommand) -> &str {
-        match which {
-            ProjectCommand::Build => &self.build,
-            ProjectCommand::Run => &self.run,
-            // Built out of the two boxes rather than stored, so it has no box of its own.
-            ProjectCommand::BuildAndRun => unreachable!("build and run has no box"),
-        }
-    }
-
     pub(crate) fn text_mut(&mut self, which: ProjectCommand) -> &mut String {
         match which {
             ProjectCommand::Build => &mut self.build,
             ProjectCommand::Run => &mut self.run,
+            // Built out of the two boxes rather than stored, so it has no box of its own.
             ProjectCommand::BuildAndRun => unreachable!("build and run has no box"),
         }
     }

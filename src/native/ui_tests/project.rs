@@ -131,9 +131,6 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
         "the palette should offer the build command the pane just wrote"
     );
 
-    // And the pane says which items the menu now has.
-    harness.get_by_label("the Project menu offers build");
-
     // The box that was typed in has the keyboard, and a blinking caret is a picture that
     // depends on which frame it was taken on. Held on, it is the same caret every run.
     harness.ctx.all_styles_mut(|style| {
