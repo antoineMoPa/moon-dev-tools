@@ -328,6 +328,7 @@ impl App {
         self.poll_submodules();
         self.poll_review_requests();
         self.poll_running_shells();
+        self.poll_language_server_work();
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
@@ -351,6 +352,9 @@ impl App {
         self.remember_selected_agent();
         self.prune_diff_cache();
 
+        // Before the workspace, so the strip is taken off the bottom of the window and the
+        // frames are laid out in what is left rather than under it.
+        self.draw_status_bar(ui);
         self.draw_workspace(ui);
         palette::draw(self, ctx);
         find::draw(self, ctx);

@@ -384,6 +384,20 @@ impl App {
                 let frame = self.frame_for(PaneKind::Submodules, active_frame);
                 self.model.layout.add_pane(frame, Pane::Submodules, None);
             }
+            OpenPaneRequest::Messages => {
+                // One log a window: asking again brings it forward rather than opening a
+                // second copy of the same list.
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Messages)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Messages, active_frame);
+                self.model.layout.add_pane(frame, Pane::Messages, None);
+            }
             OpenPaneRequest::Tasks => {
                 if let Some((pane, _)) = self
                     .model
@@ -711,8 +725,16 @@ impl App {
     }
 
     pub(crate) fn close_pane(&mut self, pane_id: PaneId) {
-        self.model.file_editors.remove(&pane_id);
+        let was_editing = self.model.file_editors.remove(&pane_id);
         let closed = self.model.layout.close_pane(pane_id);
+
+        // The language server hears the file close, if this tab was the last one on it - the
+        // editor is out of the map already, so what is left in it is the tabs still showing
+        // the file. A file open in two tabs stays open in the server for the other one.
+        if let (Some(editing), Some(Pane::File { session_id, .. })) = (&was_editing, &closed) {
+            let session_id = session_id.clone();
+            self.close_document(editing, &session_id);
+        }
 
         // A task's pane takes its boxes with it, writing whatever was typed into the notes and
         // not yet written: the tab closing is the last chance those words get.

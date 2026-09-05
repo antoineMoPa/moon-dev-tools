@@ -18,7 +18,9 @@ use serde_json::json;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
-        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        FileContentPayload, FileMatchesPayload, LspCompletion, LspCompletionsPayload,
+        LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest,
+        LspStatus, LspStatusPayload, LspWork, LspWorkPayload, OpenSessionRequest, PatchPayload, SessionOpened,
         SessionPayload, SubmoduleHubPayload, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
@@ -629,6 +631,78 @@ impl Backend for RemoteBackend {
                 name: name.to_string(),
             },
         )
+    }
+
+    fn lsp_status(&self, session_id: &str, file_path: &str) -> Result<LspStatus> {
+        let encoded = urlencode(file_path);
+        let payload: LspStatusPayload = self.get(&format!(
+            "/api/session/{session_id}/lsp/status?file_path={encoded}"
+        ))?;
+        Ok(payload.status)
+    }
+
+    fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>> {
+        let payload: LspWorkPayload = self.get(&format!("/api/session/{session_id}/lsp/working"))?;
+        Ok(payload.working)
+    }
+
+    fn lsp_did_open(&self, session_id: &str, file_path: &str, text: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/lsp/open"),
+            &LspDocumentRequest {
+                file_path: file_path.to_string(),
+                text: text.to_string(),
+            },
+        )
+    }
+
+    fn lsp_did_change(&self, session_id: &str, file_path: &str, text: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/lsp/change"),
+            &LspDocumentRequest {
+                file_path: file_path.to_string(),
+                text: text.to_string(),
+            },
+        )
+    }
+
+    fn lsp_did_close(&self, session_id: &str, file_path: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/lsp/close"),
+            &json!({ "file_path": file_path }),
+        )
+    }
+
+    fn lsp_definition(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspLocation>> {
+        let payload: LspLocationsPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/definition"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.locations)
+    }
+
+    fn lsp_completion(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspCompletion>> {
+        let payload: LspCompletionsPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/completion"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.completions)
     }
 
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

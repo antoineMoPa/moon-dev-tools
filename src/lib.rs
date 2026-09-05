@@ -13,6 +13,7 @@ mod comments;
 mod commit_suggestion;
 mod committing;
 mod git;
+mod lsp;
 mod moontasks;
 mod moved_hunks;
 mod native;

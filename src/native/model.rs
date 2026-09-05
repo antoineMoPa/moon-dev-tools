@@ -462,6 +462,15 @@ pub(crate) struct PaletteState {
     pub(crate) files: crate::native::palette::Search<String>,
     /// The same for the content search: the lines of the repo that hold what was typed.
     pub(crate) contents: crate::native::palette::Search<crate::api::ContentMatch>,
+    /// The lines a ⌘-click on a name turned up, best first, when there was more than one
+    /// worth offering. Seeded rather than searched for: the lookup already ran, and what is
+    /// typed here narrows those rows instead of starting a search of its own. `searched` is
+    /// the name that was clicked, which is what the file landed on marks.
+    pub(crate) definitions: crate::native::palette::Search<crate::api::ContentMatch>,
+    /// The review the candidates above were found in, which is the one they have to be opened
+    /// in. Not the window's own review: a file pane opened from a submodule's review searches
+    /// that submodule, and its paths mean nothing in the repo above it.
+    pub(crate) definitions_in: String,
     pub(crate) query: String,
     /// The task the file finder is picking a file for, while it is: the file chosen is put on
     /// that task's card and then opened, rather than only opened. `None` is the plain finder.
@@ -485,6 +494,8 @@ impl PaletteState {
         // Whatever the last search found belongs to the query that is being cleared.
         self.files = crate::native::palette::Search::default();
         self.contents = crate::native::palette::Search::default();
+        self.definitions = crate::native::palette::Search::default();
+        self.definitions_in.clear();
         self.files_link_to_task = None;
         self.query.clear();
         self.highlighted = 0;
@@ -512,6 +523,26 @@ impl PaletteState {
         self.mode = crate::native::palette::PaletteMode::Contents;
     }
 
+    /// The places a ⌘-clicked name could have been defined, when the lookup found more than
+    /// one worth offering. The rows are handed over already found - nothing here searches for
+    /// them again, and what is typed narrows the ones that are on screen.
+    pub(crate) fn show_definitions(
+        &mut self,
+        word: String,
+        session_id: String,
+        candidates: Vec<crate::api::ContentMatch>,
+    ) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::Definitions;
+        self.definitions_in = session_id;
+        self.definitions = crate::native::palette::Search {
+            searched: Some(word),
+            matches: candidates,
+            truncated: false,
+            error: None,
+        };
+    }
+
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
     /// measured against.
     pub(crate) fn dismiss(&mut self) {
@@ -527,6 +558,8 @@ impl Default for PaletteState {
             mode: crate::native::palette::PaletteMode::Commands,
             files: crate::native::palette::Search::default(),
             contents: crate::native::palette::Search::default(),
+            definitions: crate::native::palette::Search::default(),
+            definitions_in: String::new(),
             query: String::new(),
             files_link_to_task: None,
             highlighted: 0,
@@ -586,6 +619,13 @@ pub(crate) struct Model {
     /// quit warning is about - see `App::quit_would_kill_shells`.
     pub(crate) shells_running_a_command: Vec<String>,
     pub(crate) toasts: Vec<Toast>,
+    /// Every message the window has posted, toast or error, whether or not it was read
+    /// before it faded - see [`crate::native::messages`].
+    pub(crate) messages: crate::native::messages::MessageLog,
+    /// What each session's language servers are doing, as of the last poll - see
+    /// [`crate::native::status_bar`]. Keyed by session, because a window reviewing a
+    /// submodule beside its repo has a set of servers per review.
+    pub(crate) language_servers_working: HashMap<String, crate::native::status_bar::ServersWorking>,
     pub(crate) palette: PaletteState,
     pub(crate) board: BoardState,
     pub(crate) agent_log: Option<AgentLogView>,
@@ -729,6 +769,11 @@ impl Model {
 
     pub(crate) fn toast(&mut self, kind: ToastKind, text: impl Into<String>) {
         let text = text.into();
+        // Written down before anything else, and every time it is posted: the toast below
+        // folds a repeat into the one already up, and the log is where "it happened again"
+        // is recorded - see [`crate::native::messages`].
+        self.messages
+            .record(kind, text.clone(), crate::native::messages::now_unix());
         // A repeated message means the same thing; refresh it instead of stacking copies.
         if let Some(existing) = self.toasts.iter_mut().find(|toast| toast.text == text) {
             existing.remaining = TOAST_LIFETIME;

@@ -15,8 +15,8 @@ use crate::{
     agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
-        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleHubPayload,
+        FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation, LspPosition, LspStatus, LspWork,
+        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -186,4 +186,37 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Attach to a shell: everything it has printed, and a handle to type into it. This is
     /// what a terminal pane is built from - see [`egui_tty::TtyStream`].
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream>;
+
+    /// Whether a language server is behind this file, and whether it has finished starting.
+    fn lsp_status(&self, session_id: &str, file_path: &str) -> Result<LspStatus>;
+    /// What every language server running for this session is doing right now: indexing,
+    /// loading, fetching metadata. Empty when there is nothing to wait for.
+    ///
+    /// **The caller polls this on a timer, not per frame.** It is a network round trip on a
+    /// remote session - see [`crate::native::status_bar`].
+    fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>>;
+    /// Tell the server a file is open and what is in it. Starts the server if this is the
+    /// first file of its language.
+    fn lsp_did_open(&self, session_id: &str, file_path: &str, text: &str) -> Result<()>;
+    /// The whole text again, as it stands. Full-text sync: it skips incremental-version
+    /// bookkeeping entirely and the servers used here are fine with it.
+    ///
+    /// **The caller debounces.** This is a network round trip on a remote session, and a
+    /// call per keystroke would flood it: the pane sends this once the typing has paused.
+    fn lsp_did_change(&self, session_id: &str, file_path: &str, text: &str) -> Result<()>;
+    fn lsp_did_close(&self, session_id: &str, file_path: &str) -> Result<()>;
+    fn lsp_definition(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspLocation>>;
+    /// What could finish the word being typed at a place in a file. The pane debounces this
+    /// the same way it debounces a change - see [`crate::native::completing`].
+    fn lsp_completion(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspCompletion>>;
 }

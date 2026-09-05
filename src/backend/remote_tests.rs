@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    api::OpenSessionRequest,
+    api::{LspPosition, LspStatus, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
@@ -144,6 +144,73 @@ fn staging_through_a_remote_review_changes_the_repo() {
         .filter(|hunk| hunk.staged)
         .count();
     assert_eq!(staged, 1, "the hunk should now be staged on the server");
+}
+
+/// The language routes as a remote window uses them. A markdown file has no server behind
+/// it on any machine, so this says the same thing everywhere and says it in milliseconds -
+/// what is being checked is that the route is wired up and the answer survives the wire.
+#[test]
+fn a_remote_review_answers_that_a_markdown_file_has_no_language_server() {
+    let served = serve_a_repo("lsp");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    assert_eq!(
+        backend
+            .lsp_status(&opened.session_id, "notes.md")
+            .expect("expected a language status over HTTP"),
+        LspStatus::Unavailable
+    );
+    // Opening and closing one is quietly nothing to do rather than an error.
+    backend
+        .lsp_did_open(&opened.session_id, "notes.md", "# notes\n")
+        .expect("expected opening an unserved file to be accepted");
+    backend
+        .lsp_did_change(&opened.session_id, "notes.md", "# notes, changed\n")
+        .expect("expected changing an unserved file to be accepted");
+    backend
+        .lsp_did_close(&opened.session_id, "notes.md")
+        .expect("expected closing an unserved file to be accepted");
+    assert!(
+        backend
+            .lsp_definition(
+                &opened.session_id,
+                "notes.md",
+                LspPosition { line: 0, column: 2 }
+            )
+            .expect("expected a definition answer")
+            .is_empty(),
+        "a file with no server behind it has no definitions"
+    );
+}
+
+/// The status bar's question, over the wire. A session whose servers have not been started -
+/// nothing has opened a file yet - is doing nothing, which is an empty answer rather than an
+/// error: that is the ordinary state of a review, and the bar reads it as nothing to wait for.
+#[test]
+fn a_remote_review_says_its_language_servers_are_doing_nothing_when_none_are_running() {
+    let served = serve_a_repo("lsp-working");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    assert!(
+        backend
+            .lsp_working(&opened.session_id)
+            .expect("expected an answer about what the servers are doing")
+            .is_empty()
+    );
 }
 
 #[test]

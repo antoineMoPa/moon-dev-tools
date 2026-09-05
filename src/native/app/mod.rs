@@ -98,6 +98,10 @@ pub(crate) struct App {
     last_running_shells_poll: Instant,
     /// When the board's review requests were last read - see [`App::poll_review_requests`].
     last_review_requests_poll: Instant,
+    /// When the window last asked what the language servers are doing - see
+    /// [`crate::native::status_bar`]. Kept here rather than per pane: the question is about
+    /// the session's servers, and every pane on that session is waiting on the same answer.
+    pub(super) last_lsp_work_poll: Instant,
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
@@ -114,6 +118,16 @@ pub(crate) struct App {
     /// The tab owed the keyboard, waiting for its own draw to take it. A shell and a file
     /// editor can only ask for focus from inside the widget that would hold it.
     pub(crate) pane_taking_keyboard: Option<PaneId>,
+    /// Whether this window's file panes talk to language servers at all - see
+    /// [`crate::native::lsp_document`].
+    ///
+    /// Off as an `App` is built, and turned on by the window `crate::native::run` opens,
+    /// which is the only caller that wants it on: every other caller is a ui test, and a
+    /// test that opened a `.rs` pane would start the rust-analyzer the machine running the
+    /// tests really has and then sit out a cold index of the fixture repo. A test that is
+    /// about this wiring turns it on for its own pane, on a file nothing serves - see
+    /// `crate::native::file_pane::FileEditor::asks_language_servers_for_test`.
+    pub(crate) asks_language_servers: bool,
     /// The keyboard, read through the binding table. It holds the state of a prefix chord
     /// that has begun - the `C-x` of `C-x o` - between frames.
     keymap: Keymap,
@@ -205,6 +219,8 @@ impl App {
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
                 toasts: Vec::new(),
+                messages: Default::default(),
+                language_servers_working: HashMap::new(),
                 palette: Default::default(),
                 board: Default::default(),
                 agent_log: None,
@@ -244,6 +260,11 @@ impl App {
             last_review_requests_poll: Instant::now()
                 .checked_sub(BOARD_POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
+            // Backdated like the rest, so the first pane that has a server behind it is asked
+            // about straight away rather than after the first interval.
+            last_lsp_work_poll: Instant::now()
+                .checked_sub(POLL_INTERVAL)
+                .unwrap_or_else(Instant::now),
             pending_action: None,
             pending_close: None,
             pending_tab_action: None,
@@ -255,6 +276,8 @@ impl App {
             diffs: HashMap::new(),
             hunk_heights: HashMap::new(),
             decoded_images: HashMap::new(),
+            // Turned on by the window itself - see the field.
+            asks_language_servers: false,
             keymap: Keymap::default(),
             needs_style: true,
             window_theme_frames: WINDOW_THEME_FRAMES,

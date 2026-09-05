@@ -8,8 +8,9 @@ use anyhow::Result;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
-        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, OpenSessionRequest,
-        PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation,
+        LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        SubmoduleHubPayload,
     },
     backend::Backend,
     moontasks::{
@@ -341,6 +342,44 @@ impl Backend for LocalBackend {
 
     fn rename_terminal(&self, session_id: &str, terminal_id: &str, name: &str) -> Result<()> {
         crate::terminal::rename(&self.state, session_id, terminal_id, name)
+    }
+
+    fn lsp_status(&self, session_id: &str, file_path: &str) -> Result<LspStatus> {
+        crate::lsp::status(&self.state, session_id, file_path)
+    }
+
+    fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>> {
+        Ok(crate::lsp::working(&self.state, session_id))
+    }
+
+    fn lsp_did_open(&self, session_id: &str, file_path: &str, text: &str) -> Result<()> {
+        crate::lsp::did_open(&self.state, session_id, file_path, text)
+    }
+
+    fn lsp_did_change(&self, session_id: &str, file_path: &str, text: &str) -> Result<()> {
+        crate::lsp::did_change(&self.state, session_id, file_path, text)
+    }
+
+    fn lsp_did_close(&self, session_id: &str, file_path: &str) -> Result<()> {
+        crate::lsp::did_close(&self.state, session_id, file_path)
+    }
+
+    fn lsp_definition(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspLocation>> {
+        crate::lsp::definition(&self.state, session_id, file_path, at)
+    }
+
+    fn lsp_completion(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<LspCompletion>> {
+        crate::lsp::completion(&self.state, session_id, file_path, at)
     }
 
     fn attach_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

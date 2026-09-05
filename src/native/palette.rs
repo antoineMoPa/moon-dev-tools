@@ -25,6 +25,10 @@ pub(crate) enum PaletteMode {
     Files,
     /// A line of the repo, by the text on it, found the same way.
     Contents,
+    /// Where a ⌘-clicked name could have been defined, out of the lines the lookup already
+    /// found. Nothing is searched for in this mode - the rows are seeded, and what is typed
+    /// narrows them.
+    Definitions,
 }
 
 /// What one of the palette's two searches has found. One search at a time, for whatever was
@@ -230,6 +234,17 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Commit {
             session_id: committing,
         }),
+        None,
+    ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Messages)
+            .is_some(),
+        "messages",
+        "Open every message this window has posted",
+        "Bring the messages forward",
+        CommandAction::OpenPane(OpenPaneRequest::Messages),
         None,
     ));
     commands.push(Command {
@@ -449,6 +464,7 @@ fn rows_for(app: &App) -> Vec<Command> {
         PaletteMode::Commands => filter(commands_for(app), &app.model.palette.query),
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
+        PaletteMode::Definitions => definition_rows(app),
     }
 }
 
@@ -514,12 +530,50 @@ fn content_rows(app: &App) -> Vec<Command> {
         .collect()
 }
 
+/// One row per place the ⌘-clicked name could have been defined, best first, out of what the
+/// lookup already found - see [`crate::native::definition`]. Typing narrows these rows rather
+/// than searching the repo again: the search has already run, and its answer is the list.
+fn definition_rows(app: &App) -> Vec<Command> {
+    let word = app
+        .model
+        .palette
+        .definitions
+        .searched
+        .clone()
+        .unwrap_or_default();
+    let rows = app
+        .model
+        .palette
+        .definitions
+        .matches
+        .iter()
+        .map(|found| Command {
+            title: found.line.clone(),
+            description: format!("{}:{}", found.file_path, found.line_number),
+            action: CommandAction::OpenPane(OpenPaneRequest::File {
+                // The review the lookup ran in, not the window's own: a file pane opened from
+                // a submodule's review searched that submodule, and these paths are its.
+                session_id: app.model.palette.definitions_in.clone(),
+                file_path: found.file_path.clone(),
+                at: Some(crate::native::panes::OpenAt {
+                    line: found.line_number,
+                    query: word.clone(),
+                }),
+            }),
+            shortcut: None,
+        })
+        .collect();
+    filter(rows, &app.model.palette.query)
+}
+
 /// Whether the list on screen is only the start of what the repo matched.
 fn truncated_of(app: &App) -> bool {
     match app.model.palette.mode {
         PaletteMode::Commands => false,
         PaletteMode::Files => app.model.palette.files.truncated,
         PaletteMode::Contents => app.model.palette.contents.truncated,
+        // Seeded from a lookup that handed over everything it found.
+        PaletteMode::Definitions => false,
     }
 }
 
@@ -527,14 +581,25 @@ fn file_name_of(file_path: &str) -> &str {
     file_path.rsplit('/').next().unwrap_or(file_path)
 }
 
-fn hint_of(app: &App) -> &'static str {
+fn hint_of(app: &App) -> String {
     match app.model.palette.mode {
-        PaletteMode::Commands => "Execute a command…",
+        PaletteMode::Commands => "Execute a command…".to_string(),
         PaletteMode::Files if app.model.palette.files_link_to_task.is_some() => {
-            "Link a file to the task by name…"
+            "Link a file to the task by name…".to_string()
         }
-        PaletteMode::Files => "Open a file by name…",
-        PaletteMode::Contents => "Find text in the files…",
+        PaletteMode::Files => "Open a file by name…".to_string(),
+        PaletteMode::Contents => "Find text in the files…".to_string(),
+        // The name is said here because the rows were not typed for: without it the list
+        // reads as a search whose query went missing.
+        PaletteMode::Definitions => format!(
+            "Where {} is defined…",
+            app.model
+                .palette
+                .definitions
+                .searched
+                .clone()
+                .unwrap_or_default()
+        ),
     }
 }
 
@@ -560,6 +625,9 @@ fn empty_message(app: &App) -> String {
             )
             .unwrap_or_else(|| "no file of the repo holds that text".to_string())
         }
+        // Nothing was found for the query: the rows the lookup handed over are all there is,
+        // and what is typed has narrowed them away.
+        PaletteMode::Definitions => "none of those lines matches".to_string(),
     }
 }
 
@@ -672,6 +740,8 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         PaletteMode::Commands => {}
         PaletteMode::Files => refresh_file_matches(app),
         PaletteMode::Contents => refresh_content_matches(app),
+        // Seeded, so there is nothing to keep up to date.
+        PaletteMode::Definitions => {}
     }
     let palette = app.palette_of();
     let matches = rows_for(app);

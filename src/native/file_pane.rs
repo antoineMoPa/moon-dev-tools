@@ -3,7 +3,14 @@
 //! The text and how it is drawn belong to `egui_moon_editor`; what is here is where the text
 //! came from and where it goes - fetching it through the backend, writing it back, the pane's
 //! own chrome, and the rendered page a markdown file opens on. The find bar stays here too:
-//! the editor takes the ranges to mark as input and says how many it laid out.
+//! the editor takes the ranges to mark as input and says how many it laid out. A ⌘-click on a
+//! name in the text is the same shape of thing: the editor says which word was clicked, and
+//! [`crate::native::definition`] is what turns that into a file to open. The language server
+//! behind the file is told what this pane is showing by
+//! [`crate::native::lsp_document`], which holds what it has heard on the pane it belongs to,
+//! and what that server offers to finish the word being typed with is
+//! [`crate::native::completing`]'s business - this pane hands the list in and hands the
+//! editor's answer back on.
 
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
@@ -11,6 +18,8 @@ use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
 use crate::native::{
     app::App,
+    completing::Completing,
+    lsp_document::{CanAnswer, Served},
     theme::{Palette, SMALL_SIZE},
     widgets,
 };
@@ -37,10 +46,24 @@ pub(crate) struct FileEditor {
     /// The match a content search opened this file at, if it did. Cleared once the text is
     /// there, has been scrolled to, and has been handed to the find bar to mark.
     reveal: Option<crate::native::panes::OpenAt>,
+    /// What the lookup a ⌘-click in this pane started came back with, waiting for the frame
+    /// that acts on it. It waits here rather than being acted on where it arrives because
+    /// opening a pane is deferred to the end of a frame - see
+    /// [`crate::native::definition::follow`].
+    pub(crate) looking_up: Option<crate::native::definition::LookedUp>,
+    /// Whether this pane asks a language server anything, taken from the window as the pane
+    /// is opened - see [`App::asks_language_servers`].
+    asks_language_servers: bool,
+    /// Whether a language server is behind this file, and what it has been told about it -
+    /// see [`crate::native::lsp_document`].
+    served: Served,
+    /// What is being offered to finish the word being typed, and what has been asked about
+    /// it - see [`crate::native::completing`].
+    completing: Completing,
 }
 
 impl FileEditor {
-    fn loading(file_path: String) -> Self {
+    fn loading(file_path: String, asks_language_servers: bool) -> Self {
         let preview = is_markdown(&file_path);
         let mut code = Editor::new(String::new());
         // What the file is read as, settled here because the path is what says so and this is
@@ -55,13 +78,103 @@ impl FileEditor {
             preview,
             close_confirmed: false,
             reveal: None,
+            looking_up: None,
+            asks_language_servers,
+            served: Served::Unknown,
+            completing: Completing::default(),
         }
+    }
+
+    /// Whether this pane's ⌘-click asks a language server before it searches the repo.
+    pub(crate) fn asks_language_servers(&self) -> bool {
+        self.asks_language_servers
+    }
+
+    /// Turn the language-server side of this one pane on in a test. A window built for a
+    /// test has them off - see [`App::asks_language_servers`] - so a test that is about
+    /// this wiring says so, on a file nothing serves, or it starts a real server.
+    #[cfg(test)]
+    pub(crate) fn asks_language_servers_for_test(&mut self) {
+        self.asks_language_servers = true;
+    }
+
+    /// Whether this pane has anything to tell a server yet: a window with its language
+    /// servers switched off tells nothing, and neither does a file whose text has not
+    /// arrived - a document is opened with what is in it.
+    pub(super) fn has_a_document_to_keep_up(&self) -> bool {
+        self.asks_language_servers && self.saved.is_some()
+    }
+
+    /// The text on screen and what the server has heard of it, handed out together because
+    /// what to send next is worked out from the two at once.
+    pub(super) fn text_and_server(&mut self) -> (&str, &mut Served) {
+        (self.code.text(), &mut self.served)
+    }
+
+    /// What the server has heard about this file, for the tab that is closing and for the
+    /// call that has just come back.
+    pub(super) fn server_heard(&self) -> &Served {
+        &self.served
+    }
+
+    pub(super) fn server_heard_mut(&mut self) -> &mut Served {
+        &mut self.served
+    }
+
+    /// Whether this pane offers to finish the word being typed at all: a window with its
+    /// language servers switched off does not, and neither does a file no server is behind -
+    /// which is most of a repo, and is why this is the first thing asked every frame.
+    pub(super) fn offers_completions(&self) -> bool {
+        self.asks_language_servers && matches!(self.served, Served::Yes(_))
+    }
+
+    /// The completion box's state, beside whether the server behind the file could answer a
+    /// question about the text on screen at all: what to ask next is worked out from the two
+    /// at once.
+    pub(super) fn completing_and_server(&mut self) -> (&mut Completing, CanAnswer) {
+        let can_answer = self.served.can_answer_about(self.code.text());
+        (&mut self.completing, can_answer)
+    }
+
+    /// The completion box's state, for an answer that has just come back.
+    pub(super) fn completing_mut(&mut self) -> &mut Completing {
+        &mut self.completing
     }
 
     /// What the pane is showing, once it has arrived.
     #[cfg(test)]
     pub(crate) fn content_for_test(&self) -> Option<String> {
         self.saved.clone()
+    }
+
+    /// What is on screen, which after typing is not what was fetched.
+    #[cfg(test)]
+    pub(crate) fn text_for_test(&self) -> &str {
+        self.code.text()
+    }
+
+    /// How many rows the pane is offering to finish the word being typed with.
+    #[cfg(test)]
+    pub(crate) fn rows_offered_for_test(&self) -> usize {
+        self.completing.on_offer().len()
+    }
+
+    /// What those rows read as, for the end-to-end test that wants to see a real server's
+    /// names come back.
+    #[cfg(test)]
+    pub(crate) fn labels_offered_for_test(&self) -> Vec<String> {
+        self.completing
+            .on_offer()
+            .iter()
+            .map(|row| row.label.clone())
+            .collect()
+    }
+
+    /// Whether the pane has heard back that nothing serves its file, which is the end state
+    /// of the language-server side of a pane on most of a repo.
+    #[cfg(test)]
+    pub(crate) fn heard_no_server_for_test(&self) -> bool {
+        matches!(self.served, Served::No)
     }
 
     /// Type into the file, as the editor widget does.
@@ -187,7 +300,10 @@ impl App {
         }
         self.model
             .file_editors
-            .insert(pane_id, FileEditor::loading(file_path.to_string()));
+            .insert(
+                pane_id,
+                FileEditor::loading(file_path.to_string(), self.asks_language_servers),
+            );
         self.load_file(pane_id, session_id, file_path);
     }
 
@@ -272,6 +388,12 @@ impl App {
     ) {
         let palette = self.palette_of();
         self.ensure_file_editor(pane_id, session_id, file_path);
+        // What the language server behind this file has been told about it, brought up with
+        // what the pane is showing.
+        let ctx = ui.ctx().clone();
+        self.sync_document(&ctx, pane_id, session_id);
+        // A name ⌘-clicked in this pane on an earlier frame, once it has been looked up.
+        crate::native::definition::follow(self, pane_id, session_id);
         let Some(editor) = self.model.file_editors.get(&pane_id) else {
             return;
         };
@@ -352,7 +474,7 @@ impl App {
                 if previewing {
                     draw_preview(self, ui, pane_id);
                 } else {
-                    draw_editor(self, ui, pane_id, &palette);
+                    draw_editor(self, ui, pane_id, session_id, &palette);
                 }
             });
     }
@@ -398,7 +520,7 @@ fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
         });
 }
 
-fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
+fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, palette: &Palette) {
     let style = palette.editor_style();
     // The find bar over this pane, if there is one. Read out before the editor is borrowed,
     // and handed back what the search turned up once the text has been laid out.
@@ -449,8 +571,20 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
             },
             line_of_interest: reveal.as_ref().map(|at| at.line),
             focus: takes_keyboard,
+            // Command on macOS, ctrl elsewhere - the same modifier the whole of
+            // `crate::native::bindings` is written in, and the one a browser makes a link
+            // clickable under.
+            navigate_modifier: Some(egui::Modifiers::COMMAND),
+            // What the language server offered to finish the word being typed with, worked
+            // out on an earlier frame - see [`crate::native::completing`]. The editor draws
+            // the list and puts the chosen row in; this pane never touches the text.
+            completions: editor.completing.on_offer(),
         },
     );
+    // The name that was ⌘-clicked, if one was, and where in the text it sits - which is
+    // already the position a language server is asked about. Where it is defined is
+    // `crate::native::definition`'s business rather than this pane's.
+    let navigated_to = output.navigated_to.clone();
 
     // Only ever the once: the line is where the file was opened, not where it is held, and
     // scrolling away from it has to stick. The find bar takes it from here, marking every
@@ -472,6 +606,12 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
     if let Some((query, at)) = mark_match {
         crate::native::find::show_match(app, pane_id, query, at);
     }
+    if let Some(word) = navigated_to {
+        crate::native::definition::look_up(app, pane_id, session_id, word);
+    }
+    // What the caret is on now, and what became of the list that was up: whether that is
+    // worth a question is `completing`'s to answer.
+    crate::native::completing::follow_the_caret(app, pane_id, session_id, ui.ctx(), &output);
 }
 
 /// What the find bar is asking of a file pane this frame.
@@ -495,6 +635,10 @@ mod tests {
             preview: false,
             close_confirmed: false,
             reveal: None,
+            looking_up: None,
+            asks_language_servers: false,
+            served: Served::Unknown,
+            completing: Completing::default(),
         }
     }
 
@@ -503,7 +647,7 @@ mod tests {
         assert!(!editor_with("fn one() {}", "fn one() {}").is_dirty());
         assert!(editor_with("fn one() {}", "fn two() {}").is_dirty());
         // Nothing has arrived yet, so there is nothing to have changed.
-        assert!(!FileEditor::loading("src/lib.rs".to_string()).is_dirty());
+        assert!(!FileEditor::loading("src/lib.rs".to_string(), false).is_dirty());
     }
 
     /// Markdown opens on the rendered page; everything else opens on the text, and never
@@ -516,7 +660,7 @@ mod tests {
         assert!(!is_markdown("md"));
         assert!(!is_markdown("README"));
 
-        assert!(FileEditor::loading("Moontasks.md".to_string()).preview);
-        assert!(!FileEditor::loading("src/lib.rs".to_string()).preview);
+        assert!(FileEditor::loading("Moontasks.md".to_string(), false).preview);
+        assert!(!FileEditor::loading("src/lib.rs".to_string(), false).preview);
     }
 }

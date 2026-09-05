@@ -41,6 +41,9 @@ egui_tty = { version = "0.2", path = "crates/egui_tty" }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 libc = "0.2"
+# The LSP wire types — requests, capabilities, positions. Only the shapes; the transport and
+# the process are ours, in `src/lsp`.
+lsp-types = "0.97"
 portable-pty = "0.9.0"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # The folder picker the window opens on startup when it has no repo to review yet. On Linux it

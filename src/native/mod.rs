@@ -7,12 +7,17 @@ pub(crate) mod board;
 pub(crate) mod commit_pane;
 #[cfg(test)]
 mod commit_pane_tests;
+pub(crate) mod completing;
+pub(crate) mod definition;
+mod definition_ranking;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
 pub(crate) mod launchers;
 pub(crate) mod logos;
+pub(crate) mod lsp_document;
 pub(crate) mod menu;
+pub(crate) mod messages;
 pub(crate) mod model;
 pub(crate) mod palette;
 pub(crate) mod panes;
@@ -20,6 +25,7 @@ mod programs;
 pub(crate) mod project_pane;
 pub(crate) mod review;
 pub(crate) mod start_pane;
+pub(crate) mod status_bar;
 pub(crate) mod submodules;
 pub(crate) mod tasks;
 pub(crate) mod theme;
@@ -141,6 +147,10 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
         options,
         Box::new(|creation| {
             let mut app = app::App::new(creation.egui_ctx.clone(), launch);
+            // A real window is the one caller that wants language servers: it is looking at
+            // a repo someone is working in, and starting rust-analyzer for it is the point.
+            // Every other caller of `App::new` is a ui test - see the field.
+            app.asks_language_servers = true;
             app.install_menu();
             app.restore_layout_from(creation.storage);
             Ok(Box::new(app))

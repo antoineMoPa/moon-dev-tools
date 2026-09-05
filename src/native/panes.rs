@@ -34,6 +34,8 @@ pub(crate) enum PaneKind {
     Commit,
     Submodules,
     Project,
+    /// Every message the window has posted, the way emacs keeps a `*Messages*` buffer.
+    Messages,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -92,6 +94,9 @@ pub(crate) enum Pane {
     Submodules,
     /// The two commands the Project menu runs, and where they are set.
     Project,
+    /// Everything the window has said, with the time it said it - what a click on the status
+    /// bar opens. See [`crate::native::messages`].
+    Messages,
 }
 
 impl Pane {
@@ -106,6 +111,7 @@ impl Pane {
             Self::Commit { .. } => PaneKind::Commit,
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
+            Self::Messages => PaneKind::Messages,
         }
     }
 
@@ -132,6 +138,7 @@ impl Pane {
             Self::Commit { .. } => "commit".to_string(),
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
+            Self::Messages => "messages".to_string(),
         }
     }
 
@@ -205,6 +212,8 @@ pub(crate) enum OpenPaneRequest {
     Submodules,
     /// The two commands the Project menu runs, and where they are set.
     Project,
+    /// Everything the window has said.
+    Messages,
 }
 
 /// The match a file is opened at: the line to bring on screen, and the text that was
@@ -371,6 +380,7 @@ impl PaneView<Pane> for App {
             }
             Pane::Submodules => crate::native::submodules::draw(self, ui),
             Pane::Project => crate::native::project_pane::draw(self, ui),
+            Pane::Messages => crate::native::messages::draw(self, ui),
         }
     }
 

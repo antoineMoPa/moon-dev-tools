@@ -41,6 +41,7 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         agent_availability: detect_agent_availability(),
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
+        lsp: Arc::new(crate::lsp::LspRegistry::new()),
     }
 }
 
@@ -190,6 +191,34 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/commit-run/{terminal_id}/outcome",
             get(commit_run_outcome),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/status",
+            get(crate::lsp::routes::status),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/working",
+            get(crate::lsp::routes::working),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/open",
+            post(crate::lsp::routes::did_open),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/change",
+            post(crate::lsp::routes::did_change),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/close",
+            post(crate::lsp::routes::did_close),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/definition",
+            post(crate::lsp::routes::definition),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/completion",
+            post(crate::lsp::routes::completion),
         )
         .route(
             "/api/session/{session_id}/terminals",
