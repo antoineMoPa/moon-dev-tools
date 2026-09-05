@@ -254,7 +254,8 @@ fn draw_draft(
 /// Both boxes are filled in again when the board's answer changes under them - a title renamed
 /// on the card, or notes written in the file beside this - and not otherwise: an answer that
 /// still has the old title in it, because the rename has not been read back yet, must not be
-/// allowed to take back what was just typed.
+/// allowed to take back what was just typed. The notes have a second way of being behind the
+/// box, which is [`accept_notes`].
 fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
     let now = ui.input(|input| input.time);
     // A pane opened by a click on the card's notes opens with the keyboard in that box, which
@@ -283,15 +284,13 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
             said_title: task.title.clone(),
             said_notes: task.notes.clone(),
             notes_typed_at: None,
+            written_notes: None,
         });
     if editor.said_title != task.title {
         editor.title.clone_from(&task.title);
         editor.said_title.clone_from(&task.title);
     }
-    if editor.said_notes != task.notes {
-        editor.notes.clone_from(&task.notes);
-        editor.said_notes.clone_from(&task.notes);
-    }
+    accept_notes(editor, &task.notes);
 
     let title_id = ui.id().with("task-title");
     // Taken before the box is drawn, so the box never sees it and never adds the line.
@@ -356,6 +355,10 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
         .is_some_and(|at| now - at >= NOTES_SETTLE);
     if editor.notes_typed_at.is_some() && (settled || notes.lost_focus()) {
         editor.notes_typed_at = None;
+        // Held until the board reads these words back, so the answer that carries them - and
+        // every answer still on its way from before them - cannot put the box back to what it
+        // said before the next letters were typed.
+        editor.written_notes = Some(editor.notes.clone());
         actions.push(BoardAction::SaveNotes {
             task_id: task.id.clone(),
             notes: editor.notes.clone(),
@@ -363,6 +366,32 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
     } else if editor.notes_typed_at.is_some() {
         // The wait is being counted in frames, so it needs frames to count.
         ui.ctx().request_repaint();
+    }
+}
+
+/// Take what the board says a task's notes are into the box, or leave the box as it is.
+///
+/// The box is written to `notes.md` a moment after the typing stops, and the board is read
+/// again both on a timer and as soon as that write lands. So the answer that comes back says
+/// what the notes were when the typing paused, while the box has gone on being typed into -
+/// and filling the box in from it would take those letters back. The editor holds the words it
+/// wrote until an answer carries them, and passes over every answer until one does: they are
+/// all older than the box.
+///
+/// An answer nobody here wrote is somebody else writing the file - an agent, or the file open
+/// in a pane beside this - and the box takes it.
+fn accept_notes(editor: &mut TaskEditor, notes: &str) {
+    if editor.said_notes == notes {
+        return;
+    }
+    editor.said_notes = notes.to_string();
+    match &editor.written_notes {
+        // The write has been read back: the file and the box are talking about the same words
+        // again, and the box keeps whatever has been typed on top of them since.
+        Some(written) if written == notes => editor.written_notes = None,
+        // An answer from before the write, or from between two of them.
+        Some(_) => {}
+        None => editor.notes = notes.to_string(),
     }
 }
 
@@ -378,4 +407,87 @@ fn draw_while_the_board_is_read(ui: &mut Ui, palette: &Palette) {
             .size(SMALL_SIZE)
             .color(palette.muted),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accept_notes;
+    use crate::native::model::TaskEditor;
+
+    /// An editor with words in the box, the board's last answer, and a write waiting to be
+    /// read back.
+    fn editor(notes: &str, said_notes: &str, written_notes: Option<&str>) -> TaskEditor {
+        TaskEditor {
+            title: "Write the parser".to_string(),
+            notes: notes.to_string(),
+            notes_typed_at: None,
+            said_title: "Write the parser".to_string(),
+            said_notes: said_notes.to_string(),
+            written_notes: written_notes.map(str::to_string),
+        }
+    }
+
+    /// The answer the write itself asked for: it carries the words as they stood when the
+    /// typing paused, and the box has been typed into since. The box keeps its letters, and
+    /// the wait is over - the board and the box are talking about the same words again.
+    #[test]
+    fn the_answer_carrying_our_own_write_does_not_take_back_what_was_typed_after_it() {
+        let mut editor = editor("Ship it by Friday", "Ship it", Some("Ship it by"));
+
+        accept_notes(&mut editor, "Ship it by");
+
+        assert_eq!(
+            editor.notes, "Ship it by Friday",
+            "the box kept its letters"
+        );
+        assert_eq!(editor.said_notes, "Ship it by");
+        assert_eq!(editor.written_notes, None, "the write has been read back");
+    }
+
+    /// A read already on its way when the write landed answers with what was in the file
+    /// before it. It is older than the box twice over and says nothing the box does not know.
+    #[test]
+    fn an_answer_from_before_the_write_is_passed_over() {
+        let mut editor = editor("Ship it by Friday", "Ship", Some("Ship it by"));
+
+        accept_notes(&mut editor, "Ship it");
+
+        assert_eq!(
+            editor.notes, "Ship it by Friday",
+            "the box kept its letters"
+        );
+        assert_eq!(
+            editor.written_notes.as_deref(),
+            Some("Ship it by"),
+            "the write is still waiting to be read back"
+        );
+    }
+
+    /// Nobody here wrote this - the file changed beside the box, an agent or an editor - so
+    /// the box takes it.
+    #[test]
+    fn an_answer_nobody_here_wrote_is_taken_into_the_box() {
+        let mut editor = editor("Ship it by Friday", "Ship it by Friday", None);
+
+        accept_notes(&mut editor, "Ship it by Friday, says the agent");
+
+        assert_eq!(editor.notes, "Ship it by Friday, says the agent");
+        assert_eq!(editor.said_notes, "Ship it by Friday, says the agent");
+    }
+
+    /// The board saying again what it said last time is the ordinary frame, and nothing about
+    /// the box moves.
+    #[test]
+    fn the_answer_the_board_gave_last_time_changes_nothing() {
+        let mut editor = editor("Ship it by Friday", "Ship it", Some("Ship it"));
+
+        accept_notes(&mut editor, "Ship it");
+
+        assert_eq!(editor.notes, "Ship it by Friday");
+        assert_eq!(
+            editor.written_notes.as_deref(),
+            Some("Ship it"),
+            "an answer that has not changed is not the write being read back"
+        );
+    }
 }

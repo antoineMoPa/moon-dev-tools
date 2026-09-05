@@ -204,10 +204,15 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                     model.board.card_being_written = None;
                     // What was typed carries on in the task's own boxes: the notes as they
                     // stand here, against the empty ones the board will report until the write
-                    // above has been read back.
+                    // above has been read back. Those words are held as written, so the answer
+                    // that finally carries them cannot take back the ones typed while it was
+                    // on its way - see [`crate::native::start_pane::accept_notes`].
                     model.board.task_editors.insert(
                         task.id.clone(),
                         TaskEditor {
+                            // Empty notes wrote no file above, so there is nothing to wait
+                            // to be read back.
+                            written_notes: (!notes.is_empty()).then(|| notes.clone()),
                             title: task.title.clone(),
                             notes,
                             said_title: task.title.clone(),

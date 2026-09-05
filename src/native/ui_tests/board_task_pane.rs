@@ -13,7 +13,7 @@ use egui_kittest::Harness;
 
 use crate::native::{panes::Pane, theme::ThemeMode};
 
-use super::{app_for, click_at, press_key, seeded_fixture, settle, type_letter};
+use super::{Fixture, app_for, click_at, press_key, seeded_fixture, settle, type_letter};
 
 /// A card is the way into the task as much as it is a record of it: clicking one opens the
 /// task's own pane, whatever the task has running, and the pane says what that is.
@@ -69,9 +69,7 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
             pane_open_in_ui.store(
                 app.model
                     .layout
-                    .find_pane(
-                        |pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK),
-                    )
+                    .find_pane(|pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK))
                     .is_some(),
                 Ordering::Relaxed,
             );
@@ -444,7 +442,9 @@ fn a_shell_started_from_a_card_joins_the_column_beside_the_board() {
             start_window_open_in_ui.store(
                 app.model
                     .layout
-                    .find_pane(|pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK))
+                    .find_pane(
+                        |pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK),
+                    )
                     .is_some(),
                 Ordering::Relaxed,
             );
@@ -855,18 +855,12 @@ fn deleting_a_task_closes_the_tab_its_pane_was_in() {
     );
 }
 
-/// The task's own pane is where a task is written as well as started: the title box renames it
-/// and the notes box writes its `notes.md`, both without a file being opened beside them.
-#[test]
-fn a_tasks_pane_writes_its_title_and_its_notes() {
-    const TASK: &str = "write-the-parser-1111";
-    // Where the board ends and the task's pane begins, which tells the pane's title box from
-    // the board's own filter box.
-    const BOARD_WIDTH: f32 = 640.0;
-
-    let fixture = seeded_fixture("task-editors");
+/// A task on the board, and its pane opened by a click on its card - the window every test of
+/// the pane's boxes starts from.
+fn a_task_pane_open_on(name: &str, task_id: &str) -> (Fixture, Harness<'static>) {
+    let fixture = seeded_fixture(name);
     fixture.write(
-        &format!(".moontasks/{TASK}/metadata.json"),
+        &format!(".moontasks/{task_id}/metadata.json"),
         "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
          \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
     );
@@ -905,7 +899,7 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
     );
     let card = harness
         .ctx
-        .read_response(crate::native::board::cards::card_drag_id(TASK))
+        .read_response(crate::native::board::cards::card_drag_id(task_id))
         .expect("expected the card to have been drawn")
         .rect;
     click_at(&mut harness, card.center());
@@ -913,20 +907,54 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
         settle(&mut harness, || pane_open.load(Ordering::Relaxed)),
         "clicking the card should have opened the task's pane"
     );
+    (fixture, harness)
+}
 
-    // The title, kept by the Enter that ends it.
+/// The title box and the notes box of the task's pane, in that order.
+///
+/// Both are multiline boxes - a title wraps rather than scrolling sideways - so they are told
+/// apart by where they sit: on the task's side of the window rather than the board's, which is
+/// what tells the title box from the board's own filter box, and the title above the notes.
+fn the_panes_boxes(harness: &Harness<'_>) -> (egui::Pos2, egui::Pos2) {
+    // Where the board ends and the task's pane begins.
+    const BOARD_WIDTH: f32 = 640.0;
+
     use egui_kittest::kittest::Queryable as _;
-    // The title and the notes are both multiline boxes - a title wraps rather than scrolling
-    // sideways - so the title is the upper of the two on the task's side of the window.
     let mut boxes: Vec<egui::Pos2> = harness
         .get_all_by_role(egui::accesskit::Role::MultilineTextInput)
         .map(|node| node.rect().center())
         .filter(|at| at.x > BOARD_WIDTH)
         .collect();
     boxes.sort_by(|one, other| one.y.total_cmp(&other.y));
-    let title_box = *boxes
-        .first()
-        .expect("expected the task's pane to draw a title box");
+    assert_eq!(
+        boxes.len(),
+        2,
+        "expected the task's pane to draw a title box and a notes box"
+    );
+    (boxes[0], boxes[1])
+}
+
+/// What the notes box is showing, read off the box itself rather than off the file - the box
+/// is what the typing is in, and what it says is the thing a lost word is lost from.
+fn the_notes_box_says(harness: &Harness<'_>) -> Option<String> {
+    use egui_kittest::kittest::Queryable as _;
+    let notes_box = the_panes_boxes(harness).1;
+    harness
+        .get_all_by_role(egui::accesskit::Role::MultilineTextInput)
+        .find(|node| node.rect().center() == notes_box)
+        .and_then(|node| node.value())
+}
+
+/// The task's own pane is where a task is written as well as started: the title box renames it
+/// and the notes box writes its `notes.md`, both without a file being opened beside them.
+#[test]
+fn a_tasks_pane_writes_its_title_and_its_notes() {
+    const TASK: &str = "write-the-parser-1111";
+
+    let (fixture, mut harness) = a_task_pane_open_on("task-editors", TASK);
+
+    // The title, kept by the Enter that ends it.
+    let (title_box, notes_box) = the_panes_boxes(&harness);
     click_at(&mut harness, title_box);
     press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
     type_letter(&mut harness, egui::Key::X, "X");
@@ -940,9 +968,6 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
     );
 
     // The notes, kept on their own a moment after the typing stops.
-    let notes_box = *boxes
-        .last()
-        .expect("expected the task's pane to draw a notes box");
     click_at(&mut harness, notes_box);
     harness.run_steps(2);
     type_letter(&mut harness, egui::Key::S, "Ship it by Friday");
@@ -952,6 +977,36 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
             .is_ok_and(|written| written.contains("Ship it by Friday"))),
         "the notes box should have written notes.md, saw {:?}",
         std::fs::read_to_string(&notes)
+    );
+}
+
+/// A change to `notes.md` beside the box reaches the box.
+///
+/// The box passes over the board's answers while it is waiting for its own writing to be read
+/// back, so this is the other side of that: an answer nobody here wrote - an agent writing the
+/// task's notes, or the file open in an editor - is what the box is for showing, and it takes
+/// it within a poll.
+#[test]
+fn notes_written_beside_the_box_reach_it() {
+    const TASK: &str = "write-the-parser-2222";
+    const WRITTEN_BESIDE: &str = "The parser is where the agent got to";
+
+    let (fixture, mut harness) = a_task_pane_open_on("task-notes-beside", TASK);
+    fixture.write(&format!(".moontasks/{TASK}/notes.md"), WRITTEN_BESIDE);
+
+    // Stepped here rather than through `settle`, which cannot hand the box to its condition:
+    // what is being waited for is drawn, and reading it needs the harness the steps are on.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut shown = the_notes_box_says(&harness);
+    while Instant::now() < deadline && shown.as_deref() != Some(WRITTEN_BESIDE) {
+        harness.step();
+        shown = the_notes_box_says(&harness);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        shown.as_deref(),
+        Some(WRITTEN_BESIDE),
+        "the notes box should have taken what was written beside it"
     );
 }
 

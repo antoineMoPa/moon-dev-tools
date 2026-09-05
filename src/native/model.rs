@@ -394,6 +394,12 @@ pub(crate) struct TaskEditor {
     /// caught up with what was just typed cannot take it back.
     pub(crate) said_title: String,
     pub(crate) said_notes: String,
+    /// The notes handed to `SaveNotes` and not read back off the board yet. A read that was
+    /// already on its way when they were written answers with what was in the file before
+    /// them, and the read the write itself asks for answers with them as they stood at that
+    /// moment - neither is allowed to take back the letters typed since, so answers are passed
+    /// over until one carries this. `None` once one does, or where nothing has been written.
+    pub(crate) written_notes: Option<String>,
 }
 
 pub(crate) struct TaskRename {
