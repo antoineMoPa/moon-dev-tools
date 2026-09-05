@@ -19,27 +19,33 @@
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="MoonTask home">
+      <a class="brand" href="#top" aria-label="Moon dev tools home">
         <img src="assets/logos/moontasks-64.png" alt="" width="36" height="36">
-        <span>moon<span class="brand-accent">task</span></span>
+        <span aria-hidden="true">moon<span class="brand-accent">task</span></span>
       </a>
       <nav aria-label="Main navigation">
         <a href="#why">Why MoonTask</a>
         <a href="#workflow">How it works</a>
+        <a href="#foundation">Under the hood</a>
         <a class="nav-github" href="https://github.com/antoineMoPa/moon-dev-tools">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
 
     <main id="main">
-      <section class="hero" id="top">
+      <section class="suite-hero" id="top" aria-labelledby="suite-title">
+        <h1 id="suite-title"><span class="suite-moon">moon</span><span class="brand-accent suite-type" data-brand-type>tasks</span></h1>
+        <p>Moon dev tools brings task planning, agent workspaces, shells, and code review together in one focused local toolkit.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#install">Install moon dev tools</a>
+          <a class="button button-secondary" href="https://github.com/antoineMoPa/moon-dev-tools">View on GitHub</a>
+        </div>
+        <p class="hero-meta">Open source <span>·</span> Rust / egui based <span>·</span> macOS &amp; Linux <span>·</span> Works with Claude, Codex &amp; OpenCode</p>
+      </section>
+
+      <section class="hero">
         <div class="hero-copy">
           <h1>Keep agent work<br><em>in sight.</em></h1>
           <p class="hero-lede">MoonTask helps you stay focused when working with agents by keeping each task's notes, coding agents, shells, and review in one place.</p>
-          <div class="hero-actions">
-            <a class="button button-primary" href="#install">Install MoonTask</a>
-            <a class="button button-secondary" href="https://github.com/antoineMoPa/moon-dev-tools">View on GitHub</a>
-          </div>
-          <p class="hero-meta">Open source <span>·</span> Rust / egui based <span>·</span> macOS &amp; Linux <span>·</span> Works with Claude, Codex &amp; OpenCode</p>
         </div>
 
         <div class="product-stage">
@@ -132,6 +138,58 @@
         </figure>
       </section>
 
+      <section class="foundation" id="foundation">
+        <div class="foundation-heading">
+          <h2>Backed by giants</h2>
+        </div>
+        <div class="foundation-list">
+          <a class="foundation-item" href="https://www.rust-lang.org/" target="_blank" rel="noreferrer">
+            <span class="tech-mark rust-mark" aria-hidden="true">R</span>
+            <span><small>01 / LANGUAGE</small><strong>Rust</strong><p>Native performance and memory safety keep every tool fast and reliable.</p></span>
+            <i aria-hidden="true">↗</i>
+          </a>
+          <a class="foundation-item" href="https://github.com/emilk/egui" target="_blank" rel="noreferrer">
+            <span class="tech-mark egui-mark" aria-hidden="true">e</span>
+            <span><small>02 / INTERFACE</small><strong>egui</strong><p>An immediate-mode GUI gives the workspace a responsive native interface without a browser runtime.</p></span>
+            <i aria-hidden="true">↗</i>
+          </a>
+          <a class="foundation-item" href="https://libghostty.tip/" target="_blank" rel="noreferrer">
+            <span class="tech-mark ghostty-mark" aria-hidden="true">&gt;_</span>
+            <span><small>03 / TERMINAL ENGINE</small><strong>libghostty</strong><p>Ghostty's battle-tested VT engine powers real terminals, with scrollback, reflow, and links.</p></span>
+            <i aria-hidden="true">↗</i>
+          </a>
+        </div>
+      </section>
+
+      <section class="modular" id="modular">
+        <div class="modular-heading">
+          <p class="section-label">Modular by design</p>
+          <h2>Useful beyond<br><span>our own windows.</span></h2>
+          <p>The core interface pieces are independent, MIT-licensed Rust crates. Use one on its own, or combine them into a complete native workspace.</p>
+          <a class="text-link" href="https://github.com/antoineMoPa/moon-dev-tools/tree/main/crates">Explore the source <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="crate-stack">
+          <a class="crate-card" href="https://crates.io/crates/egui_frames" target="_blank" rel="noreferrer">
+            <span class="crate-index">01</span>
+            <div class="crate-icon frames-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div><code>egui_frames</code><h3>Shape a workspace</h3><p>Tabs, splits, and draggable panes with a serializable layout that stays independent of your app's content.</p></div>
+            <span class="crate-link">crates.io ↗</span>
+          </a>
+          <a class="crate-card" href="https://crates.io/crates/egui_tty" target="_blank" rel="noreferrer">
+            <span class="crate-index">02</span>
+            <div class="crate-icon tty-icon" aria-hidden="true"><span>$</span><i></i></div>
+            <div><code>egui_tty</code><h3>Embed a real terminal</h3><p>An egui terminal widget on Ghostty's VT engine, ready for a local PTY, remote socket, or test harness.</p></div>
+            <span class="crate-link">crates.io ↗</span>
+          </a>
+          <a class="crate-card" href="https://github.com/antoineMoPa/egui_moon_editor" target="_blank" rel="noreferrer">
+            <span class="crate-index">03</span>
+            <div class="crate-icon editor-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div><code>egui_moon_editor</code><h3>Code editor with LSP support and completion</h3><p>A focused editor widget with line numbers, search marks, selections, completion, and jump to definition.</p></div>
+            <span class="crate-link">source ↗</span>
+          </a>
+        </div>
+      </section>
+
       <section class="install" id="install">
         <img class="install-moon" src="assets/logos/moontasks-512.png" alt="" width="512" height="512">
         <div class="install-copy">
@@ -149,9 +207,9 @@
     </main>
 
     <footer>
-      <a class="brand footer-brand" href="#top">
+      <a class="brand footer-brand" href="#top" aria-label="Moon dev tools home">
         <img src="assets/logos/moontasks-64.png" alt="" width="32" height="32">
-        <span>moon<span class="brand-accent">task</span></span>
+        <span aria-hidden="true">moon<span class="brand-accent">dev tools</span></span>
       </a>
       <p>Part of <a href="https://github.com/antoineMoPa/moon-dev-tools">moon-dev-tools</a>. Open source under MIT.</p>
       <div><a href="https://github.com/antoineMoPa/moon-dev-tools">GitHub</a><a href="https://github.com/antoineMoPa/moon-dev-tools/blob/main/Moontasks.md">Docs</a><a href="https://github.com/antoineMoPa/moon-dev-tools/releases/latest">Releases</a></div>
