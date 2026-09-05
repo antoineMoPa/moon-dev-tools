@@ -30,7 +30,7 @@ pub(crate) fn find_all(app: &mut App, session_id: &str, query: &str) -> Vec<Matc
     let Some(review) = app.model.review_ref(session_id) else {
         return Vec::new();
     };
-    let patches: Vec<(String, String)> = review
+    let patches: Vec<(String, String, String)> = review
         .hunks()
         .iter()
         .map(|hunk| {
@@ -39,14 +39,14 @@ pub(crate) fn find_all(app: &mut App, session_id: &str, query: &str) -> Vec<Matc
                 .get(&hunk.id)
                 .cloned()
                 .unwrap_or_else(|| hunk.patch_preview.clone());
-            (hunk.id.clone(), patch)
+            (hunk.id.clone(), patch, hunk.file_path.clone())
         })
         .collect();
 
     let needle = query.to_lowercase();
     let mut found = Vec::new();
-    for (hunk_id, patch) in patches {
-        let lines = app.diff_lines(&hunk_id, &patch);
+    for (hunk_id, patch, file_path) in patches {
+        let lines = app.diff_lines(&hunk_id, &patch, &file_path);
         for (line_index, line) in lines.iter().enumerate() {
             if line.is_chrome() {
                 continue;

@@ -1,7 +1,10 @@
 //! One diff line: its gutter, its text, the find marks on it, and the selection sweeping
 //! across it.
 
-use egui::{Align2, CornerRadius, Sense, Stroke, Ui, vec2};
+use std::ops::Range;
+
+use egui::{Align2, CornerRadius, Sense, Stroke, Ui, text::LayoutJob, vec2};
+use egui_moon_editor::{Token, TokenStyle};
 
 use crate::{
     api::HunkView,
@@ -11,7 +14,7 @@ use crate::{
         model::{LINE_END, LineSelection, SelectionPoint, hash_of},
         review::diff::{DiffLine, LineKind, insertion_line},
         review::search,
-        theme::{CODE_SIZE, Palette},
+        theme::{CODE_SIZE, CodeFace, Palette, code_font, syntax_face},
     },
 };
 
@@ -35,7 +38,7 @@ pub(super) fn draw_hunk_body(
         .and_then(|review| review.expanded_patches.get(&hunk.id))
         .cloned();
     let patch = full_patch.clone().unwrap_or_else(|| hunk.patch_preview.clone());
-    let lines = app.diff_lines(&hunk.id, &patch);
+    let lines = app.diff_lines(&hunk.id, &patch, &hunk.file_path);
 
     let anchored = parse_anchored_comments(&hunk.comment);
     let mut comment_at: Vec<(usize, usize)> = Vec::new();
@@ -444,34 +447,153 @@ pub(super) fn draw_line_text(
         draw_find_marks(&painter, rect, line, body_origin, &font, marks, palette);
     }
 
-    let Some(words) = &line.words else {
-        painter.text(body_origin, Align2::LEFT_CENTER, line.body(), font, ink);
-        return;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(body_job(line, palette, ink)));
+    painter.galley(
+        egui::pos2(body_origin.x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        ink,
+    );
+}
+
+/// The body of `line`, laid out: every run in the look the grammar gave it, and the
+/// word-level tints of an edited line as backgrounds behind whatever they cover.
+///
+/// The two are cut against each other - a new run starts at whichever boundary comes first -
+/// the same way the editor cuts its find marks against the same tokens. A word diff finds the
+/// words that changed, which lands wherever it lands, usually across the middle of a string or
+/// a call: saying which words are new must not repaint the code it is about.
+///
+/// The ink, the face and the shear come from the tokens rather than from the kind of the line.
+/// What says added or removed is the row's background, which is left alone above; the code on
+/// it should read the way the same code reads in the file pane. `flat_ink` is for the rows
+/// that are not code - the `@@` header and git's own bookkeeping - which have no tokens.
+fn body_job(line: &DiffLine, palette: &Palette, flat_ink: egui::Color32) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    // A row is one line however long the code on it is: it is clipped at the edge of the card
+    // above, and a wrapped one would run over the row under it.
+    job.wrap.max_width = f32::INFINITY;
+    let body = line.body();
+
+    let Some(tokens) = &line.tokens else {
+        job.append(
+            body,
+            0.0,
+            egui::TextFormat::simple(code_font(CodeFace::Regular), flat_ink),
+        );
+        return job;
     };
 
-    // Word-level runs: the parts that actually changed get a tinted background so an edited
-    // line reads as an edit rather than a wholesale replacement.
+    // A removal's changed words are tinted in the removal's colour, an addition's in the
+    // addition's; every other line has no changed words at all.
     let changed_bg = match line.kind {
         LineKind::Added => palette.added_word_bg,
         _ => palette.removed_word_bg,
     };
-    let mut x = body_origin.x;
-    for part in words {
-        let galley = painter.layout_no_wrap(part.text.clone(), font.clone(), ink);
-        let size = galley.size();
-        if part.changed {
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(x, rect.min.y + 1.0),
-                    vec2(size.x, rect.height() - 2.0),
-                ),
-                CornerRadius::same(2),
-                changed_bg,
-            );
-        }
-        painter.galley(egui::pos2(x, rect.center().y - size.y / 2.0), galley, ink);
-        x += size.x;
+    let runs = token_runs(body, tokens);
+    let mut at = 0;
+    let mut cut = 0;
+    for span in changed_spans(line) {
+        append_runs(&mut job, body, &runs, &mut at, cut..span.start, None, palette);
+        append_runs(
+            &mut job,
+            body,
+            &runs,
+            &mut at,
+            span.clone(),
+            Some(changed_bg),
+            palette,
+        );
+        cut = span.end;
     }
+    append_runs(&mut job, body, &runs, &mut at, cut..body.len(), None, palette);
+    job
+}
+
+/// Append the runs `span` covers, cut at the ends of the span, each in its own look with
+/// `background` behind it. `at` is where the walk of `runs` had got to, so the whole body is
+/// one pass however many spans are laid over it.
+fn append_runs(
+    job: &mut LayoutJob,
+    body: &str,
+    runs: &[(Range<usize>, TokenStyle)],
+    at: &mut usize,
+    span: Range<usize>,
+    background: Option<egui::Color32>,
+    palette: &Palette,
+) {
+    let mut cut = span.start;
+    while cut < span.end {
+        // The runs cover the body end to end, so there is one over every byte of every span.
+        while runs[*at].0.end <= cut {
+            *at += 1;
+        }
+        let (range, style) = &runs[*at];
+        let end = range.end.min(span.end);
+        let (face, italics) = syntax_face(*style);
+        job.append(
+            &body[cut..end],
+            0.0,
+            egui::TextFormat {
+                font_id: code_font(face),
+                color: palette.syntax_ink(*style),
+                italics,
+                background: background.unwrap_or(egui::Color32::TRANSPARENT),
+                ..Default::default()
+            },
+        );
+        cut = end;
+    }
+}
+
+/// The body cut into runs of one look each, in order and covering it end to end.
+///
+/// Which is what the tokens already are, so this is mostly them as they came. The guard is for
+/// tokens that are about some other text than the body in hand: the rest of the line is drawn
+/// plain from the point they stop agreeing, rather than cut at an offset that is not a
+/// character boundary.
+fn token_runs(body: &str, tokens: &[Token]) -> Vec<(Range<usize>, TokenStyle)> {
+    let mut runs: Vec<(Range<usize>, TokenStyle)> = Vec::new();
+    let mut cut = 0;
+    for token in tokens {
+        if token.range.start != cut
+            || token.range.end > body.len()
+            || !body.is_char_boundary(token.range.end)
+        {
+            break;
+        }
+        runs.push((token.range.clone(), token.style));
+        cut = token.range.end;
+    }
+    if cut < body.len() {
+        runs.push((cut..body.len(), TokenStyle::Plain));
+    }
+    runs
+}
+
+/// The byte ranges of the body the word diff calls changed, in order, joined where they touch.
+///
+/// A [`WordPart`](crate::native::review::diff::WordPart) carries its text rather than where it
+/// is, so the offsets are counted up as the parts are walked: they are the pieces the body was
+/// split into, so they add back up to it.
+fn changed_spans(line: &DiffLine) -> Vec<Range<usize>> {
+    let Some(words) = &line.words else {
+        return Vec::new();
+    };
+    let mut spans: Vec<Range<usize>> = Vec::new();
+    let mut at = 0;
+    for part in words {
+        let range = at..at + part.text.len();
+        at = range.end;
+        if !part.changed {
+            continue;
+        }
+        match spans.last_mut() {
+            Some(last) if last.end == range.start => last.end = range.end,
+            _ => spans.push(range),
+        }
+    }
+    assert_eq!(at, line.body().len(), "word parts are the body, split up");
+    spans
 }
 
 /// What the find bar wants marked on one line: every match it covers, and which of them the
@@ -556,5 +678,65 @@ fn draw_find_marks(
                 egui::StrokeKind::Inside,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::{
+        review::diff::{attach_syntax, build_diff_lines},
+        theme::ThemeMode,
+    };
+    use egui_kittest::Harness;
+
+    /// A patch with a keyword, a string and a comment on each side, so a row is laid out in
+    /// all three faces at once.
+    const PATCH: &str = concat!(
+        "@@ -1,2 +1,2 @@\n",
+        "-    let old = \"a\"; // a note\n",
+        "+    let new = 2; /// a doc note\n",
+    );
+
+    /// The columns a sweep and the find bar work in are measured by laying the body out in the
+    /// plain face - `column_at` and `draw_find_marks` both do that - while the row itself is
+    /// painted in three faces at once. The two agree only because all three faces share an
+    /// advance, which is what this holds them to.
+    #[test]
+    fn a_highlighted_row_is_as_wide_as_the_plain_face_it_is_measured_in() {
+        let mut lines = build_diff_lines(PATCH);
+        attach_syntax(&mut lines, "src/lib.rs");
+        let palette = Palette::of(ThemeMode::Dark);
+
+        // The faces are installed from inside the first pass, the way the app installs them,
+        // and land at the start of the next; that first pass is discarded, as the app's is.
+        let mut installed = false;
+        let mut harness = Harness::builder().build_ui(move |ui| {
+            if !installed {
+                crate::native::fonts::install(ui.ctx());
+                installed = true;
+                ui.ctx().request_discard("fonts installed");
+                return;
+            }
+            for line in &lines {
+                let job = body_job(line, &palette, palette.ink);
+                let painted = ui.fonts_mut(|fonts| fonts.layout_job(job)).size().x;
+                let measured = ui
+                    .painter()
+                    .layout_no_wrap(
+                        line.body().to_string(),
+                        egui::FontId::monospace(CODE_SIZE),
+                        palette.ink,
+                    )
+                    .size()
+                    .x;
+                assert!(
+                    (painted - measured).abs() < 0.5,
+                    "{:?} painted {painted}, measured {measured}",
+                    line.body()
+                );
+            }
+        });
+        harness.run();
     }
 }

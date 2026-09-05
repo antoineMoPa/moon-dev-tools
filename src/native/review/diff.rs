@@ -3,6 +3,8 @@
 //!
 //! How a hunk's lines and their word-level changes are drawn.
 
+use egui_moon_editor::{Language, Token, highlight};
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LineKind {
     Header,
@@ -37,6 +39,10 @@ pub(crate) struct DiffLine {
     pub(crate) kind: LineKind,
     /// Word-level runs, present only on a removed line paired with the added line below it.
     pub(crate) words: Option<Vec<WordPart>>,
+    /// What the grammar made of this line's code, with ranges relative to
+    /// [`body`](DiffLine::body). Nothing on the `@@` header or on git's own bookkeeping,
+    /// which are not code, and nothing until [`attach_syntax`] has read the hunk.
+    pub(crate) tokens: Option<Vec<Token>>,
 }
 
 /// Prefixes of the git bookkeeping a patch carries before its first `@@`.
@@ -107,6 +113,7 @@ pub(crate) fn build_diff_lines(patch: &str) -> Vec<DiffLine> {
                 new_line_number: None,
                 kind: LineKind::Header,
                 words: None,
+                tokens: None,
             }
         } else if text.starts_with('+') && !text.starts_with("+++") {
             let line = DiffLine {
@@ -115,6 +122,7 @@ pub(crate) fn build_diff_lines(patch: &str) -> Vec<DiffLine> {
                 new_line_number,
                 kind: LineKind::Added,
                 words: None,
+                tokens: None,
             };
             new_line_number = new_line_number.map(|number| number + 1);
             line
@@ -125,6 +133,7 @@ pub(crate) fn build_diff_lines(patch: &str) -> Vec<DiffLine> {
                 new_line_number: None,
                 kind: LineKind::Removed,
                 words: None,
+                tokens: None,
             };
             old_line_number = old_line_number.map(|number| number + 1);
             line
@@ -135,6 +144,7 @@ pub(crate) fn build_diff_lines(patch: &str) -> Vec<DiffLine> {
                 new_line_number,
                 kind: LineKind::Context,
                 words: None,
+                tokens: None,
             };
             old_line_number = old_line_number.map(|number| number + 1);
             new_line_number = new_line_number.map(|number| number + 1);
@@ -146,6 +156,7 @@ pub(crate) fn build_diff_lines(patch: &str) -> Vec<DiffLine> {
                 new_line_number: None,
                 kind: LineKind::Other,
                 words: None,
+                tokens: None,
             }
         };
 
@@ -168,6 +179,56 @@ fn attach_word_diffs(lines: &mut [DiffLine]) {
         lines[index].words = Some(old_parts);
         lines[index + 1].words = Some(new_parts);
     }
+}
+
+/// Read a hunk as code and hand every line the tokens of its own version of the file.
+///
+/// A hunk interleaves two versions of the file: a removed line and the added line under it
+/// are alternatives, not consecutive code, and a grammar handed them in sequence reads
+/// nonsense - remove a line that opens a string or a `/*` and everything below it in the hunk
+/// is inside that string. So the two versions are put back together and read apart: context
+/// plus additions is the new file, context plus removals the old one. Two reads of a few
+/// dozen lines each, which is nothing.
+///
+/// A hunk still starts mid-file, so the grammar cannot know it is already inside a block
+/// comment that opened above the first line shown. Reading from the hunk's own first line is
+/// right almost always, and the alternative is fetching the whole file to colour a dozen rows.
+pub(crate) fn attach_syntax(lines: &mut [DiffLine], file_path: &str) {
+    let language = Language::of_path(file_path);
+    // The old side first: a context line is on both, and what it is in the file as it now
+    // stands is what a reader is looking at.
+    let read = read_side(&language, lines, LineKind::Removed)
+        .into_iter()
+        .chain(read_side(&language, lines, LineKind::Added));
+    for (index, tokens) in read {
+        lines[index].tokens = Some(tokens);
+    }
+}
+
+/// One version of the file the hunk shows - context lines plus the lines of the kind asked
+/// for - read as code, and handed back against the rows it came from.
+fn read_side(
+    language: &Language,
+    lines: &[DiffLine],
+    changed: LineKind,
+) -> Vec<(usize, Vec<Token>)> {
+    let rows: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.kind == LineKind::Context || line.kind == changed)
+        .map(|(index, _)| index)
+        .collect();
+    let mut text = String::new();
+    for &row in &rows {
+        text.push_str(lines[row].body());
+        text.push('\n');
+    }
+
+    let tokens = highlight(language, &text);
+    // A patch is split on newlines, so no body holds one and every row put exactly one line
+    // into the text. The highlighter counts lines the same way.
+    assert_eq!(tokens.len(), rows.len(), "one read line per row of this side");
+    rows.into_iter().zip(tokens).collect()
 }
 
 fn parse_hunk_header(header: &str) -> (Option<usize>, Option<usize>) {
@@ -332,6 +393,8 @@ pub(crate) fn insertion_line(lines: &[DiffLine], selection: &str, used: &[usize]
 
 #[cfg(test)]
 mod tests {
+    use egui_moon_editor::TokenStyle;
+
     use super::*;
 
     /// A context line starts with a space, so this cannot use `\`-continuations: those strip
@@ -472,6 +535,78 @@ mod tests {
         let at = insertion_line(&lines, "+fn extra() {}", &[]).expect("expected a line");
 
         assert_eq!(lines[at].body(), "fn extra() {}");
+    }
+
+    /// The removed line opens a block comment and the added line replacing it is ordinary
+    /// code. Read as one text the removal would swallow everything under it, so this is the
+    /// patch that tells the two versions apart.
+    const REPLACED_LINE_PATCH: &str = concat!(
+        "@@ -1,4 +1,4 @@\n",
+        " fn main() {\n",
+        "-    /* a note\n",
+        "+    let count = 1;\n",
+        "     println!(\"hi\");\n",
+        " }",
+    );
+
+    /// The style every token of a line is, when the whole line is one of them.
+    fn one_style(line: &DiffLine) -> Vec<TokenStyle> {
+        let tokens = line.tokens.as_ref().expect("expected the line to be read");
+        tokens.iter().map(|token| token.style).collect()
+    }
+
+    #[test]
+    fn a_removed_line_and_the_line_replacing_it_are_each_read_as_their_own_version() {
+        let mut lines = build_diff_lines(REPLACED_LINE_PATCH);
+        attach_syntax(&mut lines, "src/lib.rs");
+
+        let removed = &lines[2];
+        let added = &lines[3];
+        assert_eq!(removed.body(), "    /* a note");
+        assert_eq!(added.body(), "    let count = 1;");
+        // The removal is the comment it opens; the addition is code, not the inside of a
+        // comment that only the version it is replacing ever had.
+        assert!(one_style(removed).contains(&TokenStyle::Comment));
+        assert!(one_style(added).contains(&TokenStyle::Number));
+        assert!(!one_style(added).contains(&TokenStyle::Comment));
+    }
+
+    #[test]
+    fn a_context_line_below_a_removed_block_comment_is_read_as_code() {
+        let mut lines = build_diff_lines(REPLACED_LINE_PATCH);
+        attach_syntax(&mut lines, "src/lib.rs");
+
+        let context = &lines[4];
+        assert_eq!(context.body(), "    println!(\"hi\");");
+        // A context line is on both sides and takes the new one, where the comment the
+        // removal opened was never opened at all.
+        assert!(one_style(context).contains(&TokenStyle::StringLit));
+        assert!(!one_style(context).contains(&TokenStyle::Comment));
+    }
+
+    #[test]
+    fn every_line_of_code_in_a_hunk_is_read_and_the_headers_are_not() {
+        let mut lines = build_diff_lines(PATCH);
+        attach_syntax(&mut lines, "src/lib.rs");
+
+        for line in &lines {
+            match line.kind {
+                LineKind::Added | LineKind::Removed | LineKind::Context => {
+                    assert!(line.tokens.is_some(), "code is read: {:?}", line.text)
+                }
+                LineKind::Header | LineKind::Other => {
+                    assert!(line.tokens.is_none(), "not code: {:?}", line.text)
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_line_of_a_file_with_no_grammar_is_read_as_plain_code() {
+        let mut lines = build_diff_lines("@@ -0,0 +1 @@\n+fn not_rust() {}");
+        attach_syntax(&mut lines, "notes.unheardof");
+
+        assert_eq!(one_style(&lines[1]), vec![TokenStyle::Plain]);
     }
 
     #[test]

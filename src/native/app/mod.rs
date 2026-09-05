@@ -24,7 +24,7 @@ use crate::{
         model::{Model, Stage, hash_of},
         palette::CommandAction,
         panes::Pane,
-        review::diff::{DiffLine, build_diff_lines},
+        review::diff::{DiffLine, attach_syntax, build_diff_lines},
         tasks::Tasks,
         theme::{self, Palette, ThemeMode},
         workspace_color::WorkspaceColor,
@@ -337,7 +337,16 @@ impl App {
     }
 
     /// The parsed lines of a hunk's patch, built once per distinct patch text.
-    pub(crate) fn diff_lines(&mut self, hunk_id: &str, patch: &str) -> Arc<Vec<DiffLine>> {
+    ///
+    /// Reading the code is part of building them rather than something the painter does:
+    /// syntax is worked out once per patch here and thrown away with it, where per row or per
+    /// frame it would be a grammar run for every line on screen, every frame.
+    pub(crate) fn diff_lines(
+        &mut self,
+        hunk_id: &str,
+        patch: &str,
+        file_path: &str,
+    ) -> Arc<Vec<DiffLine>> {
         let patch_hash = hash_of(patch);
         if let Some(cached) = self.diffs.get(hunk_id)
             && cached.patch_hash == patch_hash
@@ -345,7 +354,9 @@ impl App {
             return Arc::clone(&cached.lines);
         }
 
-        let lines = Arc::new(build_diff_lines(patch));
+        let mut lines = build_diff_lines(patch);
+        attach_syntax(&mut lines, file_path);
+        let lines = Arc::new(lines);
         self.diffs.insert(
             hunk_id.to_string(),
             CachedDiff {

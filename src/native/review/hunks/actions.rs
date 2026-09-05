@@ -246,14 +246,14 @@ pub(super) fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     if selection.anchor == selection.head {
         return;
     }
-    let Some(patch) = selected_patch(app, session_id, &hunk_id) else {
+    let Some((patch, file_path)) = selected_patch(app, session_id, &hunk_id) else {
         return;
     };
 
     // Exactly the characters the selection covers: a swept word comes out as that word, a
     // clicked line as the whole line without its `+`/`-`/space marker - someone copying out
     // of a diff is nearly always taking the code somewhere it has to compile.
-    let lines = app.diff_lines(&hunk_id, &patch);
+    let lines = app.diff_lines(&hunk_id, &patch, &file_path);
     let covered: Vec<String> = selection
         .line_range()
         .filter_map(|index| {
@@ -278,41 +278,31 @@ pub(super) fn copy_selected_lines(app: &mut App, ui: &Ui, session_id: &str) {
     ui.ctx().copy_text(covered.join("\n"));
 }
 
-/// The patch the selection's indices point into: the expanded one where the hunk was
-/// expanded, the preview otherwise.
-fn selected_patch(app: &App, session_id: &str, hunk_id: &str) -> Option<String> {
+/// The patch the selection's indices point into - the expanded one where the hunk was
+/// expanded, the preview otherwise - and the path of the file it is a patch of, which is what
+/// says which grammar reads it.
+fn selected_patch(app: &App, session_id: &str, hunk_id: &str) -> Option<(String, String)> {
     let review = app.model.review_ref(session_id)?;
-    review.expanded_patches.get(hunk_id).cloned().or_else(|| {
-        review
-            .hunks()
-            .iter()
-            .find(|hunk| hunk.id == hunk_id)
-            .map(|hunk| hunk.patch_preview.clone())
-    })
+    let hunk = review.hunks().iter().find(|hunk| hunk.id == hunk_id)?;
+    let patch = review
+        .expanded_patches
+        .get(hunk_id)
+        .cloned()
+        .unwrap_or_else(|| hunk.patch_preview.clone());
+    Some((patch, hunk.file_path.clone()))
 }
 
 /// The raw patch lines the user has selected in this hunk, if any.
 pub(super) fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<String> {
-    let review = app.model.review_ref(session_id)?;
-    let selection = review.selection?;
+    let selection = app.model.review_ref(session_id)?.selection?;
     if selection.hunk_id_hash != hash_of(hunk_id) {
         return None;
     }
     // The lines have to come from the same patch the user was clicking on, which is the
     // expanded one where the hunk was expanded.
-    let patch = review
-        .expanded_patches
-        .get(hunk_id)
-        .cloned()
-        .or_else(|| {
-            review
-                .hunks()
-                .iter()
-                .find(|hunk| hunk.id == hunk_id)
-                .map(|hunk| hunk.patch_preview.clone())
-        })?;
+    let (patch, file_path) = selected_patch(app, session_id, hunk_id)?;
 
-    let lines = app.diff_lines(hunk_id, &patch);
+    let lines = app.diff_lines(hunk_id, &patch, &file_path);
     let selected: Vec<&str> = selection
         .line_range()
         .filter_map(|index| lines.get(index))

@@ -442,7 +442,7 @@ const SYNTAX_FACES: &[(TokenStyle, CodeFace, bool)] = &[
 ];
 
 /// The face `style` is set in, and whether it is sheared on top of that.
-fn syntax_face(style: TokenStyle) -> (CodeFace, bool) {
+pub(crate) fn syntax_face(style: TokenStyle) -> (CodeFace, bool) {
     SYNTAX_FACES
         .iter()
         .find(|(named, _, _)| *named == style)
