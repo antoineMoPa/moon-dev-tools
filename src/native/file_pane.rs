@@ -7,7 +7,7 @@
 
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
-use egui_moon_editor::{Editor, EditorRequest, Marks};
+use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
 use crate::native::{
     app::App,
@@ -42,10 +42,14 @@ pub(crate) struct FileEditor {
 impl FileEditor {
     fn loading(file_path: String) -> Self {
         let preview = is_markdown(&file_path);
+        let mut code = Editor::new(String::new());
+        // What the file is read as, settled here because the path is what says so and this is
+        // where the pane learns it. The text arrives later; the language is the same either way.
+        code.set_language(Language::of_path(&file_path));
         Self {
             file_path,
             saved: None,
-            code: Editor::new(String::new()),
+            code,
             error: None,
             saving: false,
             preview,

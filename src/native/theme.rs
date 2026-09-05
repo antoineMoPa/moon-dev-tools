@@ -1,6 +1,7 @@
 //! The palette the whole window is drawn from.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
+use egui_moon_editor::TokenStyle;
 
 use crate::native::{fonts, workspace_color::WorkspaceColor};
 
@@ -70,6 +71,33 @@ pub(crate) struct Palette {
     pub(crate) unstaged: Color32,
     pub(crate) partial: Color32,
     pub(crate) snoozed: Color32,
+    /// The inks code is read in, wherever it is shown: the editor's page, and the lines of a
+    /// diff. Not a surface, so a workspace color leaves it exactly where it is - see
+    /// [`Palette::of_workspace`].
+    pub(crate) syntax: SyntaxInks,
+}
+
+/// One ink per kind of token, picked against the theme they belong to.
+///
+/// Written out per theme rather than derived from the accent or the ink, because the point of
+/// them is that a reader tells a string from a comment from a number at a glance: that is a
+/// judgement about a set of colors on one particular ground, and there is no formula for it.
+#[derive(Clone, Copy)]
+pub(crate) struct SyntaxInks {
+    pub(crate) keyword: Color32,
+    pub(crate) kind: Color32,
+    pub(crate) function: Color32,
+    pub(crate) constant: Color32,
+    pub(crate) number: Color32,
+    pub(crate) string: Color32,
+    pub(crate) comment: Color32,
+    pub(crate) doc_comment: Color32,
+    pub(crate) attribute: Color32,
+    /// The brackets and commas, and the code nothing is claimed about. The same two inks the
+    /// rest of the window is written in - the shape of a line is worth less than its words,
+    /// and plain code is just text.
+    pub(crate) punctuation: Color32,
+    pub(crate) plain: Color32,
 }
 
 const fn rgb(hex: u32) -> Color32 {
@@ -158,6 +186,20 @@ fn light() -> Palette {
         unstaged: rgb(0x9d2f24),
         partial: rgb(0x9a6c12),
         snoozed: rgb(0x2b5fad),
+        syntax: SyntaxInks {
+            keyword: rgb(0xa03a1f),
+            kind: rgb(0x1f5f54),
+            function: rgb(0x2f5aa8),
+            constant: rgb(0x5a45a8),
+            number: rgb(0x8c3a86),
+            string: rgb(0x3f6b1f),
+            comment: rgb(0x857a6a),
+            doc_comment: rgb(0x6f6353),
+            attribute: rgb(0x8a6a12),
+            // The same two as `muted` and `ink` above: change one, change the other.
+            punctuation: rgb(0x6a6156),
+            plain: rgb(0x1d1a16),
+        },
     }
 }
 
@@ -199,6 +241,20 @@ fn dark() -> Palette {
         unstaged: rgb(0xff897b),
         partial: rgb(0xe7bd58),
         snoozed: rgb(0x88aef1),
+        syntax: SyntaxInks {
+            keyword: rgb(0xf2937a),
+            kind: rgb(0x7ed0c2),
+            function: rgb(0x8ab4f8),
+            constant: rgb(0xc4a2f5),
+            number: rgb(0xe8a5d8),
+            string: rgb(0xa9d67f),
+            comment: rgb(0x7f8b99),
+            doc_comment: rgb(0x9aa8b6),
+            attribute: rgb(0xe7bd58),
+            // The same two as `muted` and `ink` above: change one, change the other.
+            punctuation: rgb(0xa9b6c4),
+            plain: rgb(0xedf3fb),
+        },
     }
 }
 
@@ -220,8 +276,9 @@ impl Palette {
     /// ground by what it always did - and the window is recognizably one color rather than
     /// a neutral window with a colored margin around it.
     ///
-    /// Only the surfaces move. Ink, the muted ink, borders, accents, and every diff and
-    /// status color are the theme's throughout, so nothing a person reads changes color.
+    /// Only the surfaces move. Ink, the muted ink, borders, accents, the inks code is read
+    /// in, and every diff and status color are the theme's throughout, so nothing a person
+    /// reads changes color.
     pub(crate) fn of_workspace(mode: ThemeMode, color: WorkspaceColor) -> Self {
         let mut palette = Self::of(mode);
         let step = Step::between(WorkspaceColor::Plain.bg(mode), color.bg(mode));
@@ -247,6 +304,27 @@ impl Palette {
             '+' => self.added,
             '-' => self.removed,
             _ => self.ink,
+        }
+    }
+
+    /// The ink a run of code is drawn in, by what the grammar made of it.
+    ///
+    /// Takes a token rather than an editor style, because a diff draws its own rows and has no
+    /// editor style to ask.
+    pub(crate) fn syntax_ink(&self, style: TokenStyle) -> Color32 {
+        let inks = &self.syntax;
+        match style {
+            TokenStyle::Keyword => inks.keyword,
+            TokenStyle::Type => inks.kind,
+            TokenStyle::Function => inks.function,
+            TokenStyle::Constant => inks.constant,
+            TokenStyle::Number => inks.number,
+            TokenStyle::StringLit => inks.string,
+            TokenStyle::Comment => inks.comment,
+            TokenStyle::DocComment => inks.doc_comment,
+            TokenStyle::Attribute => inks.attribute,
+            TokenStyle::Punctuation => inks.punctuation,
+            TokenStyle::Plain => inks.plain,
         }
     }
 
@@ -310,6 +388,14 @@ impl Palette {
             // of the code without hiding it.
             mark_ink: self.accent.linear_multiply(0.35),
             current_mark_ink: self.accent,
+            syntax: egui_moon_editor::SyntaxTheme::from_fn(|style| {
+                let (face, italics) = syntax_face(style);
+                egui_moon_editor::TokenLook {
+                    ink: self.syntax_ink(style),
+                    font: code_font(face),
+                    italics,
+                }
+            }),
             ..egui_moon_editor::EditorStyle::default()
         }
     }
@@ -339,6 +425,30 @@ pub(crate) fn code_font(face: CodeFace) -> FontId {
             CodeFace::Italic => fonts::italic(),
         },
     )
+}
+
+/// The faces the kinds of token that get one are set in.
+///
+/// Only the three: a keyword is the word a line hangs off and is worth the weight, and the
+/// comments are set apart from the code they are about rather than picked out of it. Every
+/// other kind is the plain face, told apart by color, because a page where half the words are
+/// bold reads as no emphasis at all.
+const SYNTAX_FACES: &[(TokenStyle, CodeFace, bool)] = &[
+    (TokenStyle::Keyword, CodeFace::Bold, false),
+    (TokenStyle::Comment, CodeFace::Italic, false),
+    // The bold face, sheared: there is no fourth font file, and egui's synthetic italic is
+    // what bold-italic is made of here.
+    (TokenStyle::DocComment, CodeFace::Bold, true),
+];
+
+/// The face `style` is set in, and whether it is sheared on top of that.
+fn syntax_face(style: TokenStyle) -> (CodeFace, bool) {
+    SYNTAX_FACES
+        .iter()
+        .find(|(named, _, _)| *named == style)
+        .map_or((CodeFace::Regular, false), |&(_, face, italics)| {
+            (face, italics)
+        })
 }
 
 pub(crate) fn tiny_style() -> TextStyle {
