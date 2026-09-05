@@ -13,6 +13,7 @@ mod definition_ranking;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
+pub(crate) mod language_source;
 pub(crate) mod launchers;
 pub(crate) mod logos;
 pub(crate) mod lsp_document;

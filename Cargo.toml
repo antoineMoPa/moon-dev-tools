@@ -37,13 +37,20 @@ egui_frames = { version = "0.3", path = "crates/egui_frames", features = ["serde
 # The code editor a file tab holds: the buffer, the fringe of line numbers, and the marks a
 # search draws into the text.
 egui_moon_editor = { version = "0.1", path = "crates/egui_moon_editor" }
+# The seam between the two above: when a server is owed the text, when a half-typed word is
+# worth a question, and what a ⌘-click can expect of a server that is still indexing. A crate
+# of its own so that an editor with go-to-definition is not something every application has to
+# write again; what stays here is the part that is this product's - panes, the palette, the
+# `ag` fallback for the languages nobody installed a server for.
+egui_moon_code_ide = { version = "0.1", path = "crates/egui_moon_code_ide" }
 egui_tty = { version = "0.2", path = "crates/egui_tty" }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 libc = "0.2"
-# The LSP wire types — requests, capabilities, positions. Only the shapes; the transport and
-# the process are ours, in `src/lsp`.
-lsp-types = "0.97"
+# The language server client — the process, the framing, the position arithmetic, and a
+# server per workspace. A crate of its own the way the widgets above are; `src/lsp` is only
+# what turns a review session into a workspace it can answer about.
+moon_lsp = { version = "0.1", path = "crates/moon_lsp" }
 portable-pty = "0.9.0"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # The folder picker the window opens on startup when it has no repo to review yet. On Linux it

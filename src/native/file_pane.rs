@@ -14,12 +14,11 @@
 
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
+use egui_moon_code_ide::{CanAnswer, Completing, Served};
 use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
 use crate::native::{
     app::App,
-    completing::Completing,
-    lsp_document::{CanAnswer, Served},
     theme::{Palette, SMALL_SIZE},
     widgets,
 };
@@ -125,7 +124,7 @@ impl FileEditor {
     /// language servers switched off does not, and neither does a file no server is behind -
     /// which is most of a repo, and is why this is the first thing asked every frame.
     pub(super) fn offers_completions(&self) -> bool {
-        self.asks_language_servers && matches!(self.served, Served::Yes(_))
+        self.asks_language_servers && self.served.has_a_server()
     }
 
     /// The completion box's state, beside whether the server behind the file could answer a
@@ -174,7 +173,7 @@ impl FileEditor {
     /// of the language-server side of a pane on most of a repo.
     #[cfg(test)]
     pub(crate) fn heard_no_server_for_test(&self) -> bool {
-        matches!(self.served, Served::No)
+        self.served.nothing_serves_it()
     }
 
     /// Type into the file, as the editor widget does.

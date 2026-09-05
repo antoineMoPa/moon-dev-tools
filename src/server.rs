@@ -41,7 +41,9 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         agent_availability: detect_agent_availability(),
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
-        lsp: Arc::new(crate::lsp::LspRegistry::new()),
+        lsp: Arc::new(moon_lsp::LspRegistry::new(
+            crate::shell_path::installed_tools_path().to_string(),
+        )),
     }
 }
 

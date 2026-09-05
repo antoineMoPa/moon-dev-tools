@@ -18,16 +18,24 @@
 //! The search is not a consolation prize for the server being missing. It is what markdown,
 //! shell, SQL and every other language nobody wrote a server for use forever, so it keeps
 //! working exactly as it did before there was a server to ask.
+//!
+//! Two places take the click: a file pane, and a row of a review's diff - which is where most
+//! of the reading in this window actually happens, so a jump that only worked in the file pane
+//! was a feature nobody ever met. Both end in the same lookup, the same ranking and the same
+//! landing; what differs is only where the answer waits for a frame that can open a pane, and
+//! whether a language server is in a position to be asked at all.
 
 use egui_frames::PaneId;
+use egui_moon_code_ide::{AsksAbout, LanguageSource, asks_about, still_starting};
 use egui_moon_editor::Word;
 
 use crate::{
-    api::{ContentMatch, LspLocation, LspPosition, LspStatus},
+    api::{ContentMatch, LspLocation, LspPosition},
     backend::Backend,
     native::{
         app::App,
         definition_ranking::{Ranked, rank},
+        language_source::SessionLanguages,
         palette::CommandAction,
         panes::{OpenAt, OpenPaneRequest},
     },
@@ -48,8 +56,9 @@ enum Answer {
 
 /// A lookup that has come back, waiting for a frame that can act on it.
 ///
-/// It sits on the pane whose ⌘-click started it, because that is what it belongs to: two file
-/// panes can each have a lookup out, and each one's answer is its own.
+/// It sits on whatever the ⌘-click was made in, because that is what it belongs to: two file
+/// panes can each have a lookup out, and each one's answer is its own, and so can a review
+/// being read beside them.
 pub(crate) struct LookedUp {
     /// The name that was clicked, kept to mark in the file that is landed on and to say what
     /// was being looked for when nothing turned up.
@@ -129,6 +138,45 @@ pub(crate) fn look_up(app: &mut App, pane_id: PaneId, session_id: &str, word: Wo
     );
 }
 
+/// Look up a name ⌘-clicked on a row of a review's diff.
+///
+/// The repo search answers, and only the repo search. A review has never told a language
+/// server about the file whose rows it is showing - opening a document belongs to the file
+/// pane, which holds the text and keeps the server's copy of it in step as it is typed into -
+/// and [`crate::lsp`] refuses, loudly, to answer about a document it was never told about. So
+/// asking anyway would be either that refusal in the reader's face or a document opened behind
+/// their back that nothing afterwards closes, and neither is worth what a server would add to
+/// a jump the search already makes.
+///
+/// Which also settles which line the click was on, a question a diff makes real: a removed row
+/// is text the file does not contain any more, so there is no position in it for a server to
+/// be asked about even if one were listening. A search wants the name and nothing else, and
+/// reads it the same off a removal as off an addition.
+///
+/// Keyed by review, so ⌘-clicking twice in a row looks up the second name rather than racing
+/// the first - the same as a file pane, and for the same reason.
+pub(crate) fn look_up_in_review(app: &mut App, session_id: &str, word: String) {
+    let for_call = session_id.to_string();
+    let for_park = session_id.to_string();
+    let name = word.clone();
+
+    app.tasks.spawn_keyed(
+        Some(format!("definition:review:{session_id}")),
+        move |backend| Ok(backend.search_contents(&for_call, &name)?.matches),
+        move |model, result| {
+            let matches = match result {
+                Ok(matches) => matches,
+                Err(error) => {
+                    model.error(format!("could not look up {word}: {error}"));
+                    return;
+                }
+            };
+            let landing = landing_of(rank(&word, matches));
+            model.review(&for_park).looking_up = Some(LookedUp { word, landing });
+        },
+    );
+}
+
 /// Ask the server, and let the repo search answer whenever the server does not.
 ///
 /// A server that errors is a server that did not answer, so the search runs: a language
@@ -143,72 +191,30 @@ fn answer_for(
     word: &str,
     at: LspPosition,
 ) -> anyhow::Result<Answer> {
-    let status = match asks_a_server {
-        true => backend
-            .lsp_status(session_id, file_path)
-            // A status that could not be had is a file with no server, as far as a click is
-            // concerned: the search is what answers, and nothing is said about it.
-            .unwrap_or(LspStatus::Unavailable),
-        false => LspStatus::Unavailable,
+    let languages = SessionLanguages::new(backend, session_id);
+    // A status that could not be had is a file with no server, as far as a click is
+    // concerned: the search is what answers, and nothing is said about it - see
+    // [`SessionLanguages::status`].
+    let asks = match asks_a_server {
+        true => asks_about(languages.status(file_path)),
+        false => AsksAbout::Elsewhere,
     };
-    match asks_of(status) {
-        Asks::Wait => return Ok(Answer::Indexing),
-        Asks::Server => {
-            if let Ok(locations) = backend.lsp_definition(session_id, file_path, at)
+    match asks {
+        AsksAbout::Wait => return Ok(Answer::Indexing),
+        AsksAbout::Server => {
+            if let Ok(locations) = languages.definition(file_path, at)
                 && !locations.is_empty()
             {
                 return Ok(Answer::Server(locations));
             }
         }
-        Asks::Search => {}
+        // The repo search, which is this window's own fallback and the reason the crate
+        // stops where it does - see [`crate::native::definition_ranking`].
+        AsksAbout::Elsewhere => {}
     }
     Ok(Answer::Searched(
         backend.search_contents(session_id, word)?.matches,
     ))
-}
-
-/// What a ⌘-click does about the server behind the file it was made in.
-#[derive(PartialEq, Eq, Debug)]
-enum Asks {
-    /// Ask it where the name is defined. It has read the project and knows which of the
-    /// forty `new`s in the repo this one is, which no amount of ranking lines does.
-    Server,
-    /// Say it is still coming up, and search nothing. A server that is indexing answers with
-    /// nothing at all, which reads exactly like the name being defined nowhere.
-    Wait,
-    /// Search the repo. Not a consolation prize: it is how markdown, shell, SQL and every
-    /// language nobody installed a server for work, which is most of a repo and most
-    /// machines, and it works the same as it did before there was anything to ask.
-    Search,
-}
-
-fn asks_of(status: LspStatus) -> Asks {
-    match status {
-        LspStatus::Unavailable => Asks::Search,
-        LspStatus::Starting => Asks::Wait,
-        LspStatus::Ready => Asks::Server,
-    }
-}
-
-/// What to say about a click made while the server behind the file is still coming up.
-///
-/// rust-analyzer takes tens of seconds over a cold project, and every one of those seconds
-/// would otherwise look like a feature that does nothing.
-///
-/// The name comes from the one table that says which server serves which extension, so that
-/// the sentence and the process it is about can never disagree: a language added there is
-/// named here without anything being added, and a second copy of that mapping kept in the
-/// window would drift the moment one of them was edited.
-fn still_starting(file_path: &str) -> String {
-    match crate::lsp::languages::for_file(file_path) {
-        Some(language) => format!(
-            "{} is still indexing this project - try again in a moment",
-            language.server.name
-        ),
-        // Nothing in that table serves it, so it can only be named as what it is. A file
-        // like this never reads as starting in the first place.
-        None => "the language server is still starting - try again in a moment".to_string(),
-    }
 }
 
 /// Where a server's answer sends the window.
@@ -261,7 +267,25 @@ pub(crate) fn follow(app: &mut App, pane_id: PaneId, session_id: &str) {
     let Some(looked_up) = editor.looking_up.take() else {
         return;
     };
+    land(app, session_id, looked_up);
+}
 
+/// The same, for a name ⌘-clicked on a row of a review's diff.
+///
+/// Called as the review draws, for the same reason the file pane's is: the pane the jump opens
+/// cannot be opened from underneath the tree that is drawing.
+pub(crate) fn follow_in_review(app: &mut App, session_id: &str) {
+    if app.pending_action.is_some() {
+        return;
+    }
+    let Some(looked_up) = app.model.review(session_id).looking_up.take() else {
+        return;
+    };
+    land(app, session_id, looked_up);
+}
+
+/// Send the window where the answer says, whichever kind of click asked.
+fn land(app: &mut App, session_id: &str, looked_up: LookedUp) {
     match looked_up.landing {
         // Silence would read as the click having missed, so it says so.
         Landing::Nowhere => app
@@ -349,15 +373,6 @@ mod tests {
         assert!(matches!(landing_of(rank("greet", Vec::new())), Landing::Nowhere));
     }
 
-    /// The server is asked first and its answer is the answer; a file nothing serves is
-    /// searched, exactly as it always was; and a server still coming up is neither.
-    #[test]
-    fn a_server_answers_where_there_is_one_and_the_search_answers_everywhere_else() {
-        assert_eq!(asks_of(LspStatus::Ready), Asks::Server);
-        assert_eq!(asks_of(LspStatus::Unavailable), Asks::Search);
-        assert_eq!(asks_of(LspStatus::Starting), Asks::Wait);
-    }
-
     /// A server that answered is taken at its word: one place is a jump, several are the
     /// several the language has and are offered rather than guessed between.
     #[test]
@@ -394,15 +409,5 @@ mod tests {
         assert_eq!(row.line, "definition.rs:120");
         assert_eq!(row.file_path, "src/native/definition.rs");
         assert_eq!(row.line_number, 120);
-    }
-
-    /// A click made while the server is indexing says so, and says which server: the wait is
-    /// tens of seconds on a cold project, and silence would read as a feature that does
-    /// nothing.
-    #[test]
-    fn a_click_while_the_server_is_indexing_names_the_language_that_is_busy() {
-        assert!(still_starting("src/lib.rs").starts_with("rust is still indexing"));
-        assert!(still_starting("web/app.tsx").starts_with("typescript is still indexing"));
-        assert!(still_starting("README.md").starts_with("the language server"));
     }
 }

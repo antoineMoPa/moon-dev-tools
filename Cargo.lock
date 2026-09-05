@@ -1245,6 +1245,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_moon_code_ide"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "egui",
+ "egui_moon_editor",
+ "moon_lsp",
+]
+
+[[package]]
 name = "egui_moon_editor"
 version = "0.1.0"
 dependencies = [
@@ -2563,12 +2573,13 @@ dependencies = [
  "egui_extras",
  "egui_frames",
  "egui_kittest",
+ "egui_moon_code_ide",
  "egui_moon_editor",
  "egui_tty",
  "futures",
  "image",
  "libc",
- "lsp-types",
+ "moon_lsp",
  "muda",
  "portable-pty",
  "reqwest",
@@ -2580,6 +2591,16 @@ dependencies = [
  "tokio",
  "tungstenite 0.30.0",
  "webbrowser",
+]
+
+[[package]]
+name = "moon_lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lsp-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -8,10 +8,13 @@ use crate::{
     native::{
         app::App,
         model::{Draft, LineSelection, hash_of},
-        theme::{Palette, SMALL_SIZE},
+        review::diff::DiffLine,
+        theme::{CODE_SIZE, Palette, SMALL_SIZE},
         widgets,
     },
 };
+
+use super::{body_text_x, column_at, word_bounds_at};
 
 pub(super) fn draw_hunk_toolbar(
     app: &mut App,
@@ -368,4 +371,108 @@ pub(super) fn select_and_open(
         return;
     };
     open_draft(app, session_id, hunk, anchor);
+}
+
+/// ⌘ over a name on a diff row: underline it, and take the click on it as a jump to where the
+/// name is defined.
+///
+/// Reading code is what a review is for, and following a name out of it is most of reading
+/// code, so the gesture is the one the file pane already has: ⌘ held, the name under the
+/// pointer underlined and the cursor a pointing hand, and the click landing on the definition.
+/// Nothing about the plain click changes - it still selects the line and opens the composer,
+/// which is the other half of what this pane is for.
+///
+/// Says whether the click was taken as a jump, so the row knows not to also select on it.
+///
+/// The affordance costs one row's worth of layout a frame at the very most: the row is drawn
+/// at all only when it is on screen, and the name is worked out only while ⌘ is down and only
+/// on the row the pointer is actually over. Scrolling a lock file's diff with no modifier held
+/// does none of this work at all.
+pub(super) fn jump_to_definition(
+    app: &mut App,
+    ui: &Ui,
+    session_id: &str,
+    rect: egui::Rect,
+    line: &DiffLine,
+    response: &egui::Response,
+    ink: egui::Color32,
+) -> bool {
+    // Command on macOS, ctrl elsewhere - the same modifier the whole of
+    // `crate::native::bindings` is written in, and the one the file pane's editor navigates
+    // under. Exactly it: shift-⌘ is not this gesture, and shift-click is still the one that
+    // grows a selection.
+    if !ui.input(|input| input.modifiers.matches_exact(egui::Modifiers::COMMAND)) {
+        return false;
+    }
+    // Where the pointer is, not where a click was: the underline has to be there before the
+    // click, which is the whole point of drawing it.
+    let Some(at) = response.interact_pointer_pos().or(response.hover_pos()) else {
+        return false;
+    };
+    if !response.contains_pointer() {
+        return false;
+    }
+    let Some((from, to)) = name_at(line.body(), column_at(ui, rect, line, at.x)) else {
+        return false;
+    };
+
+    underline(ui, rect, line, from, to, ink);
+    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+
+    if !response.clicked() {
+        return false;
+    }
+    let name: String = line.body().chars().skip(from).take(to - from).collect();
+    crate::native::definition::look_up_in_review(app, session_id, name);
+    true
+}
+
+/// The name a column of a diff row falls in, as the character columns it spans.
+///
+/// The row is already cut into words for the word diff, along exactly the boundary a name has:
+/// letters, digits and underscores. So that cut is what says where the name starts and stops.
+/// What it also hands back is punctuation and runs of spaces, which are not names and have
+/// nothing to look up, so a piece that does not begin the way a name does is none.
+fn name_at(body: &str, column: usize) -> Option<(usize, usize)> {
+    let (from, to) = word_bounds_at(body, column)?;
+    let starts_a_name = body
+        .chars()
+        .nth(from)
+        .is_some_and(|ch| ch.is_alphabetic() || ch == '_');
+    starts_a_name.then_some((from, to))
+}
+
+/// Underline the name the ⌘-click would take, in the ink the row is already set in.
+///
+/// The ink rather than a colour of its own, the way the file pane's editor does it: what says
+/// the name can be clicked is the underline, not a highlight the code does not otherwise use.
+/// Measured in the plain monospace face, which is what every other column on this row is
+/// measured in.
+fn underline(
+    ui: &Ui,
+    rect: egui::Rect,
+    line: &DiffLine,
+    from: usize,
+    to: usize,
+    ink: egui::Color32,
+) {
+    let font = egui::FontId::monospace(CODE_SIZE);
+    let body: Vec<char> = line.body().chars().collect();
+    let width_of = |from: usize, to: usize| {
+        let text: String = body[from.min(body.len())..to.min(body.len())]
+            .iter()
+            .collect();
+        ui.painter()
+            .layout_no_wrap(text, font.clone(), ink)
+            .size()
+            .x
+    };
+    let left = body_text_x(rect) + width_of(0, from);
+    // Clipped to the row, like the text is: a name near the end of a long line must not draw
+    // its underline out over the card's border.
+    ui.painter().with_clip_rect(rect).hline(
+        left..=left + width_of(from, to),
+        rect.max.y - 2.0,
+        egui::Stroke::new(1.0, ink),
+    );
 }

@@ -10,3 +10,11 @@
 	path = crates/egui_moon_editor
 	url = git@github.com:antoineMoPa/egui_moon_editor.git
 	branch = main
+[submodule "crates/moon_lsp"]
+	path = crates/moon_lsp
+	url = git@github.com:antoineMoPa/moon_lsp.git
+	branch = main
+[submodule "crates/egui_moon_code_ide"]
+	path = crates/egui_moon_code_ide
+	url = git@github.com:antoineMoPa/egui_moon_code_ide.git
+	branch = main

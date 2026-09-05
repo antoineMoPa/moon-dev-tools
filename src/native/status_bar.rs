@@ -29,7 +29,6 @@ use crate::{
     api::LspWork,
     native::{
         app::App,
-        lsp_document::Served,
         panes::{OpenPaneRequest, Pane},
         theme::{Palette, SMALL_SIZE},
     },
@@ -184,7 +183,7 @@ impl App {
             .filter_map(|(pane_id, pane)| match pane {
                 Pane::File { session_id, .. } => {
                     let editor = self.model.file_editors.get(&pane_id)?;
-                    matches!(editor.server_heard(), Served::Yes(_)).then(|| session_id.clone())
+                    editor.server_heard().has_a_server().then(|| session_id.clone())
                 }
                 _ => None,
             })

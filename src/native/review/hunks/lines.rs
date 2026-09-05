@@ -18,7 +18,9 @@ use crate::{
     },
 };
 
-use super::actions::{current_selection, draw_truncation_notice, select_and_open};
+use super::actions::{
+    current_selection, draw_truncation_notice, jump_to_definition, select_and_open,
+};
 use super::comments::{draw_composer, draw_inline_comment};
 use super::{GUTTER_WIDTH, LINE_HEIGHT, body_text_x, column_at, diff_line_id, word_bounds_at};
 
@@ -205,6 +207,22 @@ fn draw_diff_line(
     draw_line_text(ui, rect, line, palette, &marks);
 
     if !selectable {
+        return;
+    }
+
+    // ⌘ over the row means the name under the pointer, not the line: it underlines, and the
+    // click on it jumps to where the name is defined instead of selecting and opening a
+    // composer. Asked before anything else looks at the click, so the two gestures never both
+    // happen.
+    if jump_to_definition(
+        app,
+        ui,
+        session_id,
+        rect,
+        line,
+        &response,
+        palette.diff_line_ink(line.kind.prefix()),
+    ) {
         return;
     }
 

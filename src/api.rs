@@ -59,7 +59,7 @@ pub(crate) struct AppState {
     pub(crate) terminals: Arc<crate::terminal::TerminalRegistry>,
     /// The language servers running for these reviews. Repo-side like the shells beside it,
     /// because a server has to read the files it answers about - see [`crate::lsp`].
-    pub(crate) lsp: Arc<crate::lsp::LspRegistry>,
+    pub(crate) lsp: Arc<moon_lsp::LspRegistry>,
 }
 
 #[derive(Default)]
@@ -310,66 +310,11 @@ pub(crate) struct CommitRunOutcome {
     pub(crate) exit_code: Option<i32>,
 }
 
-/// A place in a file, counted the way the editor counts: the line from zero, and how far
-/// into that line in **bytes**.
+/// The types a language question and its answer are made of, from the client crate.
 ///
-/// Bytes because that is what the editor widget reports and what a `String` is indexed by.
-/// The protocol counts UTF-16 code units, and converting between the two happens in one
-/// place - `src/lsp/` - rather than at every call site.
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub(crate) struct LspPosition {
-    pub(crate) line: usize,
-    pub(crate) column: usize,
-}
-
-/// Somewhere a definition was found: the file, and the line to open it at.
-///
-/// `line_number` counts from one, the way [`ContentMatch`] and the panes' open-at do, so a
-/// caller can open it without an off-by-one at the boundary.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct LspLocation {
-    pub(crate) file_path: String,
-    pub(crate) line_number: usize,
-}
-
-/// One thing a server offered to complete with.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct LspCompletion {
-    pub(crate) label: String,
-    pub(crate) detail: Option<String>,
-    pub(crate) insert: String,
-}
-
-/// Whether there is a language server behind a file, and whether it can answer yet.
-///
-/// The three are told apart because they read completely differently in a pane: a server
-/// that is still indexing answers with nothing, which is indistinguishable from "there is
-/// no definition" unless the pane is told which it is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum LspStatus {
-    Unavailable,
-    Starting,
-    Ready,
-}
-
-/// One piece of work a language server has begun and not finished, as it described it.
-///
-/// This is the server's own account of the wait, not the window's guess at it: the title and
-/// the line under it are the server's words, and `percentage` is there only when it said how
-/// far through it is - most work never does. See [`crate::native::status_bar`], which reads
-/// it out along the bottom of the window.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct LspWork {
-    /// The server doing it, by the name the language table knows it by - `rust-analyzer`.
-    pub(crate) server: String,
-    /// What the server called this piece of work: "Indexing", "Fetching metadata".
-    pub(crate) title: String,
-    /// The line it is writing under that title, where it writes one.
-    pub(crate) detail: Option<String>,
-    /// How far through, 0 to 100, where the server says.
-    pub(crate) percentage: Option<u8>,
-}
+/// Re-exported rather than redefined so that the wire format and the client's own types are
+/// one thing: a `--remote` window serialises exactly what [`moon_lsp`] hands back.
+pub(crate) use moon_lsp::{LspCompletion, LspLocation, LspPosition, LspStatus, LspWork};
 
 /// A file the editor has opened or changed, and what is in it now.
 #[derive(Serialize, Deserialize)]

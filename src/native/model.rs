@@ -159,6 +159,11 @@ pub(crate) struct ReviewState {
     pub(crate) find_query: String,
     /// The one match the bar has stepped to, which is drawn differently from the rest.
     pub(crate) find_match: Option<crate::native::review::search::Match>,
+    /// A name ⌘-clicked on a diff row, once it has been looked up and before a frame that
+    /// can open a pane has read it. It waits on the review rather than on the pane showing it
+    /// because the answer belongs to the review the click was made in - a second review open
+    /// beside this one has its own - and a review pane has no editor of its own to park it on.
+    pub(crate) looking_up: Option<crate::native::definition::LookedUp>,
     pub(crate) history_loaded: Vec<CommitView>,
     pub(crate) history_has_more: bool,
     pub(crate) loading_history: bool,
@@ -182,6 +187,7 @@ impl ReviewState {
             expanded_patches: HashMap::new(),
             find_query: String::new(),
             find_match: None,
+            looking_up: None,
             history_loaded: Vec::new(),
             history_has_more: false,
             loading_history: false,

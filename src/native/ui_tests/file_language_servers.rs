@@ -11,7 +11,7 @@
 //! There is one exception, at the bottom, and it is marked `#[ignore]` for exactly that
 //! reason: `typing_in_a_real_crate_offers_what_rust_analyzer_knows` starts rust-analyzer on a
 //! throwaway cargo crate and types into it. Everything above proves each half in isolation -
-//! the pane's side here, the protocol's side in `src/lsp/tests.rs`, the popup's in the editor
+//! the pane's side here, the protocol's side in the `moon_lsp` crate, the popup's in the editor
 //! crate - and none of it proves the whole of it works in one window, which is the only thing
 //! anyone is actually shipping. So that test exists, and is run on purpose with
 //! `cargo test --lib -- --ignored` rather than as part of a suite that has to stay fast.
@@ -349,7 +349,7 @@ fn typing_in_a_file_no_language_server_serves_offers_nothing_and_still_types() {
 /// A real crate, a real rust-analyzer, and a word half typed: the one test that proves the
 /// whole of this works in one window rather than each half working on its own.
 ///
-/// Marked `#[ignore]` the way the tests in `src/lsp/tests.rs` are, and for the same reason:
+/// Marked `#[ignore]` the way `moon_lsp`'s real-server tests are, and for the same reason:
 /// it starts a language server and waits for it to read a project, which is tens of seconds
 /// on a cold one and belongs nowhere near a suite that has to stay fast. Everything it needs
 /// is in the fixture - a `Cargo.toml`, one file, no dependencies - so the only thing it asks

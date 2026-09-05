@@ -73,6 +73,11 @@ pub(super) fn word_bounds_at(body: &str, column: usize) -> Option<(usize, usize)
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    // A name ⌘-clicked on a row on an earlier frame, once the lookup it started has come
+    // back. Here rather than where the answer arrives, because the pane the jump opens cannot
+    // be opened from underneath the tree that is drawing.
+    crate::native::definition::follow_in_review(app, session_id);
+
     // The payload is shared, so the hunks below are read straight out of it rather than
     // copied - a diff of a lock file is far too much text to clone every frame.
     let Some(payload) = app
