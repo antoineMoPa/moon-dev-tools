@@ -65,7 +65,10 @@ fn a_range_of_branches_is_reviewed_as_a_diff_against_its_base() {
     )
     .expect("expected review request");
 
-    assert_eq!(request.diff_target.base.as_deref(), Some("main..egui-version"));
+    assert_eq!(
+        request.diff_target.base.as_deref(),
+        Some("main..egui-version")
+    );
     assert_eq!(request.diff_target.pathspec, None);
     assert_eq!(request.active_commit, None);
 }

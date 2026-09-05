@@ -37,7 +37,9 @@ pub(super) fn draw_hunk_body(
         .review_ref(session_id)
         .and_then(|review| review.expanded_patches.get(&hunk.id))
         .cloned();
-    let patch = full_patch.clone().unwrap_or_else(|| hunk.patch_preview.clone());
+    let patch = full_patch
+        .clone()
+        .unwrap_or_else(|| hunk.patch_preview.clone());
     let lines = app.diff_lines(&hunk.id, &patch, &hunk.file_path);
 
     let anchored = parse_anchored_comments(&hunk.comment);
@@ -65,7 +67,11 @@ pub(super) fn draw_hunk_body(
     let mut draft_at: Vec<(usize, String)> = Vec::new();
     let mut unplaced: Vec<String> = Vec::new();
     if let Some(review) = app.model.review_ref(session_id) {
-        for draft in review.drafts.iter().filter(|draft| draft.hunk_id == hunk.id) {
+        for draft in review
+            .drafts
+            .iter()
+            .filter(|draft| draft.hunk_id == hunk.id)
+        {
             let at = if selection_anchor.as_deref() == Some(draft.selection.as_str()) {
                 selection_end
             } else {
@@ -165,8 +171,9 @@ fn draw_diff_line(
             let font = egui::FontId::monospace(CODE_SIZE);
             let body: Vec<char> = line.body().chars().collect();
             let width_of = |from: usize, to: usize| {
-                let text: String =
-                    body[from.min(body.len())..to.min(body.len())].iter().collect();
+                let text: String = body[from.min(body.len())..to.min(body.len())]
+                    .iter()
+                    .collect();
                 ui.painter()
                     .layout_no_wrap(text, font.clone(), palette.ink)
                     .size()
@@ -264,10 +271,7 @@ fn draw_diff_line(
                 && existing.hunk_id_hash == hunk_hash
                 && existing.head != head
             {
-                review.selection = Some(LineSelection {
-                    head,
-                    ..existing
-                });
+                review.selection = Some(LineSelection { head, ..existing });
             }
         }
         return;
@@ -276,15 +280,18 @@ fn draw_diff_line(
     // A double-click takes the word under the pointer, split the same way the word diff
     // splits a line; a triple-click takes the whole line back.
     if response.triple_clicked() {
-        select_and_open(app, session_id, hunk, LineSelection::whole_line(hunk_hash, index));
+        select_and_open(
+            app,
+            session_id,
+            hunk,
+            LineSelection::whole_line(hunk_hash, index),
+        );
         return;
     }
     if response.double_clicked() {
         let selection = response
             .interact_pointer_pos()
-            .and_then(|at| {
-                word_bounds_at(line.body(), column_at(ui, rect, line, at.x))
-            })
+            .and_then(|at| word_bounds_at(line.body(), column_at(ui, rect, line, at.x)))
             .map(|(from, to)| LineSelection {
                 hunk_id_hash: hunk_hash,
                 anchor: SelectionPoint {
@@ -388,11 +395,7 @@ fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
     );
 
     let font = egui::FontId::monospace(CODE_SIZE - 1.0);
-    let number = |value: Option<usize>| {
-        value
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    };
+    let number = |value: Option<usize>| value.map(|value| value.to_string()).unwrap_or_default();
     painter.text(
         egui::pos2(rect.min.x + 32.0, rect.center().y),
         Align2::RIGHT_CENTER,
@@ -493,7 +496,15 @@ fn body_job(line: &DiffLine, palette: &Palette, flat_ink: egui::Color32) -> Layo
     let mut at = 0;
     let mut cut = 0;
     for span in changed_spans(line) {
-        append_runs(&mut job, body, &runs, &mut at, cut..span.start, None, palette);
+        append_runs(
+            &mut job,
+            body,
+            &runs,
+            &mut at,
+            cut..span.start,
+            None,
+            palette,
+        );
         append_runs(
             &mut job,
             body,
@@ -505,7 +516,15 @@ fn body_job(line: &DiffLine, palette: &Palette, flat_ink: egui::Color32) -> Layo
         );
         cut = span.end;
     }
-    append_runs(&mut job, body, &runs, &mut at, cut..body.len(), None, palette);
+    append_runs(
+        &mut job,
+        body,
+        &runs,
+        &mut at,
+        cut..body.len(),
+        None,
+        palette,
+    );
     job
 }
 
@@ -648,7 +667,9 @@ fn draw_find_marks(
 ) {
     let body: Vec<char> = line.body().chars().collect();
     let width_of = |from: usize, to: usize| {
-        let text: String = body[from.min(body.len())..to.min(body.len())].iter().collect();
+        let text: String = body[from.min(body.len())..to.min(body.len())]
+            .iter()
+            .collect();
         painter
             .layout_no_wrap(text, font.clone(), palette.ink)
             .size()

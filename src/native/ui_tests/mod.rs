@@ -7,21 +7,21 @@
 mod board;
 mod board_cards;
 mod board_drag;
-mod board_task_pane;
 mod board_selection;
+mod board_task_pane;
 mod diff_comments;
 mod diff_selection;
 mod files;
 mod launch;
 mod layout;
 mod palette;
-mod workspace_color;
 mod project;
 mod shell_input;
 mod shell_lifecycle;
 mod sidebar_menu;
 mod submodules;
 mod tab_rename;
+mod workspace_color;
 
 use std::{
     fs,
@@ -381,7 +381,12 @@ fn board_of(name: &str, notes_on: &[&str]) -> (Harness<'static>, Arc<Mutex<Seen>
 
     let read = Arc::clone(&seen);
     assert!(
-        settle(&mut harness, || read.lock().expect("poisoned").columns.len() == 3),
+        settle(&mut harness, || read
+            .lock()
+            .expect("poisoned")
+            .columns
+            .len()
+            == 3),
         "the board never read the three tasks"
     );
     harness.run_steps(3);
@@ -420,7 +425,10 @@ fn marked_tasks(app: &crate::native::app::App) -> Vec<String> {
 /// The one card the board has marked, for the tests that only ever mark one.
 fn marked_task(app: &crate::native::app::App) -> Option<String> {
     let mut marked = marked_tasks(app);
-    assert!(marked.len() <= 1, "expected one card marked, got {marked:?}");
+    assert!(
+        marked.len() <= 1,
+        "expected one card marked, got {marked:?}"
+    );
     marked.pop()
 }
 

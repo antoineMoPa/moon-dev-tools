@@ -75,7 +75,10 @@ fn moved_hint(
     hint: &crate::api::HunkMoveHint,
     palette: &Palette,
 ) {
-    let text = format!("{label} {}", widgets::elide_path(&hint.target_file_path, 26));
+    let text = format!(
+        "{label} {}",
+        widgets::elide_path(&hint.target_file_path, 26)
+    );
     if widgets::quiet_button_colored(ui, &text, palette.snoozed)
         .on_hover_text(format!(
             "{} {}\n{}% similar - click to jump there",
@@ -107,7 +110,10 @@ fn draw_hunk_actions(
                 });
         }
     } else {
-        if widgets::quiet_button(ui, "[stage hunk]").on_hover_text("stage this hunk (s)").clicked() {
+        if widgets::quiet_button(ui, "[stage hunk]")
+            .on_hover_text("stage this hunk (s)")
+            .clicked()
+        {
             let hunk_id = hunk.id.clone();
             let for_call = session_id.to_string();
             app.tasks
@@ -168,7 +174,11 @@ pub(super) fn draw_truncation_notice(
                 let busy = app.tasks.is_busy(&format!("patch:{}", hunk.id));
                 if widgets::clickable(ui.add_enabled(
                     !busy,
-                    egui::Button::new(if busy { "loading…" } else { "show the whole hunk" }),
+                    egui::Button::new(if busy {
+                        "loading…"
+                    } else {
+                        "show the whole hunk"
+                    }),
                 ))
                 .clicked()
                 {
@@ -344,7 +354,12 @@ pub(super) fn open_draft(app: &mut App, session_id: &str, hunk: &HunkView, selec
 
 /// Make a selection current and open a composer on it. Composers already open stay as they
 /// are - see `open_draft`.
-pub(super) fn select_and_open(app: &mut App, session_id: &str, hunk: &HunkView, selection: LineSelection) {
+pub(super) fn select_and_open(
+    app: &mut App,
+    session_id: &str,
+    hunk: &HunkView,
+    selection: LineSelection,
+) {
     let review = app.model.review(session_id);
     review.selection = Some(selection);
     review.active_hunk_id = Some(hunk.id.clone());

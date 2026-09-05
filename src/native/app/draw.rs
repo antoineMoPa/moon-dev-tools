@@ -7,7 +7,8 @@ use egui::{Align, Align2, CornerRadius, Key, Layout as UiLayout, RichText, Ui, v
 use crate::{
     api::OpenSessionRequest,
     native::{
-        bindings::{self}, find, fonts, logos,
+        bindings::{self},
+        find, fonts, logos,
         menu::{MenuAction, NativeMenu},
         model::{Stage, ToastKind},
         palette::{self, CommandAction},
@@ -27,7 +28,6 @@ const LOGO_POINTS: f32 = 80.0;
 const LOGO_GAP: f32 = 8.0;
 
 impl App {
-
     pub(super) fn draw_prompt(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
         // A repo on this machine can be pointed at; one on the far side of a remote connection
@@ -112,9 +112,7 @@ impl App {
         });
 
         // Both deferred: the dialog blocks, and opening a review takes `self`.
-        if pick_folder
-            && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone())
-        {
+        if pick_folder && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone()) {
             open_path = Some(picked);
         }
         if let Some(repo_path) = open_path {
@@ -278,7 +276,12 @@ impl App {
             Stage::Ready => {}
         }
 
-        for action in self.menu.as_ref().map(NativeMenu::drain).unwrap_or_default() {
+        for action in self
+            .menu
+            .as_ref()
+            .map(NativeMenu::drain)
+            .unwrap_or_default()
+        {
             self.pending_action = Some(match action {
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,

@@ -30,7 +30,10 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
     // Arrange: a repo with no project file at all, which is every repo the first time.
     let fixture = seeded_fixture("project-pane");
     let project_file = fixture.root.join(".moonreview.json");
-    assert!(!project_file.exists(), "the fixture starts with no project file");
+    assert!(
+        !project_file.exists(),
+        "the fixture starts with no project file"
+    );
 
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     let opened = Arc::new(AtomicBool::new(false));

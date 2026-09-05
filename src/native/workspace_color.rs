@@ -51,15 +51,69 @@ struct Ground {
 /// is the test that holds this.
 const GROUNDS: [(WorkspaceColor, Ground); 9] = [
     // The palettes' own `bg`, so an unmarked workspace is exactly what it was.
-    (WorkspaceColor::Plain, Ground { light: 0xf3efe6, dark: 0x10141c }),
-    (WorkspaceColor::Ember, Ground { light: 0xf3e6dc, dark: 0x28161c }),
-    (WorkspaceColor::Amber, Ground { light: 0xf1ecd2, dark: 0x26201c }),
-    (WorkspaceColor::Moss, Ground { light: 0xe2eedc, dark: 0x10221c }),
-    (WorkspaceColor::Teal, Ground { light: 0xd8ece4, dark: 0x102426 }),
-    (WorkspaceColor::Ocean, Ground { light: 0xd6e3e6, dark: 0x101a30 }),
-    (WorkspaceColor::Indigo, Ground { light: 0xdedee6, dark: 0x1a1632 }),
-    (WorkspaceColor::Plum, Ground { light: 0xece0e6, dark: 0x24142c }),
-    (WorkspaceColor::Rose, Ground { light: 0xf3e2e2, dark: 0x2c1422 }),
+    (
+        WorkspaceColor::Plain,
+        Ground {
+            light: 0xf3efe6,
+            dark: 0x10141c,
+        },
+    ),
+    (
+        WorkspaceColor::Ember,
+        Ground {
+            light: 0xf3e6dc,
+            dark: 0x28161c,
+        },
+    ),
+    (
+        WorkspaceColor::Amber,
+        Ground {
+            light: 0xf1ecd2,
+            dark: 0x26201c,
+        },
+    ),
+    (
+        WorkspaceColor::Moss,
+        Ground {
+            light: 0xe2eedc,
+            dark: 0x10221c,
+        },
+    ),
+    (
+        WorkspaceColor::Teal,
+        Ground {
+            light: 0xd8ece4,
+            dark: 0x102426,
+        },
+    ),
+    (
+        WorkspaceColor::Ocean,
+        Ground {
+            light: 0xd6e3e6,
+            dark: 0x101a30,
+        },
+    ),
+    (
+        WorkspaceColor::Indigo,
+        Ground {
+            light: 0xdedee6,
+            dark: 0x1a1632,
+        },
+    ),
+    (
+        WorkspaceColor::Plum,
+        Ground {
+            light: 0xece0e6,
+            dark: 0x24142c,
+        },
+    ),
+    (
+        WorkspaceColor::Rose,
+        Ground {
+            light: 0xf3e2e2,
+            dark: 0x2c1422,
+        },
+    ),
 ];
 
 /// The colors a picker offers, in the order it offers them.
@@ -197,10 +251,30 @@ mod tests {
                 let marked = Palette::of_workspace(mode, color);
 
                 assert_eq!(marked.ink, plain.ink, "{} moved the ink", color.label());
-                assert_eq!(marked.muted, plain.muted, "{} moved the muted ink", color.label());
-                assert_eq!(marked.accent, plain.accent, "{} moved the accent", color.label());
-                assert_eq!(marked.added, plain.added, "{} moved a diff color", color.label());
-                assert_eq!(marked.removed, plain.removed, "{} moved a diff color", color.label());
+                assert_eq!(
+                    marked.muted,
+                    plain.muted,
+                    "{} moved the muted ink",
+                    color.label()
+                );
+                assert_eq!(
+                    marked.accent,
+                    plain.accent,
+                    "{} moved the accent",
+                    color.label()
+                );
+                assert_eq!(
+                    marked.added,
+                    plain.added,
+                    "{} moved a diff color",
+                    color.label()
+                );
+                assert_eq!(
+                    marked.removed,
+                    plain.removed,
+                    "{} moved a diff color",
+                    color.label()
+                );
             }
         }
     }

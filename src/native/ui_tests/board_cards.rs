@@ -297,10 +297,13 @@ fn a_cards_notes_open_the_task_ready_to_write() {
     // click was someone reaching for those words, so the next ones land after them.
     harness.run_steps(2);
     type_letter(&mut harness, egui::Key::A, "And test it.");
-    let notes = fixture.root.join(".moontasks/write-the-parser-1111/notes.md");
+    let notes = fixture
+        .root
+        .join(".moontasks/write-the-parser-1111/notes.md");
     assert!(
-        settle(&mut harness, || std::fs::read_to_string(&notes)
-            .is_ok_and(|written| written == "Ship it by Friday, working top down.\nAnd test it.")),
+        settle(&mut harness, || std::fs::read_to_string(&notes).is_ok_and(
+            |written| written == "Ship it by Friday, working top down.\nAnd test it."
+        )),
         "the typing should have gone into the notes box, saw {:?}",
         std::fs::read_to_string(&notes)
     );
@@ -321,7 +324,9 @@ fn a_cards_notes_open_the_task_ready_to_write() {
         .join(".moontasks/fix-the-login-page-2222/notes.md");
     assert!(
         settle(&mut harness, || std::fs::read_to_string(&started)
-            .is_ok_and(|written| written.contains("Start with the session cookie"))),
+            .is_ok_and(
+                |written| written.contains("Start with the session cookie")
+            )),
         "writing the notes is what makes the file real, saw {:?}",
         std::fs::read_to_string(&started)
     );
@@ -429,7 +434,8 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
     use egui_kittest::kittest::Queryable as _;
     harness.get_by_label("src/extra.rs").click();
     assert!(
-        settle(&mut harness, || panes_open().contains(&"src/extra.rs".to_string())),
+        settle(&mut harness, || panes_open()
+            .contains(&"src/extra.rs".to_string())),
         "clicking the linked file should have opened it, got {:?}",
         panes_open()
     );
@@ -440,7 +446,11 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
     harness.run_steps(3);
     harness.get_by_label("file…").click();
     harness.run_steps(3);
-    for (key, letter) in [(egui::Key::L, "l"), (egui::Key::I, "i"), (egui::Key::B, "b")] {
+    for (key, letter) in [
+        (egui::Key::L, "l"),
+        (egui::Key::I, "i"),
+        (egui::Key::B, "b"),
+    ] {
         type_letter(&mut harness, key, letter);
     }
     assert!(
@@ -452,7 +462,8 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
 
     assert!(
-        settle(&mut harness, || panes_open().contains(&"src/lib.rs".to_string())),
+        settle(&mut harness, || panes_open()
+            .contains(&"src/lib.rs".to_string())),
         "the picked file should have opened, got {:?}",
         panes_open()
     );
@@ -549,10 +560,7 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
                 app.model.board.loaded && app.model.board.tasks.len() == 1,
                 Ordering::Relaxed,
             );
-            picker_open_in_ui.store(
-                app.model.board.attach_picker.is_some(),
-                Ordering::Relaxed,
-            );
+            picker_open_in_ui.store(app.model.board.attach_picker.is_some(), Ordering::Relaxed);
         });
 
     let deadline = Instant::now() + Duration::from_secs(30);

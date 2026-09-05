@@ -105,11 +105,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
     let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
 
-    let scroll_target = app
-        .model
-        .review(session_id)
-        .scroll_to_hunk
-        .take();
+    let scroll_target = app.model.review(session_id).scroll_to_hunk.take();
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -201,8 +197,11 @@ fn draw_empty(ui: &mut Ui, palette: &Palette) {
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
-    parameter struct that only exists to be destructured immediately")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_section(
     app: &mut App,
     ui: &mut Ui,
@@ -263,7 +262,13 @@ fn draw_section(
     }
 }
 
-fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &str, palette: &Palette) {
+fn draw_file_heading(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    file_path: &str,
+    palette: &Palette,
+) {
     let collapsed = app
         .model
         .review_ref(session_id)
@@ -286,8 +291,11 @@ fn draw_file_heading(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &s
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; the alternative is a \
-    parameter struct that only exists to be destructured immediately")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_hunk_card(
     app: &mut App,
     ui: &mut Ui,
@@ -320,10 +328,7 @@ fn draw_hunk_card(
     if scroll_target != Some(hunk.id.as_str())
         && let Some(height) = app.hunk_heights.get(&hunk.id).copied()
     {
-        let skipped = Rect::from_min_size(
-            ui.cursor().min,
-            vec2(ui.available_width(), height),
-        );
+        let skipped = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
         if !ui.is_rect_visible(skipped) {
             ui.allocate_exact_size(skipped.size(), Sense::hover());
             return;
@@ -334,7 +339,11 @@ fn draw_hunk_card(
         .fill(palette.code_bg)
         .stroke(Stroke::new(
             1.0,
-            if is_active { palette.accent } else { palette.line },
+            if is_active {
+                palette.accent
+            } else {
+                palette.line
+            },
         ))
         // Square: a hunk is a block of code, and a rounded box around monospaced rows that
         // run to its edges reads as a card the code is escaping rather than a frame round it.

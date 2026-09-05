@@ -41,7 +41,10 @@ pub(crate) enum PaneKind {
 pub(crate) enum Pane {
     /// One review of one repo. The window opens on the repo it was launched in; changed
     /// submodules are further reviews, each with its own session and its own tab title.
-    Review { session_id: String, title: String },
+    Review {
+        session_id: String,
+        title: String,
+    },
     Agents,
     Terminal {
         terminal_id: String,
@@ -66,7 +69,10 @@ pub(crate) enum Pane {
     /// One task, in a tab of its own: what a click on its card opens. The title it was opened
     /// under is only the name for the tab until the board answers - the task's own is what the
     /// pane reads and writes.
-    Start { task_id: String, title: String },
+    Start {
+        task_id: String,
+        title: String,
+    },
     /// A task being written before it exists: what a column's `+` opens. It becomes the task's
     /// own pane, in this very tab, the moment the title box is answered for - see
     /// [`crate::native::start_pane`].
@@ -79,7 +85,9 @@ pub(crate) enum Pane {
         draft_id: String,
     },
     /// Committing what one review has staged, and pushing it.
-    Commit { session_id: String },
+    Commit {
+        session_id: String,
+    },
     /// Every submodule of the repo, and a way into a review of the changed ones.
     Submodules,
     /// The two commands the Project menu runs, and where they are set.

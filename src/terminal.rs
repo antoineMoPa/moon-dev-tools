@@ -47,10 +47,17 @@ const BROADCAST_CAPACITY: usize = 256;
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ClientMessage {
-    Input { data: String },
+    Input {
+        data: String,
+    },
     /// The terminal answering a query the program made of it, which is not somebody typing.
-    Reply { data: String },
-    Resize { cols: u16, rows: u16 },
+    Reply {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
 }
 
 #[derive(Deserialize)]
@@ -878,7 +885,11 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
         loop {
             match output.recv().await {
                 Ok(chunk) => {
-                    if socket_sender.send(Message::Binary(chunk.into())).await.is_err() {
+                    if socket_sender
+                        .send(Message::Binary(chunk.into()))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }

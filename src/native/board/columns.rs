@@ -12,8 +12,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark,
-            plus_button, slide_into_place, stamp_place,
+            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark, plus_button,
+            slide_into_place, stamp_place,
         },
         model::ColumnRename,
         theme::{Palette, SMALL_SIZE},
@@ -198,13 +198,16 @@ fn draw_heading_handle(
 
 /// What a column can be told about itself: where cards moved into it land. A menu rather than
 /// a mark on the heading, because it is set once for a column and then left alone.
-fn draw_heading_menu(handle: &egui::Response, column: &BoardColumn, actions: &mut Vec<BoardAction>) {
+fn draw_heading_menu(
+    handle: &egui::Response,
+    column: &BoardColumn,
+    actions: &mut Vec<BoardAction>,
+) {
     egui::Popup::context_menu(handle)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.label(
-                RichText::new("a card moved in from another column goes")
-                    .size(SMALL_SIZE - 1.0),
+                RichText::new("a card moved in from another column goes").size(SMALL_SIZE - 1.0),
             );
             // Written out rather than derived: these are the three answers, and each says
             // plainly what the column will do with what is dropped on it.

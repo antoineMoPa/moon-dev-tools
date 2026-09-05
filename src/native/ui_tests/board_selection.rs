@@ -54,17 +54,15 @@ fn a_tasks_tab_coming_to_the_front_marks_its_card() {
             match *step {
                 Step::OpenTheShell => {
                     let frame = app.model.layout.active_frame();
-                    *shell_pane_in_ui.lock().expect("poisoned") = Some(
-                        app.model.layout.add_pane(
-                            frame,
-                            Pane::Terminal {
-                                terminal_id: "worked-in-shell".to_string(),
-                                command: Some(crate::api::AgentKind::Claude),
-                                task_id: Some("write-the-parser-1111".to_string()),
-                            },
-                            None,
-                        ),
-                    );
+                    *shell_pane_in_ui.lock().expect("poisoned") = Some(app.model.layout.add_pane(
+                        frame,
+                        Pane::Terminal {
+                            terminal_id: "worked-in-shell".to_string(),
+                            command: Some(crate::api::AgentKind::Claude),
+                            task_id: Some("write-the-parser-1111".to_string()),
+                        },
+                        None,
+                    ));
                     *step = Step::OpenTheBoard;
                 }
                 Step::OpenTheBoard => {
@@ -150,8 +148,7 @@ fn clicking_the_board_beside_the_cards_lets_the_marks_go() {
             drop(opened);
 
             app.draw(ui);
-            *worked_in_in_ui.lock().expect("poisoned") =
-                super::marked_task(&app);
+            *worked_in_in_ui.lock().expect("poisoned") = super::marked_task(&app);
             *board_in_ui.lock().expect("poisoned") = app
                 .model
                 .layout
@@ -162,7 +159,8 @@ fn clicking_the_board_beside_the_cards_lets_the_marks_go() {
 
     let task = Some("write-the-parser-1111".to_string());
     assert!(
-        settle(&mut harness, || *worked_in.lock().expect("poisoned") == task
+        settle(&mut harness, || *worked_in.lock().expect("poisoned")
+            == task
             && board.lock().expect("poisoned").is_some()),
         "the shell's task is marked, with the board open and read"
     );
@@ -170,10 +168,19 @@ fn clicking_the_board_beside_the_cards_lets_the_marks_go() {
     // Right of the last column and below the new-column slot's own button, where nothing of
     // the board's is drawn - and well above the corner the toasts stack up in, since the
     // shell this test names has one saying it could not be attached.
-    let pane = board.lock().expect("poisoned").expect("the board was drawn");
-    click_at(&mut harness, egui::pos2(pane.max.x - 12.0, pane.min.y + 160.0));
+    let pane = board
+        .lock()
+        .expect("poisoned")
+        .expect("the board was drawn");
+    click_at(
+        &mut harness,
+        egui::pos2(pane.max.x - 12.0, pane.min.y + 160.0),
+    );
     assert!(
-        settle(&mut harness, || worked_in.lock().expect("poisoned").is_none()),
+        settle(&mut harness, || worked_in
+            .lock()
+            .expect("poisoned")
+            .is_none()),
         "a click on the board's background should take the mark off the task"
     );
 }

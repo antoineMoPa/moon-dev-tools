@@ -8,9 +8,9 @@ use crate::{
     comments::{AnchoredComment, build_anchored_comment_value, parse_anchored_comments},
     native::{
         app::App,
-        panes::OpenPaneRequest,
         model::{Draft, hash_of},
         palette::CommandAction,
+        panes::OpenPaneRequest,
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -43,13 +43,17 @@ pub(super) fn draw_inline_comment(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(if entry.resolved { "resolved" } else { "comment" })
-                        .size(SMALL_SIZE - 1.0)
-                        .color(if entry.resolved {
-                            palette.accent_2
-                        } else {
-                            palette.accent
-                        }),
+                    RichText::new(if entry.resolved {
+                        "resolved"
+                    } else {
+                        "comment"
+                    })
+                    .size(SMALL_SIZE - 1.0)
+                    .color(if entry.resolved {
+                        palette.accent_2
+                    } else {
+                        palette.accent
+                    }),
                 );
 
                 if let Some(dispatch) = &dispatch
@@ -73,13 +77,10 @@ pub(super) fn draw_inline_comment(
                         if dispatch.can_cancel && widgets::quiet_button(ui, "cancel").clicked() {
                             let hunk_id = hunk.id.clone();
                             let for_call = session_id.to_string();
-                            app.tasks.act(
-                                session_id,
-                                "could not cancel the run",
-                                move |backend| {
+                            app.tasks
+                                .act(session_id, "could not cancel the run", move |backend| {
                                     backend.cancel_dispatch(&for_call, &hunk_id, comment_index)
-                                },
-                            );
+                                });
                         }
                         if dispatch.has_log && widgets::quiet_button(ui, "log").clicked() {
                             open_dispatch_log(app, session_id, &dispatch.key);
@@ -157,17 +158,13 @@ pub(super) fn draw_composer(
     read_only: bool,
     palette: &Palette,
 ) {
-    let Some(mut draft) = app
-        .model
-        .review_ref(session_id)
-        .and_then(|review| {
-            review
-                .drafts
-                .iter()
-                .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
-                .cloned()
-        })
-    else {
+    let Some(mut draft) = app.model.review_ref(session_id).and_then(|review| {
+        review
+            .drafts
+            .iter()
+            .find(|draft| draft.hunk_id == hunk.id && draft.selection == anchor)
+            .cloned()
+    }) else {
         return;
     };
     let payload = app

@@ -7,14 +7,12 @@
 
 use egui::{Align, CornerRadius, Key, Layout, Modifiers, RichText, Sense, Stroke, Ui, vec2};
 
-use crate::{
-    native::{
-        app::App,
-        palette::CommandAction,
-        panes::OpenPaneRequest,
-        theme::{Palette, SMALL_SIZE},
-        widgets,
-    },
+use crate::native::{
+    app::App,
+    palette::CommandAction,
+    panes::OpenPaneRequest,
+    theme::{Palette, SMALL_SIZE},
+    widgets,
 };
 
 /// The gap between the change count and the path that follows it. The count's column is as
@@ -134,14 +132,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                                         ui.add_space(2.0);
                                     }
                                     for row in &group.rows {
-                                        draw_row(
-                                            app,
-                                            ui,
-                                            row,
-                                            changes_column,
-                                            row_width,
-                                            &palette,
-                                        );
+                                        draw_row(app, ui, row, changes_column, row_width, &palette);
                                     }
                                 });
                             });
@@ -310,7 +301,9 @@ fn draw_row(
             .is_some_and(|response| response.hovered());
         // Nothing at all until the pointer is on it: at rest the hub is a list of names, and
         // the fill and border fading up are what say the whole block is one target.
-        let shown = ui.ctx().animate_bool_with_time(id.with("hover"), hovered, HOVER_FADE);
+        let shown = ui
+            .ctx()
+            .animate_bool_with_time(id.with("hover"), hovered, HOVER_FADE);
 
         egui::Frame::new()
             .fill(palette.control_active_bg.gamma_multiply(shown))
@@ -344,8 +337,8 @@ fn draw_row(
     });
 
     let clicked = widgets::clickable(ui.interact(response.response.rect, id, Sense::click()))
-    .on_hover_text(format!("Review {}", row.path_under_repo))
-    .clicked();
+        .on_hover_text(format!("Review {}", row.path_under_repo))
+        .clicked();
     // Deferred: the arrangement is lent out while its panes draw, this one included, so a
     // request made here would find no panes to bring forward. The app acts on it after.
     if clicked {

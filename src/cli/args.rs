@@ -75,10 +75,10 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
             "--help" | "-h" | "help" => return Ok(CliCommand::Help),
             "--version" | "-v" => return Ok(CliCommand::Version),
             "--remote" => {
-                remote = Some(
-                    args.next()
-                        .ok_or_else(|| anyhow!("--remote needs an address, e.g. --remote dev-box"))?,
-                );
+                remote =
+                    Some(args.next().ok_or_else(|| {
+                        anyhow!("--remote needs an address, e.g. --remote dev-box")
+                    })?);
             }
             "--repo" => {
                 repo = Some(

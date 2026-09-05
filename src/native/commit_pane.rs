@@ -374,7 +374,12 @@ impl App {
     /// header's `asked for` pill: the card being in that column is the person saying the work is
     /// behind them, and a commit pane opened afterwards has nothing to hear from it.
     pub(super) fn requested_review_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
-        let repo_path = &self.model.review_ref(session_id)?.payload.as_ref()?.repo_path;
+        let repo_path = &self
+            .model
+            .review_ref(session_id)?
+            .payload
+            .as_ref()?
+            .repo_path;
         let mut for_this_repo = self
             .model
             .review_requests
@@ -409,8 +414,9 @@ impl App {
             return None;
         }
         match &request.branch {
-            Some(branch) => (Some(branch.as_str()) == self.branch_of_commit_pane(session_id))
-                .then_some(request),
+            Some(branch) => {
+                (Some(branch.as_str()) == self.branch_of_commit_pane(session_id)).then_some(request)
+            }
             None => Some(request),
         }
     }
@@ -943,7 +949,9 @@ fn draw_branch_line(
                 // named differently, the state starting a branch from `origin/dev` leaves it
                 // in. The push goes under the branch's own name, and the label says so.
                 if state.push_ref.is_none() {
-                    label.on_hover_text("pushing sends it to origin under its own name and tracks it there");
+                    label.on_hover_text(
+                        "pushing sends it to origin under its own name and tracks it there",
+                    );
                 }
             }
             None => {
@@ -975,8 +983,7 @@ fn draw_branch_line(
         // to say about it, and a line saying so on every commit is a line nobody reads. When they
         // do differ this is also what says why the box is empty - the message written for that
         // branch is held back from a commit being made somewhere else.
-        let elsewhere =
-            asked_branch.filter(|asked| Some(*asked) != state.branch_name.as_deref());
+        let elsewhere = asked_branch.filter(|asked| Some(*asked) != state.branch_name.as_deref());
         if let Some(asked) = elsewhere {
             widgets::pill(
                 ui,
@@ -1020,7 +1027,9 @@ fn draw_staged_files(
         .id_salt(("commit-staged", session_id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (directory, files) in widgets::by_directory(state.staged_files.iter(), |file| file.file_path.as_str()) {
+            for (directory, files) in
+                widgets::by_directory(state.staged_files.iter(), |file| file.file_path.as_str())
+            {
                 // The directory once, over the names in it: a commit is usually a handful of
                 // files in two or three places, and repeating the path on every row buries the
                 // names under it.

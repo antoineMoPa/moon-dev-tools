@@ -59,7 +59,9 @@ pub(crate) struct CommitState {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub(crate) enum CommitAction {
-    Commit { message: String },
+    Commit {
+        message: String,
+    },
     Push,
     /// Open the pull request for the pushed branch, in the browser, through `gh`.
     OpenPr,
@@ -531,8 +533,7 @@ mod tests {
 
     #[test]
     fn the_status_reads_a_change_kind_and_a_path_per_staged_file() {
-        let (staged, unstaged) =
-            parse_status("M  src/git.rs\0A  src/committing.rs\0D  old.rs\0");
+        let (staged, unstaged) = parse_status("M  src/git.rs\0A  src/committing.rs\0D  old.rs\0");
 
         assert_eq!(unstaged, 0);
         assert_eq!(

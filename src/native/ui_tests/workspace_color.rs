@@ -153,7 +153,11 @@ fn a_marked_workspace_keeps_its_color_across_the_theme_switch() {
             *reopened_ground_in_ui.lock().expect("the ground") = next.palette_of().bg;
         });
 
-    step_until(&mut next_harness, &reopened, "the second window never opened the project");
+    step_until(
+        &mut next_harness,
+        &reopened,
+        "the second window never opened the project",
+    );
     next_harness.run_steps(3);
 
     assert_eq!(

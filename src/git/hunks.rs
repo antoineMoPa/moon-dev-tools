@@ -1,12 +1,7 @@
 //! Turning a git diff into the hunks the review draws, and turning a selection back into a
 //! patch git can apply.
 
-use std::{
-    fs,
-    io::Read,
-    path::Path,
-    process::Stdio,
-};
+use std::{fs, io::Read, path::Path, process::Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};

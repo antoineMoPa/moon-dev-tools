@@ -26,7 +26,8 @@ impl Drop for Served {
 }
 
 fn serve(name: &str) -> Served {
-    let root = std::env::temp_dir().join(format!("moonreview-server-{}-{name}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("moonreview-server-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("failed to create the fixture directory");
     run_git_no_output(&root, &["init"]).expect("failed to init the fixture repo");
@@ -154,7 +155,9 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }))
+        .json(
+            &serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }),
+        )
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -581,7 +584,9 @@ fn the_columns_are_the_boards_to_change() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }))
+        .json(
+            &serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }),
+        )
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -671,7 +676,9 @@ fn a_file_can_be_linked_to_a_task_over_http() {
     let created: serde_json::Value = served
         .client
         .post(&tasks_url)
-        .json(&serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }))
+        .json(
+            &serde_json::json!({ "title": "Fix the login page", "status": "todo", "joins": "top" }),
+        )
         .send()
         .expect("failed to create a task")
         .error_for_status()
@@ -721,10 +728,12 @@ fn a_file_can_be_linked_to_a_task_over_http() {
             .expect("failed to decode the board")
     };
     let tasks = board(&served);
-    let resources = tasks[0]["resources"]
-        .as_array()
-        .expect("expected an array");
-    assert_eq!(resources.len(), 1, "one link, whatever was refused: {resources:?}");
+    let resources = tasks[0]["resources"].as_array().expect("expected an array");
+    assert_eq!(
+        resources.len(),
+        1,
+        "one link, whatever was refused: {resources:?}"
+    );
     let resource = &resources[0];
     assert_eq!(resource["kind"], "file");
     assert_eq!(resource["file_path"], "src/lib.rs");

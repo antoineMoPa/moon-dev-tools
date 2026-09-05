@@ -7,13 +7,13 @@ use egui_frames::DropSide;
 
 use crate::{
     api::AgentKind,
-    project::ProjectCommand,
     native::{
         app::App,
         bindings::{self, Action},
         panes::{OpenPaneRequest, PaneKind},
         theme::{Palette, SMALL_SIZE},
     },
+    project::ProjectCommand,
 };
 
 /// What the palette's query is picking.
@@ -78,7 +78,10 @@ pub(crate) enum CommandAction {
     FindFile,
     /// Put a file of the repo on a task's card, then open it: what the file finder does with
     /// a pick when a card's `[start]` menu opened it.
-    LinkTaskFile { task_id: String, file_path: String },
+    LinkTaskFile {
+        task_id: String,
+        file_path: String,
+    },
     /// Turn the palette into the content search, where what is typed is looked for in the
     /// text of every file of the repo.
     SearchContent,
@@ -90,7 +93,11 @@ pub(crate) enum CommandAction {
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
 const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
-    (AgentKind::OpenCode, "opencode", "Open OpenCode in a terminal"),
+    (
+        AgentKind::OpenCode,
+        "opencode",
+        "Open OpenCode in a terminal",
+    ),
     (AgentKind::Claude, "claude", "Open Claude in a terminal"),
     (AgentKind::Codex, "codex", "Open Codex in a terminal"),
 ];
@@ -119,7 +126,10 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let root_repo = root_repo_name(app);
 
     commands.push(single_pane_command(
-        app.model.layout.find_pane(|pane| pane.reviews(&root)).is_some(),
+        app.model
+            .layout
+            .find_pane(|pane| pane.reviews(&root))
+            .is_some(),
         "review",
         &format!("Open the {root_repo} review"),
         &format!("Bring the {root_repo} review forward"),
@@ -244,8 +254,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     });
     commands.push(Command {
         title: "search content".to_string(),
-        description: "Find text in the files of the repo, wherever under it they are"
-            .to_string(),
+        description: "Find text in the files of the repo, wherever under it they are".to_string(),
         action: CommandAction::SearchContent,
         shortcut: bindings::chord_of(Action::SearchContent),
     });
@@ -269,10 +278,15 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         }
         commands.push(Command {
             title: format!("new {} window", frame.program()),
-            description: format!("Open another window on {}, asking which repo", frame.opens()),
+            description: format!(
+                "Open another window on {}, asking which repo",
+                frame.opens()
+            ),
             action: CommandAction::NewWindow(*frame),
             // Only this window's own program has a chord; the other two are named only.
-            shortcut: (*frame == app.frame()).then(|| bindings::chord_of(Action::NewWindow)).flatten(),
+            shortcut: (*frame == app.frame())
+                .then(|| bindings::chord_of(Action::NewWindow))
+                .flatten(),
         });
     }
 
@@ -539,8 +553,12 @@ fn empty_message(app: &App) -> String {
             if query.is_empty() {
                 return "type what to look for in the files".to_string();
             }
-            searching_message(contents.error.as_deref(), contents.searched.as_deref(), query)
-                .unwrap_or_else(|| "no file of the repo holds that text".to_string())
+            searching_message(
+                contents.error.as_deref(),
+                contents.searched.as_deref(),
+                query,
+            )
+            .unwrap_or_else(|| "no file of the repo holds that text".to_string())
         }
     }
 }

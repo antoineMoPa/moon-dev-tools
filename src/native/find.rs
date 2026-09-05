@@ -142,7 +142,10 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
 
     egui::Area::new("moonreview-find".into())
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(rect.max.x - OUTER_WIDTH - INSET, rect.min.y + INSET))
+        .fixed_pos(egui::pos2(
+            rect.max.x - OUTER_WIDTH - INSET,
+            rect.min.y + INSET,
+        ))
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(palette.panel)

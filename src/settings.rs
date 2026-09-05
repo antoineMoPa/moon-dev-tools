@@ -45,7 +45,11 @@ impl Settings {
     /// Returns whether the list changed, so a reopen of the project already at the head does
     /// not rewrite the file.
     pub(crate) fn remember_project(&mut self, path: &str) -> bool {
-        if self.recent_projects.first().is_some_and(|first| first == path) {
+        if self
+            .recent_projects
+            .first()
+            .is_some_and(|first| first == path)
+        {
             return false;
         }
         self.recent_projects.retain(|recent| recent != path);
@@ -75,7 +79,9 @@ impl Settings {
         }
         match color {
             WorkspaceColor::Plain => self.workspace_colors.remove(project_path),
-            color => self.workspace_colors.insert(project_path.to_string(), color),
+            color => self
+                .workspace_colors
+                .insert(project_path.to_string(), color),
         };
         true
     }
@@ -106,7 +112,13 @@ pub(crate) fn path() -> Option<PathBuf> {
             .name()
             .unwrap_or("unnamed")
             .chars()
-            .map(|character| if character.is_alphanumeric() { character } else { '-' })
+            .map(|character| {
+                if character.is_alphanumeric() {
+                    character
+                } else {
+                    '-'
+                }
+            })
             .collect();
         Some(std::env::temp_dir().join(format!(
             "moonreview-test-settings-{}-{test}.json",
@@ -198,7 +210,10 @@ mod tests {
         let settings: Settings = serde_json::from_str("{}").expect("expected the defaults");
 
         assert!(settings.workspace_colors.is_empty());
-        assert_eq!(settings.workspace_color("/repos/anything"), WorkspaceColor::Plain);
+        assert_eq!(
+            settings.workspace_color("/repos/anything"),
+            WorkspaceColor::Plain
+        );
     }
 
     #[test]
@@ -250,7 +265,10 @@ mod tests {
         settings.remember_project("/b");
 
         assert!(settings.remember_project("/a"));
-        assert_eq!(settings.recent_projects, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(
+            settings.recent_projects,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
     }
 
     #[test]
@@ -270,7 +288,10 @@ mod tests {
 
         assert_eq!(settings.recent_projects.len(), RECENT_PROJECTS_KEPT);
         assert_eq!(settings.recent_projects[0], "/project-10");
-        assert_eq!(settings.recent_projects[RECENT_PROJECTS_KEPT - 1], "/project-3");
+        assert_eq!(
+            settings.recent_projects[RECENT_PROJECTS_KEPT - 1],
+            "/project-3"
+        );
     }
 
     #[test]

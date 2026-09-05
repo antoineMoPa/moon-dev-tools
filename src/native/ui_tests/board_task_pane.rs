@@ -69,7 +69,9 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
             pane_open_in_ui.store(
                 app.model
                     .layout
-                    .find_pane(|pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK))
+                    .find_pane(
+                        |pane| matches!(pane, Pane::Start { task_id, .. } if task_id == TASK),
+                    )
                     .is_some(),
                 Ordering::Relaxed,
             );
@@ -188,7 +190,10 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
         .extend([press_and_release(true), press_and_release(false)]);
     harness.step();
     assert!(
-        settle(&mut harness, || renaming.lock().expect("poisoned").is_some()
+        settle(&mut harness, || renaming
+            .lock()
+            .expect("poisoned")
+            .is_some()
             && typing_lands.load(Ordering::Relaxed)),
         "a double click on the title opens it for renaming, with the keyboard in it"
     );
@@ -401,10 +406,7 @@ fn a_shell_started_from_a_card_joins_the_column_beside_the_board() {
     const OTHER: &str = "fix-the-login-page-2222";
 
     let fixture = seeded_fixture("card-shell-column");
-    for (task_id, title) in [
-        (TASK, "Write the parser"),
-        (OTHER, "Fix the login page"),
-    ] {
+    for (task_id, title) in [(TASK, "Write the parser"), (OTHER, "Fix the login page")] {
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
             &format!(
@@ -650,10 +652,7 @@ fn a_new_task_is_written_on_its_pane_before_it_exists() {
         "a title typed is not a task either: [create] is what makes one"
     );
 
-    let create = harness
-        .get_by_label("[create]")
-        .rect()
-        .center();
+    let create = harness.get_by_label("[create]").rect().center();
     click_at(&mut harness, create);
     assert!(
         settle(&mut harness, || tasks
@@ -675,10 +674,7 @@ fn a_new_task_is_written_on_its_pane_before_it_exists() {
         "the new-task pane is that task's pane now, not a second tab beside it"
     );
     assert!(
-        card_held
-            .lock()
-            .expect("expected the held card")
-            .is_none(),
+        card_held.lock().expect("expected the held card").is_none(),
         "and the empty card comes off the board, its own card having taken the place"
     );
 }
@@ -959,7 +955,9 @@ fn a_tasks_pane_writes_its_title_and_its_notes() {
     press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
     type_letter(&mut harness, egui::Key::X, "X");
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
-    let metadata = fixture.root.join(format!(".moontasks/{TASK}/metadata.json"));
+    let metadata = fixture
+        .root
+        .join(format!(".moontasks/{TASK}/metadata.json"));
     assert!(
         settle(&mut harness, || std::fs::read_to_string(&metadata)
             .is_ok_and(|written| written.contains("Write the parserX"))),
@@ -1137,8 +1135,7 @@ fn triple_clicking_the_title_selects_all_of_it() {
             .extend([press_and_release(true), press_and_release(false)]);
         harness.run_steps(3);
 
-        if renaming.lock().expect("poisoned").is_some() && typing_lands.load(Ordering::Relaxed)
-        {
+        if renaming.lock().expect("poisoned").is_some() && typing_lands.load(Ordering::Relaxed) {
             selected = true;
             break;
         }

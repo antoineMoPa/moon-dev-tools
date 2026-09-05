@@ -233,8 +233,7 @@ fn a_failed_agent_keeps_its_shell_open_with_a_notice() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut printed = String::new();
     while Instant::now() < deadline {
-        printed =
-            String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
         if printed.contains("[claude exited with code 1]") {
             break;
         }
@@ -415,7 +414,11 @@ fn a_tasks_shell_is_named_after_the_task() {
         "write the parser claude - 2"
     );
     assert_eq!(
-        numbered_name(Some("write the parser"), &TerminalProgram::LoginShell, in_use()),
+        numbered_name(
+            Some("write the parser"),
+            &TerminalProgram::LoginShell,
+            in_use()
+        ),
         "write the parser shell - 2"
     );
     assert_eq!(
@@ -447,11 +450,7 @@ fn a_long_title_is_cut_to_its_front() {
         "twenty characters fit whole"
     );
     assert_eq!(
-        numbered_name(
-            Some("rewrite the whole parser from scratch"),
-            &claude,
-            []
-        ),
+        numbered_name(Some("rewrite the whole parser from scratch"), &claude, []),
         "rewrite the whole pa claude - 1"
     );
     assert_eq!(
@@ -665,9 +664,9 @@ fn a_shell_reads_as_running_a_command_only_while_one_runs() {
 fn a_shell_reads_utf8_input_as_utf8() {
     // Nothing to fix on a machine with no UTF-8 locale to start a shell in - see
     // `crate::shell_locale::shell_lang`.
-    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|name| {
-        std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8"))
-    });
+    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8")));
     if !inherits_utf8 && crate::shell_locale::shell_lang().is_none() {
         return;
     }
@@ -709,9 +708,9 @@ fn a_shell_reads_utf8_input_as_utf8() {
 fn a_shell_pages_utf8_text_as_characters_rather_than_escapes() {
     // Nothing to fix, and nothing to test, on a machine that has no UTF-8 locale to start a
     // shell in - see `crate::shell_locale::shell_lang`.
-    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|name| {
-        std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8"))
-    });
+    let inherits_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|value| value.to_uppercase().ends_with("UTF-8")));
     if !inherits_utf8 && crate::shell_locale::shell_lang().is_none() {
         return;
     }

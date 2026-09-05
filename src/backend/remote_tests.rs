@@ -32,7 +32,8 @@ impl Drop for ServedRepo {
 
 /// Start a `moonreview serve` on a free port, over a throwaway repo with pending changes.
 fn serve_a_repo(name: &str) -> ServedRepo {
-    let root = std::env::temp_dir().join(format!("moonreview-remote-{}-{name}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("moonreview-remote-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("failed to create the fixture directory");
 
@@ -44,12 +45,18 @@ fn serve_a_repo(name: &str) -> ServedRepo {
     ] {
         run_git_no_output(&root, &["config", key, value]).expect("failed to configure git");
     }
-    fs::write(root.join("main.rs"), "fn main() {\n    println!(\"one\");\n}\n")
-        .expect("failed to write the fixture file");
+    fs::write(
+        root.join("main.rs"),
+        "fn main() {\n    println!(\"one\");\n}\n",
+    )
+    .expect("failed to write the fixture file");
     run_git_no_output(&root, &["add", "-A"]).expect("failed to stage the fixture");
     run_git_no_output(&root, &["commit", "-m", "first"]).expect("failed to commit the fixture");
-    fs::write(root.join("main.rs"), "fn main() {\n    println!(\"two\");\n}\n")
-        .expect("failed to change the fixture file");
+    fs::write(
+        root.join("main.rs"),
+        "fn main() {\n    println!(\"two\");\n}\n",
+    )
+    .expect("failed to change the fixture file");
 
     let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
     let (port_sender, port_receiver) = std::sync::mpsc::channel();

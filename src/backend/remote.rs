@@ -17,9 +17,9 @@ use serde_json::json;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-        ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleHubPayload, TerminalNameRequest, TerminalView,
+        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
+        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        SessionPayload, SubmoduleHubPayload, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -278,7 +278,9 @@ impl Backend for RemoteBackend {
 
     fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload> {
         let encoded = urlencode(query);
-        self.get(&format!("/api/session/{session_id}/content?query={encoded}"))
+        self.get(&format!(
+            "/api/session/{session_id}/content?query={encoded}"
+        ))
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {
@@ -299,7 +301,10 @@ impl Backend for RemoteBackend {
     }
 
     fn send_comment_batch(&self, session_id: &str) -> Result<()> {
-        self.post(&format!("/api/session/{session_id}/comment-batch"), &json!({}))
+        self.post(
+            &format!("/api/session/{session_id}/comment-batch"),
+            &json!({}),
+        )
     }
 
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()> {
@@ -468,9 +473,7 @@ impl Backend for RemoteBackend {
         resource_id: &str,
     ) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
-            &format!(
-                "/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"
-            ),
+            &format!("/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/resume"),
             &json!({}),
         )?;
         Ok(opened.terminal_id)
@@ -496,12 +499,7 @@ impl Backend for RemoteBackend {
         Ok(opened.terminal_id)
     }
 
-    fn stop_task_resource(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        resource_id: &str,
-    ) -> Result<()> {
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/tasks/{task_id}/resources/{resource_id}/stop"),
             &json!({}),
@@ -618,8 +616,9 @@ impl Backend for RemoteBackend {
     }
 
     fn terminal_name(&self, session_id: &str, terminal_id: &str) -> Result<Option<String>> {
-        let view: TerminalView =
-            self.get(&format!("/api/session/{session_id}/terminals/{terminal_id}"))?;
+        let view: TerminalView = self.get(&format!(
+            "/api/session/{session_id}/terminals/{terminal_id}"
+        ))?;
         Ok(view.name)
     }
 

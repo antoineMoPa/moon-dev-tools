@@ -8,8 +8,8 @@ use anyhow::Result;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
-        FileContentPayload, ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleHubPayload,
+        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, OpenSessionRequest,
+        PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
     },
     backend::Backend,
     moontasks::{
@@ -48,7 +48,9 @@ impl egui_tty::Tty for LocalShell {
     }
 
     fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
-        self.session.resize(cols, rows).map_err(egui_tty::Error::msg)
+        self.session
+            .resize(cols, rows)
+            .map_err(egui_tty::Error::msg)
     }
 
     /// The pane is what holds this shell's session alive, so its output channel stays open
@@ -261,12 +263,7 @@ impl Backend for LocalBackend {
         moontasks::service::attach_resource(&self.state, session_id, task_id, request)
     }
 
-    fn stop_task_resource(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        resource_id: &str,
-    ) -> Result<()> {
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()> {
         moontasks::service::stop_resource(&self.state, session_id, task_id, resource_id)
     }
 

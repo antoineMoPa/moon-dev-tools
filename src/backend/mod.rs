@@ -14,9 +14,9 @@ use anyhow::Result;
 use crate::{
     agent_sessions::AgentSessionView,
     api::{
-        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, FileContentPayload,
-        ContentMatchesPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleHubPayload,
+        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
+        FileContentPayload, FileMatchesPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        SessionPayload, SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -71,7 +71,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
     fn dispatch_log(&self, session_id: &str, dispatch_key: &str) -> Result<AgentLogPayload>;
 
-
     fn stage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn unstage_hunk(&self, session_id: &str, hunk_id: &str) -> Result<()>;
     fn stage_file(&self, session_id: &str, file_path: &str) -> Result<()>;
@@ -119,8 +118,7 @@ pub(crate) trait Backend: Send + Sync + 'static {
         task_id: &str,
         request: &AttachResourceRequest,
     ) -> Result<String>;
-    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str)
-    -> Result<()>;
+    fn stop_task_resource(&self, session_id: &str, task_id: &str, resource_id: &str) -> Result<()>;
     /// Take a run off the task for good, rather than leaving it to be resumed.
     fn delete_task_resource(
         &self,

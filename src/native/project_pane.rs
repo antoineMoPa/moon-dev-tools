@@ -175,4 +175,3 @@ fn swatch(
     );
     response
 }
-

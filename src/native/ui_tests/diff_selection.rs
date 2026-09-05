@@ -12,7 +12,7 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{app_for, seeded_fixture, click_at};
+use super::{app_for, click_at, seeded_fixture};
 
 /// cmd+c over the diff copies what is selected - and copies the code, without the `+` that
 /// says it was added. A clicked line is selected whole, so that is what arrives.

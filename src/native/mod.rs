@@ -5,6 +5,8 @@ pub(crate) mod app;
 pub(crate) mod bindings;
 pub(crate) mod board;
 pub(crate) mod commit_pane;
+#[cfg(test)]
+mod commit_pane_tests;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
@@ -14,15 +16,13 @@ pub(crate) mod menu;
 pub(crate) mod model;
 pub(crate) mod palette;
 pub(crate) mod panes;
-pub(crate) mod project_pane;
 mod programs;
+pub(crate) mod project_pane;
 pub(crate) mod review;
 pub(crate) mod start_pane;
 pub(crate) mod submodules;
 pub(crate) mod tasks;
 pub(crate) mod theme;
-#[cfg(test)]
-mod commit_pane_tests;
 #[cfg(test)]
 pub(crate) mod ui_tests;
 pub(crate) mod widgets;

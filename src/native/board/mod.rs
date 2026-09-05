@@ -4,11 +4,11 @@
 //! gave, and everything it does goes back through the backend, so the same board works
 //! against a repo on this machine and one on another.
 
+pub(crate) mod actions;
 pub(crate) mod attach;
 pub(crate) mod cards;
 pub(crate) mod columns;
 pub(crate) mod filter;
-pub(crate) mod actions;
 pub(crate) mod gesture;
 pub(crate) mod resources;
 pub(crate) mod selection;
@@ -78,8 +78,11 @@ fn settle_gesture(app: &mut App, ui: &Ui, actions: &mut Vec<BoardAction>) {
         && let Some((task_id, modifiers)) = gesture::grabbed(&app.model.board)
     {
         let task_id = task_id.to_string();
-        app.model.board.carrying =
-            Some(selection::carried_by(&mut app.model.board, &task_id, modifiers));
+        app.model.board.carrying = Some(selection::carried_by(
+            &mut app.model.board,
+            &task_id,
+            modifiers,
+        ));
     }
     if app.model.board.carrying.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -481,7 +484,8 @@ pub(super) fn file_mark(ui: &mut Ui, palette: &Palette) {
         rect.left_bottom(),
         rect.left_top(),
     ];
-    ui.painter().add(egui::Shape::line(outline.to_vec(), stroke));
+    ui.painter()
+        .add(egui::Shape::line(outline.to_vec(), stroke));
     ui.painter().add(egui::Shape::line(
         vec![
             egui::pos2(rect.max.x - FOLD, rect.min.y),
@@ -668,9 +672,9 @@ fn draw_column(
             // Which column the pointer is in, worked out from the pointer rather than taken from
             // the response: egui hit-tests a frame behind, on the widgets the last frame drew, and
             // a column that has just taken the carried cards in is not the column it hit-tested.
-            let ghost = carrying
-                .as_ref()
-                .map(|carrying| egui::LayerId::new(egui::Order::Tooltip, card_drag_id(&carrying.primary)));
+            let ghost = carrying.as_ref().map(|carrying| {
+                egui::LayerId::new(egui::Order::Tooltip, card_drag_id(&carrying.primary))
+            });
             let over = ghost.is_some() && pointer_over(ui, &response, ghost);
             let landing = over
                 .then(|| ui.ctx().pointer_interact_pos())
@@ -899,7 +903,11 @@ mod tests {
     /// scroll partway through.
     #[test]
     fn a_scrolling_gesture_keeps_the_axis_it_started_on() {
-        assert_eq!(scroll_axis(None, vec2(0.0, 0.0)), None, "nothing is scrolling");
+        assert_eq!(
+            scroll_axis(None, vec2(0.0, 0.0)),
+            None,
+            "nothing is scrolling"
+        );
         assert_eq!(
             scroll_axis(None, vec2(-30.0, 4.0)),
             Some(Axis::Horizontal),

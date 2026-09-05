@@ -4,8 +4,8 @@ use super::hunks::{
     collect_commit_hunks, collect_hunks, collect_session_hunks, local_change_summary_from_status,
 };
 use super::{
-    branch_commits_since_default, canonicalize_repo, commit_history_page,
-    list_submodule_repos, run_git, run_git_no_output,
+    branch_commits_since_default, canonicalize_repo, commit_history_page, list_submodule_repos,
+    run_git, run_git_no_output,
 };
 use crate::api::{AgentKind, DiffTarget, RepoSession};
 use std::collections::{HashMap, HashSet};
@@ -94,16 +94,21 @@ fn an_svg_is_one_hunk_however_many_places_it_changed_in() {
     let svg = |first: &str, last: &str| {
         format!("<svg xmlns=\"http://www.w3.org/2000/svg\">\n  {first}\n{spacer}  {last}\n</svg>\n")
     };
-    fs::write(repo_root.join("logo.svg"), svg("<g id=\"a\"/>", "<g id=\"z\"/>"))
-        .expect("failed to write the svg");
+    fs::write(
+        repo_root.join("logo.svg"),
+        svg("<g id=\"a\"/>", "<g id=\"z\"/>"),
+    )
+    .expect("failed to write the svg");
     run_git_no_output(&repo_root, &["add", "logo.svg"]).expect("failed to add the svg");
-    run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"])
-        .expect("failed to commit");
-    fs::write(repo_root.join("logo.svg"), svg("<g id=\"b\"/>", "<g id=\"y\"/>"))
-        .expect("failed to change the svg");
+    run_git_no_output(&repo_root, &["commit", "-m", "Add the logo"]).expect("failed to commit");
+    fs::write(
+        repo_root.join("logo.svg"),
+        svg("<g id=\"b\"/>", "<g id=\"y\"/>"),
+    )
+    .expect("failed to change the svg");
 
-    let hunks = collect_hunks(&repo_root, &DiffTarget::default())
-        .expect("failed to collect the hunks");
+    let hunks =
+        collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect the hunks");
 
     let svg_hunks: Vec<_> = hunks
         .iter()
@@ -127,7 +132,10 @@ fn an_svg_is_one_hunk_however_many_places_it_changed_in() {
         .expect("the whole-file patch should stage cleanly");
     let staged = run_git(&repo_root, &["diff", "--cached", "--name-only"])
         .expect("failed to list staged files");
-    assert!(staged.contains("logo.svg"), "staging the hunk stages the file");
+    assert!(
+        staged.contains("logo.svg"),
+        "staging the hunk stages the file"
+    );
 }
 
 #[test]
@@ -150,8 +158,8 @@ fn collect_commit_hunks_returns_hunks_for_single_commit() {
     let commit = run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
 
     // Act
-    let hunks = collect_commit_hunks(&repo_root, commit.trim())
-        .expect("failed to collect commit hunks");
+    let hunks =
+        collect_commit_hunks(&repo_root, commit.trim()).expect("failed to collect commit hunks");
 
     // Assert
     assert_eq!(hunks.len(), 1);
@@ -258,10 +266,8 @@ fn a_revision_range_collects_the_hunks_between_two_branches() {
     run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
     run_git_no_output(&repo_root, &["commit", "-m", "first"]).expect("failed to commit");
     run_git_no_output(&repo_root, &["branch", "-M", "main"]).expect("failed to name main");
-    run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
-        .expect("failed to branch");
-    fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n")
-        .expect("failed to write");
+    run_git_no_output(&repo_root, &["checkout", "-b", "feature"]).expect("failed to branch");
+    fs::write(repo_root.join("lib.rs"), "fn one() {}\nfn two() {}\n").expect("failed to write");
     run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage");
     run_git_no_output(&repo_root, &["commit", "-m", "second"]).expect("failed to commit");
 
@@ -335,10 +341,8 @@ fn branch_commits_since_default_prefers_origin_head_over_current_branch_upstream
     run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add file");
     run_git_no_output(&repo_root, &["commit", "-m", "initial"])
         .expect("failed to commit initial file");
-    let default_head =
-        run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
-    run_git_no_output(&repo_root, &["remote", "add", "origin", "."])
-        .expect("failed to add remote");
+    let default_head = run_git(&repo_root, &["rev-parse", "HEAD"]).expect("failed to read HEAD");
+    run_git_no_output(&repo_root, &["remote", "add", "origin", "."]).expect("failed to add remote");
     run_git_no_output(
         &repo_root,
         &["update-ref", "refs/remotes/origin/dev", default_head.trim()],
@@ -361,8 +365,7 @@ fn branch_commits_since_default_prefers_origin_head_over_current_branch_upstream
     run_git_no_output(&repo_root, &["commit", "-m", "first change"])
         .expect("failed to commit first change");
     fs::write(&file_path, "base\none\ntwo\n").expect("failed to write second change");
-    run_git_no_output(&repo_root, &["add", "example.txt"])
-        .expect("failed to add second change");
+    run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add second change");
     run_git_no_output(&repo_root, &["commit", "-m", "second change"])
         .expect("failed to commit second change");
     let feature_head =
@@ -412,13 +415,11 @@ fn branch_commits_since_default_falls_back_to_current_branch_upstream() {
     run_git_no_output(&repo_root, &["commit", "-m", "initial"])
         .expect("failed to commit initial file");
 
-    run_git_no_output(&repo_root, &["remote", "add", "origin", "."])
-        .expect("failed to add remote");
+    run_git_no_output(&repo_root, &["remote", "add", "origin", "."]).expect("failed to add remote");
     run_git_no_output(&repo_root, &["checkout", "-b", "feature"])
         .expect("failed to create feature branch");
     fs::write(&file_path, "base\none\n").expect("failed to write feature change");
-    run_git_no_output(&repo_root, &["add", "example.txt"])
-        .expect("failed to add feature change");
+    run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to add feature change");
     run_git_no_output(&repo_root, &["commit", "-m", "feature change"])
         .expect("failed to commit feature change");
     let feature_head =
@@ -469,15 +470,13 @@ fn collect_hunks_keeps_partially_staged_file_counts_separate() {
     run_git_no_output(&repo_root, &["commit", "-m", "initial"])
         .expect("failed to commit initial file");
 
-    fs::write(&file_path, "one\nTWO staged\nthree\nfour\n")
-        .expect("failed to write staged change");
+    fs::write(&file_path, "one\nTWO staged\nthree\nfour\n").expect("failed to write staged change");
     run_git_no_output(&repo_root, &["add", "example.txt"]).expect("failed to stage change");
     fs::write(&file_path, "one\nTWO staged\nTHREE unstaged\nfour\n")
         .expect("failed to write unstaged change");
 
     // Act
-    let hunks =
-        collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+    let hunks = collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
     let staged = hunks
         .iter()
         .filter(|hunk| hunk.file_path == "example.txt" && hunk.staged)
@@ -501,14 +500,12 @@ fn collect_hunks_skips_untracked_binary_files() {
     let repo_root = temp.path.join("repo");
     init_test_repo(&repo_root);
 
-    fs::write(repo_root.join("note.txt"), "reviewable\ntext\n")
-        .expect("failed to write text file");
+    fs::write(repo_root.join("note.txt"), "reviewable\ntext\n").expect("failed to write text file");
     fs::write(repo_root.join("asset.bin"), [0, 159, 146, 150, 255])
         .expect("failed to write binary file");
 
     // Act
-    let hunks =
-        collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+    let hunks = collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
 
     // Assert
     assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
@@ -525,16 +522,14 @@ fn working_tree_pathspec_limits_hunks_and_status_summary() {
     fs::create_dir_all(repo_root.join("src")).expect("failed to create src directory");
     fs::create_dir_all(repo_root.join("docs")).expect("failed to create docs directory");
     fs::write(repo_root.join("src/tracked.txt"), "before\n").expect("failed to write src file");
-    fs::write(repo_root.join("docs/tracked.txt"), "before\n")
-        .expect("failed to write docs file");
+    fs::write(repo_root.join("docs/tracked.txt"), "before\n").expect("failed to write docs file");
     run_git_no_output(&repo_root, &["add", "src/tracked.txt", "docs/tracked.txt"])
         .expect("failed to add tracked files");
     run_git_no_output(&repo_root, &["commit", "-m", "initial"])
         .expect("failed to commit tracked files");
 
     fs::write(repo_root.join("src/tracked.txt"), "after\n").expect("failed to modify src file");
-    fs::write(repo_root.join("docs/tracked.txt"), "after\n")
-        .expect("failed to modify docs file");
+    fs::write(repo_root.join("docs/tracked.txt"), "after\n").expect("failed to modify docs file");
     fs::write(repo_root.join("src/new.txt"), "new\n").expect("failed to write src new file");
     fs::write(repo_root.join("docs/new.txt"), "new\n").expect("failed to write docs new file");
 
@@ -578,8 +573,7 @@ fn collect_hunks_handles_untracked_image_paths_with_non_ascii_characters() {
         .expect("failed to write image file");
 
     // Act
-    let hunks =
-        collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+    let hunks = collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
     let hunk = hunks
         .iter()
         .find(|hunk| hunk.file_path == image_path)
@@ -611,8 +605,7 @@ fn collect_hunks_includes_image_diff_for_unstaged_binary_image() {
         .expect("failed to modify image");
 
     // Act
-    let hunks =
-        collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
+    let hunks = collect_hunks(&repo_root, &DiffTarget::default()).expect("failed to collect hunks");
     let hunk = hunks
         .iter()
         .find(|hunk| hunk.file_path == "asset.png")

@@ -12,11 +12,12 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
+    agent::{agent_is_available, agent_options},
     api::{
         AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitView,
         ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
-        OpenSessionRequest, PatchPayload, RepoSession, SessionOpened, SessionPayload,
-        RepoStatusView, SubmoduleHubPayload,
+        OpenSessionRequest, PatchPayload, RepoSession, RepoStatusView, SessionOpened,
+        SessionPayload, SubmoduleHubPayload,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -24,12 +25,11 @@ use crate::{
         cancel_comment_dispatch, comment_dispatch_view, parse_anchored_comments,
         plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
-    agent::{agent_is_available, agent_options},
     git::{
-        apply_patch, branch_commits_since_default,
-        build_partial_patch_from_selection, canonicalize_repo, collect_session_hunks,
-        commit_history_page, commit_view, current_branch_name, list_submodule_repos,
-        local_change_summary_from_status, preview_patch, read_repo_file, run_git, run_git_no_output,
+        apply_patch, branch_commits_since_default, build_partial_patch_from_selection,
+        canonicalize_repo, collect_session_hunks, commit_history_page, commit_view,
+        current_branch_name, list_submodule_repos, local_change_summary_from_status, preview_patch,
+        read_repo_file, run_git, run_git_no_output,
     },
 };
 
@@ -96,10 +96,7 @@ fn unchanged_file_path(
     }
 
     let pathspec = diff_target.pathspec.as_ref()?;
-    repo_path
-        .join(pathspec)
-        .is_file()
-        .then(|| pathspec.clone())
+    repo_path.join(pathspec).is_file().then(|| pathspec.clone())
 }
 
 pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Result<SessionOpened> {
@@ -243,7 +240,10 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
     })
 }
 
-pub(crate) fn session_submodules(state: &AppState, session_id: &str) -> Result<SubmoduleHubPayload> {
+pub(crate) fn session_submodules(
+    state: &AppState,
+    session_id: &str,
+) -> Result<SubmoduleHubPayload> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
 
@@ -301,9 +301,7 @@ pub(crate) fn update_commit_view(
     commit: Option<String>,
 ) -> Result<()> {
     crate::api::with_session(state, session_id, |session| {
-        session.active_commit = commit
-            .clone()
-            .filter(|commit| !commit.trim().is_empty());
+        session.active_commit = commit.clone().filter(|commit| !commit.trim().is_empty());
         if let Some(commit) = &session.active_commit {
             let commit_ref = format!("{commit}^{{commit}}");
             let _ = run_git(&session.repo_path, &["rev-parse", "--verify", &commit_ref])
@@ -313,7 +311,11 @@ pub(crate) fn update_commit_view(
     })
 }
 
-pub(crate) fn hunk_patch(state: &AppState, session_id: &str, hunk_id: &str) -> Result<PatchPayload> {
+pub(crate) fn hunk_patch(
+    state: &AppState,
+    session_id: &str,
+    hunk_id: &str,
+) -> Result<PatchPayload> {
     let (_, patch, _) = crate::api::lookup_hunk(state, session_id, hunk_id)?;
     Ok(PatchPayload { patch })
 }

@@ -201,7 +201,8 @@ mod tests {
     use super::*;
 
     fn scratch_repo(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("moonreview-project-{}-{name}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("moonreview-project-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("failed to make the scratch repo");
         dir
     }
@@ -280,7 +281,10 @@ mod tests {
             ProjectCommand::BuildAndRun,
         ] {
             assert_eq!(
-                which.token().parse::<ProjectCommand>().expect("should parse"),
+                which
+                    .token()
+                    .parse::<ProjectCommand>()
+                    .expect("should parse"),
                 which
             );
         }

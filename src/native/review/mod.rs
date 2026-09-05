@@ -4,8 +4,8 @@ pub(crate) mod agents;
 pub(crate) mod diff;
 pub(crate) mod files;
 pub(crate) mod header;
-pub(crate) mod image_diff;
 pub(crate) mod hunks;
+pub(crate) mod image_diff;
 pub(crate) mod search;
 pub(crate) mod sidebar;
 

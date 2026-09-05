@@ -10,13 +10,9 @@ use std::{
 
 use egui_kittest::Harness;
 
-use crate::{
-    api::OpenSessionRequest,
-    backend::local::LocalBackend,
-    native::theme::ThemeMode,
-};
+use crate::{api::OpenSessionRequest, backend::local::LocalBackend, native::theme::ThemeMode};
 
-use super::{Fixture, app_for, seeded_fixture, click_at, settle};
+use super::{Fixture, app_for, click_at, seeded_fixture, settle};
 
 /// Clicking a diff line selects it and opens the comment composer in one gesture, the way
 /// selecting text does.

@@ -174,8 +174,7 @@ fn attach_word_diffs(lines: &mut [DiffLine]) {
         if lines[index].kind != LineKind::Removed || lines[index + 1].kind != LineKind::Added {
             continue;
         }
-        let (old_parts, new_parts) =
-            word_diff_parts(lines[index].body(), lines[index + 1].body());
+        let (old_parts, new_parts) = word_diff_parts(lines[index].body(), lines[index + 1].body());
         lines[index].words = Some(old_parts);
         lines[index + 1].words = Some(new_parts);
     }
@@ -227,7 +226,11 @@ fn read_side(
     let tokens = highlight(language, &text);
     // A patch is split on newlines, so no body holds one and every row put exactly one line
     // into the text. The highlighter counts lines the same way.
-    assert_eq!(tokens.len(), rows.len(), "one read line per row of this side");
+    assert_eq!(
+        tokens.len(),
+        rows.len(),
+        "one read line per row of this side"
+    );
     rows.into_iter().zip(tokens).collect()
 }
 
@@ -246,10 +249,7 @@ fn parse_hunk_header(header: &str) -> (Option<usize>, Option<usize>) {
 }
 
 fn range_start(value: &str) -> Option<usize> {
-    value
-        .split(',')
-        .next()
-        .and_then(|start| start.parse().ok())
+    value.split(',').next().and_then(|start| start.parse().ok())
 }
 
 /// Identifiers, runs of whitespace, and single punctuation characters. Splitting this way
@@ -363,8 +363,8 @@ fn merge_adjacent(tokens: &[String], changed: &[bool]) -> Vec<WordPart> {
     for (index, token) in tokens.iter().enumerate() {
         // Whitespace is never highlighted on its own: a shifted indent would otherwise light
         // up the whole line.
-        let is_changed = changed.get(index).copied().unwrap_or(false)
-            && !token.chars().all(char::is_whitespace);
+        let is_changed =
+            changed.get(index).copied().unwrap_or(false) && !token.chars().all(char::is_whitespace);
         match merged.last_mut() {
             Some(previous) if previous.changed == is_changed => previous.text.push_str(token),
             _ => merged.push(WordPart {

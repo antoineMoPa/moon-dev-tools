@@ -258,7 +258,11 @@ mod tests {
             "the button is down where the press began, so it is ours"
         );
         assert!(
-            !stale(Some(&press), Some(press.origin + egui::vec2(3.0, 0.0)), false),
+            !stale(
+                Some(&press),
+                Some(press.origin + egui::vec2(3.0, 0.0)),
+                false
+            ),
             "and a few points apart is the same press, told a moment later"
         );
         assert!(
@@ -286,7 +290,10 @@ mod tests {
         };
 
         assert!(!carried_to(&mut press, 106.0), "a few points is a click");
-        assert!(carried_to(&mut press, 130.0), "and a hand's width is a grab");
+        assert!(
+            carried_to(&mut press, 130.0),
+            "and a hand's width is a grab"
+        );
         assert!(
             carried_to(&mut press, 100.0),
             "and coming back does not put the card down again"

@@ -18,7 +18,7 @@ use crate::{
     native::{Launch, app::App, panes::Pane, theme::ThemeMode},
 };
 
-use super::{Fixture, app_for, harness_with_loaded_review, seeded_fixture, settle, press_key};
+use super::{Fixture, app_for, harness_with_loaded_review, press_key, seeded_fixture, settle};
 
 /// The file tab: a fringe of line numbers beside the text, and the text editable.
 #[test]

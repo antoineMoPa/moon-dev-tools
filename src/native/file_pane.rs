@@ -119,11 +119,9 @@ impl App {
     ) {
         use crate::native::panes::{Pane, PaneKind};
 
-        let pane_id = match self
-            .model
-            .layout
-            .find_pane(|pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path))
-        {
+        let pane_id = match self.model.layout.find_pane(
+            |pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path),
+        ) {
             Some((pane, _)) => {
                 // The tab was already open, on the file of the repo rather than on the task's
                 // copy of it: opening it from a card is what puts it on that task, and what

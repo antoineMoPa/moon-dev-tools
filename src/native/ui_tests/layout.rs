@@ -13,7 +13,9 @@ use egui_kittest::Harness;
 
 use crate::native::{panes::Pane, panes::PaneKind, theme::ThemeMode};
 
-use super::{frame_rects, tab_rects, Fixture, app_for, seeded_fixture, asked_to_close, settle, press_key};
+use super::{
+    Fixture, app_for, asked_to_close, frame_rects, press_key, seeded_fixture, settle, tab_rects,
+};
 
 /// A split handle keeps resizing while the pointer runs past it - the drag belongs to the
 /// handle until the button comes up, not to the few points it happened to start on.
@@ -704,7 +706,11 @@ fn a_review_of_a_repo_that_is_already_open_is_brought_forward() {
     // another tab, because a review already in front coming forward says nothing.
     let mut step = 0;
 
-    let seen = Arc::new(Mutex::new((0_usize, None::<PaneKind>, Vec::<String>::new())));
+    let seen = Arc::new(Mutex::new((
+        0_usize,
+        None::<PaneKind>,
+        Vec::<String>::new(),
+    )));
     let seen_in_ui = Arc::clone(&seen);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))

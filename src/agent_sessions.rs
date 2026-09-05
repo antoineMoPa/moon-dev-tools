@@ -45,9 +45,8 @@ pub(crate) fn list_for_session(
     state: &AppState,
     session_id: &str,
 ) -> Result<Vec<AgentSessionView>> {
-    let repo_path = crate::api::with_session(state, session_id, |session| {
-        Ok(session.repo_path.clone())
-    })?;
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set, so there is nowhere to read agent sessions from")?;
@@ -94,7 +93,10 @@ fn transcripts_newest_first(dir: &Path) -> Vec<PathBuf> {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| {
-            path.is_file() && path.extension().is_some_and(|extension| extension == "jsonl")
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl")
         })
         .collect();
     files.sort_by_key(|path| std::cmp::Reverse(mtime_unix(path)));
@@ -130,8 +132,14 @@ fn claude_sessions(repo_path: &Path, home: &Path) -> Result<Vec<AgentSessionView
         .join(claude_project_dir_name(repo_path));
 
     let mut sessions = Vec::new();
-    for path in transcripts_newest_first(&dir).into_iter().take(RECENT_PER_AGENT) {
-        let Some(id) = path.file_stem().map(|stem| stem.to_string_lossy().to_string()) else {
+    for path in transcripts_newest_first(&dir)
+        .into_iter()
+        .take(RECENT_PER_AGENT)
+    {
+        let Some(id) = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+        else {
             continue;
         };
         let file = std::fs::File::open(&path)
@@ -215,8 +223,7 @@ fn codex_sessions(repo_path: &Path, home: &Path) -> Result<Vec<AgentSessionView>
         sessions.push(AgentSessionView {
             agent: AgentKind::Codex,
             id,
-            title: codex_session_title(lines)
-                .unwrap_or_else(|| "(nothing said yet)".to_string()),
+            title: codex_session_title(lines).unwrap_or_else(|| "(nothing said yet)".to_string()),
             updated_at_unix: mtime_unix(&path),
         });
     }
@@ -232,7 +239,10 @@ fn collect_jsonl_files(dir: &Path, into: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_jsonl_files(&path, into);
-        } else if path.extension().is_some_and(|extension| extension == "jsonl") {
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
             into.push(path);
         }
     }

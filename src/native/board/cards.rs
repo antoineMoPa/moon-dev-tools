@@ -12,8 +12,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, CLOSE_MARK_SIZE, actions::TaskPaneBox, close_button,
-            filter::Filter, gesture, resources, selection, slide_into_place, stamp_place, start,
+            Axis, BoardAction, CLOSE_MARK_SIZE, actions::TaskPaneBox, close_button, filter::Filter,
+            gesture, resources, selection, slide_into_place, stamp_place, start,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -159,11 +159,15 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
     let first = pending
         .index
         .min(column.len().saturating_sub(pending.task_ids.len()));
-    let landed = pending.task_ids.iter().enumerate().all(|(offset, task_id)| {
-        column
-            .get(first + offset)
-            .is_some_and(|task| task.id == *task_id)
-    });
+    let landed = pending
+        .task_ids
+        .iter()
+        .enumerate()
+        .all(|(offset, task_id)| {
+            column
+                .get(first + offset)
+                .is_some_and(|task| task.id == *task_id)
+        });
 
     if landed {
         model.board.pending_place = None;
@@ -454,9 +458,9 @@ fn draw_card_body(
                 .data(|data| data.get_temp::<bool>(menu_up_id(drag_id)))
                 .unwrap_or(false);
             let pointed_at = holding || ui.response().contains_pointer();
-            let showing = ui
-                .ctx()
-                .animate_bool_with_time(drag_id.with("offers"), pointed_at, OFFER_FADE);
+            let showing =
+                ui.ctx()
+                    .animate_bool_with_time(drag_id.with("offers"), pointed_at, OFFER_FADE);
             title_rect = draw_card_title(app, ui, task, &mut card, palette, actions);
             ui.add_space(3.0);
             draw_notes_box(ui, task, &mut card, palette, showing, actions);
@@ -616,9 +620,10 @@ fn draw_title_editor(
         input
             .pointer
             .button_triple_clicked(egui::PointerButton::Primary)
-            && input.pointer.interact_pos().is_some_and(|pos| {
-                entry.rect.contains(pos) || rename.title_rect.contains(pos)
-            })
+            && input
+                .pointer
+                .interact_pos()
+                .is_some_and(|pos| entry.rect.contains(pos) || rename.title_rect.contains(pos))
     });
     if tripled {
         let mut state =
@@ -811,7 +816,10 @@ mod tests {
 
         // With `sing` in the air, the only card showing is `song`, at place 1 of the two the
         // column has left - so the first place a drop can take is that one, not `sing`'s.
-        assert_eq!(column_index_of(&tasks, &filter, &status, &dragging("sing-1111"), 0), 1);
+        assert_eq!(
+            column_index_of(&tasks, &filter, &status, &dragging("sing-1111"), 0),
+            1
+        );
         assert_eq!(
             column_index_of(&tasks, &filter, &status, &dragging("sing-1111"), 1),
             2,

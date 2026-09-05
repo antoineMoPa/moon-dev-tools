@@ -97,13 +97,17 @@ fn a_shells_tab_is_renamed_by_double_clicking_it() {
                 })
                 .filter(|_| app.terminals.contains_key(&for_pane))
                 .and_then(|(pane, _)| app.frames.tab_rect(pane));
-            *renaming_in_ui.lock().expect("poisoned") =
-                app.model.renaming_tab.as_ref().map(|rename| rename.name.clone());
+            *renaming_in_ui.lock().expect("poisoned") = app
+                .model
+                .renaming_tab
+                .as_ref()
+                .map(|rename| rename.name.clone());
             typing_lands_in_ui.store(
                 ui.ctx().memory(|memory| memory.focused()).is_some(),
                 Ordering::Relaxed,
             );
-            *named_in_ui.lock().expect("poisoned") = app.model.terminal_names.get(&for_pane).cloned().flatten();
+            *named_in_ui.lock().expect("poisoned") =
+                app.model.terminal_names.get(&for_pane).cloned().flatten();
         });
 
     assert!(
@@ -159,7 +163,10 @@ fn a_shells_tab_is_renamed_by_double_clicking_it() {
 
     double_click(&mut harness);
     assert!(
-        settle(&mut harness, || renaming.lock().expect("poisoned").is_some()
+        settle(&mut harness, || renaming
+            .lock()
+            .expect("poisoned")
+            .is_some()
             && typing_lands.load(Ordering::Relaxed)),
         "a double click on the tab opens its title for retyping, with the keyboard in it"
     );
@@ -171,7 +178,10 @@ fn a_shells_tab_is_renamed_by_double_clicking_it() {
 
     retype(&mut harness, "build", egui::Key::Enter);
     assert!(
-        settle(&mut harness, || renaming.lock().expect("poisoned").is_none()
+        settle(&mut harness, || renaming
+            .lock()
+            .expect("poisoned")
+            .is_none()
             && named.lock().expect("poisoned").as_deref() == Some("build")),
         "Enter keeps the name on the tab"
     );
@@ -186,14 +196,20 @@ fn a_shells_tab_is_renamed_by_double_clicking_it() {
 
     double_click(&mut harness);
     assert!(
-        settle(&mut harness, || renaming.lock().expect("poisoned").as_deref()
+        settle(&mut harness, || renaming
+            .lock()
+            .expect("poisoned")
+            .as_deref()
             == Some("build")
             && typing_lands.load(Ordering::Relaxed)),
         "the tab can be renamed again, from the name it has now"
     );
     retype(&mut harness, "nope", egui::Key::Escape);
     assert!(
-        settle(&mut harness, || renaming.lock().expect("poisoned").is_none()),
+        settle(&mut harness, || renaming
+            .lock()
+            .expect("poisoned")
+            .is_none()),
         "Escape closes the box"
     );
     assert_eq!(

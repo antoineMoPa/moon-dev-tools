@@ -30,7 +30,9 @@ use crate::api::{CommitView, DiffTarget};
 /// still taken - so every git call here goes through this.
 fn git_command(repo_path: &Path) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(repo_path).env("GIT_OPTIONAL_LOCKS", "0");
+    command
+        .current_dir(repo_path)
+        .env("GIT_OPTIONAL_LOCKS", "0");
     command
 }
 
@@ -92,8 +94,14 @@ pub(crate) fn list_submodule_repos(repo_path: &Path) -> Result<Vec<SubmoduleRepo
 /// included. A submodule with changes of its own counts as one changed file of the repo
 /// holding it, the way `git status` shows it.
 pub(crate) fn changed_file_count(repo_path: &Path) -> Result<usize> {
-    let status = run_git(repo_path, &["status", "--short", "--ignore-submodules=none"])?;
-    Ok(status.lines().filter(|line| !line.trim().is_empty()).count())
+    let status = run_git(
+        repo_path,
+        &["status", "--short", "--ignore-submodules=none"],
+    )?;
+    Ok(status
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count())
 }
 
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
@@ -144,8 +152,7 @@ pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) 
         bail!("{file_path} is not a file in the working tree");
     }
 
-    fs::write(&resolved, content)
-        .with_context(|| format!("failed to write {}", resolved.display()))
+    fs::write(&resolved, content).with_context(|| format!("failed to write {}", resolved.display()))
 }
 
 pub(crate) fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {
@@ -414,7 +421,12 @@ pub(crate) fn current_branch_upstream_ref(repo_path: &Path) -> Result<Option<Str
 pub(crate) fn current_branch_push_ref(repo_path: &Path) -> Result<Option<String>> {
     let push_ref = run_git_allow_status(
         repo_path,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"],
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{push}",
+        ],
         &[0, 128],
     )?;
     let push_ref = push_ref.trim();

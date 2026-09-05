@@ -148,10 +148,7 @@ mod platform {
 
             let view_menu = Submenu::new("View", true);
             view_menu
-                .append_items(&[
-                    &toggle_theme,
-                    &command_palette,
-                ])
+                .append_items(&[&toggle_theme, &command_palette])
                 .ok()?;
 
             // There is deliberately no Edit menu.
@@ -211,30 +208,29 @@ mod platform {
             // opens, before any repo has been read, and macOS gives no way to grow it later -
             // so a command the project has not set says so when it is picked, which is what
             // the palette avoids by only listing the ones that are set.
-            let project_commands: Vec<(MenuItem, ProjectCommand)> =
-                [
-                    (
-                        ProjectCommand::Build,
-                        Accelerator::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyB),
-                    ),
-                    (
-                        ProjectCommand::Run,
-                        Accelerator::new(Some(Modifiers::META), Code::KeyR),
-                    ),
-                    (
-                        ProjectCommand::BuildAndRun,
-                        // Off `R` and beside `build`, because `cmd+alt+R` and the review's
-                        // `cmd+shift+R` were one hand's reach and one letter apart.
-                        Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyB),
-                    ),
-                ]
-                .into_iter()
-                .map(|(which, accelerator)| {
-                    let mut label = which.label().to_string();
-                    label[..1].make_ascii_uppercase();
-                    (MenuItem::new(label, true, Some(accelerator)), which)
-                })
-                .collect();
+            let project_commands: Vec<(MenuItem, ProjectCommand)> = [
+                (
+                    ProjectCommand::Build,
+                    Accelerator::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyB),
+                ),
+                (
+                    ProjectCommand::Run,
+                    Accelerator::new(Some(Modifiers::META), Code::KeyR),
+                ),
+                (
+                    ProjectCommand::BuildAndRun,
+                    // Off `R` and beside `build`, because `cmd+alt+R` and the review's
+                    // `cmd+shift+R` were one hand's reach and one letter apart.
+                    Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyB),
+                ),
+            ]
+            .into_iter()
+            .map(|(which, accelerator)| {
+                let mut label = which.label().to_string();
+                label[..1].make_ascii_uppercase();
+                (MenuItem::new(label, true, Some(accelerator)), which)
+            })
+            .collect();
             let open_project = MenuItem::new("Project Settings…", true, None);
             let project_menu = Submenu::new("Project", true);
             for (item, _) in &project_commands {
@@ -297,7 +293,7 @@ mod platform {
                 &tools_menu,
                 &window_menu,
             ])
-                .ok()?;
+            .ok()?;
             menu.init_for_nsapp();
 
             Some(Self {
@@ -349,20 +345,16 @@ mod platform {
                     MenuAction::OpenSubmodules
                 } else if event.id == self.open_project {
                     MenuAction::OpenProject
-                } else if let Some((_, which)) = self
-                    .project_commands
-                    .iter()
-                    .find(|(id, _)| *id == event.id)
+                } else if let Some((_, which)) =
+                    self.project_commands.iter().find(|(id, _)| *id == event.id)
                 {
                     MenuAction::RunProject(*which)
                 } else if event.id == self.restart_window {
                     MenuAction::RestartWindow
                 } else if event.id == self.install_launchers {
                     MenuAction::InstallLaunchers
-                } else if let Some((_, frame)) = self
-                    .new_windows
-                    .iter()
-                    .find(|(id, _)| *id == event.id)
+                } else if let Some((_, frame)) =
+                    self.new_windows.iter().find(|(id, _)| *id == event.id)
                 {
                     MenuAction::NewWindow(*frame)
                 } else {
@@ -383,10 +375,7 @@ mod platform {
     pub(crate) struct NativeMenu;
 
     impl NativeMenu {
-        pub(crate) fn install(
-            _picks_files: bool,
-            _frame: crate::cli::Frame,
-        ) -> Option<Self> {
+        pub(crate) fn install(_picks_files: bool, _frame: crate::cli::Frame) -> Option<Self> {
             None
         }
 

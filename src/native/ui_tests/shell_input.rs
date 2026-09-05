@@ -16,7 +16,7 @@ use crate::{
     native::{Launch, app::App, panes::Pane, theme::ThemeMode},
 };
 
-use super::{app_for, seeded_fixture, click_at, settle, press_key, drag_from_to};
+use super::{app_for, click_at, drag_from_to, press_key, seeded_fixture, settle};
 
 /// cmd+c pressed while the keyboard is in a shell belongs to that shell, even when the
 /// review beside it still shows a selection - the selection the user just made is the
@@ -56,10 +56,8 @@ fn a_copy_pressed_in_a_shell_stays_with_the_shell() {
                 egui::Area::new("stand-in-shell-area".into())
                     .fixed_pos(egui::pos2(2.0, 2.0))
                     .show(ui.ctx(), |ui| {
-                        let rect = egui::Rect::from_min_size(
-                            egui::pos2(2.0, 2.0),
-                            egui::vec2(8.0, 8.0),
-                        );
+                        let rect =
+                            egui::Rect::from_min_size(egui::pos2(2.0, 2.0), egui::vec2(8.0, 8.0));
                         let response = ui.interact(rect, shell_id, egui::Sense::click());
                         response.request_focus();
                     });

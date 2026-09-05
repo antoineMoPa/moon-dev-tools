@@ -15,17 +15,18 @@ use axum::{
 };
 
 use crate::{
+    agent::detect_agent_availability,
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
-        CommitHistoryQuery, CommitSelectionRequest, FileContentPayload, ContentMatchesPayload, FileMatchesPayload,
-        FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload, SelectionRequest,
-        ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload, bind_host, port, server_url,
+        CommitHistoryQuery, CommitSelectionRequest, ContentMatchesPayload, FileContentPayload,
+        FileMatchesPayload, FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload,
+        SelectionRequest, ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        bind_host, port, server_url,
     },
-    agent::detect_agent_availability,
     moontasks::{
-        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
-        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
+        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
+        LinkFileRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
+        TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
     service,
@@ -104,7 +105,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/tasks",
             get(list_tasks).post(create_task),
         )
-        .route("/api/session/{session_id}/tasks/{task_id}", delete(delete_task))
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}",
+            delete(delete_task),
+        )
         .route(
             "/api/session/{session_id}/tasks/placement",
             post(place_tasks),
@@ -179,7 +183,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/commit-message",
             post(suggest_commit_message),
         )
-        .route("/api/session/{session_id}/commit-run", post(start_commit_run))
+        .route(
+            "/api/session/{session_id}/commit-run",
+            post(start_commit_run),
+        )
         .route(
             "/api/session/{session_id}/commit-run/{terminal_id}/outcome",
             get(commit_run_outcome),
@@ -286,7 +293,9 @@ fn mark_activity(state: &AppState) {
 
 async fn root(State(state): State<AppState>) -> impl IntoResponse {
     mark_activity(&state);
-    Html("<!doctype html><title>Moon Review</title><p>A review server. Point a window at it with `moonreview --remote`.</p>")
+    Html(
+        "<!doctype html><title>Moon Review</title><p>A review server. Point a window at it with `moonreview --remote`.</p>",
+    )
 }
 
 async fn healthz(State(state): State<AppState>) -> &'static str {
@@ -452,12 +461,7 @@ async fn cancel_comment_dispatch_request(
     Json(request): Json<crate::api::CancelCommentDispatchRequest>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
-    service::cancel_dispatch(
-        &state,
-        &session_id,
-        &request.hunk_id,
-        request.comment_index,
-    )?;
+    service::cancel_dispatch(&state, &session_id, &request.hunk_id, request.comment_index)?;
     Ok("ok")
 }
 

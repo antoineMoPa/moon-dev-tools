@@ -112,7 +112,9 @@ fn the_file_menu_stages_and_discards_the_whole_file() {
         "arming the discard should ask for confirmation in the open menu"
     );
 
-    harness.get_by_label("[really discard the whole file]").click();
+    harness
+        .get_by_label("[really discard the whole file]")
+        .click();
     let discarded = settle(&mut harness, || {
         std::fs::read_to_string(fixture.root.join("src/lib.rs"))
             .expect("failed to read")

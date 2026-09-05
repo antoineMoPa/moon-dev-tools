@@ -201,14 +201,20 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
 
     // Act: the repo's own row brings the review the window opened on back in front.
     assert_eq!(
-        active_tab.lock().expect("the active tab is readable").as_deref(),
+        active_tab
+            .lock()
+            .expect("the active tab is readable")
+            .as_deref(),
         Some("submodules"),
         "the hub is in front while it is being read"
     );
     harness.get_by_label("repo").click();
     harness.run_steps(3);
     assert_eq!(
-        active_tab.lock().expect("the active tab is readable").as_deref(),
+        active_tab
+            .lock()
+            .expect("the active tab is readable")
+            .as_deref(),
         Some("review"),
         "the repo's row should have brought its review forward"
     );
@@ -216,7 +222,10 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
     reopen.store(true, Ordering::Relaxed);
     harness.run_steps(3);
     assert_eq!(
-        active_tab.lock().expect("the active tab is readable").as_deref(),
+        active_tab
+            .lock()
+            .expect("the active tab is readable")
+            .as_deref(),
         Some("submodules")
     );
 

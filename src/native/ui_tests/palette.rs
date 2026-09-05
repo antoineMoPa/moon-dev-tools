@@ -12,7 +12,7 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{app_for, seeded_fixture, click_at, settle, type_letter, press_key};
+use super::{app_for, click_at, press_key, seeded_fixture, settle, type_letter};
 
 #[test]
 fn the_command_palette_lists_what_can_be_opened() {
@@ -118,7 +118,10 @@ fn a_split_command_opens_a_shell_in_the_half_it_makes() {
         opened,
         "the split never arrived: {frames} frames, {shells} shells"
     );
-    assert!(column, "`split bottom` should split the frame the short way");
+    assert!(
+        column,
+        "`split bottom` should split the frame the short way"
+    );
 
     // The shell is this window's to end, the way quitting would end it.
     stop.store(true, Ordering::Relaxed);
@@ -285,7 +288,10 @@ fn the_palette_searches_the_files_for_text_and_opens_a_match() {
     let ready = Arc::new(AtomicBool::new(false));
     let ready_in_ui = Arc::clone(&ready);
     // What the search is showing - the query it answered for, and the lines it found.
-    let found = Arc::new(Mutex::new((None::<String>, Vec::<(String, usize, String)>::new())));
+    let found = Arc::new(Mutex::new((
+        None::<String>,
+        Vec::<(String, usize, String)>::new(),
+    )));
     let found_in_ui = Arc::clone(&found);
     let open_files = Arc::new(Mutex::new(Vec::<String>::new()));
     let open_in_ui = Arc::clone(&open_files);
@@ -512,15 +518,13 @@ fn the_commit_command_commits_the_review_in_front() {
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     let root = app.model.root_session_id.clone();
 
-    let would_commit = |app: &crate::native::app::App| {
-        match commands_for(app)
-            .into_iter()
-            .find(|command| command.title == "commit")
-            .map(|command| command.action)
-        {
-            Some(CommandAction::OpenPane(OpenPaneRequest::Commit { session_id })) => session_id,
-            _ => panic!("expected a commit command on the list"),
-        }
+    let would_commit = |app: &crate::native::app::App| match commands_for(app)
+        .into_iter()
+        .find(|command| command.title == "commit")
+        .map(|command| command.action)
+    {
+        Some(CommandAction::OpenPane(OpenPaneRequest::Commit { session_id })) => session_id,
+        _ => panic!("expected a commit command on the list"),
     };
     let review = |session_id: &str, title: &str| Pane::Review {
         session_id: session_id.to_string(),

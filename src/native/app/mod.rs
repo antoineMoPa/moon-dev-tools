@@ -380,7 +380,8 @@ impl App {
             .flat_map(|review| review.hunks().iter().map(|hunk| hunk.id.clone()))
             .collect();
         self.diffs.retain(|hunk_id, _| live.contains(hunk_id));
-        self.hunk_heights.retain(|hunk_id, _| live.contains(hunk_id));
+        self.hunk_heights
+            .retain(|hunk_id, _| live.contains(hunk_id));
     }
 }
 

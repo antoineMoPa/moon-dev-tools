@@ -16,7 +16,7 @@ use crate::{
     native::{Launch, app::App, panes::Pane, theme::ThemeMode},
 };
 
-use super::{app_for, seeded_fixture, asked_to_close, asked_to_stay_open};
+use super::{app_for, asked_to_close, asked_to_stay_open, seeded_fixture};
 
 /// A shell that ends takes its tab with it: logging out of a terminal, or an agent finishing,
 /// should leave the workspace as it was before the shell was opened.

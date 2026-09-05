@@ -115,7 +115,11 @@ impl LineSelection {
         }
         let (start, end) = self.ordered();
         let from = if index == start.line { start.column } else { 0 };
-        let to = if index == end.line { end.column } else { LINE_END };
+        let to = if index == end.line {
+            end.column
+        } else {
+            LINE_END
+        };
         Some((from, to))
     }
 }
@@ -412,7 +416,6 @@ pub(crate) struct TaskRename {
     /// the triple finishing on it - even where the box is drawn narrower than the title was.
     pub(crate) title_rect: egui::Rect,
 }
-
 
 /// A file the board readied and wants shown: where it is, and the task it was opened from,
 /// which the pane carries so the board can mark that task's card while the file is in front.

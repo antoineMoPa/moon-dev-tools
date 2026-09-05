@@ -114,7 +114,12 @@ fn committing_from_the_pane_commits_what_is_staged() {
     harness.get_by_label("[commit]").click();
     let commit_pane_open = {
         let panes = Arc::clone(&panes_open);
-        move || panes.lock().expect("expected the lock").contains(&PaneKind::Commit)
+        move || {
+            panes
+                .lock()
+                .expect("expected the lock")
+                .contains(&PaneKind::Commit)
+        }
     };
     step_until(&mut harness, &commit_pane_open);
 
@@ -292,7 +297,10 @@ fn pushing_a_branch_that_tracks_nothing_sets_its_upstream() {
         .commit_state(&opened.session_id)
         .expect("expected a commit state");
     assert_eq!(before.upstream_ref, None, "the fixture tracks nothing yet");
-    assert_eq!(before.push_ref, None, "so git has nowhere to send a plain push");
+    assert_eq!(
+        before.push_ref, None,
+        "so git has nowhere to send a plain push"
+    );
 
     let terminal_id = backend
         .start_commit_run(&opened.session_id, &CommitAction::Push)
@@ -347,8 +355,11 @@ fn pushing_a_branch_that_tracks_another_name_sends_it_under_its_own() {
     run_git_no_output(&fixture.root, &["branch", "-M", "main"]).expect("failed to name the branch");
     run_git_no_output(&fixture.root, &["push", "-u", "origin", "main"])
         .expect("failed to push main");
-    run_git_no_output(&fixture.root, &["switch", "-c", "work", "--track", "origin/main"])
-        .expect("failed to branch off origin/main");
+    run_git_no_output(
+        &fixture.root,
+        &["switch", "-c", "work", "--track", "origin/main"],
+    )
+    .expect("failed to branch off origin/main");
     fixture.write("src/more.rs", "pub const MORE: u32 = 1;\n");
     fixture.commit("Add more");
 
@@ -478,10 +489,7 @@ fn the_push_button_goes_off_once_the_push_has_gone_through() {
         "the push should have gone through"
     );
     assert!(
-        harness
-            .get_by_label("push")
-            .accesskit_node()
-            .is_disabled(),
+        harness.get_by_label("push").accesskit_node().is_disabled(),
         "everything is pushed, so the button has nothing left to send"
     );
 
@@ -511,7 +519,11 @@ fn the_commit_pane_of_a_review_is_closed_by_the_session_it_belongs_to() {
     });
 
     let kinds = |app: &crate::native::app::App| -> Vec<PaneKind> {
-        app.model.layout.panes().map(|(_, pane)| pane.kind()).collect()
+        app.model
+            .layout
+            .panes()
+            .map(|(_, pane)| pane.kind())
+            .collect()
     };
     assert!(
         kinds(&app).contains(&PaneKind::Commit),
@@ -1022,4 +1034,3 @@ fn a_message_that_would_not_come_says_why() {
         "there is no message to use"
     );
 }
-

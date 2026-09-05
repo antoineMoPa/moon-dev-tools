@@ -126,8 +126,7 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
         // A task whose metadata cannot be read is somewhere unknown, which is not the finished
         // column - the same way an unreadable line reads as still wanting a look.
         let finished = finished_column.as_ref().is_some_and(|column| {
-            store::read_task(repo_path, &task_id)
-                .is_ok_and(|metadata| &metadata.status == column)
+            store::read_task(repo_path, &task_id).is_ok_and(|metadata| &metadata.status == column)
         });
         requests.extend(
             parse(&contents)
@@ -161,8 +160,8 @@ pub(crate) enum Amend {
 pub(crate) fn amend(repo_path: &Path, task_id: &str, index: usize, amend: Amend) -> Result<()> {
     let dir = store::task_dir(repo_path, task_id)?;
     let path = dir.join(REVIEW_REQUEST_FILE_NAME);
-    let contents =
-        std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
 
     let mut kept = String::new();
     let mut entry = 0usize;
@@ -261,7 +260,12 @@ fn working_copy_of(repo: &Path, branch: Option<&str>) -> PathBuf {
     // Asked first, and not only as a shortcut: `git worktree list` inside a submodule names the
     // main worktree by its gitdir under `.git/modules`, which is not where its files are. Every
     // path the listing is trusted for below belongs to a linked worktree, which is a real one.
-    if crate::git::current_branch_name(repo).ok().flatten().as_deref() == Some(branch) {
+    if crate::git::current_branch_name(repo)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some(branch)
+    {
         return repo.to_path_buf();
     }
     crate::git::worktree_on_branch(repo, branch)
@@ -352,7 +356,9 @@ fn parse_entry(line: &str) -> Option<ReviewRequest> {
     Some(ReviewRequest {
         done,
         path_under_repo,
-        branch: branch.filter(|branch| !branch.is_empty()).map(str::to_string),
+        branch: branch
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_string),
         suggestion,
     })
 }
@@ -414,12 +420,22 @@ mod tests {
             Some("fix(encabulator): Fix the retro encabulator")
         );
         assert_eq!(
-            requests[0].suggestion.as_ref().map(|one| one.paragraph.as_str()),
+            requests[0]
+                .suggestion
+                .as_ref()
+                .map(|one| one.paragraph.as_str()),
             Some("The bearing races were reversed. This puts them back.")
         );
 
         assert_eq!(requests[1].branch.as_deref(), Some("main"));
-        assert_eq!(requests[1].suggestion.as_ref().expect("a suggestion").paragraph, "");
+        assert_eq!(
+            requests[1]
+                .suggestion
+                .as_ref()
+                .expect("a suggestion")
+                .paragraph,
+            ""
+        );
 
         assert_eq!(requests[2].path_under_repo, "repos/turbocharger");
         assert_eq!(requests[2].branch, None);
@@ -438,7 +454,10 @@ mod tests {
     /// The board's own repo, which is what a list of submodules is deployed alongside.
     #[test]
     fn the_root_repo_is_named_by_a_dot_or_a_slash() {
-        for line in [". // chore: bump the submodules", "/ // chore: bump the submodules"] {
+        for line in [
+            ". // chore: bump the submodules",
+            "/ // chore: bump the submodules",
+        ] {
             let requests = parse(line);
             assert_eq!(requests.len(), 1, "expected {line} to name the root repo");
             assert_eq!(requests[0].path_under_repo, "");
@@ -504,7 +523,11 @@ mod tests {
         assert_eq!(requests[0].path_under_repo, "src");
         assert_eq!(requests[0].branch.as_deref(), Some("the-branch"));
         assert_eq!(
-            requests[0].suggestion.as_ref().expect("a suggestion").paragraph,
+            requests[0]
+                .suggestion
+                .as_ref()
+                .expect("a suggestion")
+                .paragraph,
             "It was eating the last line of every file."
         );
         // `src` is no repo of its own, so it resolves to the repo it sits in - which is the repo
@@ -540,12 +563,19 @@ mod tests {
             )
             .expect("failed to write the fixture task");
             let requests = list_for_repo(&repo);
-            assert_eq!(requests.len(), 1, "the line is read whichever column it is in");
+            assert_eq!(
+                requests.len(),
+                1,
+                "the line is read whichever column it is in"
+            );
             requests[0].task_finished
         };
 
         assert!(!card_in("in_progress"), "a card being worked on still asks");
-        assert!(card_in(store::CLOSES_REVIEWS_IN), "a card finished does not");
+        assert!(
+            card_in(store::CLOSES_REVIEWS_IN),
+            "a card finished does not"
+        );
         assert_eq!(
             std::fs::read_to_string(&request_file).expect("the file should still be there"),
             line,
@@ -609,7 +639,11 @@ mod tests {
         assert_eq!(requests[0].path_under_repo, "repos/retro_encabulator");
         assert_eq!(requests[0].branch.as_deref(), Some("fix-the-races"));
         assert_eq!(
-            requests[0].suggestion.as_ref().expect("a suggestion").paragraph,
+            requests[0]
+                .suggestion
+                .as_ref()
+                .expect("a suggestion")
+                .paragraph,
             "They were reversed, which is why the flux only ran one way.",
             "the indented line under the first entry is that commit's paragraph"
         );
@@ -666,7 +700,10 @@ mod tests {
         // nobody has written yet, which is not what happened.
         std::fs::write(&path, "repos/only/ // fix: only\n").expect("failed to rewrite");
         amend(&repo, "deploy-the-thing-1111", 0, Amend::Dismiss).expect("failed to dismiss");
-        assert!(!path.exists(), "a list with nothing left in it is taken away");
+        assert!(
+            !path.exists(),
+            "a list with nothing left in it is taken away"
+        );
     }
 
     /// Crossing a line off keeps it and marks it; dismissing takes it away. Both leave the rest
@@ -775,11 +812,20 @@ mod tests {
         let beside = repo.join("../work-on-the-parser");
         crate::git::run_git_no_output(
             &repo,
-            &["worktree", "add", "-b", "write-the-parser", &beside.display().to_string()],
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "write-the-parser",
+                &beside.display().to_string(),
+            ],
         )
         .expect("failed to add the fixture worktree");
-        std::fs::write(dir.join(REVIEW_REQUEST_FILE_NAME), ".#write-the-parser // feat: it\n")
-            .expect("failed to write the fixture request");
+        std::fs::write(
+            dir.join(REVIEW_REQUEST_FILE_NAME),
+            ".#write-the-parser // feat: it\n",
+        )
+        .expect("failed to write the fixture request");
 
         // Work in the worktree, which is what the line is asking to have looked at.
         std::fs::write(beside.join("parser.rs"), "pub fn parse() {}\n").expect("failed to write");

@@ -233,7 +233,10 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(shell_ready.load(Ordering::Relaxed), "the shell never drew its output");
+    assert!(
+        shell_ready.load(Ordering::Relaxed),
+        "the shell never drew its output"
+    );
     harness.run_steps(3);
     harness.snapshot_options(
         "moontasks-workspace",

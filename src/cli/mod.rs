@@ -8,13 +8,14 @@ use std::{env, path::Path};
 
 use anyhow::{Context, Result};
 
-use args::{
-    CliCommand, ReviewSource, ReviewTarget, current_dir_pathspec, parse_cli_args, review_open_request,
-};
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
     git::{canonicalize_repo, find_repo_root},
     server,
+};
+use args::{
+    CliCommand, ReviewSource, ReviewTarget, current_dir_pathspec, parse_cli_args,
+    review_open_request,
 };
 
 /// What the window opens on, which is the whole difference between the three executables.

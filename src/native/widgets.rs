@@ -14,14 +14,12 @@ pub(crate) fn pill(ui: &mut Ui, text: &str, ink: Color32, background: Color32) -
         ink,
     );
     let padding = vec2(5.0, 2.0);
-    let (rect, response) =
-        ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
 
     if ui.is_rect_visible(rect) {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(3), background);
-        ui.painter()
-            .galley(rect.min + padding, galley, ink);
+        ui.painter().galley(rect.min + padding, galley, ink);
     }
     response
 }
@@ -36,10 +34,8 @@ const SMALL_SPINNER_STROKE: f32 = 1.5;
 
 /// A spinner for a line of small text: egui's own arc, half the size and going round faster.
 pub(crate) fn small_spinner(ui: &mut Ui, color: Color32) -> Response {
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(SMALL_SPINNER_SIZE, SMALL_SPINNER_SIZE),
-        Sense::hover(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(SMALL_SPINNER_SIZE, SMALL_SPINNER_SIZE), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return response;
     }
@@ -330,7 +326,10 @@ mod tests {
     #[test]
     fn long_names_keep_their_front() {
         assert_eq!(elide_end("main", 20), "main");
-        assert_eq!(elide_end("exactly-twenty-chars", 20), "exactly-twenty-chars");
+        assert_eq!(
+            elide_end("exactly-twenty-chars", 20),
+            "exactly-twenty-chars"
+        );
 
         let elided = elide_end("moontask/show-moon-icons-in-bootscreens-59c3e24c", 20);
         assert_eq!(elided, "moontask/show-moon-…");

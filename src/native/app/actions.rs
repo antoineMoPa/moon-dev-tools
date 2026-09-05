@@ -1,10 +1,7 @@
 //! What the window does between frames: polls the backend, opens reviews and windows, and
 //! runs the commands a keystroke or a menu item asks for.
 
-use std::{
-    sync::Arc,
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 use egui_frames::PaneId;
 
@@ -36,7 +33,6 @@ const REVIEW_REQUESTS_KEY: &str = "review-requests";
 const PROJECT_SAVE: &str = "project-save";
 
 impl App {
-
     pub(super) fn open_review(&mut self, open: OpenSessionRequest) {
         let frame = self.frame;
         // Only remembered once the review is actually open: a path that turns out not to be a
@@ -596,8 +592,9 @@ impl App {
         }
         editor.close_confirmed = true;
         let file_path = editor.file_path.clone();
-        self.model
-            .error(format!("{file_path} has unsaved edits - close again to discard them"));
+        self.model.error(format!(
+            "{file_path} has unsaved edits - close again to discard them"
+        ));
         true
     }
 
@@ -607,8 +604,8 @@ impl App {
         // box, the palette's search line included: a box the window owns is still a box the
         // user is typing in. Only the chords marked as reaching anywhere are the window's
         // while either has the keyboard.
-        let typing = ctx.egui_wants_keyboard_input()
-            || self.active_pane_kind() == Some(PaneKind::Terminal);
+        let typing =
+            ctx.egui_wants_keyboard_input() || self.active_pane_kind() == Some(PaneKind::Terminal);
 
         for action in self.keymap.resolve(ctx, typing) {
             self.apply_action(action);
@@ -668,7 +665,12 @@ impl App {
         let Some(active) = review.active_hunk_id.clone() else {
             return;
         };
-        let Some(hunk) = review.hunks().iter().find(|hunk| hunk.id == active).cloned() else {
+        let Some(hunk) = review
+            .hunks()
+            .iter()
+            .find(|hunk| hunk.id == active)
+            .cloned()
+        else {
             return;
         };
         if review.read_only() {
@@ -825,6 +827,9 @@ mod path_tests {
     fn a_file_that_is_not_there_is_not_a_file_of_the_repo() {
         let repo = TestDir::new();
 
-        assert_eq!(path_inside_repo(&repo.path, &repo.path.join("gone.rs")), None);
+        assert_eq!(
+            path_inside_repo(&repo.path, &repo.path.join("gone.rs")),
+            None
+        );
     }
 }

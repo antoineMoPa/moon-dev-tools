@@ -38,8 +38,14 @@ const ITALIC_NAME: &str = "hack-italic";
 /// Hack v3.003, the release egui's `Hack-Regular.ttf` is taken from byte for byte;
 /// `assets/fonts/Hack-LICENSE.md` is the licence they ship under.
 const BUNDLED_FACES: &[(&str, &[u8])] = &[
-    (BOLD_NAME, include_bytes!("../../assets/fonts/Hack-Bold.ttf")),
-    (ITALIC_NAME, include_bytes!("../../assets/fonts/Hack-Italic.ttf")),
+    (
+        BOLD_NAME,
+        include_bytes!("../../assets/fonts/Hack-Bold.ttf"),
+    ),
+    (
+        ITALIC_NAME,
+        include_bytes!("../../assets/fonts/Hack-Italic.ttf"),
+    ),
 ];
 
 /// Where each platform keeps a font with the drawing characters in it, best first. Every one
@@ -58,9 +64,18 @@ const SYSTEM_FONTS: &[(&str, &str)] = &[
 #[cfg(target_os = "linux")]
 const SYSTEM_FONTS: &[(&str, &str)] = &[
     // DejaVu carries the braille, the box drawing and the block elements between them.
-    ("dejavu-sans-mono", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
-    ("dejavu-sans-mono-fedora", "/usr/share/fonts/dejavu/DejaVuSansMono.ttf"),
-    ("noto-sans-mono", "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"),
+    (
+        "dejavu-sans-mono",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ),
+    (
+        "dejavu-sans-mono-fedora",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+    ),
+    (
+        "noto-sans-mono",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+    ),
 ];
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

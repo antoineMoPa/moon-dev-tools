@@ -39,7 +39,10 @@ pub(crate) enum BoardAction {
     /// Turn the palette into the file finder, picking a file to put on this task's card.
     PickFile(String),
     /// Open a file linked to a card, in a pane down the right.
-    OpenFile { task_id: String, file_path: String },
+    OpenFile {
+        task_id: String,
+        file_path: String,
+    },
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -75,7 +78,10 @@ pub(crate) enum BoardAction {
         amend: crate::moontasks::review_request::Amend,
     },
     /// Write what has been typed into a task's notes on its own pane.
-    SaveNotes { task_id: String, notes: String },
+    SaveNotes {
+        task_id: String,
+        notes: String,
+    },
     /// Open the task's own pane: its title and notes, what it has running, and what it can
     /// start.
     OpenStart {
@@ -470,8 +476,8 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             // this is the reading. It is also what keeps the page and the mark together, so
             // letting the card go puts the page away - see `board::close_pages_of_unmarked`.
             super::selection::mark_only(&mut app.model.board, task_id.clone());
-            app.model.board.task_box_focus = (opens_on != TaskPaneBox::Neither)
-                .then(|| (task_id.clone(), opens_on));
+            app.model.board.task_box_focus =
+                (opens_on != TaskPaneBox::Neither).then(|| (task_id.clone(), opens_on));
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TaskStart {
                 task_id,
                 title,

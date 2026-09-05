@@ -4,7 +4,9 @@
 //! list in both, from here: a row is a way back to what it names, and the marks that stop it,
 //! resume it, or take it off the task.
 
-use egui::{Align, CornerRadius, Layout as UiLayout, Rect, Response, RichText, Sense, Ui, UiBuilder, vec2};
+use egui::{
+    Align, CornerRadius, Layout as UiLayout, Rect, Response, RichText, Sense, Ui, UiBuilder, vec2,
+};
 
 use crate::{
     api::AgentKind,
@@ -243,8 +245,7 @@ fn draw_resource(
             (Some(terminal_id), true) => {
                 let name = widgets::quiet_button(ui, &resource.label)
                     .on_hover_text("Open this shell in a tab");
-                if card.pressed(&name) || row_pressed
-                {
+                if card.pressed(&name) || row_pressed {
                     actions.push(BoardAction::OpenShell {
                         terminal_id: terminal_id.clone(),
                         command: (resource.agent != AgentKind::None).then_some(resource.agent),
@@ -288,11 +289,12 @@ fn draw_resource(
                 }
                 return;
             }
-            let close = close_button(ui, palette).on_hover_text(match (is_shell, resource.running) {
-                (true, _) => "Close this shell",
-                (false, true) => "End this run and take it off the task",
-                (false, false) => "Take this run off the task",
-            });
+            let close =
+                close_button(ui, palette).on_hover_text(match (is_shell, resource.running) {
+                    (true, _) => "Close this shell",
+                    (false, true) => "End this run and take it off the task",
+                    (false, false) => "Take this run off the task",
+                });
             if card.pressed(&close) {
                 actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
             }
@@ -392,8 +394,7 @@ fn draw_file_resource(
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            let unlink =
-                close_button(ui, palette).on_hover_text("Take this file off the task");
+            let unlink = close_button(ui, palette).on_hover_text("Take this file off the task");
             if card.pressed(&unlink) {
                 actions.push(BoardAction::DeleteResource(
                     task.id.clone(),

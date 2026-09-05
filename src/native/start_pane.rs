@@ -219,10 +219,9 @@ fn draw_draft(
     // Off while the box is empty - a task is its title - and while the one that was written is
     // already being made, so the button cannot ask for the same task twice.
     let ready = !title.is_empty() && !creating;
-    let create = widgets::clickable(
-        ui.add_enabled(ready, egui::Button::new("[create]").frame(false)),
-    )
-    .on_hover_text("Make this task's card, and open it here");
+    let create =
+        widgets::clickable(ui.add_enabled(ready, egui::Button::new("[create]").frame(false)))
+            .on_hover_text("Make this task's card, and open it here");
 
     if !ready || !(entered || create.clicked()) {
         return None;
@@ -310,8 +309,8 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
     // Escape throws the typing away rather than leaving a title on that is not the task's;
     // egui takes the keyboard off the box with the same press, which is what `lost_focus` is
     // below, so the key is taken here before that is read.
-    let thrown_away = title.has_focus()
-        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let thrown_away =
+        title.has_focus() && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if thrown_away {
         editor.title.clone_from(&task.title);
     }

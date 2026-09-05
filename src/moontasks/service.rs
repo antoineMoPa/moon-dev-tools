@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    api::{AgentKind, AppState},
     agent::agent_is_available,
+    api::{AgentKind, AppState},
     moontasks::{
-        AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView,
-        TaskView, agent_launch,
+        AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView, TaskView,
+        agent_launch,
         store::{
             self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource,
             TaskResourceKind,
@@ -591,12 +591,9 @@ pub(crate) fn resume_resource(
     // The run keeps the name it had; one written down before runs had names is numbered now.
     let name = match resource.name {
         Some(name) => name,
-        None => crate::terminal::name_for_new_shell(
-            state,
-            &repo_path,
-            Some(&metadata.title),
-            &program,
-        )?,
+        None => {
+            crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?
+        }
     };
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd: repo_path.clone(),
@@ -880,8 +877,11 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     // rewritten for the same reason: it is ours, not the task's, and a task started today should
     // be reading today's.
     let path = dir.join(super::REVIEW_REQUEST_BRIEF_FILE_NAME);
-    std::fs::write(&path, crate::moontasks::review_request::REVIEW_REQUEST_BRIEF)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    std::fs::write(
+        &path,
+        crate::moontasks::review_request::REVIEW_REQUEST_BRIEF,
+    )
+    .with_context(|| format!("failed to write {}", path.display()))?;
 
     Ok(Fillings {
         values: vec![("{brief}", brief)],
@@ -956,7 +956,9 @@ mod tests {
             let launch = agent_launch(*kind).expect("expected the agent to be launchable");
 
             assert_eq!(
-                fillings().with_session(Some(session)).fill_all(launch.attach.iter()),
+                fillings()
+                    .with_session(Some(session))
+                    .fill_all(launch.attach.iter()),
                 *args,
                 "{kind:?} did not open the picked session"
             );
