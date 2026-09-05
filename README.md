@@ -56,7 +56,7 @@ moonreview
 to the newest compatible versions, which is how you end up compiling a release nobody tested.
 
 The window embeds Ghostty's terminal emulator
-([libghostty-vt](https://libghostty.tip.ghostty.org/)), which is built from Ghostty's Zig
+([libghostty-vt](https://ghostty.org/)), which is built from Ghostty's Zig
 source, so a Zig 0.15.x toolchain has to be on `PATH` at build time. On macOS:
 
 ```bash
