@@ -27,12 +27,7 @@ impl App {
     /// Called as the pane draws, because that is where the text is. Nothing goes out for a
     /// file no server serves: the first thing asked is whether there is a server at all,
     /// once, and the answer decides whether this pane ever speaks again.
-    pub(crate) fn sync_document(
-        &mut self,
-        ctx: &egui::Context,
-        pane_id: PaneId,
-        session_id: &str,
-    ) {
+    pub(crate) fn sync_document(&mut self, ctx: &egui::Context, pane_id: PaneId, session_id: &str) {
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };

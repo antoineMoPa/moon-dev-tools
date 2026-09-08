@@ -19,6 +19,7 @@ pub(crate) mod lsp_document;
 pub(crate) mod menu;
 pub(crate) mod messages;
 pub(crate) mod model;
+pub(crate) mod open_from_shell;
 pub(crate) mod palette;
 pub(crate) mod panes;
 mod programs;
@@ -152,6 +153,8 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
             // Every other caller of `App::new` is a ui test - see the field.
             app.asks_language_servers = true;
             app.install_menu();
+            // The same: a real window is the one caller a `moon open` should reach.
+            app.listen_for_shell_asks(&creation.egui_ctx);
             app.restore_layout_from(creation.storage);
             Ok(Box::new(app))
         }),

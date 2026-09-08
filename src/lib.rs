@@ -1,8 +1,9 @@
-//! moonreview, as one library behind three executables.
+//! moonreview, as one library behind one executable.
 //!
-//! The three differ only in what the window opens on - a review, the task board, or a shell -
-//! so they are three [`Frame`]s over the same everything else. `src/bin` holds one file per
-//! executable, and each is a single call to [`run`].
+//! `moon` opens a window on one of three things - a review, the task board, or a shell -
+//! which are three [`cli::Frame`]s over the same everything else; and it reaches the windows
+//! that are already open, which is what `moon open` does. `src/bin/moon.rs` is a single call
+//! to [`run`].
 
 mod agent;
 mod agent_sessions;
@@ -13,6 +14,7 @@ mod comments;
 mod commit_suggestion;
 mod committing;
 mod git;
+mod instances;
 mod lsp;
 mod moontasks;
 mod moved_hunks;
@@ -30,9 +32,8 @@ mod terminal;
 
 use anyhow::Result;
 
-pub use cli::Frame;
-
-/// Run one of the three executables. `frame` is the whole difference between them.
-pub fn run(frame: Frame) -> Result<()> {
-    cli::run(frame)
+/// Run `moon`: the command line decides whether that is a window, the server behind one, or
+/// a word to a window that is already open.
+pub fn run() -> Result<()> {
+    cli::run()
 }

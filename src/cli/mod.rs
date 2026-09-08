@@ -1,6 +1,7 @@
-//! The three executables' command line: which frame a window opens on, and how it gets there.
+//! The command line: which command was asked for, and which frame a window opens on.
 
 mod args;
+mod open;
 #[cfg(test)]
 mod tests;
 
@@ -9,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
@@ -21,14 +22,14 @@ use args::{
     review_open_request,
 };
 
-/// What the window opens on, which is the whole difference between the three executables.
+/// What the window opens on, which is the whole difference between the three windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Frame {
-    /// `moonreview`: the review of the repo.
+    /// `moon review`: the review of the repo.
     Review,
-    /// `moontasks`: the task board, and the agents working through it.
+    /// `moon tasks`: the task board, and the agents working through it.
     Tasks,
-    /// `moonshell`: a shell in the folder, which need not be a repo.
+    /// `moon shell`: a shell in the folder, which need not be a repo.
     Shell,
 }
 
@@ -40,12 +41,28 @@ pub(crate) const FRAMES: &[Frame] = &[Frame::Review, Frame::Tasks, Frame::Shell]
 /// piece of work rather than a second look at this one.
 pub(crate) const NEW_WINDOW_FRAMES: &[Frame] = &[Frame::Tasks, Frame::Review, Frame::Shell];
 
-/// Everything that differs between the three executables in name and wording, kept in one
-/// place so a new frame is a row here rather than a branch wherever text is written.
+/// The one executable all of this is: the three windows, the server behind them, and the
+/// commands that reach a window which is already open.
+pub(crate) const PROGRAM: &str = "moon";
+
+/// How a launcher says which window it is.
+///
+/// A desktop entry runs `moon <subcommand>` and needs none of this, but a macOS bundle runs
+/// its executable with no arguments at all - and with the executable a link to the installed
+/// `moon`, which the OS resolves before starting it, so not even the name it was started
+/// under says which window was asked for. What a bundle *can* carry is `LSEnvironment`, so
+/// that is where its window is written; see [`crate::native::launchers`].
+pub(crate) const FRAME_ENV: &str = "MOON_FRAME";
+
+/// Everything that differs between the three frames in name and wording, kept in one place so
+/// a new frame is a row here rather than a branch wherever text is written.
 struct FrameProgram {
     frame: Frame,
-    /// The name of the executable that opens on this frame.
-    program: &'static str,
+    /// The word after `moon` that opens a window on this frame.
+    subcommand: &'static str,
+    /// The name this frame goes by wherever a name has to be one token: its icon and
+    /// launcher files, and its bundle identifier.
+    slug: &'static str,
     /// The name a desktop launcher shows: the one the OS puts under the icon.
     display_name: &'static str,
     /// What the window opens on, as one line of prose, for the CLI's help.
@@ -72,7 +89,8 @@ struct FrameProgram {
 const FRAME_PROGRAMS: &[FrameProgram] = &[
     FrameProgram {
         frame: Frame::Review,
-        program: "moonreview",
+        subcommand: "review",
+        slug: "moonreview",
         display_name: "Moonreview",
         opens: "a review of the repo",
         asks_for_repo: "Which repo to review:",
@@ -84,7 +102,8 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
     },
     FrameProgram {
         frame: Frame::Tasks,
-        program: "moontasks",
+        subcommand: "tasks",
+        slug: "moontasks",
         display_name: "Moontasks",
         opens: "the task board",
         asks_for_repo: "Which folder to open the board of:",
@@ -96,7 +115,8 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
     },
     FrameProgram {
         frame: Frame::Shell,
-        program: "moonshell",
+        subcommand: "shell",
+        slug: "moonshell",
         display_name: "Moonshell",
         opens: "a shell in the folder",
         asks_for_repo: "Which folder to open a shell in:",
@@ -109,9 +129,20 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
 ];
 
 impl Frame {
-    /// The name of the executable that opens on this frame.
-    pub(crate) fn program(self) -> &'static str {
-        self.entry().program
+    /// The word after `moon` that opens a window on this frame.
+    pub(crate) fn subcommand(self) -> &'static str {
+        self.entry().subcommand
+    }
+
+    /// What somebody types to open this window, which is what the window calls itself
+    /// wherever it names itself to a person.
+    pub(crate) fn command(self) -> String {
+        format!("{PROGRAM} {}", self.subcommand())
+    }
+
+    /// The single token this frame's files and identifiers are named with - see the field.
+    pub(crate) fn slug(self) -> &'static str {
+        self.entry().slug
     }
 
     /// The name a desktop launcher shows: the one the OS puts under the icon.
@@ -159,26 +190,54 @@ impl Frame {
         FRAME_PROGRAMS
             .iter()
             .find(|entry| entry.frame == self)
-            .expect("every frame has an executable")
+            .expect("every frame is in the table")
     }
 }
 
-pub(crate) fn run(frame: Frame) -> Result<()> {
+/// What the command line asked for. One executable, so this is the whole of what it does.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum MoonCommand {
+    Help,
+    Version,
+    /// A window on one of the frames. What it opens on is the rest of the command line,
+    /// which is [`args`]' business rather than this one's.
+    Window {
+        frame: Frame,
+        args: Vec<String>,
+    },
+    /// The review server, in this terminal, for a window on another machine to read.
+    Serve {
+        logs: bool,
+    },
+    /// Write the desktop launcher of each frame, so the OS offers them too.
+    InstallLaunchers,
+    /// One file, in the window that is already open on its project.
+    Open {
+        path: String,
+        line: Option<usize>,
+    },
+    /// Which windows are open, and what they are open on.
+    ListWindows,
+}
+
+pub(crate) fn run() -> Result<()> {
     // Before anything starts a thread or a child: a window launched from the Dock has no
     // locale, and every tool it runs would read and write bytes outside ASCII as something
     // other than UTF-8 - see `crate::shell_locale`.
     crate::shell_locale::adopt_utf8_locale();
 
-    match parse_cli_args(env::args().skip(1).collect::<Vec<_>>(), frame)? {
-        CliCommand::Help => {
-            print_help(frame);
+    let launched_on = frame_of_launcher()?;
+
+    match parse_command(launched_on, env::args().skip(1).collect())? {
+        MoonCommand::Help => {
+            println!("{}", help_text());
             Ok(())
         }
-        CliCommand::Version => {
-            print_version(frame);
+        MoonCommand::Version => {
+            print_version();
             Ok(())
         }
-        CliCommand::Serve { logs } => {
+        MoonCommand::Serve { logs } => {
             if logs {
                 eprintln!("Moon Review server logs enabled.");
             }
@@ -188,7 +247,106 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())
         }
-        CliCommand::InstallLaunchers => install_launchers(),
+        MoonCommand::InstallLaunchers => install_launchers(),
+        MoonCommand::Open { path, line } => open::open_file(&path, line),
+        MoonCommand::ListWindows => open::list_windows(),
+        MoonCommand::Window { frame, args } => open_window(frame, args),
+    }
+}
+
+/// Which command a command line names.
+///
+/// `launched_on` is the window a macOS launcher asked for, which it says in the environment
+/// rather than in the arguments - see [`FRAME_ENV`]. It comes first: a bundle passes no
+/// arguments, so there is nothing else to read the window out of.
+pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Result<MoonCommand> {
+    if let Some(frame) = launched_on {
+        return Ok(MoonCommand::Window { frame, args });
+    }
+
+    let mut args = args.into_iter();
+    let Some(command) = args.next() else {
+        return Ok(MoonCommand::Help);
+    };
+    let rest: Vec<String> = args.collect();
+
+    if let Some(frame) = frame_named(&command) {
+        return Ok(MoonCommand::Window { frame, args: rest });
+    }
+
+    match command.as_str() {
+        "--help" | "-h" | "help" => Ok(MoonCommand::Help),
+        "--version" | "-v" => Ok(MoonCommand::Version),
+        // `edit` and `open` are one thing said two ways: the tab it lands in is one that
+        // edits the file, and both are words a hand reaches for.
+        "open" | "edit" => open::parse_open(rest),
+        "list" => match rest.is_empty() {
+            true => Ok(MoonCommand::ListWindows),
+            false => bail!("`{PROGRAM} list` says which windows are open, so it takes nothing"),
+        },
+        "serve" => parse_serve(rest),
+        "install-launchers" => match rest.is_empty() {
+            true => Ok(MoonCommand::InstallLaunchers),
+            false => bail!("`{PROGRAM} install-launchers` takes nothing else"),
+        },
+        other => bail!("`{PROGRAM} {other}` is not a command\n\n{}", help_text()),
+    }
+}
+
+/// The frame a word names, for the word after `moon` and for what a launcher wrote in the
+/// environment - they are the same word.
+fn frame_named(name: &str) -> Option<Frame> {
+    FRAME_PROGRAMS
+        .iter()
+        .find(|entry| entry.subcommand == name)
+        .map(|entry| entry.frame)
+}
+
+/// The window a macOS launcher asked for, and `None` for every other way of starting.
+///
+/// The variable is taken out of the environment as it is read, so that the shells this
+/// window starts do not inherit it: to them `moon` is the command line's `moon`, and a
+/// `moon` typed with no arguments in one of them says what it can do rather than opening
+/// another window.
+fn frame_of_launcher() -> Result<Option<Frame>> {
+    let Some(named) = env::var_os(FRAME_ENV) else {
+        return Ok(None);
+    };
+    // SAFETY: nothing else has run yet - no thread has been started and no child spawned -
+    // so there is no other reader of the environment to race with.
+    unsafe { env::remove_var(FRAME_ENV) };
+
+    let named = named
+        .to_str()
+        .with_context(|| format!("{FRAME_ENV} is not a window this program has"))?
+        .to_string();
+    frame_named(&named)
+        .map(Some)
+        .with_context(|| format!("{FRAME_ENV}={named} is not a window this program has"))
+}
+
+fn parse_serve(args: Vec<String>) -> Result<MoonCommand> {
+    let mut logs = false;
+    for arg in args {
+        match arg.as_str() {
+            "--logs" => logs = true,
+            other => bail!("`{PROGRAM} serve` takes `--logs` and nothing else, not {other}"),
+        }
+    }
+    Ok(MoonCommand::Serve { logs })
+}
+
+/// Open a window on a frame. What it opens on is the rest of the command line.
+fn open_window(frame: Frame, args: Vec<String>) -> Result<()> {
+    match parse_cli_args(args, frame)? {
+        CliCommand::Help => {
+            println!("{}", help_text_for(frame));
+            Ok(())
+        }
+        CliCommand::Version => {
+            print_version();
+            Ok(())
+        }
         CliCommand::PickProject => pick_project(frame),
         CliCommand::OpenRepo(path) => open_repo(Path::new(&path), frame),
         CliCommand::Review { target, source } => launch_review(target, source, frame),
@@ -208,7 +366,7 @@ fn install_launchers() -> Result<()> {
         );
     }
     println!(
-        "The OS lists them from {}; rerun this after moving the executables.",
+        "The OS lists them from {}; rerun this after moving the executable.",
         launchers::destination_hint()
     );
     Ok(())
@@ -297,26 +455,70 @@ fn launch_review(target: ReviewTarget, source: ReviewSource, frame: Frame) -> Re
     crate::native::run(launch)
 }
 
-fn print_help(frame: Frame) {
-    println!("{}", help_text_for(frame));
+fn print_version() {
+    println!("{PROGRAM} {}", env!("CARGO_PKG_VERSION"));
 }
 
-/// The help of whichever executable was run: the same review options either way, with the
-/// frame it opens on at the top and the other two named at the bottom.
-pub(super) fn help_text_for(frame: Frame) -> String {
-    let program = frame.program();
-    let opens = frame.opens();
-    let siblings: Vec<String> = FRAMES
+/// `moon --help`: every command there is, with what each window opens on.
+fn help_text() -> String {
+    let windows: Vec<String> = FRAMES
         .iter()
-        .filter(|candidate| **candidate != frame)
-        .map(|sibling| {
+        .map(|frame| {
             format!(
-                "  {name} - opens on {opens}",
-                name = sibling.program(),
-                opens = sibling.opens()
+                "  {command:<30} {opens}",
+                command = format!("{} [<target>]", frame.command()),
+                opens = frame.opens()
             )
         })
         .collect();
+
+    format!(
+        "{PROGRAM}
+
+Tiny local dev tools: a task board, a code review and a shell, one window each.
+
+Usage:
+{windows}
+  {PROGRAM} open <path>[:<line>]      a file, in the window already open on its project
+  {PROGRAM} list                      which windows are open, and what they are on
+  {PROGRAM} serve [--logs]            the review server, for a window on another machine
+  {PROGRAM} install-launchers         entries the OS offers for the three windows
+  {PROGRAM} --version
+  {PROGRAM} --help
+
+Examples:
+  {PROGRAM} tasks
+  {PROGRAM} review src/main.rs
+  {PROGRAM} shell
+  {PROGRAM} open src/main.rs:42
+
+Open a window inside any git repository you want to work in. The board and the shell run just
+as well in a folder that is no repository: the review is the part that needs one.
+
+`{PROGRAM} <window> --help` says what that window can be opened on; `--pick` opens it on its
+launch screen instead, and `--remote <host>` opens it against a `serve` on another machine.
+
+Desktop launchers:
+  `install-launchers` gives each window an entry the OS offers - an application bundle on
+  macOS, a desktop entry on Linux - so they open from Spotlight, Launchpad or an application
+  menu as well as from a shell. The window has the same thing in its menu.
+  A window opened that way starts outside any repo, so it opens on the project the last one
+  did - and the review, which has nothing to show without a repo, asks which one instead.
+
+Moontasks:
+  The moontasks board is a sprint board over the `.moontasks` folder of the repo, with an
+  agent running behind each card. `{PROGRAM} tasks` opens on it; the other two windows reach
+  it from the command palette.
+  The columns are the board's own - rename them, reorder them, add and remove them - and a
+  finished agent is reflected on its card the next time the board reads the folder.",
+        windows = windows.join("\n")
+    )
+}
+
+/// `moon review --help` and its siblings: what that window can be opened on.
+pub(super) fn help_text_for(frame: Frame) -> String {
+    let command = frame.command();
+    let opens = frame.opens();
 
     // The one line of help that is only true of the two frames that need no repo.
     let opens_without_a_repo = if frame.opens_without_a_repo() {
@@ -327,79 +529,53 @@ that needs one.\n"
     };
 
     format!(
-        "{program}
+        "{command}
 
-Tiny local code review UI for git. This one opens on {opens}.
+Opens a window on {opens}.
 
 Usage:
-  {program}
-  {program} .
-  {program} <path>
-  {program} <before-path> <after-path>
-  {program} <commit>
-  {program} diff <target>
-  {program} --pick
-  {program} --repo <path>
-  {program} --remote <host> [--repo <path>]
-  {program} serve --logs
-  {program} install-launchers
-  {program} --version
-  {program} --help
+  {command}
+  {command} .
+  {command} <path>
+  {command} <before-path> <after-path>
+  {command} <commit>
+  {command} diff <target>
+  {command} --pick
+  {command} --repo <path>
+  {command} --remote <host> [--repo <path>]
 
 Examples:
-  {program}
-  {program} .
-  {program} src/main.rs
-  {program} before.json after.json
-  {program} 4542abe
-  {program} diff dev
-  {program} --remote dev-box --repo /home/you/project
+  {command}
+  {command} .
+  {command} src/main.rs
+  {command} before.json after.json
+  {command} 4542abe
+  {command} diff dev
+  {command} --remote dev-box --repo /home/you/project
 
-Run `{program}` inside any git repository you want to work in.
+Run it inside any git repository you want to work in.
 {opens_without_a_repo}`--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
 `--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
 what the Window menu's Restart hands the instance it starts.
-Run `{program} .` to limit the review to the current directory.
+Run `{command} .` to limit the review to the current directory.
 Pass one path to review only that file or directory's working-tree changes.
 Pass two paths to review a read-only comparison of those files.
 
-`{program} <commit>` opens a read-only review of a single commit.
-`{program} diff <target>` opens a read-only diff review against a git target.
+`{command} <commit>` opens a read-only review of a single commit.
+`{command} diff <target>` opens a read-only diff review against a git target.
 Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`.
-
-The other frames, which are the same window opened on something else:
-{siblings}
-
-Desktop launchers:
-  `install-launchers` gives each installed executable an entry the OS offers - an application
-  bundle on macOS, a desktop entry on Linux - so they open from Spotlight, Launchpad or an
-  application menu as well as from a shell. The window has the same thing in its menu.
-  A window opened that way starts outside any repo, so it opens on the project the last one
-  did - and `moonreview`, which has nothing to show without a repo, asks which one instead.
 
 Reviewing another machine's repo:
   The window carries the review server inside it, so a window elsewhere can be pointed at
-  this repo.
+  this repo - `{PROGRAM} serve` is the same server without a window.
   `--remote <host>` opens the window against a `serve` on another machine, where the repo
   lives; `--repo <path>` then names the path there, and without it the window asks.
   `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
-
-Moontasks:
-  The moontasks board is a sprint board over the `.moontasks` folder of the repo, with an
-  agent running behind each card. `moontasks` opens on it; the other two reach it from the
-  command palette.
-  The columns are the board's own - rename them, reorder them, add and remove them - and a
-  finished agent is reflected on its card the next time the board reads the folder.
-
-Use `--logs` with `serve` to run the server in the foreground and print agent/failure logs
-until you stop it with Ctrl+C.
 Changed submodules are offered inside the review, as extra reviews you can open from the
-command palette.",
-        siblings = siblings.join("\n")
-    )
-}
+command palette.
 
-fn print_version(frame: Frame) {
-    println!("{} {}", frame.program(), env!("CARGO_PKG_VERSION"));
+Every other command - the other two windows, `open`, `list`, `serve` and the desktop
+launchers - is in `{PROGRAM} --help`."
+    )
 }

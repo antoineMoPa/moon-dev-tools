@@ -155,7 +155,6 @@ fn a_command_clicked_name_in_a_diff_says_when_no_language_server_serves_the_file
             "a click nothing could answer should not have opened a tab"
         );
     }
-
 }
 
 /// ⌘-clicking a name on a **removed** row says the file does not hold that line any more.

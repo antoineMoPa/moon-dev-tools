@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-PROGRAMS=(moonreview moontasks moonshell)
+PROGRAMS=(moon moonreview moontasks moonshell)
 INSTALL_DIR="${MOONREVIEW_INSTALL_DIR:-$HOME/.local/bin}"
 CARGO_BIN_DIR="${CARGO_INSTALL_ROOT:-$HOME/.cargo}/bin"
 

@@ -4,21 +4,18 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use super::{Frame, help_text_for};
+use super::{Frame, PROGRAM, help_text_for};
 use crate::{
     api::DiffTarget,
     git::{parse_review_target, run_git},
 };
 
+/// What a window was asked to open on. Which window it is has already been decided - see
+/// [`super::parse_command`] - so this is only ever the rest of the command line.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum CliCommand {
     Help,
     Version,
-    Serve {
-        logs: bool,
-    },
-    /// Write the desktop launcher of each installed executable, so the OS offers them too.
-    InstallLaunchers,
     /// The window with no repo: it asks which one to open, the same as a launcher started
     /// from the OS. This is what "New Window" in the menu bar opens.
     PickProject,
@@ -116,10 +113,10 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
         return Ok(CliCommand::OpenRepo(path.clone()));
     }
 
-    // `--logs` prints what the review server is doing, and `serve` is the only command that
-    // runs one in this terminal.
-    if logs && positional.first().map(String::as_str) != Some("serve") {
-        bail!("--logs prints the review server's logs, so it goes with `serve`");
+    // `--logs` prints what the review server is doing, and `moon serve` is the only command
+    // that runs one in this terminal.
+    if logs {
+        bail!("--logs prints the review server's logs, so it goes with `{PROGRAM} serve`");
     }
 
     let source = match remote {
@@ -136,8 +133,6 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
 
     match positional.as_slice() {
         [] => Ok(review(ReviewTarget::WorkingTree)),
-        [command] if command == "serve" => Ok(CliCommand::Serve { logs }),
-        [command] if command == "install-launchers" => Ok(CliCommand::InstallLaunchers),
         [command] if command == "diff" => Ok(review(ReviewTarget::WorkingTree)),
         [command, target] if command == "diff" => Ok(review(ReviewTarget::Diff(target.clone()))),
         [target] if target == "." || target == "./" => Ok(review(ReviewTarget::CurrentDirectory)),
@@ -146,11 +141,7 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
         } else {
             ReviewTarget::Path(target.clone())
         })),
-        [command, ..]
-            if command == "diff" || command == "serve" || command == "install-launchers" =>
-        {
-            bail!("{}", help_text_for(frame))
-        }
+        [command, ..] if command == "diff" => bail!("{}", help_text_for(frame)),
         [before, after] => Ok(review(ReviewTarget::Comparison([
             before.clone(),
             after.clone(),

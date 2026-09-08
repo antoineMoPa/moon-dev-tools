@@ -1,23 +1,23 @@
-//! Desktop launchers: the entry the OS itself offers for each executable.
+//! Desktop launchers: the entry the OS itself offers for each of the three windows.
 //!
-//! `cargo install` and the install script both leave three plain executables on `PATH`, which
-//! is all a shell needs. Spotlight, Launchpad and an application grid need more than that: on
+//! `cargo install` and the install script both leave one plain executable on `PATH`, which is
+//! all a shell needs. Spotlight, Launchpad and an application grid need more than that: on
 //! macOS an application is a `.app` bundle, and on Linux a `.desktop` file. Both are written
-//! here, out of the executables that are already installed beside this one.
+//! here, one per window, all of them around the one installed executable.
 //!
-//! Each launcher runs the real executable from where it is installed, so upgrading in place -
-//! `cargo install`, or rerunning the install script - needs no new launcher.
+//! Each launcher runs that executable from where it is installed, so upgrading in place -
+//! `cargo install`, or rerunning the install script - needs no new launcher. Which window a
+//! launcher opens is in the launcher: a desktop entry names the window as an argument, and a
+//! macOS bundle - which passes none - names its executable after the window instead, which
+//! is what `crate::cli::parse_command` reads it out of.
 
 use std::{env, path::PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::{
     cli::{FRAMES, Frame},
-    native::{
-        logos::logo_png,
-        programs::{executable_for, install_dir},
-    },
+    native::{logos::logo_png, programs::this_executable},
 };
 
 /// A launcher that was written, and where it landed.
@@ -26,24 +26,15 @@ pub(crate) struct InstalledLauncher {
     pub(crate) path: PathBuf,
 }
 
-/// Write a launcher for every executable installed beside this one.
+/// Write a launcher for each of the three windows, all of them this one executable.
 pub(crate) fn install() -> Result<Vec<InstalledLauncher>> {
+    let executable = this_executable()?;
     let mut installed = Vec::new();
     for frame in FRAMES {
-        let Some(executable) = executable_for(*frame) else {
-            continue;
-        };
         installed.push(InstalledLauncher {
             frame: *frame,
             path: platform::write_launcher(*frame, &executable)?,
         });
-    }
-
-    if installed.is_empty() {
-        bail!(
-            "no moonreview executables in {} to make launchers for",
-            install_dir()?.display()
-        );
     }
 
     Ok(installed)
@@ -140,7 +131,7 @@ mod platform {
     /// else installed is not ours to open.
     pub(super) fn installed_launcher(frame: Frame) -> Option<PathBuf> {
         let bundle_name = format!("{}.app", frame.display_name());
-        let identifier = format!("com.moonreview.{}", frame.program());
+        let identifier = format!("com.moonreview.{}", frame.slug());
         for candidate in APPLICATIONS_DIRS {
             let dir = match candidate.strip_prefix("~/") {
                 Some(under_home) => match super::home() {
@@ -161,7 +152,7 @@ mod platform {
     pub(super) fn write_launcher(frame: Frame, executable: &Path) -> Result<PathBuf> {
         let bundle_name = format!("{}.app", frame.display_name());
         let bundle = applications_dir()?.join(&bundle_name);
-        let identifier = format!("com.moonreview.{}", frame.program());
+        let identifier = format!("com.moonreview.{}", frame.slug());
         refuse_foreign_bundle(&bundle, &identifier)?;
 
         let macos_dir = bundle.join("Contents/MacOS");
@@ -177,7 +168,7 @@ mod platform {
         )
         .context("failed to write Info.plist")?;
         fs::write(
-            resources_dir.join(format!("{}.icns", frame.program())),
+            resources_dir.join(format!("{}.icns", frame.slug())),
             icns(frame),
         )
         .context("failed to write the bundle icon")?;
@@ -189,10 +180,17 @@ mod platform {
         // refuses to launch one as a bundle executable - `LSOpenURLsWithCompletionHandler()
         // failed with error -10669`. Launch Services follows the link and still reads the
         // bundle around it, so the icon, the name and the bundle id all still come from here.
-        let link = macos_dir.join(frame.program());
-        if link.symlink_metadata().is_ok() {
-            fs::remove_file(&link)
-                .with_context(|| format!("failed to replace {}", link.display()))?;
+        //
+        // It follows it before starting the program, though: what the window is started as
+        // is the installed `moon` itself, whatever this link is called. So the link is called
+        // what the program is called, and which window it opens is in the plist instead - see
+        // `crate::cli::FRAME_ENV`.
+        let link = macos_dir.join(crate::cli::PROGRAM);
+        for existing in [macos_dir.join(frame.slug()), link.clone()] {
+            if existing.symlink_metadata().is_ok() {
+                fs::remove_file(&existing)
+                    .with_context(|| format!("failed to replace {}", existing.display()))?;
+            }
         }
         symlink(executable, &link).with_context(|| format!("failed to link {}", link.display()))?;
 
@@ -258,7 +256,10 @@ mod platform {
 
     fn info_plist(frame: Frame, identifier: &str) -> String {
         let display_name = frame.display_name();
-        let program = frame.program();
+        let program = crate::cli::PROGRAM;
+        let icon = frame.slug();
+        let frame_env = crate::cli::FRAME_ENV;
+        let subcommand = frame.subcommand();
         let version = env!("CARGO_PKG_VERSION");
 
         format!(
@@ -275,7 +276,7 @@ mod platform {
 	<key>CFBundleIdentifier</key>
 	<string>{identifier}</string>
 	<key>CFBundleIconFile</key>
-	<string>{program}.icns</string>
+	<string>{icon}.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -286,6 +287,11 @@ mod platform {
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>LSEnvironment</key>
+	<dict>
+		<key>{frame_env}</key>
+		<string>{subcommand}</string>
+	</dict>
 </dict>
 </plist>
 "#
@@ -348,12 +354,12 @@ mod platform {
             .with_context(|| format!("failed to create {}", applications_dir.display()))?;
 
         fs::write(
-            icon_dir.join(format!("{}.png", frame.program())),
+            icon_dir.join(format!("{}.png", frame.slug())),
             logo_png(frame, ICON_SIZE),
         )
         .context("failed to write the launcher icon")?;
 
-        let entry = applications_dir.join(format!("{}.desktop", frame.program()));
+        let entry = applications_dir.join(format!("{}.desktop", frame.slug()));
         fs::write(&entry, desktop_entry(frame, executable))
             .with_context(|| format!("failed to write {}", entry.display()))?;
 
@@ -371,7 +377,7 @@ mod platform {
 Type=Application
 Name={display_name}
 Comment=Opens on {opens}
-Exec={executable} %f
+Exec={executable} {subcommand} %f
 Icon={program}
 Terminal=false
 Categories=Development;RevisionControl;
@@ -380,7 +386,8 @@ StartupWMClass=moonreview
             display_name = frame.display_name(),
             opens = frame.opens(),
             executable = executable.display(),
-            program = frame.program(),
+            subcommand = frame.subcommand(),
+            program = frame.slug(),
         )
     }
 }

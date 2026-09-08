@@ -185,22 +185,91 @@ fn parse_diff_short_sha_as_range_diff_review() {
     );
 }
 
+/// The command line names the window first, and everything after it is what that window
+/// opens on.
+#[test]
+fn a_window_is_named_by_the_word_after_moon() {
+    assert_eq!(
+        parse_command(None, vec!["review".to_string(), "src".to_string()])
+            .expect("expected it to parse"),
+        MoonCommand::Window {
+            frame: Frame::Review,
+            args: vec!["src".to_string()]
+        }
+    );
+    assert_eq!(
+        parse_command(None, vec!["tasks".to_string()]).expect("expected it to parse"),
+        MoonCommand::Window {
+            frame: Frame::Tasks,
+            args: Vec::new()
+        }
+    );
+}
+
+/// A macOS bundle passes no arguments at all, so the window it opens is the one its plist
+/// named in the environment - see `crate::cli::FRAME_ENV`.
+#[test]
+fn a_window_started_from_a_launcher_opens_on_the_frame_the_launcher_named() {
+    assert_eq!(
+        parse_command(Some(Frame::Shell), Vec::new()).expect("expected it to parse"),
+        MoonCommand::Window {
+            frame: Frame::Shell,
+            args: Vec::new()
+        }
+    );
+}
+
 #[test]
 fn parse_install_launchers_command() {
-    assert_eq!(parse(&["install-launchers"]), CliCommand::InstallLaunchers);
+    assert_eq!(
+        parse_command(None, vec!["install-launchers".to_string()]).expect("expected it to parse"),
+        MoonCommand::InstallLaunchers
+    );
 }
 
 /// `install-launchers` takes nothing, so an argument after it is a mistake rather than a
 /// path to review.
 #[test]
 fn install_launchers_takes_no_arguments() {
-    let error = parse_cli_args(
+    let error = parse_command(
+        None,
         vec!["install-launchers".to_string(), "extra".to_string()],
-        Frame::Review,
     )
     .expect_err("expected an argument after install-launchers to be rejected");
 
-    assert!(error.to_string().contains("Usage:"));
+    assert!(error.to_string().contains("takes nothing else"));
+}
+
+/// The server is a command of its own now, and `--logs` is the only thing it takes.
+#[test]
+fn parse_serve_with_and_without_logs() {
+    assert_eq!(
+        parse_command(None, vec!["serve".to_string()]).expect("expected it to parse"),
+        MoonCommand::Serve { logs: false }
+    );
+    assert_eq!(
+        parse_command(None, vec!["serve".to_string(), "--logs".to_string()])
+            .expect("expected it to parse"),
+        MoonCommand::Serve { logs: true }
+    );
+}
+
+/// A word that names no command says so, rather than being read as something to review.
+#[test]
+fn a_command_that_is_not_one_is_refused() {
+    let error = parse_command(None, vec!["frobnicate".to_string()])
+        .expect_err("expected an unknown command to be rejected");
+
+    assert!(error.to_string().contains("is not a command"));
+}
+
+/// `moon` on its own has nothing to do, so it says what it can do.
+#[test]
+fn no_arguments_at_all_is_the_help() {
+    assert_eq!(
+        parse_command(None, Vec::new()).expect("expected it to parse"),
+        MoonCommand::Help
+    );
 }
 
 /// `--repo` on its own names the repo the window opens on, which is how a restarted

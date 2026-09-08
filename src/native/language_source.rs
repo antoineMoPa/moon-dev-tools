@@ -55,13 +55,11 @@ impl LanguageSource for SessionLanguages<'_> {
     }
 
     fn definition(&self, file_path: &str, at: LspPosition) -> Result<Vec<LspLocation>> {
-        self.backend
-            .lsp_definition(self.session_id, file_path, at)
+        self.backend.lsp_definition(self.session_id, file_path, at)
     }
 
     fn completion(&self, file_path: &str, at: LspPosition) -> Result<Vec<LspCompletion>> {
-        self.backend
-            .lsp_completion(self.session_id, file_path, at)
+        self.backend.lsp_completion(self.session_id, file_path, at)
     }
 
     /// What the server behind this file said opens a completion list on its own, carried

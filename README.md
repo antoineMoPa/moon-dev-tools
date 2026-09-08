@@ -3,13 +3,14 @@
 A collection of local tools for the agentic era.
 
 `moon-dev-tools` brings task planning, agent workspaces, shells and code review together. It
-installs three executables:
+installs one executable, `moon`, which opens on three things:
 
 | | |
 | --- | --- |
-| `moontasks` | a sprint board for organizing tasks, agents and shells |
-| `moonreview` | a local code review UI for git |
-| `moonshell` | a shell in the repo |
+| `moon tasks` | a sprint board for organizing tasks, agents and shells |
+| `moon review` | a local code review UI for git |
+| `moon shell` | a shell in the repo |
+| `moon open <file>` | opens a file in the window that is already open on it |
 
 ![Moontasks sprint board with a shell beside it](docs/assets/moontasks-workspace.png)
 
@@ -32,7 +33,7 @@ Install the latest prebuilt release:
 curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moon-dev-tools/main/install.sh | sh
 ```
 
-This installs all three executables and desktop launchers. If `~/.local/bin` is not already on
+This installs `moon` and the desktop launchers. If `~/.local/bin` is not already on
 your `PATH`, add it in your shell configuration.
 
 ## Build from source
@@ -47,9 +48,9 @@ Requirements:
 ```bash
 ./scripts/setup-dev.sh            # Rust update, Zig and submodules
 export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
-cargo install --locked --path .   # installs moonreview, moontasks and moonshell
-moonreview install-launchers      # optional: launchers the OS itself offers
-moonreview
+cargo install --locked --path .   # installs moon
+moon install-launchers            # optional: launchers the OS itself offers
+moon review
 ```
 
 `--locked` builds the dependency versions in `Cargo.lock`; without it `cargo install` re-resolves
@@ -64,28 +65,27 @@ brew install zig@0.15
 export PATH="$(brew --prefix zig@0.15)/bin:$PATH"
 ```
 
-Everything still links statically - the result is three executables with no runtime
-dependency on Zig or on a separate server process. They share one library, so the build
-compiles once and links three times.
+Everything still links statically - the result is one executable with no runtime dependency
+on Zig or on a separate server process.
 
 ## Desktop launchers
 
-`cargo install` leaves three executables on `PATH`, which is all a shell needs. To open them
-from the OS as well - Spotlight and Launchpad on macOS, the application menu on Linux:
+`cargo install` leaves one executable on `PATH`, which is all a shell needs. To open the
+windows from the OS as well - Spotlight and Launchpad on macOS, the application menu on Linux:
 
 ```bash
-moonreview install-launchers
+moon install-launchers
 ```
 
-It writes one launcher per installed executable: a `.app` bundle in `/Applications` on macOS -
+It writes one launcher per window: a `.app` bundle in `/Applications` on macOS -
 in `~/Applications` instead, for an account that cannot write the shared folder - and a
 `.desktop` entry in `~/.local/share/applications` on Linux. The window has the same thing in
 its macOS menu bar and in the command palette, as `install desktop launchers`. Each launcher
 runs the executable where it is installed, so `cargo install` over it is also an upgrade of
-what the launcher opens; rerun the command only after moving the executables somewhere else.
+what the launcher opens; rerun the command only after moving the executable somewhere else.
 
-A window opened that way starts outside every repo. `moontasks` and `moonshell` open on the
-project the last window opened - neither needs a repo - and `moonreview`, which has nothing
+A window opened that way starts outside every repo. `moon tasks` and `moon shell` open on the
+project the last window opened - neither needs a repo - and `moon review`, which has nothing
 to show without one, asks which repo to open with the folder picker of the OS.
 
 `install.sh` writes the launchers itself, so a prebuilt install needs nothing further.
@@ -93,12 +93,12 @@ to show without one, asks which repo to open with the folder picker of the OS.
 ## Usage
 
 ```bash
-moontasks    # the sprint board
-moonreview   # review local changes
-moonshell    # a shell in the folder
+moon tasks    # the sprint board
+moon review   # review local changes
+moon shell    # a shell in the folder
 ```
 
-Run any of them inside a git repository. `moontasks` and `moonshell` run just as well in a
+Run any of them inside a git repository. `moon tasks` and `moon shell` run just as well in a
 folder that is no repository: the review is the part that needs one. The other tools remain
 one command-palette action away (`⌘⇧P`).
 
@@ -118,16 +118,16 @@ complete board behavior and controls.
 Pass two paths to compare arbitrary files in a read-only review:
 
 ```bash
-moonreview a.txt b.txt
+moon review a.txt b.txt
 ```
 
 Every review target opens the same window:
 
 ```bash
-moonreview .              # only the current directory
-moonreview src/main.rs    # only that file or directory
-moonreview 4542abe        # one commit, read only
-moonreview diff dev       # against a git target, read only
+moon review .              # only the current directory
+moon review src/main.rs    # only that file or directory
+moon review 4542abe        # one commit, read only
+moon review diff dev       # against a git target, read only
 ```
 
 Inside the window:
@@ -150,9 +150,9 @@ Clicking a diff line selects it and opens a comment on it; shift-click extends t
 comment is anchored to exactly those lines, and `stage lines` stages exactly those lines.
 
 On macOS the **View** menu carries the theme switch and the command palette, and the **Window**
-menu opens another window of any of the three programs - `New Moontasks Window` from the
+menu opens another window on any of the three - `New Moontasks Window` from the
 review, `New Moonreview Window` from the board. A new window opens on its launch screen, so it
-is a new place to work rather than a second view of this one; `moontasks --pick` is the same
+is a new place to work rather than a second view of this one; `moon tasks --pick` is the same
 thing from a shell. Everywhere else those live in the command palette, which also has them on
 macOS.
 
@@ -162,13 +162,13 @@ Run the server where the repo is:
 
 ```bash
 # on the remote machine
-MOONREVIEW_HOST=0.0.0.0 moonreview serve
+MOONREVIEW_HOST=0.0.0.0 moon serve
 ```
 
 Then point a local window at it:
 
 ```bash
-moonreview --remote dev-box --repo /home/you/project
+moon review --remote dev-box --repo /home/you/project
 ```
 
 `--remote` takes `host`, `host:port`, or a full URL, and defaults to port 42000. Leave
@@ -182,13 +182,13 @@ The server binds `127.0.0.1` unless `MOONREVIEW_HOST` says otherwise, and it has
 authentication, so prefer an SSH tunnel over exposing the port:
 
 ```bash
-ssh -N -L 42000:127.0.0.1:42000 dev-box   # then: moonreview --remote 127.0.0.1
+ssh -N -L 42000:127.0.0.1:42000 dev-box   # then: moon review --remote 127.0.0.1
 ```
 
 ## Stopping the server
 
 Closing the window ends the process, server included. A standalone `serve` stops with
-`pkill moonreview`, and times out on its own after 30 minutes of inactivity.
+`pkill moon`, and times out on its own after 30 minutes of inactivity.
 
 ## Crates
 
@@ -220,7 +220,7 @@ pkill moon;  cargo install --locked --path .
 To install launchers:
 
 ```bash
-cargo install --locked --path .; moonreview install-launchers
+cargo install --locked --path .; moon install-launchers
 ```
 
 On mac you will need to drag applications from the Applications folder to your menu bar.

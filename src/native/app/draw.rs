@@ -49,7 +49,7 @@ impl App {
                         .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
                 );
                 ui.add_space(LOGO_GAP);
-                ui.label(RichText::new(frame.program()).size(22.0).strong());
+                ui.label(RichText::new(frame.command()).size(22.0).strong());
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("connected to {}", self.model.connection))
@@ -139,7 +139,7 @@ impl App {
                         .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
                 );
                 ui.add_space(LOGO_GAP);
-                ui.label(RichText::new(frame.program()).size(20.0).strong());
+                ui.label(RichText::new(frame.command()).size(20.0).strong());
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.add_space((ui.available_width() - 140.0).max(0.0) / 2.0);
@@ -332,6 +332,7 @@ impl App {
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
+        self.follow_shell_asks(ctx);
         if std::mem::take(&mut self.model.project_pending) {
             self.load_project();
         }
@@ -408,7 +409,7 @@ const RECENT_COLUMN_WIDTH: f32 = 260.0;
 /// The home directory is written as `~`, which is how a path is read at a glance.
 pub(crate) fn window_title(frame: crate::cli::Frame, project: Option<&str>) -> String {
     let Some(project) = project else {
-        return format!("🌚 {}", frame.program());
+        return format!("🌚 {}", frame.command());
     };
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -423,7 +424,7 @@ pub(crate) fn window_title(frame: crate::cli::Frame, project: Option<&str>) -> S
         })
         .unwrap_or_else(|| project.to_string());
 
-    format!("🌚 {} | {shortened}", frame.program())
+    format!("🌚 {} | {shortened}", frame.command())
 }
 
 /// The projects opened before, under the picker on the launch screen. Clicking one opens it,

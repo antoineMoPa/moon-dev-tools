@@ -8,11 +8,9 @@ cd "$ROOT_DIR"
 TAG="v$(bash "$ROOT_DIR/scripts/_internal/version.sh")"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
-# The three executables Cargo builds. install.sh expects every one of them in the archive.
+# The executable Cargo builds. install.sh expects it in the archive.
 PROGRAMS=(
-    "moonreview"
-    "moontasks"
-    "moonshell"
+    "moon"
 )
 LINUX_TARGET_TRIPLES=(
     "x86_64-unknown-linux-gnu"

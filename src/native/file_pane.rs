@@ -303,6 +303,24 @@ impl App {
         ));
     }
 
+    /// Open a file somebody asked for from outside the window - `moon open <file>` typed in
+    /// a shell. A file already in a tab is brought forward rather than left where it is: the
+    /// ask was made to look at the file, and it may well be behind another tab.
+    pub(crate) fn open_file_pane_asked_for(
+        &mut self,
+        session_id: &str,
+        file_path: &str,
+        at: Option<crate::native::panes::OpenAt>,
+    ) {
+        self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
+            crate::native::panes::OpenPaneRequest::File {
+                session_id: session_id.to_string(),
+                file_path: file_path.to_string(),
+                at,
+            },
+        ));
+    }
+
     /// Open a file of a task's beside the board: in the frame the other file tabs are in, else
     /// the column the rest of that task's tabs are in, else a new column down the right - the
     /// way a shell opens. It lands in the text editor rather than the rendered page, because a
@@ -381,12 +399,10 @@ impl App {
         if self.model.file_editors.contains_key(&pane_id) {
             return;
         }
-        self.model
-            .file_editors
-            .insert(
-                pane_id,
-                FileEditor::loading(file_path.to_string(), self.asks_language_servers),
-            );
+        self.model.file_editors.insert(
+            pane_id,
+            FileEditor::loading(file_path.to_string(), self.asks_language_servers),
+        );
         self.load_file(pane_id, session_id, file_path);
     }
 

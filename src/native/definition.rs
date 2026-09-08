@@ -95,10 +95,7 @@ enum Landing {
     /// Nowhere, and why not: the three ways a lookup ends without a place to go.
     Nowhere(WhyNot),
     /// The place to open, and how many others the server named beside it.
-    Place {
-        place: LspLocation,
-        others: usize,
-    },
+    Place { place: LspLocation, others: usize },
 }
 
 /// Why a lookup has nowhere to send the window. Each of these is said, and each says something

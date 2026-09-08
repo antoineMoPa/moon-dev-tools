@@ -15,8 +15,9 @@ use crate::{
     agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
-        FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation, LspPosition, LspStatus, LspWork,
-        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation, LspPosition, LspStatus,
+        LspWork, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},

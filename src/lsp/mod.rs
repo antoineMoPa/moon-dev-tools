@@ -204,11 +204,7 @@ pub(crate) fn definition(
 /// reply and has been sitting on it ever since, so this is a read rather than a question
 /// anything waits on. Empty for a file nothing serves and for a server that has not started
 /// yet - the window asks once its file is `Ready`, which is when there is a reply to read.
-pub(crate) fn trigger_characters(
-    state: &AppState,
-    session_id: &str,
-    file_path: &str,
-) -> Vec<char> {
+pub(crate) fn trigger_characters(state: &AppState, session_id: &str, file_path: &str) -> Vec<char> {
     state.lsp.trigger_characters(session_id, file_path)
 }
 

@@ -477,13 +477,7 @@ pub(super) fn jump_to_definition(
             .map(|(byte, _)| byte)
             .unwrap_or(body.len()),
     };
-    crate::native::definition::look_up_in_review(
-        app,
-        session_id,
-        file_path.to_string(),
-        at,
-        name,
-    );
+    crate::native::definition::look_up_in_review(app, session_id, file_path.to_string(), at, name);
     true
 }
 

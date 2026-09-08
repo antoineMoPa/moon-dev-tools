@@ -28,7 +28,7 @@ pub(crate) fn logo_png(frame: Frame, size: usize) -> &'static [u8] {
         (Frame::Shell, 128) => include_bytes!("../../assets/logos/moonshell-128.png"),
         (Frame::Shell, 256) => include_bytes!("../../assets/logos/moonshell-256.png"),
         (Frame::Shell, 512) => include_bytes!("../../assets/logos/moonshell-512.png"),
-        (frame, size) => panic!("no {size}px logo is rendered for {}", frame.program()),
+        (frame, size) => panic!("no {size}px logo is rendered for {}", frame.slug()),
     }
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn logo_png(frame: Frame, size: usize) -> &'static [u8] {
 /// it on every frame after.
 pub(crate) fn logo_image_source(frame: Frame, size: usize) -> egui::ImageSource<'static> {
     egui::ImageSource::Bytes {
-        uri: format!("bytes://logo-{}-{size}.png", frame.program()).into(),
+        uri: format!("bytes://logo-{}-{size}.png", frame.slug()).into(),
         bytes: egui::load::Bytes::Static(logo_png(frame, size)),
     }
 }
@@ -76,7 +76,7 @@ mod tests {
                     (image.width() as usize, image.height() as usize),
                     (size, size),
                     "{} at {size}px",
-                    frame.program()
+                    frame.slug()
                 );
             }
         }

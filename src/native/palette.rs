@@ -189,7 +189,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             // `crate::project::RESTART_RUN_COMMAND`.
             ProjectCommand::Run if restarts => format!(
                 "Start {} again on this repo, and close this window",
-                app.frame().program()
+                app.frame().command()
             ),
             ProjectCommand::BuildAndRun if restarts => {
                 format!("Run {line} in a shell, and restart this window when it ends")
@@ -280,15 +280,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         });
     }
 
-    // Another window of each program that is installed beside this one, opening on its
-    // launch screen. The board, the review and a shell are three windows rather than three
-    // panes when that is how you want them; on macOS these are in the Window menu as well.
+    // Another window of each frame, opening on its launch screen. The board, the review and
+    // a shell are three windows rather than three panes when that is how you want them; on
+    // macOS these are in the Window menu as well.
     for frame in crate::cli::NEW_WINDOW_FRAMES {
-        if crate::native::programs::executable_for(*frame).is_none() {
-            continue;
-        }
         commands.push(Command {
-            title: format!("new {} window", frame.program()),
+            title: format!("new {} window", frame.command()),
             description: format!(
                 "Open another window on {}, asking which repo",
                 frame.opens()
@@ -307,7 +304,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         title: "restart window".to_string(),
         description: format!(
             "Start {} again on this repo, and close this window",
-            app.frame().program()
+            app.frame().command()
         ),
         action: CommandAction::RestartWindow,
         shortcut: None,
@@ -321,7 +318,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             title: "install desktop launchers".to_string(),
             // Where they land is said by the toast the install leaves, rather than here: it
             // depends on what this account can write.
-            description: "Give each installed executable an entry the OS offers".to_string(),
+            description: "Give each of the three windows an entry the OS offers".to_string(),
             action: CommandAction::InstallLaunchers,
             shortcut: None,
         });

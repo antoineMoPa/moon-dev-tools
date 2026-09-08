@@ -17,9 +17,7 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{
-    Fixture, app_for, click_at, seeded_fixture, settle,
-};
+use super::{Fixture, app_for, click_at, seeded_fixture, settle};
 
 /// cmd+c over the diff copies what is selected - and copies the code, without the `+` that
 /// says it was added. A clicked line is selected whole, so that is what arrives.
@@ -446,7 +444,11 @@ pub(super) fn row_at(
 }
 
 /// The added row of the one hunk, and where in the window it was drawn.
-pub(super) fn added_row_at(harness: &egui_kittest::Harness<'_>, hunk_id: &str, patch: &str) -> egui::Pos2 {
+pub(super) fn added_row_at(
+    harness: &egui_kittest::Harness<'_>,
+    hunk_id: &str,
+    patch: &str,
+) -> egui::Pos2 {
     row_at(
         harness,
         hunk_id,

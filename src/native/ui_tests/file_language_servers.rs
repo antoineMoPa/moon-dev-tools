@@ -388,9 +388,15 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
     // the backend to this pane. Asked once the server is ready, so it lands a frame or two
     // after the indexing does.
     let carried = wait(&mut harness, ANSWERING_TAKES_AT_MOST, || {
-        !triggers.lock().expect("the triggers are not shared").is_empty()
+        !triggers
+            .lock()
+            .expect("the triggers are not shared")
+            .is_empty()
     });
-    let carried_triggers = triggers.lock().expect("the triggers are not shared").clone();
+    let carried_triggers = triggers
+        .lock()
+        .expect("the triggers are not shared")
+        .clone();
     println!("the pane was told {carried_triggers:?} open a list");
     assert!(
         carried,

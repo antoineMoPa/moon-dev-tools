@@ -535,6 +535,11 @@ impl TerminalRegistry {
         if let Some(tty_name) = pty.master.tty_name() {
             command.env("GPG_TTY", tty_name);
         }
+        // Which window a `moon open` typed in this shell should land in: this process's, when
+        // this process is a window. A `serve` on another machine runs shells too and is no
+        // window, so what this names is checked against the windows written down before it is
+        // believed - see `crate::instances`.
+        command.env(crate::instances::WINDOW_ENV, std::process::id().to_string());
         // The agent is started by name, so it has to be looked up on the PATH the user's shell
         // has rather than the one a desktop launcher hands this process.
         command.env("PATH", crate::shell_path::installed_tools_path());

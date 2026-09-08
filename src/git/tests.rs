@@ -253,11 +253,7 @@ fn reading_outside_the_repository_is_refused() {
 
     for path in [
         "../outside.txt",
-        temp.path
-            .join("outside.txt")
-            .display()
-            .to_string()
-            .as_str(),
+        temp.path.join("outside.txt").display().to_string().as_str(),
     ] {
         let refused = super::read_repo_file(&repo_root, path);
         assert_eq!(

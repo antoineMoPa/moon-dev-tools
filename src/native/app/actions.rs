@@ -424,12 +424,13 @@ impl App {
     /// so there is nothing to open a second window out of but a second run of the executable.
     /// It is left to run on its own; closing this one does not take it with it.
     fn open_new_window(&mut self, frame: crate::cli::Frame) {
-        let Some(executable) = crate::native::programs::executable_for(frame) else {
-            self.model.error(format!(
-                "{} is not installed beside this one",
-                frame.program()
-            ));
-            return;
+        let executable = match crate::native::programs::this_executable() {
+            Ok(executable) => executable,
+            Err(error) => {
+                self.model
+                    .error(format!("could not find this window's own program: {error}"));
+                return;
+            }
         };
 
         if let Err(error) = self.start_window(frame, &executable, Opens::LaunchScreen) {
@@ -448,12 +449,13 @@ impl App {
     /// closed on a failed spawn would leave the user with nothing.
     pub(crate) fn restart_window(&mut self, ctx: &egui::Context) {
         let frame = self.frame;
-        let Some(executable) = crate::native::programs::executable_for(frame) else {
-            self.model.error(format!(
-                "{} is no longer installed beside this window",
-                frame.program()
-            ));
-            return;
+        let executable = match crate::native::programs::this_executable() {
+            Ok(executable) => executable,
+            Err(error) => {
+                self.model
+                    .error(format!("could not find this window's own program: {error}"));
+                return;
+            }
         };
 
         // Without a project the window is on its launch screen, and that is where it comes
@@ -494,6 +496,7 @@ impl App {
         crate::native::programs::window_command(
             executable,
             launcher.as_deref(),
+            frame,
             target.as_deref(),
             opens,
         )

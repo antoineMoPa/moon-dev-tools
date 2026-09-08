@@ -17,9 +17,9 @@ use egui_moon_code_ide::LanguageSource;
 use crate::{
     api::{LspPosition, LspStatus, LspTriggersPayload, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
-    native::language_source::SessionLanguages,
     git::run_git_no_output,
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
+    native::language_source::SessionLanguages,
 };
 
 struct ServedRepo {

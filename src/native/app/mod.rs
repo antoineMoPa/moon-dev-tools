@@ -6,7 +6,7 @@ mod draw;
 pub(crate) use draw::window_title;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -163,6 +163,16 @@ pub(crate) struct App {
     window_title: String,
     /// Until when a quit that was warned about goes through unasked.
     quit_armed_until: Option<Instant>,
+    /// The socket a `moon open` typed in a shell reaches this window on, and the record
+    /// saying which project it is on. `None` in a ui test, which listens for nothing - see
+    /// [`App::listen_for_shell_asks`].
+    pub(crate) shell_asks: Option<crate::instances::window::ShellAsks>,
+    /// The project that record was last written with, so it is rewritten when the window
+    /// opens another project and not on every frame.
+    pub(crate) project_asks_reach_this_window_on: Option<std::path::PathBuf>,
+    /// Files shells have asked for, waiting their turn: opening a tab goes through the one
+    /// deferred slot every other pane change does, so they are opened one to a frame.
+    pub(crate) asked_files: VecDeque<crate::instances::window::OpenFileAsked>,
     /// What `~/.moonreview/settings.json` said, and what it will be written back as.
     settings: crate::settings::Settings,
 }
@@ -288,6 +298,10 @@ impl App {
             // What `run` opened the window with, so the first frame has nothing to say.
             window_title: window_title(launch.frame, None),
             quit_armed_until: None,
+            // Started by the window itself - see the field.
+            shell_asks: None,
+            project_asks_reach_this_window_on: None,
+            asked_files: VecDeque::new(),
             settings,
         };
 

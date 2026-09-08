@@ -21,8 +21,8 @@ use crate::{
         FileContentPayload, FileMatchesPayload, LspCompletion, LspCompletionsPayload,
         LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest,
         LspStatus, LspStatusPayload, LspTriggersPayload, LspWork, LspWorkPayload,
-        OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleHubPayload, TerminalNameRequest, TerminalView,
+        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -651,7 +651,8 @@ impl Backend for RemoteBackend {
     }
 
     fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>> {
-        let payload: LspWorkPayload = self.get(&format!("/api/session/{session_id}/lsp/working"))?;
+        let payload: LspWorkPayload =
+            self.get(&format!("/api/session/{session_id}/lsp/working"))?;
         Ok(payload.working)
     }
 

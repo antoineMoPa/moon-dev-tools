@@ -3,23 +3,16 @@ name = "moon-review"
 version = "0.20.0"
 edition = "2024"
 
-# One library, three executables. They differ only in what the window opens on, so the whole
-# of each is a call into the library with a different frame — see `src/bin`.
+# One library, one executable. `moon` opens a window on a review, the task board or a shell —
+# the same window, on three different things — and reaches the windows that are already open;
+# `src/bin/moon.rs` is a single call into the library.
 [lib]
 name = "moonreview"
 path = "src/lib.rs"
 
 [[bin]]
-name = "moonreview"
-path = "src/bin/moonreview.rs"
-
-[[bin]]
-name = "moontasks"
-path = "src/bin/moontasks.rs"
-
-[[bin]]
-name = "moonshell"
-path = "src/bin/moonshell.rs"
+name = "moon"
+path = "src/bin/moon.rs"
 
 [dependencies]
 anyhow = "1"

@@ -44,7 +44,6 @@ mod platform {
     use super::MenuAction;
     use crate::{
         cli::{Frame, NEW_WINDOW_FRAMES},
-        native::programs,
         project::ProjectCommand,
     };
 
@@ -175,16 +174,14 @@ mod platform {
                 Some(Accelerator::new(Some(Modifiers::META), Code::KeyW)),
             );
 
-            // A window of each program, so moonshell is a menu item away from the board rather
+            // A window of each frame, so a shell is a menu item away from the board rather
             // than a trip to the terminal. Each opens on its launch screen, asking which repo
-            // to work in. Only the ones installed beside this executable are offered: an item
-            // that could not open anything would be a broken promise.
+            // to work in.
             //
             // ⌘N opens another window of this same program, which is what the chord means in
             // every other application; the other two are named and unbound.
             let new_windows: Vec<(MenuItem, Frame)> = NEW_WINDOW_FRAMES
                 .iter()
-                .filter(|offered| programs::executable_for(**offered).is_some())
                 .map(|offered| {
                     let accelerator = (*offered == frame)
                         .then(|| Accelerator::new(Some(Modifiers::META), Code::KeyN));

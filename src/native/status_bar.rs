@@ -179,7 +179,10 @@ impl App {
             .filter_map(|(pane_id, pane)| match pane {
                 Pane::File { session_id, .. } => {
                     let editor = self.model.file_editors.get(&pane_id)?;
-                    editor.server_heard().has_a_server().then(|| session_id.clone())
+                    editor
+                        .server_heard()
+                        .has_a_server()
+                        .then(|| session_id.clone())
                 }
                 _ => None,
             })

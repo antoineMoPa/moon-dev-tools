@@ -18,6 +18,7 @@ mod files;
 mod finding;
 mod launch;
 mod layout;
+mod open_from_shell;
 mod palette;
 mod project;
 mod shell_input;
