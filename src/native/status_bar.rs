@@ -9,14 +9,12 @@
 //! the rest of the time it says the last thing the window said - and a click on it opens the
 //! whole log, which is [`crate::native::messages`].
 //!
-//! **The bar is there from the first thing the window has to say, and then it stays.** It is
-//! hidden only in the one state where it would be a blank strip over a window that has said
-//! nothing and is waiting for nothing - the first seconds of a run. The moment there is
-//! either a message or a server working it appears, and it never goes away again, because
-//! the log it is reading from never empties. So the workspace is reflowed at most once in
-//! the life of a window, early, rather than jumping up and down under the pointer every time
-//! a server starts indexing and finishes - which is the thing that would make a bar that
-//! comes and goes worse than no bar at all.
+//! **The bar is there from the first frame, and it stays.** In the one state where it has
+//! nothing to read out - a window that has said nothing and is waiting for nothing, which is
+//! the first seconds of a run - it is an empty strip rather than no strip, and a click on it
+//! still opens the log. The workspace is laid out once, in the height that is left below the
+//! bar, and it is never reflowed again: nothing jumps under the pointer when the window says
+//! its first thing or when a server starts indexing and finishes.
 //!
 //! It takes no keyboard: it is a strip that is read and clicked, and the editor or the shell
 //! that has the keyboard keeps it.
@@ -68,9 +66,7 @@ impl App {
     /// is taken off the bottom of the window rather than out of a pane's scroll.
     pub(crate) fn draw_status_bar(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
-        let Some(line) = self.status_line() else {
-            return;
-        };
+        let line = self.status_line();
 
         let clicked = egui::Panel::bottom("moonreview-status-bar")
             .exact_size(BAR_HEIGHT)
@@ -84,7 +80,7 @@ impl App {
                     .stroke(Stroke::NONE)
                     .inner_margin(egui::Margin::symmetric(10, 3)),
             )
-            .show(ui, |ui| draw_line(ui, &line, &palette))
+            .show(ui, |ui| draw_line(ui, line.as_ref(), &palette))
             .inner;
 
         if clicked {
@@ -96,8 +92,8 @@ impl App {
         }
     }
 
-    /// What the bar has to say this frame, or `None` for a window that has said nothing and
-    /// is waiting for nothing.
+    /// What the bar has to read out this frame, or `None` for a window that has said nothing
+    /// and is waiting for nothing - which is an empty strip, not an absent one.
     fn status_line(&self) -> Option<StatusLine> {
         if let Some(work) = self.language_server_work() {
             return Some(StatusLine::Working {
@@ -222,8 +218,9 @@ enum StatusLine {
     },
 }
 
-/// Draw the strip and answer whether it was clicked.
-fn draw_line(ui: &mut Ui, line: &StatusLine, palette: &Palette) -> bool {
+/// Draw the strip and answer whether it was clicked. A `line` of `None` is a strip with
+/// nothing on it, which is still there to be hovered and clicked.
+fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> bool {
     let hovered = ui.rect_contains_pointer(ui.max_rect());
     let response = ui.interact(
         ui.max_rect(),
@@ -241,12 +238,13 @@ fn draw_line(ui: &mut Ui, line: &StatusLine, palette: &Palette) -> bool {
     // a separation.
 
     ui.horizontal_centered(|ui| match line {
-        StatusLine::Working { work, others } => draw_working(ui, work, *others, palette),
-        StatusLine::Said {
+        None => {}
+        Some(StatusLine::Working { work, others }) => draw_working(ui, work, *others, palette),
+        Some(StatusLine::Said {
             text,
             failed,
             at_unix,
-        } => {
+        }) => {
             let ink = if *failed { palette.warn } else { palette.muted };
             ui.label(
                 RichText::new(crate::native::messages::clock_label(*at_unix))

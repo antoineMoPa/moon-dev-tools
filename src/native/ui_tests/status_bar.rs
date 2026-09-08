@@ -179,3 +179,60 @@ fn a_message_posted_twice_is_one_toast_and_two_lines_in_the_log() {
         "both should be recorded as failures"
     );
 }
+
+/// The reason the strip is drawn even with nothing on it: a bar that appeared with the
+/// window's first message would take 24 pixels off the workspace the moment it did, moving
+/// every line of the diff up under the pointer. So a window that has said nothing still has
+/// the strip, and a click on it still opens the log - which reads "nothing has been said
+/// yet".
+#[test]
+fn a_window_that_has_said_nothing_still_has_the_strip_and_opens_the_log_from_it() {
+    // Arrange: a review loaded and no message posted, which is the first seconds of a run.
+    let fixture = seeded_fixture("status-bar-quiet");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let log_open = Arc::new(AtomicBool::new(false));
+    let log_open_in_ui = Arc::clone(&log_open);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+
+    let mut harness = Harness::builder()
+        .with_size(WINDOW)
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| {
+            app.draw(ui);
+            assert!(
+                app.model.messages.is_empty(),
+                "this test is about a window that has said nothing"
+            );
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready),
+                Ordering::Relaxed,
+            );
+            log_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Messages)
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.load(Ordering::Relaxed), "the review never loaded");
+    harness.run_steps(3);
+
+    // Act: a click along the bottom of the window, where the empty strip is.
+    click_at(&mut harness, egui::pos2(WINDOW.x / 2.0, WINDOW.y - 12.0));
+    harness.run_steps(3);
+
+    // Assert
+    assert!(
+        log_open.load(Ordering::Relaxed),
+        "the empty strip should still open the message log"
+    );
+    harness.get_by_label_contains("nothing has been said yet");
+}
