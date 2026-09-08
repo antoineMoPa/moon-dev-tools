@@ -5,6 +5,7 @@
 //! actually looks like - a diff that fails to draw, or an empty pane, shows up here.
 
 mod board;
+mod board_card_menu;
 mod board_cards;
 mod board_drag;
 mod board_selection;
@@ -283,6 +284,28 @@ fn click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
         egui::Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    harness.run_steps(2);
+}
+
+/// Press and release the secondary button at a position, then let the UI settle - the click
+/// a context menu is opened with.
+fn right_click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(at),
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
             pressed: false,
             modifiers: egui::Modifiers::NONE,
         },

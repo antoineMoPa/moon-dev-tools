@@ -21,6 +21,7 @@ on it in the repo.
 | `+` under a column's last card | the same, for the bottom of it |
 | `+` at the right-hand end | add a column |
 | `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
+| `right click` a card | the card's own menu: the task folder's path onto the clipboard, and a shell standing in that folder - which is where its notes and brief are, and where `[start]`'s shell is not, since that one comes up in the repo where the work is done |
 | a running resource | click its name to bring its terminal back on screen |
 | a card drawn in the accent color | a marked card: one you clicked, or the task whose tab was last in front, which is the same thing said twice |
 | a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |

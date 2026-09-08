@@ -7,7 +7,7 @@ use egui::Ui;
 
 use crate::{
     api::AgentKind,
-    moontasks::{StartResourceRequest, TaskResourceKind, TaskView},
+    moontasks::{StartFolder, StartResourceRequest, TaskResourceKind, TaskView},
     native::{
         app::App,
         board::{BoardAction, agent_label, available_agents, gesture::Controls},
@@ -58,6 +58,7 @@ pub(crate) fn draw_button(
                         StartResourceRequest {
                             kind: TaskResourceKind::Shell,
                             agent: AgentKind::None,
+                            opens_in: StartFolder::Repo,
                         },
                     ));
                     ui.close();
@@ -82,6 +83,7 @@ pub(crate) fn draw_button(
                             StartResourceRequest {
                                 kind: TaskResourceKind::Agent,
                                 agent,
+                                opens_in: StartFolder::Repo,
                             },
                         ));
                         ui.close();

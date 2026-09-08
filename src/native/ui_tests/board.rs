@@ -195,6 +195,21 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     harness.run_steps(3);
     harness.snapshot("moontasks-start-menu");
 
+    // The card's own menu, which a right click opens wherever on the card it lands: the task
+    // folder, said and stood in. Opened at the same card, a little in from its corner, so the
+    // menu stands over the board rather than off the side of it.
+    let on_the_card = handle.center();
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: on_the_card,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    harness.run_steps(3);
+    harness.snapshot("moontasks-card-menu");
+
     // Off the cards again, so the pictures below are of a board nothing is pointed at, with
     // the menu shut behind them.
     harness.input_mut().events.push(egui::Event::Key {

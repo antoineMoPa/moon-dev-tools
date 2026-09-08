@@ -6,6 +6,7 @@
 
 pub(crate) mod actions;
 pub(crate) mod attach;
+pub(crate) mod card_menu;
 pub(crate) mod cards;
 pub(crate) mod columns;
 pub(crate) mod filter;
@@ -59,6 +60,9 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
         .show(ui, |ui| draw_board(app, ui, &palette, &mut actions));
 
     attach::draw(app, ui.ctx(), &palette, &mut actions);
+    // Over the whole board rather than inside the card it belongs to: the cards are laid out
+    // and moved every frame, and the menu stands where the click was made.
+    card_menu::draw(app, ui.ctx(), &mut actions);
     settle_gesture(app, ui, &mut actions);
 
     for action in actions {

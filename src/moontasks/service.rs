@@ -11,8 +11,8 @@ use crate::{
     agent::agent_is_available,
     api::{AgentKind, AppState},
     moontasks::{
-        AttachResourceRequest, CreateTaskRequest, StartResourceRequest, TaskResourceView, TaskView,
-        agent_launch,
+        AttachResourceRequest, CreateTaskRequest, StartFolder, StartResourceRequest,
+        TaskResourceView, TaskView, agent_launch,
         store::{
             self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource,
             TaskResourceKind,
@@ -514,9 +514,13 @@ pub(crate) fn start_resource(
     let program = TerminalProgram::of_agent(Some(agent));
     let name =
         crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
+    let cwd = match request.opens_in {
+        StartFolder::Repo => repo_path.clone(),
+        StartFolder::TaskFolder => store::task_dir(&repo_path, task_id)?,
+    };
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd,
         program,
         args,
         env,

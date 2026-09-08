@@ -14,7 +14,7 @@
 
 use egui::{Modifiers, Pos2};
 
-use crate::native::model::BoardState;
+use crate::native::model::{BoardState, CardMenu};
 
 /// How far the pointer carries from where it went down before the press is a card being picked
 /// up rather than a click on it. Further than `egui`'s own few points: a careful click is a
@@ -124,16 +124,6 @@ pub(crate) fn claim(
     title: egui::Rect,
     on_a_button: bool,
 ) {
-    if board.press.is_some() {
-        return;
-    }
-    let origin = ui.input(|input| {
-        input
-            .pointer
-            .any_pressed()
-            .then(|| input.pointer.interact_pos())
-            .flatten()
-    });
     // Only where the press can be seen to land: a card scrolled out of sight, or laid out past
     // the board's own edge, still has a place, and a press over there is not that card being
     // pressed. See [`BoardState::showing`].
@@ -141,17 +131,42 @@ pub(crate) fn claim(
         return;
     };
     let showing = within.intersect(board_rect).intersect(ui.clip_rect());
-    let Some(origin) = origin.filter(|at| showing.contains(*at)) else {
-        return;
+    let (primary, secondary) = ui.input(|input| {
+        let at = input.pointer.interact_pos();
+        let went_down = |button| input.pointer.button_pressed(button).then_some(at).flatten();
+        (
+            went_down(egui::PointerButton::Primary),
+            went_down(egui::PointerButton::Secondary),
+        )
+    });
+    // Where this press can be taken at all: inside what is showing of the card, and not
+    // through a menu or a modal standing over the board - those are drawn in their own layer,
+    // and a press that lands on one belongs to it.
+    let landed_here = |at: Option<Pos2>| {
+        at.filter(|at| showing.contains(*at))
+            // Read outside the input, which holds a lock the layers are behind.
+            .filter(|at| {
+                ui.ctx()
+                    .layer_id_at(*at)
+                    .is_none_or(|layer| layer.order <= egui::Order::Middle)
+            })
     };
-    // Read outside the input, which holds a lock the layers are behind.
-    let over_a_menu = ui
-        .ctx()
-        .layer_id_at(origin)
-        .is_some_and(|layer| layer.order > egui::Order::Middle);
-    if over_a_menu {
+
+    // A right click on a card opens the card's own menu, and does nothing else: it neither
+    // marks the card nor picks it up, so the menu is read against a board that has not moved.
+    if let (Some(task_id), Some(at)) = (on.as_deref(), landed_here(secondary)) {
+        board.card_menu = Some(CardMenu {
+            task_id: task_id.to_string(),
+            at,
+        });
+    }
+
+    if board.press.is_some() {
         return;
     }
+    let Some(origin) = landed_here(primary) else {
+        return;
+    };
 
     board.press = Some(Press {
         on,

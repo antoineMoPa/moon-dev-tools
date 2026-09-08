@@ -181,7 +181,7 @@ fn a_task_can_be_created_worked_in_and_moved_over_http() {
     let opened: serde_json::Value = served
         .client
         .post(format!("{tasks_url}/{task_id}/resources"))
-        .json(&serde_json::json!({ "kind": "shell", "agent": "none" }))
+        .json(&serde_json::json!({ "kind": "shell", "agent": "none", "opens_in": "repo" }))
         .send()
         .expect("failed to start a shell")
         .error_for_status()

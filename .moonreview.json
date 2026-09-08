@@ -1,4 +1,4 @@
 {
-  "build": "cargo install --locked --path . && moonreview install-launchers",
+  "build": "cargo install --locked --path . && moon install-launchers",
   "run": "@restart"
 }

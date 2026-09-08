@@ -97,6 +97,22 @@ pub(crate) struct StartResourceRequest {
     pub(crate) kind: TaskResourceKind,
     /// Which agent to run, for an agent resource.
     pub(crate) agent: AgentKind,
+    /// The folder it comes up in.
+    pub(crate) opens_in: StartFolder,
+}
+
+/// Which folder a task's shell or agent comes up in.
+///
+/// An agent is always started in the repo: the work is there, and the task folder is what the
+/// brief points it at. A shell is offered both, because a task folder is a place you read -
+/// the notes, the brief, whatever the agent left in it.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StartFolder {
+    /// The repo the board is over.
+    Repo,
+    /// The task's own folder under `.moontasks`.
+    TaskFolder,
 }
 
 /// A session an agent already has, being put on a task as a new resource.

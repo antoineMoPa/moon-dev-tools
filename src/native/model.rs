@@ -314,6 +314,17 @@ pub(crate) struct BoardState {
     pub(crate) pending_column_place: Option<PendingColumnPlace>,
     /// The attach-a-session modal, while it is open.
     pub(crate) attach_picker: Option<AttachPicker>,
+    /// The card a right click opened the task menu on, while that menu is up.
+    pub(crate) card_menu: Option<CardMenu>,
+}
+
+/// A card's own menu, and where on the board it was opened.
+///
+/// The position is kept rather than taken from the pointer each frame: the menu stands where
+/// the click was made, and the hand is free to travel down it.
+pub(crate) struct CardMenu {
+    pub(crate) task_id: String,
+    pub(crate) at: egui::Pos2,
 }
 
 /// The modal that attaches one of an agent's own sessions to a task.

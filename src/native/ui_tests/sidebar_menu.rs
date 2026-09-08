@@ -9,29 +9,8 @@ use std::sync::{
 
 use egui_kittest::{Harness, kittest::Queryable as _};
 
-use super::{app_for, click_like_a_hand, press_modifiers, seeded_fixture, settle};
+use super::{app_for, click_like_a_hand, press_modifiers, right_click_at, seeded_fixture, settle};
 use crate::native::theme::ThemeMode;
-
-/// Press and release the secondary button at a position, then let the UI settle.
-fn right_click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
-    harness.input_mut().events.extend([
-        egui::Event::PointerMoved(at),
-        egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Secondary,
-            pressed: true,
-            modifiers: egui::Modifiers::NONE,
-        },
-        egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Secondary,
-            pressed: false,
-            modifiers: egui::Modifiers::NONE,
-        },
-    ]);
-    harness.step();
-    harness.run_steps(2);
-}
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 struct Staging {
