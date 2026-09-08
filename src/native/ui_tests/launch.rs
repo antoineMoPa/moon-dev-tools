@@ -490,6 +490,57 @@ fn a_recent_project_opens_from_the_middle_of_its_row() {
     );
 }
 
+/// A shell and a board need no repo, so a window opened on a plain folder opens on that
+/// folder rather than stopping to ask for a repo that is not the point.
+#[test]
+fn the_shell_and_the_board_open_on_a_folder_that_is_no_repo() {
+    for (frame, expected) in [
+        (crate::cli::Frame::Shell, PaneKind::Terminal),
+        (crate::cli::Frame::Tasks, PaneKind::Tasks),
+    ] {
+        let enclosing = std::env::temp_dir().join(format!(
+            "moonreview-ui-{}-no-repo-{expected:?}",
+            std::process::id()
+        ));
+        let folder = enclosing.join("notes");
+        let _ = fs::remove_dir_all(&enclosing);
+        fs::create_dir_all(&folder).expect("failed to create the fixture folder");
+
+        let app = app_for_frame(&folder, ThemeMode::Dark, frame);
+        let opened = Arc::new(Mutex::new(None));
+        let opened_in_ui = Arc::clone(&opened);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .wgpu()
+            .build_ui({
+                let mut app = app;
+                move |ui| {
+                    app.draw(ui);
+                    *opened_in_ui.lock().expect("poisoned") =
+                        app.model.layout.active_pane().map(|(_, pane)| pane.kind());
+                }
+            });
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            harness.step();
+            if *opened.lock().expect("poisoned") == Some(expected) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let kind = *opened.lock().expect("poisoned");
+        let _ = fs::remove_dir_all(&enclosing);
+        assert_eq!(
+            kind,
+            Some(expected),
+            "{frame:?} on a folder with no repo in it should have opened on {expected:?}"
+        );
+    }
+}
+
 /// A line of code longer than the pane is wide. It has to stop at the edge of its hunk card:
 /// before this, a long line carried on over the card's border and across the pane beside it.
 #[test]

@@ -263,3 +263,31 @@ fn parse_rejects_unknown_options() {
 
     assert!(error.to_string().contains("unknown option: -ns"));
 }
+
+/// A window opens on the folder it was started in, whatever git makes of that folder.
+#[test]
+fn a_window_started_in_a_folder_opens_on_that_folder() {
+    let folder = std::env::temp_dir();
+
+    assert_eq!(
+        folder_when_there_is_no_repo(&folder).expect("expected the folder it was started in"),
+        folder
+    );
+}
+
+/// A window opened from a desktop launcher is started by the OS at the root of the
+/// filesystem. Nobody works there, so it opens where the last one did.
+#[test]
+fn a_window_started_at_the_root_of_the_filesystem_opens_on_the_last_project() {
+    let last_project = std::env::temp_dir();
+    let mut saved = crate::settings::Settings::default();
+    saved.remember_project(&last_project.display().to_string());
+    crate::settings::store(&saved).expect("expected the settings to be written");
+
+    let opened = folder_when_there_is_no_repo(Path::new("/")).expect("expected the last project");
+
+    if let Some(path) = crate::settings::path() {
+        let _ = std::fs::remove_file(path);
+    }
+    assert_eq!(opened, last_project);
+}

@@ -4,13 +4,16 @@ mod args;
 #[cfg(test)]
 mod tests;
 
-use std::{env, path::Path};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
-    git::{canonicalize_repo, find_repo_root},
+    git::{find_repo_root, project_root},
     server,
 };
 use args::{
@@ -25,7 +28,7 @@ pub enum Frame {
     Review,
     /// `moontasks`: the task board, and the agents working through it.
     Tasks,
-    /// `moonshell`: a shell in the repo.
+    /// `moonshell`: a shell in the folder, which need not be a repo.
     Shell,
 }
 
@@ -52,10 +55,18 @@ struct FrameProgram {
     /// The same, when the repo is on the far side of a remote connection and can only be
     /// typed out.
     asks_for_remote_repo: &'static str,
+    /// What the launch screen's folder picker button says. A review needs a repo and asks
+    /// for one; the other two are as much use in a folder git knows nothing about.
+    picker_button: &'static str,
     /// What the launch screen's button says.
     opens_button: &'static str,
     /// What the screen between that button and the open window says it is doing.
     opening: &'static str,
+    /// Whether this frame is any use in a folder git knows nothing about, which decides what
+    /// a window does when the folder it was started in is in no repo: a shell and a task
+    /// board just open on it, and a review - which is made entirely out of what git knows -
+    /// asks for a repo instead.
+    opens_without_a_repo: bool,
 }
 
 const FRAME_PROGRAMS: &[FrameProgram] = &[
@@ -66,28 +77,34 @@ const FRAME_PROGRAMS: &[FrameProgram] = &[
         opens: "a review of the repo",
         asks_for_repo: "Which repo to review:",
         asks_for_remote_repo: "Path of the repo to review, on that machine:",
+        picker_button: "Choose a repo…",
         opens_button: "Open review",
         opening: "opening the review…",
+        opens_without_a_repo: false,
     },
     FrameProgram {
         frame: Frame::Tasks,
         program: "moontasks",
         display_name: "Moontasks",
         opens: "the task board",
-        asks_for_repo: "Which repo to open the board of:",
-        asks_for_remote_repo: "Path of the repo to open the board of, on that machine:",
+        asks_for_repo: "Which folder to open the board of:",
+        asks_for_remote_repo: "Path of the folder to open the board of, on that machine:",
+        picker_button: "Choose a folder…",
         opens_button: "Open board",
         opening: "opening the board…",
+        opens_without_a_repo: true,
     },
     FrameProgram {
         frame: Frame::Shell,
         program: "moonshell",
         display_name: "Moonshell",
-        opens: "a shell in the repo",
-        asks_for_repo: "Which repo to open a shell in:",
-        asks_for_remote_repo: "Path of the repo to open a shell in, on that machine:",
+        opens: "a shell in the folder",
+        asks_for_repo: "Which folder to open a shell in:",
+        asks_for_remote_repo: "Path of the folder to open a shell in, on that machine:",
+        picker_button: "Choose a folder…",
         opens_button: "Open shell",
         opening: "opening the shell…",
+        opens_without_a_repo: true,
     },
 ];
 
@@ -118,6 +135,11 @@ impl Frame {
         }
     }
 
+    /// What the launch screen's folder picker button says.
+    pub(crate) fn picker_button(self) -> &'static str {
+        self.entry().picker_button
+    }
+
     /// What the launch screen's button says.
     pub(crate) fn opens_button(self) -> &'static str {
         self.entry().opens_button
@@ -126,6 +148,11 @@ impl Frame {
     /// What the screen between that button and the open window says it is doing.
     pub(crate) fn opening(self) -> &'static str {
         self.entry().opening
+    }
+
+    /// Whether this frame is any use in a folder git knows nothing about.
+    fn opens_without_a_repo(self) -> bool {
+        self.entry().opens_without_a_repo
     }
 
     fn entry(self) -> &'static FrameProgram {
@@ -163,7 +190,7 @@ pub(crate) fn run(frame: Frame) -> Result<()> {
         }
         CliCommand::InstallLaunchers => install_launchers(),
         CliCommand::PickProject => pick_project(frame),
-        CliCommand::OpenRepo(path) => open_repo(&path, frame),
+        CliCommand::OpenRepo(path) => open_repo(Path::new(&path), frame),
         CliCommand::Review { target, source } => launch_review(target, source, frame),
     }
 }
@@ -192,12 +219,12 @@ fn pick_project(frame: Frame) -> Result<()> {
     crate::native::run(crate::native::launch_prompt(frame)?)
 }
 
-/// The window on a named repo rather than on the one the shell it was started from is in.
+/// The window on a named folder rather than on the one the shell it was started from is in.
 ///
-/// It opens on the whole working tree: a path names the repo here, not a part of it to
+/// It opens on the whole working tree: a path names the folder here, not a part of it to
 /// narrow the review to.
-fn open_repo(path: &str, frame: Frame) -> Result<()> {
-    let repo_path = canonicalize_repo(Path::new(path))?;
+fn open_repo(path: &Path, frame: Frame) -> Result<()> {
+    let repo_path = project_root(path)?;
     let launch = crate::native::launch_local(
         OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
@@ -207,6 +234,29 @@ fn open_repo(path: &str, frame: Frame) -> Result<()> {
         frame,
     )?;
     crate::native::run(launch)
+}
+
+/// Where a window opens when nothing named a folder and the directory it was started in is
+/// in no repo: that directory, when it is one somebody could be working in.
+///
+/// A window opened from a desktop launcher is started by the OS rather than by a shell, and
+/// macOS starts it at the root of the filesystem. Nobody works there, so that one opens on
+/// the last project this machine opened, and on the home folder when there has not been one.
+fn folder_when_there_is_no_repo(current_dir: &Path) -> Result<PathBuf> {
+    if current_dir != Path::new("/") {
+        return Ok(current_dir.to_path_buf());
+    }
+    let last_project = crate::settings::load()
+        .recent_projects
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|project| project.is_dir());
+    match last_project {
+        Some(project) => Ok(project),
+        None => env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set, so there is no folder to open on"),
+    }
 }
 
 fn launch_review(target: ReviewTarget, source: ReviewSource, frame: Frame) -> Result<()> {
@@ -219,13 +269,18 @@ fn launch_review(target: ReviewTarget, source: ReviewSource, frame: Frame) -> Re
     let current_dir = env::current_dir()?;
 
     if target == ReviewTarget::WorkingTree && find_repo_root(&current_dir)?.is_none() {
+        // A shell and a board need no repo, so they never ask for one: they open on the
+        // folder the window was started in.
+        if frame.opens_without_a_repo() {
+            return open_repo(&folder_when_there_is_no_repo(&current_dir)?, frame);
+        }
         // A launcher opened from the OS starts outside any repo - there is no terminal it could
         // have inherited one from - so the window asks which repo to open.
         let launch = crate::native::launch_prompt(frame)?;
         return crate::native::run(launch);
     }
 
-    let repo_path = canonicalize_repo(&current_dir)?;
+    let repo_path = project_root(&current_dir)?;
     let current_dir_pathspec = current_dir_pathspec(&repo_path, &current_dir)?;
     let open_request = review_open_request(&repo_path, target, current_dir_pathspec, &current_dir)?;
 
@@ -263,6 +318,14 @@ pub(super) fn help_text_for(frame: Frame) -> String {
         })
         .collect();
 
+    // The one line of help that is only true of the two frames that need no repo.
+    let opens_without_a_repo = if frame.opens_without_a_repo() {
+        "A folder that is no git repository works just as well: the review is the part
+that needs one.\n"
+    } else {
+        ""
+    };
+
     format!(
         "{program}
 
@@ -293,7 +356,7 @@ Examples:
   {program} --remote dev-box --repo /home/you/project
 
 Run `{program}` inside any git repository you want to work in.
-`--pick` opens the window on its launch screen instead, which is where recent projects and
+{opens_without_a_repo}`--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
 `--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
 what the Window menu's Restart hands the instance it starts.
@@ -312,7 +375,8 @@ Desktop launchers:
   `install-launchers` gives each installed executable an entry the OS offers - an application
   bundle on macOS, a desktop entry on Linux - so they open from Spotlight, Launchpad or an
   application menu as well as from a shell. The window has the same thing in its menu.
-  A window opened that way starts outside any repo, so it asks which repo to open.
+  A window opened that way starts outside any repo, so it opens on the project the last one
+  did - and `moonreview`, which has nothing to show without a repo, asks which one instead.
 
 Reviewing another machine's repo:
   The window carries the review server inside it, so a window elsewhere can be pointed at

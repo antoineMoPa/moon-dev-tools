@@ -84,8 +84,9 @@ its macOS menu bar and in the command palette, as `install desktop launchers`. E
 runs the executable where it is installed, so `cargo install` over it is also an upgrade of
 what the launcher opens; rerun the command only after moving the executables somewhere else.
 
-A window opened that way starts outside every repo, so it asks which repo to open with the
-folder picker of the OS.
+A window opened that way starts outside every repo. `moontasks` and `moonshell` open on the
+project the last window opened - neither needs a repo - and `moonreview`, which has nothing
+to show without one, asks which repo to open with the folder picker of the OS.
 
 `install.sh` writes the launchers itself, so a prebuilt install needs nothing further.
 
@@ -94,11 +95,12 @@ folder picker of the OS.
 ```bash
 moontasks    # the sprint board
 moonreview   # review local changes
-moonshell    # a shell in the repo
+moonshell    # a shell in the folder
 ```
 
-Run any of them inside a git repository. The other tools remain one command-palette action away
-(`⌘⇧P`).
+Run any of them inside a git repository. `moontasks` and `moonshell` run just as well in a
+folder that is no repository: the review is the part that needs one. The other tools remain
+one command-palette action away (`⌘⇧P`).
 
 ### Moontasks
 

@@ -88,7 +88,7 @@ impl App {
                     match &typed {
                         None => {
                             pick_folder = widgets::clickable(
-                                ui.add(egui::Button::new("Choose a repo…").min_size(BUTTON)),
+                                ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
                             )
                             .clicked();
                         }

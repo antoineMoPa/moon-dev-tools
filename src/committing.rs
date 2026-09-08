@@ -254,6 +254,12 @@ fn run_owner(session_id: &str) -> String {
 /// What the commit pane draws: what a commit would take in, and where a push would send it.
 pub(crate) fn commit_state(state: &crate::api::AppState, session_id: &str) -> Result<CommitState> {
     let (repo_path, pathspec) = repo_of(state, session_id)?;
+    // A window can be open on a folder that is no repo, and the pane is asked for it there
+    // like anywhere else. Said in words rather than as whatever `git status` prints when it
+    // is run outside a repo.
+    if !crate::git::is_git_repo(&repo_path) {
+        bail!("{} is not a git repository", repo_path.display());
+    }
     read_commit_state(&repo_path, pathspec.as_deref())
 }
 

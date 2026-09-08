@@ -44,6 +44,32 @@ pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     }
 }
 
+/// The folder a window opens on: the root of the repo `path` sits in, or `path` itself when
+/// it sits in no repo.
+///
+/// A shell and a task board are as much use in a folder git knows nothing about as in one it
+/// does, so what a window opens on is a folder rather than necessarily a repo. The review is
+/// the one part made entirely out of what git knows, and it shows nothing where there is no
+/// repo - see [`is_git_repo`].
+pub(crate) fn project_root(path: impl AsRef<Path>) -> Result<PathBuf> {
+    let original_path = path.as_ref();
+    match find_repo_root(original_path)? {
+        Some(repo_path) => Ok(repo_path),
+        None => original_path
+            .canonicalize()
+            .with_context(|| format!("failed to resolve {}", original_path.display())),
+    }
+}
+
+/// Whether this folder is a repo root, which is what decides whether there is a review to
+/// show in it. Asked each time rather than remembered: a `git init` in the folder a window
+/// is already open on is meant to light the review up.
+pub(crate) fn is_git_repo(path: &Path) -> bool {
+    // A worktree's `.git` is a file naming the real gitdir, so existence rather than a
+    // directory test - the same thing `find_repo_root` walks up looking for.
+    path.join(".git").exists()
+}
+
 /// The repo a path sits in, or `None` when it sits in no repo at all - which is an answer
 /// rather than a failure for a window that can ask which repo to open.
 pub(crate) fn find_repo_root(path: impl AsRef<Path>) -> Result<Option<PathBuf>> {
@@ -118,8 +144,7 @@ pub(crate) fn changed_file_count(repo_path: &Path) -> Result<usize> {
 /// [`write_repo_file`] keeps its containment check exactly as it is and has no counterpart
 /// here.
 pub(crate) fn read_file_named_outside_the_repo(real_path: &Path) -> Result<String> {
-    fs::read_to_string(real_path)
-        .with_context(|| format!("failed to read {}", real_path.display()))
+    fs::read_to_string(real_path).with_context(|| format!("failed to read {}", real_path.display()))
 }
 
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {

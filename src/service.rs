@@ -27,8 +27,8 @@ use crate::{
     },
     git::{
         apply_patch, branch_commits_since_default, build_partial_patch_from_selection,
-        canonicalize_repo, collect_session_hunks, commit_history_page, commit_view,
-        current_branch_name, list_submodule_repos, local_change_summary_from_status, preview_patch,
+        collect_session_hunks, commit_history_page, commit_view, current_branch_name,
+        list_submodule_repos, local_change_summary_from_status, preview_patch, project_root,
         read_repo_file, run_git, run_git_no_output,
     },
 };
@@ -100,7 +100,7 @@ fn unchanged_file_path(
 }
 
 pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Result<SessionOpened> {
-    let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
+    let repo_path = project_root(PathBuf::from(request.repo_path))?;
     let diff_target = request.diff_target.unwrap_or_default();
     let active_commit = request
         .active_commit
@@ -144,10 +144,73 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
     Ok(SessionOpened { session_id })
 }
 
+/// Everything the review is made of that comes out of git.
+///
+/// A window can be open on a folder that is no repo - a shell and a task board need none -
+/// and there it is [`GitReview::default`]: no hunks, no branch, no commits. Nothing here is
+/// asked of git until the folder is known to be a repo, so that folder runs no git at all.
+#[derive(Default)]
+struct GitReview {
+    hunks: Vec<crate::api::DiffHunk>,
+    branch_name: Option<String>,
+    commit_base: Option<String>,
+    commits: Vec<CommitView>,
+    history_commits: Vec<CommitView>,
+    history_has_more: bool,
+    local_change_summary: crate::api::LocalChangeSummary,
+}
+
+fn read_git_review(session: &RepoSession) -> Result<GitReview> {
+    let hunks = collect_session_hunks(session)?;
+    let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
+    let (mut history_commits, history_has_more) = commit_history_page(
+        &session.repo_path,
+        &branch_commit_shas(&commits),
+        0,
+        HISTORY_COMMIT_PAGE_SIZE,
+    )?;
+    ensure_active_commit_visible(
+        &session.repo_path,
+        &commits,
+        &mut history_commits,
+        session.active_commit.as_deref(),
+    )?;
+    let local_change_summary = if session.diff_target.comparison.is_some() {
+        Default::default()
+    } else {
+        local_change_summary_from_status(
+            &session.repo_path,
+            session.diff_target.pathspec.as_deref(),
+        )?
+    };
+
+    Ok(GitReview {
+        hunks,
+        branch_name: current_branch_name(&session.repo_path)?,
+        commit_base,
+        commits,
+        history_commits,
+        history_has_more,
+        local_change_summary,
+    })
+}
+
 pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<SessionPayload> {
     let available_agents = agent_options(state.agent_availability);
     crate::api::with_session(state, session_id, |session| {
-        let hunks = collect_session_hunks(session)?;
+        let GitReview {
+            hunks,
+            branch_name,
+            commit_base,
+            commits,
+            history_commits,
+            history_has_more,
+            local_change_summary,
+        } = if crate::git::is_git_repo(&session.repo_path) {
+            read_git_review(session)?
+        } else {
+            GitReview::default()
+        };
         let full_file_path = unchanged_file_path(
             &session.repo_path,
             &session.diff_target,
@@ -155,27 +218,6 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
             !hunks.is_empty(),
         );
         let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
-        let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
-        let (mut history_commits, history_has_more) = commit_history_page(
-            &session.repo_path,
-            &branch_commit_shas(&commits),
-            0,
-            HISTORY_COMMIT_PAGE_SIZE,
-        )?;
-        ensure_active_commit_visible(
-            &session.repo_path,
-            &commits,
-            &mut history_commits,
-            session.active_commit.as_deref(),
-        )?;
-        let local_change_summary = if session.diff_target.comparison.is_some() {
-            Default::default()
-        } else {
-            local_change_summary_from_status(
-                &session.repo_path,
-                session.diff_target.pathspec.as_deref(),
-            )?
-        };
         let read_only = session.diff_target.base.is_some()
             || session.diff_target.comparison.is_some()
             || session.active_commit.is_some();
@@ -221,7 +263,7 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
                 .and_then(|name| name.to_str())
                 .unwrap_or("repo")
                 .to_string(),
-            branch_name: current_branch_name(&session.repo_path)?,
+            branch_name,
             commit_base,
             commits,
             history_commits,
@@ -247,6 +289,15 @@ pub(crate) fn session_submodules(
 ) -> Result<SubmoduleHubPayload> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+
+    // A folder that is no repo has no changed files and no submodules, and neither `git
+    // status` nor `git submodule status` has an answer to give in one.
+    if !crate::git::is_git_repo(&repo_path) {
+        return Ok(SubmoduleHubPayload {
+            root: repo_status_view(&repo_path, 0),
+            submodules: Vec::new(),
+        });
+    }
 
     let root = repo_status_view(&repo_path, crate::git::changed_file_count(&repo_path)?);
     let submodules = list_submodule_repos(&repo_path)?
@@ -274,6 +325,12 @@ pub(crate) fn commit_history(
     limit: usize,
 ) -> Result<CommitHistoryPayload> {
     crate::api::with_session(state, session_id, |session| {
+        if !crate::git::is_git_repo(&session.repo_path) {
+            return Ok(CommitHistoryPayload {
+                commits: Vec::new(),
+                has_more: false,
+            });
+        }
         let (_, commits) = branch_commits_since_default(&session.repo_path)?;
         let (commits, has_more) = commit_history_page(
             &session.repo_path,
@@ -720,7 +777,9 @@ mod tests {
         }
 
         // The repo's own files are read exactly as they always were.
-        let inside = served.read("lib.rs").expect("expected the repo's file to read");
+        let inside = served
+            .read("lib.rs")
+            .expect("expected the repo's file to read");
         assert_eq!(inside.content, "fn one() {}\n");
         assert!(!inside.outside_the_repo);
     }
@@ -864,5 +923,56 @@ mod tests {
         );
 
         fs::remove_dir_all(repo_path).expect("failed to remove test directory");
+    }
+
+    /// A shell and a task board are as much use in a plain folder as in a repo, so a window
+    /// opens on one - and everything the review is made of comes back empty rather than as
+    /// the failure of a `git status` run where there is no git.
+    #[test]
+    fn a_folder_that_is_no_repo_opens_with_an_empty_review() {
+        let enclosing = std::env::temp_dir().join(format!(
+            "moonreview-no-repo-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let folder = enclosing.join("notes");
+        fs::create_dir_all(&folder).expect("failed to create the fixture folder");
+        fs::write(folder.join("todo.md"), "- write it down\n").expect("failed to write a file");
+
+        let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+        let session_id = open_session(
+            &state,
+            OpenSessionRequest {
+                repo_path: folder.display().to_string(),
+                diff_target: None,
+                active_commit: None,
+            },
+        )
+        .expect("a folder that is no repo should still open")
+        .session_id;
+
+        let payload = session_state(&state, &session_id).expect("the state should still read");
+        assert_eq!(payload.repo_name, "notes");
+        assert_eq!(payload.branch_name, None);
+        assert!(payload.hunks.is_empty(), "no repo means nothing to review");
+        assert!(payload.commits.is_empty());
+        assert!(
+            !payload.read_only,
+            "the files of the folder are still there to edit"
+        );
+
+        let hub = session_submodules(&state, &session_id).expect("the hub should still read");
+        assert_eq!(hub.root.changed_files, 0);
+        assert!(hub.submodules.is_empty());
+
+        // And a `git init` in that same folder is what turns the review on.
+        run_git_no_output(&folder, &["init"]).expect("failed to init the folder");
+        let payload = session_state(&state, &session_id).expect("the state should read again");
+        assert!(
+            payload.branch_name.is_some(),
+            "a folder that has become a repo is one with a branch"
+        );
+
+        fs::remove_dir_all(&enclosing).expect("failed to remove test directory");
     }
 }
