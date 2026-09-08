@@ -1,8 +1,8 @@
-//! The window's answer to the six questions an editor puts to a language server.
+//! The window's answer to the seven questions an editor puts to a language server.
 //!
 //! [`egui_moon_code_ide::LanguageSource`] is a trait rather than a registry precisely
 //! because of this window: a review of a repo on another machine has no files here to start a
-//! server on, so [`crate::backend::Backend`] carries the same six questions over HTTP and the
+//! server on, so [`crate::backend::Backend`] carries the same seven questions over HTTP and the
 //! servers run beside the repo. A local review calls straight through instead. Which of the
 //! two is in play is the backend's business and nothing above it can tell.
 //!
@@ -62,5 +62,22 @@ impl LanguageSource for SessionLanguages<'_> {
     fn completion(&self, file_path: &str, at: LspPosition) -> Result<Vec<LspCompletion>> {
         self.backend
             .lsp_completion(self.session_id, file_path, at)
+    }
+
+    /// What the server behind this file said opens a completion list on its own, carried
+    /// over the backend like everything else - a `--remote` review asks the server sitting
+    /// beside the repo, which is the only side that has one.
+    ///
+    /// A list that could not be had is a file that opens no list of its own, which is what
+    /// every other way of having no triggers already reads as: nothing serves the file, the
+    /// server named none, or the call did not land. The trait has no error to report here
+    /// and the pane's next move is the same for all three - go on offering to finish words -
+    /// so the error is dropped here rather than carried up to be dropped there. The pane
+    /// asks this once, and once its file's server is `Ready`, so the answer it keeps is one
+    /// a started server really gave.
+    fn trigger_characters(&self, file_path: &str) -> Vec<char> {
+        self.backend
+            .lsp_trigger_characters(self.session_id, file_path)
+            .unwrap_or_default()
     }
 }

@@ -211,6 +211,10 @@ pub(crate) fn router(state: AppState) -> Router {
             get(crate::lsp::routes::working),
         )
         .route(
+            "/api/session/{session_id}/lsp/triggers",
+            get(crate::lsp::routes::triggers),
+        )
+        .route(
             "/api/session/{session_id}/lsp/open",
             post(crate::lsp::routes::did_open),
         )

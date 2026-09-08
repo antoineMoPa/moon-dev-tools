@@ -20,7 +20,8 @@ use crate::{
         AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
         FileContentPayload, FileMatchesPayload, LspCompletion, LspCompletionsPayload,
         LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest,
-        LspStatus, LspStatusPayload, LspWork, LspWorkPayload, OpenSessionRequest, PatchPayload, SessionOpened,
+        LspStatus, LspStatusPayload, LspTriggersPayload, LspWork, LspWorkPayload,
+        OpenSessionRequest, PatchPayload, SessionOpened,
         SessionPayload, SubmoduleHubPayload, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
@@ -639,6 +640,14 @@ impl Backend for RemoteBackend {
             "/api/session/{session_id}/lsp/status?file_path={encoded}"
         ))?;
         Ok(payload.status)
+    }
+
+    fn lsp_trigger_characters(&self, session_id: &str, file_path: &str) -> Result<Vec<char>> {
+        let encoded = urlencode(file_path);
+        let payload: LspTriggersPayload = self.get(&format!(
+            "/api/session/{session_id}/lsp/triggers?file_path={encoded}"
+        ))?;
+        Ok(payload.triggers)
     }
 
     fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>> {

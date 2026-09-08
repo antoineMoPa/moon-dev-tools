@@ -358,6 +358,14 @@ pub(crate) struct LspCompletionsPayload {
     pub(crate) completions: Vec<LspCompletion>,
 }
 
+/// The characters a language server said should open a completion list on their own - the
+/// `.` of `thing.`, the `:` of a path. One answer per file, and it does not change for as
+/// long as that server runs.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspTriggersPayload {
+    pub(crate) triggers: Vec<char>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct HunkRequest {
     pub(crate) hunk_id: String,

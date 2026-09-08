@@ -12,9 +12,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use egui_moon_code_ide::LanguageSource;
+
 use crate::{
-    api::{LspPosition, LspStatus, OpenSessionRequest},
+    api::{LspPosition, LspStatus, LspTriggersPayload, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
+    native::language_source::SessionLanguages,
     git::run_git_no_output,
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
 };
@@ -188,6 +191,58 @@ fn a_remote_review_answers_that_a_markdown_file_has_no_language_server() {
             .is_empty(),
         "a file with no server behind it has no definitions"
     );
+}
+
+/// The seventh question, over the wire and through the same [`SessionLanguages`] the panes
+/// use: what the server behind a file says opens a completion list on its own.
+///
+/// This is the one that was missing. Everything above it can be right - the server declares
+/// its `.` and `:`, the crate asks with no prefix when one is typed - and typing a `.` in a
+/// remote review still does nothing, because the window never carried the question across.
+/// So it is asked here the way the window asks it: through the trait, on a backend that is
+/// really HTTP.
+///
+/// Markdown for the same reason the definition test uses it - no machine has a server behind
+/// it, so the answer is the same everywhere and arrives in milliseconds. That the wire itself
+/// carries a real list is checked beside it, on the payload the route answers with: a `char`
+/// goes out as a one-character string and has to come back the character it was, which is the
+/// half of this that a file with no server cannot prove.
+#[test]
+fn a_remote_review_is_asked_what_opens_a_completion_list_through_the_pane_s_own_source() {
+    let served = serve_a_repo("lsp-triggers");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    assert!(
+        backend
+            .lsp_trigger_characters(&opened.session_id, "notes.md")
+            .expect("expected an answer about what opens a list")
+            .is_empty(),
+        "nothing serves a markdown file, so nothing opens a list in one"
+    );
+
+    // And as the pane really asks it: through the source the crate is handed, which is what
+    // makes the crate's default answer of "none" stop applying to this window.
+    let source = SessionLanguages::new(&backend, &opened.session_id);
+    assert!(
+        LanguageSource::trigger_characters(&source, "notes.md").is_empty(),
+        "the window\'s source has to answer the question, not fall back on the default"
+    );
+
+    // What a served file would send back, over the format the route answers in.
+    let sent = serde_json::to_string(&LspTriggersPayload {
+        triggers: vec!['.', ':', '\'', '('],
+    })
+    .expect("expected the triggers to serialise");
+    let read: LspTriggersPayload =
+        serde_json::from_str(&sent).expect("expected the triggers to be read back");
+    assert_eq!(read.triggers, ['.', ':', '\'', '(']);
 }
 
 /// The status bar's question, over the wire. A session whose servers have not been started -

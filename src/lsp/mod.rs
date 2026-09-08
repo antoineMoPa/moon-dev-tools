@@ -198,6 +198,20 @@ pub(crate) fn definition(
     Ok(locations)
 }
 
+/// The characters the server behind this file said open a completion list on their own.
+///
+/// Answered without touching a server: the list came out of that server's `initialize`
+/// reply and has been sitting on it ever since, so this is a read rather than a question
+/// anything waits on. Empty for a file nothing serves and for a server that has not started
+/// yet - the window asks once its file is `Ready`, which is when there is a reply to read.
+pub(crate) fn trigger_characters(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+) -> Vec<char> {
+    state.lsp.trigger_characters(session_id, file_path)
+}
+
 /// What could be typed at this place.
 pub(crate) fn completion(
     state: &AppState,

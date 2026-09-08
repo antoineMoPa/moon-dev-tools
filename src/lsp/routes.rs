@@ -8,7 +8,7 @@ use axum::{
 
 use crate::api::{
     AppError, AppState, FileQuery, LspCompletionsPayload, LspDocumentRequest, LspLocationsPayload,
-    LspPositionRequest, LspStatusPayload, LspWorkPayload,
+    LspPositionRequest, LspStatusPayload, LspTriggersPayload, LspWorkPayload,
 };
 
 pub(crate) async fn status(
@@ -32,6 +32,19 @@ pub(crate) async fn working(
     crate::api::mark_activity(&state.last_activity);
     Ok(Json(LspWorkPayload {
         working: super::working(&state, &session_id),
+    }))
+}
+
+/// What opens a completion list in this file on its own. A read of what the server said as
+/// it started, so it is a `GET` beside the status rather than a question about a place.
+pub(crate) async fn triggers(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<LspTriggersPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(LspTriggersPayload {
+        triggers: super::trigger_characters(&state, &session_id, &query.file_path),
     }))
 }
 

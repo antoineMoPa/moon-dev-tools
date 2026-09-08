@@ -211,6 +211,15 @@ pub(crate) trait Backend: Send + Sync + 'static {
         file_path: &str,
         at: LspPosition,
     ) -> Result<Vec<LspLocation>>;
+    /// The characters the server behind this file said open a completion list on their own:
+    /// the `.` of `thing.`, the `:` of a path, the `(` of a call. Empty for a file nothing
+    /// serves and for a server that has not finished starting.
+    ///
+    /// **The caller asks this once per file**, once that file's server is ready - see
+    /// [`crate::native::completing`]. The answer is the server's own, said once in its
+    /// `initialize` reply and unchanged for as long as it runs, and on a remote session
+    /// asking again would be a round trip for something already in hand.
+    fn lsp_trigger_characters(&self, session_id: &str, file_path: &str) -> Result<Vec<char>>;
     /// What could finish the word being typed at a place in a file. The pane debounces this
     /// the same way it debounces a change - see [`crate::native::completing`].
     fn lsp_completion(

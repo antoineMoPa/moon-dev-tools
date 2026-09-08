@@ -15,7 +15,8 @@
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
 use egui_moon_code_ide::{
-    Asked, CanAnswer, Completing, LspCompletion, Served, follows_the_caret,
+    Asked, AtTheCaret, CanAnswer, Completing, LspCompletion, LspPosition, LspStatus, Served,
+    before_the_caret, follows_the_caret,
 };
 use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
@@ -70,6 +71,16 @@ pub(crate) struct FileEditor {
     /// What is being offered to finish the word being typed, and what has been asked about
     /// it - see [`crate::native::completing`].
     completing: Completing,
+    /// The characters the server behind this file said open a completion list on their own -
+    /// the `.` of `thing.`, the `:` of a path. Empty until it has been asked and empty for a
+    /// server that named none, which in both cases means only a word being typed is asked
+    /// about.
+    triggers: Vec<char>,
+    /// Whether that question has been put. Once per pane: the answer is the server's own,
+    /// said once as it started and unchanged for as long as it runs, and on a `--remote`
+    /// review it is a round trip - asking again every frame would be a call a frame for
+    /// something already in hand.
+    asked_what_opens_a_list: bool,
 }
 
 impl FileEditor {
@@ -93,6 +104,8 @@ impl FileEditor {
             asks_language_servers,
             served: Served::Unknown,
             completing: Completing::default(),
+            triggers: Vec::new(),
+            asked_what_opens_a_list: false,
         }
     }
 
@@ -140,12 +153,56 @@ impl FileEditor {
         self.asks_language_servers && self.served.has_a_server()
     }
 
-    /// The completion box's state, beside whether the server behind the file could answer a
-    /// question about the text on screen at all: what to ask next is worked out from the two
-    /// at once.
-    pub(super) fn completing_and_server(&mut self) -> (&mut Completing, CanAnswer) {
+    /// The completion box's state, what the caret is sitting behind, and whether the server
+    /// behind the file could answer a question about the text on screen at all. All three at
+    /// once because what to ask next is worked out from all three, and because the character
+    /// under the caret has to be read off this pane's own buffer.
+    pub(super) fn completing_at_the_caret(
+        &mut self,
+        caret: Option<&egui_moon_editor::TextPoint>,
+    ) -> (&mut Completing, AtTheCaret<'_>, CanAnswer) {
         let can_answer = self.served.can_answer_about(self.code.text());
-        (&mut self.completing, can_answer)
+        let typed = caret.and_then(|caret| {
+            before_the_caret(
+                self.code.text(),
+                LspPosition {
+                    line: caret.line,
+                    column: caret.column,
+                },
+            )
+        });
+        let at_the_caret = AtTheCaret {
+            typed,
+            triggers: &self.triggers,
+        };
+        (&mut self.completing, at_the_caret, can_answer)
+    }
+
+    /// Whether this pane still has to be told what opens a completion list in it, and is in
+    /// a position to be: it says yes once, and only once its file's server is up.
+    ///
+    /// Waited for rather than asked at once, because the answer comes out of that server's
+    /// `initialize` reply and a server that has not started has not sent one. Asking early
+    /// would keep the empty list of a server that had simply not spoken yet, and nothing
+    /// would ever ask again - the list would be silently dead in this file for the rest of
+    /// the session.
+    pub(super) fn wants_to_know_what_opens_a_list(&mut self) -> bool {
+        if self.asked_what_opens_a_list || self.served.status() != LspStatus::Ready {
+            return false;
+        }
+        self.asked_what_opens_a_list = true;
+        true
+    }
+
+    /// What the server said opens a list here, as the answer comes back off the worker.
+    pub(super) fn opens_a_list_on(&mut self, triggers: Vec<char>) {
+        self.triggers = triggers;
+    }
+
+    /// What this pane thinks opens a list, for the test that follows one over the backend.
+    #[cfg(test)]
+    pub(crate) fn triggers_for_test(&self) -> Vec<char> {
+        self.triggers.clone()
     }
 
     /// An answer about the word being typed, as it comes back off the worker.
@@ -689,6 +746,8 @@ mod tests {
             asks_language_servers: false,
             served: Served::Unknown,
             completing: Completing::default(),
+            triggers: Vec::new(),
+            asked_what_opens_a_list: false,
         }
     }
 

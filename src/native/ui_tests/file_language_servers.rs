@@ -305,6 +305,10 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
     let ready_in_ui = Arc::clone(&ready);
     let labels = Arc::new(Mutex::new(Vec::<String>::new()));
     let labels_in_ui = Arc::clone(&labels);
+    // What the pane was told opens a list on its own, read out the same way: it is asked once
+    // the server is ready and carried back over the backend like every other answer.
+    let triggers = Arc::new(Mutex::new(Vec::<char>::new()));
+    let triggers_in_ui = Arc::clone(&triggers);
     // What is in the buffer, read out every frame: what taking a row put there is the other
     // half of what this test is about.
     let typed = Arc::new(Mutex::new(String::new()));
@@ -339,6 +343,8 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
                 if !offered.is_empty() {
                     *labels_in_ui.lock().expect("the labels are not shared") = offered;
                 }
+                *triggers_in_ui.lock().expect("the triggers are not shared") =
+                    editor.triggers_for_test();
                 *typed_in_ui.lock().expect("the text is not shared") =
                     editor.text_for_test().to_string();
             }
@@ -378,8 +384,27 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
         status.lock().expect("the status is not shared")
     );
 
+    // What rust-analyzer itself said opens a list, carried from its `initialize` reply through
+    // the backend to this pane. Asked once the server is ready, so it lands a frame or two
+    // after the indexing does.
+    let carried = wait(&mut harness, ANSWERING_TAKES_AT_MOST, || {
+        !triggers.lock().expect("the triggers are not shared").is_empty()
+    });
+    let carried_triggers = triggers.lock().expect("the triggers are not shared").clone();
+    println!("the pane was told {carried_triggers:?} open a list");
+    assert!(
+        carried,
+        "the pane was never told what opens a list, with the server {}",
+        status.lock().expect("the status is not shared")
+    );
+    assert!(
+        carried_triggers.contains(&'.') && carried_triggers.contains(&':'),
+        "expected rust-analyzer's own triggers to reach the pane, saw {carried_triggers:?}"
+    );
+
     // Into the first line and to the end of it, which is the dot the member access is waiting
-    // on, then the first two letters of the method's name.
+    // on. That dot is the whole of the card: nothing has been typed towards a name, and the
+    // list has to come up anyway, on what the server said the dot means.
     press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
     let first_line = harness
         .get_by_role(egui::accesskit::Role::MultilineTextInput)
@@ -389,6 +414,33 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
     super::click_at(&mut harness, first_line);
     harness.run_steps(2);
     press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+
+    let after_the_dot = Instant::now();
+    let opened_on_the_dot = wait(&mut harness, ANSWERING_TAKES_AT_MOST, || {
+        !labels.lock().expect("the labels are not shared").is_empty()
+    });
+    let on_the_dot = labels.lock().expect("the labels are not shared").clone();
+    println!(
+        "the dot alone offered {} rows {:.1}s later: {:?}",
+        on_the_dot.len(),
+        after_the_dot.elapsed().as_secs_f32(),
+        on_the_dot
+    );
+    assert!(
+        opened_on_the_dot,
+        "a caret behind a dot offered nothing at all, with the server {}",
+        status.lock().expect("the status is not shared")
+    );
+    assert!(
+        on_the_dot
+            .iter()
+            .any(|label| label.starts_with("greet_loudly")),
+        "expected the members of what is left of the dot, saw {on_the_dot:?}"
+    );
+
+    // And then the first two letters of the method's name, which is the other half: the same
+    // place asked about again, with something to filter the answer against this time.
+    labels.lock().expect("the labels are not shared").clear();
     for (key, letter) in [(egui::Key::G, "g"), (egui::Key::R, "r")] {
         super::type_letter(&mut harness, key, letter);
     }

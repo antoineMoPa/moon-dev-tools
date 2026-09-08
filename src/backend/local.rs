@@ -373,6 +373,14 @@ impl Backend for LocalBackend {
         crate::lsp::definition(&self.state, session_id, file_path, at)
     }
 
+    fn lsp_trigger_characters(&self, session_id: &str, file_path: &str) -> Result<Vec<char>> {
+        Ok(crate::lsp::trigger_characters(
+            &self.state,
+            session_id,
+            file_path,
+        ))
+    }
+
     fn lsp_completion(
         &self,
         session_id: &str,
