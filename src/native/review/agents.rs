@@ -165,12 +165,24 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
                     ink,
                     fill,
                 );
-                ui.label(
-                    RichText::new(widgets::elide_path(&comment.file_path, 46))
-                        .size(SMALL_SIZE)
-                        .color(palette.muted),
-                )
-                .on_hover_text(&comment.file_path);
+                let path_label = ui
+                    .add(
+                        egui::Label::new(
+                            RichText::new(widgets::elide_path(&comment.file_path, 46))
+                                .size(SMALL_SIZE)
+                                .color(palette.muted),
+                        )
+                        .selectable(true),
+                    )
+                    .on_hover_text(&comment.file_path);
+                // The row is a comment on a file, so the file is a ⌘-click away from it.
+                crate::native::review::opens_the_file_on_its_own(
+                    app,
+                    ui,
+                    &path_label,
+                    &entry.session_id,
+                    &comment.file_path,
+                );
                 if comment.dispatch.agent != crate::api::AgentKind::None {
                     ui.label(
                         RichText::new(comment.dispatch.agent.label())

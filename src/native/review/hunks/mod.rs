@@ -291,8 +291,11 @@ fn draw_file_heading(
         }
         // The path is a label rather than part of the button, so it can be selected and
         // copied - which is most of what one wants a file's name for while reading a diff.
-        // The arrow beside it is what folds the file away.
-        ui.add(egui::Label::new(RichText::new(file_path).color(palette.ink)).selectable(true));
+        // The arrow beside it is what folds the file away, and right-clicking it opens the
+        // file the diff is of.
+        let heading =
+            ui.add(egui::Label::new(RichText::new(file_path).color(palette.ink)).selectable(true));
+        crate::native::review::opens_the_file_on_its_own(app, ui, &heading, session_id, file_path);
     });
 }
 

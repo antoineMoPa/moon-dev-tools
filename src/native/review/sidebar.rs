@@ -272,7 +272,7 @@ fn draw_file_row(
     }
 
     let mut hover_text = format!(
-        "{}\n{} hunk{}, {} staged",
+        "{}\n{} hunk{}, {} staged\n⌘-click to open the file",
         file.file_path,
         file.hunk_count,
         if file.hunk_count == 1 { "" } else { "s" },
@@ -286,9 +286,13 @@ fn draw_file_row(
     }
     let response = response.on_hover_text(hover_text);
 
+    // ⌘-click opens the file itself; the click that is not one still takes the diff to it.
+    let opened =
+        crate::native::review::opens_the_file(app, ui, &response, session_id, &file.file_path);
+
     if dot_response.is_some_and(|dot| dot.clicked()) {
         toggle_file_stage(app, session_id, file);
-    } else if response.clicked() {
+    } else if !opened && response.clicked() {
         let review = app.model.review(session_id);
         review.scroll_to_hunk = review
             .hunks()
@@ -297,18 +301,22 @@ fn draw_file_row(
             .map(|hunk| hunk.id.clone());
     }
 
-    // Right-clicking a file offers what can be done to all of it at once. A review with no
-    // index behind it - a commit, a comparison - can do none of it, and gets no menu.
-    if !can_stage {
-        return;
-    }
-
     // A menu closes on any click inside it by default, which would take the discard away on
     // the press that arms it and leave the question unasked. Every item here closes the menu
     // itself once it has acted, so the menu only has to go away on a click outside it.
     egui::Popup::context_menu(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
+            crate::native::review::open_file_item(app, ui, session_id, &file.file_path);
+
+            // The rest of the menu is what can be done to the whole file at once. A review
+            // with no index behind it - a commit, a comparison - can do none of it, and is
+            // left with the file itself.
+            if !can_stage {
+                return;
+            }
+            ui.separator();
+
             if file.status != FileStageStatus::Staged
                 && widgets::clickable(ui.button("stage the whole file")).clicked()
             {

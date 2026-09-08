@@ -82,18 +82,27 @@ fn moved_hint(
         "{label} {}",
         widgets::elide_path(&hint.target_file_path, 26)
     );
-    if widgets::quiet_button_colored(ui, &text, palette.snoozed)
-        .on_hover_text(format!(
+    let hint_response =
+        widgets::quiet_button_colored(ui, &text, palette.snoozed).on_hover_text(format!(
             "{} {}\n{}% similar - click to jump there",
             hint.target_file_path,
             hint.target_header,
             (hint.score * 100.0).round()
-        ))
-        .clicked()
-    {
+        ));
+    // The hint names the other file, so it opens it the way every other mention of one does -
+    // and that click is not also the one that jumps to the hunk over there.
+    let opened = crate::native::review::opens_the_file(
+        app,
+        ui,
+        &hint_response,
+        session_id,
+        &hint.target_file_path,
+    );
+    if !opened && hint_response.clicked() {
         let review = app.model.review(session_id);
         review.scroll_to_hunk = Some(hint.target_hunk_id.clone());
     }
+    crate::native::review::open_file_menu(app, &hint_response, session_id, &hint.target_file_path);
 }
 
 fn draw_hunk_actions(
