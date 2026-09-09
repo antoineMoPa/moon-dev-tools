@@ -30,7 +30,7 @@ use crate::{
         CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
         TaskPlacementRequest, TaskView, TerminalOpened,
     },
-    project::{ProjectCommand, ProjectCommands},
+    project::{ProjectCommand, ProjectConfig},
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -429,11 +429,11 @@ impl Backend for RemoteBackend {
         )
     }
 
-    fn project_commands(&self, session_id: &str) -> Result<ProjectCommands> {
+    fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {
         self.get(&format!("/api/session/{session_id}/project"))
     }
 
-    fn set_project_commands(&self, session_id: &str, commands: &ProjectCommands) -> Result<()> {
+    fn set_project_config(&self, session_id: &str, commands: &ProjectConfig) -> Result<()> {
         self.post(&format!("/api/session/{session_id}/project"), commands)
     }
 

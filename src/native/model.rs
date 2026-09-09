@@ -12,7 +12,7 @@ use crate::{
     api::{AgentKind, AgentLogPayload, CommitView, HunkView, RepoStatusView, SessionPayload},
     moontasks::ReviewRequestView,
     native::{panes::Pane, theme::ThemeMode, workspace_color::WorkspaceColor},
-    project::{ProjectCommand, ProjectCommands},
+    project::{ProjectCommand, ProjectConfig},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -653,7 +653,7 @@ pub(crate) struct Model {
     /// The commands the Project menu runs, as the repo's `.moonreview.json` has them. Read
     /// when the review opens, and again whenever the configuration pane is opened or saves,
     /// because the file is one a person may also edit by hand.
-    pub(crate) project: ProjectCommands,
+    pub(crate) project: ProjectConfig,
     /// Set when a review opens, so the commands above are read for it.
     pub(crate) project_pending: bool,
     /// Set when the configuration pane is opened, so its first box takes the keyboard: the
@@ -675,13 +675,19 @@ pub(crate) struct Model {
     pub(crate) restart_on_shell_exit: Option<String>,
 }
 
-/// The configuration pane's two boxes, mid-edit. They are text rather than commands because
-/// a box someone has emptied is still a box: it becomes a command that is not set only when
-/// the pane saves - see [`ProjectCommands::typed`].
+/// What the configuration pane holds, mid-edit: the two commands as text, and the
+/// indentation as the choice it is.
+///
+/// The commands are text rather than commands because a box someone has emptied is still a
+/// box: it becomes a command that is not set only when the pane saves - see
+/// [`ProjectConfig::typed`].
 #[derive(Default)]
 pub(crate) struct ProjectEditor {
     pub(crate) build: String,
     pub(crate) run: String,
+    /// What a Tab press puts into this repo's files. Not a box, so a click on the row picks
+    /// it outright and the pane saves the moment it is picked.
+    pub(crate) indent: egui_moon_editor::Indent,
 }
 
 impl ProjectEditor {
@@ -696,10 +702,11 @@ impl ProjectEditor {
         }
     }
 
-    pub(crate) fn of(commands: &ProjectCommands) -> Self {
+    pub(crate) fn of(config: &ProjectConfig) -> Self {
         Self {
-            build: commands.build.clone().unwrap_or_default(),
-            run: commands.run.clone().unwrap_or_default(),
+            build: config.build.clone().unwrap_or_default(),
+            run: config.run.clone().unwrap_or_default(),
+            indent: config.indent(),
         }
     }
 }

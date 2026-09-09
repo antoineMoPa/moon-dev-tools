@@ -227,6 +227,71 @@ fn the_save_button_and_the_chord_write_the_file() {
     );
 }
 
+/// Tab indents by what the repo's `.moonreview.json` asks for, rather than by the tab
+/// character egui's text area would type. The whole way through: the file is read as the
+/// review opens, carried on the model, and handed to the editor as it is drawn.
+#[test]
+fn pressing_tab_indents_the_way_the_repo_asks() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = Fixture::new("file-tab-indent");
+    fixture.write("src/lib.rs", "one\n");
+    fixture.write(".moonreview.json", r#"{ "indent": { "spaces": 2 } }"#);
+    fixture.commit("Add the library");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let text = Arc::new(Mutex::new(String::new()));
+    let text_in_ui = Arc::clone(&text);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            let open_pane = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                .map(|(pane_id, _)| pane_id);
+            if let Some(editor) = open_pane.and_then(|id| app.model.file_editors.get(&id)) {
+                loaded_in_ui.store(editor.content_for_test().is_some(), Ordering::Relaxed);
+                *text_in_ui.lock().expect("poisoned") = editor.text_for_test().to_string();
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the file never loaded"
+    );
+    harness.run_steps(2);
+
+    // Into the text, which leaves the caret at the end of it, and then a tab.
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .click();
+    harness.run_steps(2);
+    press_key(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+    harness.run_steps(2);
+
+    assert_eq!(
+        text.lock().expect("poisoned").as_str(),
+        "one\n  ",
+        "a repo asking for two spaces should have got two spaces, not a tab character"
+    );
+}
+
 /// A file the jump to a definition landed on outside the repo opens read-only: the header says
 /// where it is rather than letting it look like every other file tab, and no `[save]` is
 /// offered even once it has been typed into.

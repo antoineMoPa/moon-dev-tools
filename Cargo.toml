@@ -29,7 +29,9 @@ egui_extras = { version = "0.36", features = ["image"] }
 egui_frames = { version = "0.3", path = "crates/egui_frames", features = ["serde"] }
 # The code editor a file tab holds: the buffer, the fringe of line numbers, and the marks a
 # search draws into the text.
-egui_moon_editor = { version = "0.1", path = "crates/egui_moon_editor" }
+# `serde` for the one setting of it a repo writes down: how its files are indented, which the
+# project file carries - see `crate::project`.
+egui_moon_editor = { version = "0.1", path = "crates/egui_moon_editor", features = ["serde"] }
 # The seam between the two above: when a server is owed the text, when a half-typed word is
 # worth a question, and what a ⌘-click can expect of a server that is still indexing. A crate
 # of its own so that an editor with go-to-definition is not something every application has to

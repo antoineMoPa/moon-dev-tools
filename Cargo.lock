@@ -1259,6 +1259,7 @@ name = "egui_moon_editor"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "serde",
  "syntect",
 ]
 

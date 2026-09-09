@@ -17,7 +17,7 @@ use crate::{
         self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest,
         StartResourceRequest, TaskView,
     },
-    project::{ProjectCommand, ProjectCommands},
+    project::{ProjectCommand, ProjectConfig},
     service,
     terminal::TerminalSession,
 };
@@ -218,11 +218,11 @@ impl Backend for LocalBackend {
         moontasks::service::place_column(&self.state, session_id, column_id, position)
     }
 
-    fn project_commands(&self, session_id: &str) -> Result<ProjectCommands> {
+    fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {
         crate::project::session_commands(&self.state, session_id)
     }
 
-    fn set_project_commands(&self, session_id: &str, commands: &ProjectCommands) -> Result<()> {
+    fn set_project_config(&self, session_id: &str, commands: &ProjectConfig) -> Result<()> {
         crate::project::set_session_commands(&self.state, session_id, commands)
     }
 

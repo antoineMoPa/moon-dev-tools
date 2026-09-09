@@ -17,7 +17,7 @@ use crate::{
         programs::Opens,
         workspace::TerminalPlacement,
     },
-    project::{ProjectCommand, ProjectCommands},
+    project::{ProjectCommand, ProjectConfig},
 };
 
 use super::{
@@ -364,12 +364,12 @@ impl App {
             return;
         };
         self.model.project_unsaved = false;
-        let commands = ProjectCommands::typed(&editor.build, &editor.run);
+        let commands = ProjectConfig::typed(&editor.build, &editor.run, editor.indent);
         let session_id = self.model.root_session_id.clone();
         let written = commands.clone();
         self.tasks.spawn_keyed(
             Some(PROJECT_SAVE.to_string()),
-            move |backend| backend.set_project_commands(&session_id, &commands),
+            move |backend| backend.set_project_config(&session_id, &commands),
             move |model, result| match result {
                 // The menu offers what the file now says without waiting to read it again.
                 Ok(()) => model.project = written,

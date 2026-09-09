@@ -130,7 +130,7 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/api/session/{session_id}/project",
-            get(project_commands).post(set_project_commands),
+            get(project_commands).post(set_project_config),
         )
         .route(
             "/api/session/{session_id}/project/run/{which}",
@@ -665,15 +665,15 @@ async fn delete_task(
 async fn project_commands(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-) -> Result<Json<crate::project::ProjectCommands>, AppError> {
+) -> Result<Json<crate::project::ProjectConfig>, AppError> {
     mark_activity(&state);
     Ok(Json(crate::project::session_commands(&state, &session_id)?))
 }
 
-async fn set_project_commands(
+async fn set_project_config(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<crate::project::ProjectCommands>,
+    Json(request): Json<crate::project::ProjectConfig>,
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     crate::project::set_session_commands(&state, &session_id, &request)?;

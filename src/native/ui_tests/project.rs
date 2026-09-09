@@ -1,4 +1,5 @@
-//! The project pane: the two commands the Project menu runs, typed into the repo's own file.
+//! The project pane: the two commands the Project menu runs and how the repo's files are
+//! indented, typed and picked into the repo's own file.
 
 use std::{
     sync::{
@@ -141,6 +142,24 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
     });
     harness.run_steps(2);
     harness.snapshot("project-settings");
+
+    // Act: pick an indentation, which is written the moment it is picked rather than on a
+    // button of its own.
+    harness.get_by_label("8 spaces").click();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut text = String::new();
+    while Instant::now() < deadline {
+        harness.step();
+        text = std::fs::read_to_string(&project_file).unwrap_or_default();
+        if text.contains("\"spaces\": 8") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        text.contains("\"spaces\": 8"),
+        "the project file should hold the indentation that was picked, got {text:?}"
+    );
 
     // Act: running it opens a shell of its own, which is where its output is.
     run_build.store(true, Ordering::Relaxed);

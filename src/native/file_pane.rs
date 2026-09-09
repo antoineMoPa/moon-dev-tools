@@ -664,6 +664,8 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     if takes_keyboard {
         app.pane_taking_keyboard = None;
     }
+    // Read out before the editor is borrowed, like the find bar above it.
+    let indent = app.model.project.indent();
 
     let Some(editor) = app.model.file_editors.get_mut(&pane_id) else {
         return;
@@ -701,6 +703,9 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
             // out on an earlier frame - see [`crate::native::completing`]. The editor draws
             // the list and puts the chosen row in; this pane never touches the text.
             completions: editor.completing.on_offer(),
+            // What a Tab press puts in, as the repo's `.moonreview.json` has it - four spaces
+            // until it says otherwise. A fact about the repo, so it is read from the repo.
+            indent,
         },
     );
     // The name that was ⌘-clicked, if one was, and where in the text it sits - which is

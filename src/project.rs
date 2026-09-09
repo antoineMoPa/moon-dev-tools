@@ -1,9 +1,12 @@
-//! `<repo>/.moonreview.json`: the two commands a project is built and run with.
+//! `<repo>/.moonreview.json`: the commands a project is built and run with, and how its
+//! files are indented.
 //!
-//! Which command builds a repo is a fact about the repo, not about whoever opened it, so it is
-//! kept with the repo rather than in `~/.moonreview/settings.json` alongside the choices that
-//! belong to a person. It is one small file at the root, in a format anyone can open and edit,
-//! and it can be committed so everyone working on the repo gets the same two commands.
+//! Which command builds a repo, and whether its code is written in tabs or in spaces, are
+//! facts about the repo rather than about whoever opened it, so they are kept with the repo
+//! rather than in `~/.moonreview/settings.json` alongside the choices that belong to a person.
+//! It is one small file at the root, in a format anyone can open and edit, and it can be
+//! committed so everyone working on the repo gets the same commands and the same
+//! indentation.
 
 use std::path::{Path, PathBuf};
 
@@ -67,18 +70,26 @@ impl std::str::FromStr for ProjectCommand {
     }
 }
 
-/// What the Project menu runs. A command that is not set is one the menu does not offer:
-/// there is no sensible guess at how a repo is built, and an item that runs nothing is worse
-/// than no item.
+/// What the repo's file says about it.
+///
+/// A command that is not set is one the Project menu does not offer: there is no sensible
+/// guess at how a repo is built, and an item that runs nothing is worse than no item. An
+/// indentation that is not set is four spaces, which is a guess worth making - every file has
+/// to be indented in something the moment a tab is pressed.
 #[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub(crate) struct ProjectCommands {
+pub(crate) struct ProjectConfig {
     #[serde(default)]
     pub(crate) build: Option<String>,
     #[serde(default)]
     pub(crate) run: Option<String>,
+    /// What a Tab press puts into a file of this repo: `"tab"`, or `{ "spaces": 2 }`. Picked
+    /// in the configuration pane, or typed into the file by hand, and read by the editor
+    /// through [`ProjectConfig::indent`].
+    #[serde(default)]
+    pub(crate) indent: Option<egui_moon_editor::Indent>,
 }
 
-impl ProjectCommands {
+impl ProjectConfig {
     /// The command line one of the menu's items runs, if the project has set what it needs.
     /// Build and run is the two commands chained on the first's success. For a project whose
     /// run command is [`RESTART_RUN_COMMAND`] the run half is `exit` instead: the build shell
@@ -108,13 +119,19 @@ impl ProjectCommands {
         self.run.as_deref() == Some(RESTART_RUN_COMMAND)
     }
 
-    /// What two boxes of typed text mean, which is the one place a blank box becomes an unset
-    /// command - so a file written by the native pane and one written through the web say the
-    /// same thing about a command nobody filled in.
-    pub(crate) fn typed(build: &str, run: &str) -> Self {
+    /// How this repo's files are indented, which is four spaces until the file says otherwise.
+    pub(crate) fn indent(&self) -> egui_moon_editor::Indent {
+        self.indent.unwrap_or_default()
+    }
+
+    /// What the configuration pane is holding, as a file to write. This is the one place a
+    /// blank box becomes an unset command - so a file written by the native pane and one
+    /// written through the web say the same thing about a command nobody filled in.
+    pub(crate) fn typed(build: &str, run: &str, indent: egui_moon_editor::Indent) -> Self {
         Self {
             build: typed_command(build),
             run: typed_command(run),
+            indent: Some(indent),
         }
     }
 }
@@ -134,21 +151,21 @@ fn project_path(repo_path: &Path) -> PathBuf {
 /// [`crate::moontasks::store::read_board`] falls back to its defaults: a window that opens
 /// with an empty Project menu is worth more than one that refuses to open, and this file is
 /// hand-editable, so a half-typed one is an ordinary thing to find.
-pub(crate) fn read_project(repo_path: &Path) -> ProjectCommands {
+pub(crate) fn read_project(repo_path: &Path) -> ProjectConfig {
     let path = project_path(repo_path);
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return ProjectCommands::default();
+        return ProjectConfig::default();
     };
     match serde_json::from_str(&text) {
         Ok(commands) => commands,
         Err(error) => {
             eprintln!("[moonreview] ignoring {}: {error}", path.display());
-            ProjectCommands::default()
+            ProjectConfig::default()
         }
     }
 }
 
-pub(crate) fn write_project(repo_path: &Path, commands: &ProjectCommands) -> Result<()> {
+pub(crate) fn write_project(repo_path: &Path, commands: &ProjectConfig) -> Result<()> {
     let path = project_path(repo_path);
     let text = serde_json::to_string_pretty(commands).context("failed to encode the commands")?;
     std::fs::write(&path, format!("{text}\n"))
@@ -157,7 +174,7 @@ pub(crate) fn write_project(repo_path: &Path, commands: &ProjectCommands) -> Res
 
 /// The commands of the repo one review is open on. Both frontends ask through this, so the
 /// window and the browser read the same file.
-pub(crate) fn session_commands(state: &AppState, session_id: &str) -> Result<ProjectCommands> {
+pub(crate) fn session_commands(state: &AppState, session_id: &str) -> Result<ProjectConfig> {
     let repo_path = repo_of(state, session_id)?;
     Ok(read_project(&repo_path))
 }
@@ -165,7 +182,7 @@ pub(crate) fn session_commands(state: &AppState, session_id: &str) -> Result<Pro
 pub(crate) fn set_session_commands(
     state: &AppState,
     session_id: &str,
-    commands: &ProjectCommands,
+    commands: &ProjectConfig,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     write_project(&repo_path, commands)
@@ -198,6 +215,8 @@ fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use egui_moon_editor::Indent;
+
     use super::*;
 
     fn scratch_repo(name: &str) -> PathBuf {
@@ -211,13 +230,13 @@ mod tests {
     fn a_repo_with_no_file_has_neither_command() {
         let commands = read_project(&scratch_repo("empty"));
 
-        assert_eq!(commands, ProjectCommands::default());
+        assert_eq!(commands, ProjectConfig::default());
     }
 
     #[test]
     fn what_is_written_is_what_is_read_back() {
         let repo = scratch_repo("round-trip");
-        let commands = ProjectCommands::typed("cargo build", "cargo run -- .");
+        let commands = ProjectConfig::typed("cargo build", "cargo run -- .", Indent::default());
 
         write_project(&repo, &commands).expect("failed to write the commands");
 
@@ -225,8 +244,42 @@ mod tests {
     }
 
     #[test]
+    fn a_repo_that_says_nothing_about_indentation_gets_four_spaces() {
+        assert_eq!(
+            read_project(&scratch_repo("no-indent")).indent(),
+            Indent::Spaces(4)
+        );
+    }
+
+    #[test]
+    fn a_repo_can_ask_for_tabs_or_for_a_width_of_its_own() {
+        let repo = scratch_repo("indent");
+
+        std::fs::write(project_path(&repo), r#"{ "indent": "tab" }"#)
+            .expect("failed to write the file");
+        assert_eq!(read_project(&repo).indent(), Indent::Tab);
+
+        std::fs::write(project_path(&repo), r#"{ "indent": { "spaces": 2 } }"#)
+            .expect("failed to write the file");
+        assert_eq!(read_project(&repo).indent(), Indent::Spaces(2));
+    }
+
+    /// What the pane holds is what the file says, indentation included: the row of choices
+    /// is written by the same save as the two boxes.
+    #[test]
+    fn what_the_pane_holds_is_written_indentation_and_all() {
+        let repo = scratch_repo("pane-indent");
+        let config = ProjectConfig::typed("cargo build", "cargo run", Indent::Tab);
+
+        write_project(&repo, &config).expect("failed to write the configuration");
+
+        assert_eq!(read_project(&repo).indent(), Indent::Tab);
+        assert_eq!(read_project(&repo).build, Some("cargo build".to_string()));
+    }
+
+    #[test]
     fn a_blank_box_is_a_command_that_is_not_set() {
-        let commands = ProjectCommands::typed("  ", "cargo run");
+        let commands = ProjectConfig::typed("  ", "cargo run", Indent::default());
 
         assert_eq!(commands.build, None);
         assert_eq!(commands.run, Some("cargo run".to_string()));
@@ -237,12 +290,12 @@ mod tests {
         let repo = scratch_repo("broken");
         std::fs::write(project_path(&repo), "{ not json").expect("failed to write the file");
 
-        assert_eq!(read_project(&repo), ProjectCommands::default());
+        assert_eq!(read_project(&repo), ProjectConfig::default());
     }
 
     #[test]
     fn build_and_run_is_the_two_commands_chained_on_success() {
-        let commands = ProjectCommands::typed("cargo build", "cargo run -- .");
+        let commands = ProjectConfig::typed("cargo build", "cargo run -- .", Indent::default());
 
         assert_eq!(
             commands.line(ProjectCommand::BuildAndRun),
@@ -253,18 +306,20 @@ mod tests {
     #[test]
     fn build_and_run_needs_both_commands() {
         assert_eq!(
-            ProjectCommands::typed("cargo build", "").line(ProjectCommand::BuildAndRun),
+            ProjectConfig::typed("cargo build", "", Indent::default())
+                .line(ProjectCommand::BuildAndRun),
             None
         );
         assert_eq!(
-            ProjectCommands::typed("", "cargo run").line(ProjectCommand::BuildAndRun),
+            ProjectConfig::typed("", "cargo run", Indent::default())
+                .line(ProjectCommand::BuildAndRun),
             None
         );
     }
 
     #[test]
     fn a_restart_word_run_command_makes_the_build_shell_exit_on_success() {
-        let commands = ProjectCommands::typed("cargo build", RESTART_RUN_COMMAND);
+        let commands = ProjectConfig::typed("cargo build", RESTART_RUN_COMMAND, Indent::default());
 
         assert!(commands.run_restarts_window());
         assert_eq!(

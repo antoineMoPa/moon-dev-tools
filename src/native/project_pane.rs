@@ -1,10 +1,13 @@
-//! The project pane: the two commands the Project menu runs, and where they are set.
+//! The project pane: the two commands the Project menu runs, how the repo's files are
+//! indented, and where both are set.
 //!
-//! What builds a repo is a fact about the repo, so it is kept in the repo - see
-//! [`crate::project`]. This is the frame that writes that file, so a project is configured
-//! from the window rather than by finding the file first.
+//! What builds a repo, and what a Tab press puts into its files, are facts about the repo, so
+//! they are kept in the repo - see [`crate::project`]. This is the frame that writes that
+//! file, so a project is configured from the window rather than by finding the file first.
 
 use egui::{CornerRadius, RichText, Sense, Stroke, Ui, vec2};
+
+use egui_moon_editor::Indent;
 
 use crate::{
     native::{
@@ -34,6 +37,16 @@ const BOXES: &[(ProjectCommand, &str)] = &[
     ),
 ];
 
+/// What a Tab press can be set to from here, in the order the row offers them. A repo
+/// wanting a width the row has no button for writes it into the file by hand; these are the
+/// ones a repo actually picks.
+const INDENTS: &[(Indent, &str)] = &[
+    (Indent::Spaces(2), "2 spaces"),
+    (Indent::Spaces(4), "4 spaces"),
+    (Indent::Spaces(8), "8 spaces"),
+    (Indent::Tab, "tab"),
+];
+
 /// How wide a command box gets. A command line is longer than a name and shorter than a
 /// paragraph, and the pane is often a narrow column beside a review.
 const BOX_WIDTH: f32 = 420.0;
@@ -53,6 +66,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
             ui.add_space(8.0);
 
             draw_commands(app, ui, &palette);
+            ui.add_space(16.0);
+            draw_indent(app, ui);
             ui.add_space(16.0);
             draw_workspace_color(app, ui, &palette);
         });
@@ -99,6 +114,38 @@ fn draw_commands(app: &mut App, ui: &mut Ui, palette: &Palette) {
     // and a command left unsaved is a menu item that does not do what the pane says it does.
     // The write itself is `App::save_project`, one at a time.
     app.model.project_unsaved |= edited;
+}
+
+/// The row that says what a Tab press puts into this repo's files.
+///
+/// Written to the repo's file like the two commands above it, and by the same save: how a
+/// repo is indented is a fact about the repo, and one everybody working on it should get.
+fn draw_indent(app: &mut App, ui: &mut Ui) {
+    // Nothing to pick from until the file is back - the message about that is `draw_commands`'.
+    let Some(editor) = &mut app.model.project_editor else {
+        return;
+    };
+
+    ui.label(RichText::new("indentation").size(SMALL_SIZE).strong());
+    ui.add_space(4.0);
+    // Taken out of the loop, since drawing holds the editor and marking the file wants it.
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (indent, label) in INDENTS {
+            let chosen = editor.indent == *indent;
+            let button = ui.selectable_label(chosen, RichText::new(*label).size(SMALL_SIZE));
+            if widgets::clickable(button).clicked() {
+                picked = Some(*indent);
+            }
+        }
+    });
+
+    // Saved the moment it is picked, like a command is saved as it is typed - see
+    // `App::save_project`.
+    if let Some(indent) = picked {
+        editor.indent = indent;
+        app.model.project_unsaved = true;
+    }
 }
 
 /// How big one color's swatch is.
