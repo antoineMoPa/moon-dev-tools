@@ -251,6 +251,18 @@ pub(crate) fn seeded_fixture(name: &str) -> Fixture {
     fixture
 }
 
+/// The fixture hunk with the most changed lines in it, which is the one a test that sweeps
+/// over lines or comments on a run needs. Naming it by its size rather than by its place in
+/// the diff keeps the test off the file order, which is the repo's and not the test's.
+pub(crate) fn hunk_with_the_most_lines(
+    review: &crate::native::model::ReviewState,
+) -> Option<&crate::api::HunkView> {
+    review
+        .hunks()
+        .iter()
+        .max_by_key(|hunk| hunk.added_line_count + hunk.removed_line_count)
+}
+
 /// Whether the window asked to be closed, which is what quitting looks like from in here.
 fn asked_to_close(harness: &Harness<'_>) -> bool {
     harness.output().viewport_output.values().any(|viewport| {

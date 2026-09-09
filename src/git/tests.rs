@@ -322,6 +322,44 @@ fn a_revision_range_collects_the_hunks_between_two_branches() {
     );
 }
 
+/// Staging a file must not move its row in the review: the unstaged and staged diffs are two
+/// git calls, and before the hunks were grouped by path a staged file jumped to the bottom.
+#[test]
+fn staging_a_file_leaves_the_files_in_the_same_order() {
+    let temp = TestDir::new();
+    let repo_root = temp.path.join("repo");
+    init_test_repo(&repo_root);
+
+    for name in ["a.rs", "b.rs", "c.rs"] {
+        fs::write(repo_root.join(name), "fn one() {}\n").expect("failed to write the file");
+    }
+    run_git_no_output(&repo_root, &["add", "-A"]).expect("failed to stage the first commit");
+    run_git_no_output(&repo_root, &["commit", "-m", "initial"]).expect("failed to commit");
+    for name in ["a.rs", "b.rs", "c.rs"] {
+        fs::write(repo_root.join(name), "fn one() {}\nfn two() {}\n")
+            .expect("failed to change the file");
+    }
+
+    let files_in_order = |repo_root: &PathBuf| {
+        collect_hunks(repo_root, &DiffTarget::default())
+            .expect("expected the working tree to diff")
+            .into_iter()
+            .map(|hunk| hunk.file_path)
+            .collect::<Vec<_>>()
+    };
+
+    let before = files_in_order(&repo_root);
+    assert_eq!(before, vec!["a.rs", "b.rs", "c.rs"]);
+
+    run_git_no_output(&repo_root, &["add", "a.rs"]).expect("failed to stage a.rs");
+
+    assert_eq!(
+        files_in_order(&repo_root),
+        before,
+        "staging the first file should not have moved it"
+    );
+}
+
 #[test]
 fn collect_session_hunks_uses_active_commit_when_present() {
     // Arrange

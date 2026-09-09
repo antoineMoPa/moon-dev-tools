@@ -17,7 +17,7 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{Fixture, app_for, click_at, seeded_fixture, settle};
+use super::{Fixture, app_for, click_at, hunk_with_the_most_lines, seeded_fixture, settle};
 
 /// cmd+c over the diff copies what is selected - and copies the code, without the `+` that
 /// says it was added. A clicked line is selected whole, so that is what arrives.
@@ -48,8 +48,8 @@ fn copy_takes_the_selected_diff_lines_without_their_diff_markers() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                seen.hunk_id = review.hunks().first().map(|hunk| hunk.id.clone());
-                if let Some(hunk) = review.hunks().first() {
+                seen.hunk_id = hunk_with_the_most_lines(review).map(|hunk| hunk.id.clone());
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.patch = hunk.patch_preview.clone();
                 }
                 if let Some(text) = ui.ctx().output(|output| {
@@ -146,7 +146,7 @@ fn dragging_across_diff_lines_selects_the_run() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                if let Some(hunk) = review.hunks().first() {
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
                 }
@@ -287,7 +287,7 @@ fn double_clicking_a_word_selects_and_copies_it() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                if let Some(hunk) = review.hunks().first() {
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
                 }
@@ -496,7 +496,7 @@ fn a_plain_click_on_a_diff_line_still_opens_the_comment_composer() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                if let Some(hunk) = review.hunks().first() {
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
                 }

@@ -3,6 +3,8 @@
 //! The review's left sidebar, minus a comments list - comments have a
 //! window of their own.
 
+use std::collections::HashMap;
+
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
 
 use crate::{
@@ -29,15 +31,16 @@ pub(crate) fn stage_dot_id(file_path: &str) -> egui::Id {
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
-    let Some(payload) = app
+    let Some((payload, asked_staging)) = app
         .model
         .review_ref(session_id)
-        .and_then(|review| review.payload.clone())
+        .and_then(|review| Some((review.payload.clone()?, review.asked_file_staging.clone())))
     else {
         return;
     };
 
-    let files = build_sidebar_files(&payload);
+    let mut files = build_sidebar_files(&payload);
+    wear_asked_staging(&asked_staging, &mut files);
     let read_only = payload.read_only;
     let is_commit_review = payload.active_commit.is_some();
     let commit_base = payload.commit_base.as_deref();
@@ -139,6 +142,22 @@ fn draw_files_section(
     }
 }
 
+/// A click on a staging dot is drawn before git has been told, so the dot answers the press
+/// rather than the round trip. The row shows what was asked for until a fetched diff has it.
+fn wear_asked_staging(asked_staging: &HashMap<String, bool>, files: &mut [SidebarFile]) {
+    for file in files.iter_mut() {
+        let Some(&staged) = asked_staging.get(&file.file_path) else {
+            continue;
+        };
+        file.status = if staged {
+            FileStageStatus::Staged
+        } else {
+            FileStageStatus::Unstaged
+        };
+        file.staged_hunk_count = if staged { file.hunk_count } else { 0 };
+    }
+}
+
 fn stage_status_color(status: FileStageStatus, palette: &Palette) -> Color32 {
     match status {
         FileStageStatus::Staged => palette.staged,
@@ -150,19 +169,44 @@ fn stage_status_color(status: FileStageStatus, palette: &Palette) -> Color32 {
 /// Staged goes back to unstaged; anything else - unstaged or half-staged - is staged whole.
 /// The rule the sidebar's status badge follows.
 fn toggle_file_stage(app: &mut App, session_id: &str, file: &SidebarFile) {
-    let path = file.file_path.clone();
+    let stage = file.status != FileStageStatus::Staged;
+    set_file_staging(app, session_id, &file.file_path, stage);
+}
+
+/// Stage or unstage a whole file, with the dot wearing the answer from the press onwards.
+fn set_file_staging(app: &mut App, session_id: &str, file_path: &str, stage: bool) {
+    app.model
+        .review(session_id)
+        .asked_file_staging
+        .insert(file_path.to_string(), stage);
+
+    let path = file_path.to_string();
     let for_call = session_id.to_string();
-    if file.status == FileStageStatus::Staged {
-        app.tasks
-            .act(session_id, "could not unstage the file", move |backend| {
-                backend.unstage_file(&for_call, &path)
-            });
-    } else {
-        app.tasks
-            .act(session_id, "could not stage the file", move |backend| {
+    let for_apply = session_id.to_string();
+    let asked_for = file_path.to_string();
+    app.tasks.spawn(
+        move |backend| {
+            if stage {
                 backend.stage_file(&for_call, &path)
-            });
-    }
+            } else {
+                backend.unstage_file(&for_call, &path)
+            }
+        },
+        move |model, result| {
+            let review = model.review(&for_apply);
+            review.refresh_requested = true;
+            // The dot drawn from the click has nothing behind it once the call has failed.
+            if result.is_err() {
+                review.asked_file_staging.remove(&asked_for);
+            }
+            let context = if stage {
+                "could not stage the file"
+            } else {
+                "could not unstage the file"
+            };
+            model.report(result, context);
+        },
+    );
 }
 
 fn draw_file_row(
@@ -320,23 +364,13 @@ fn draw_file_row(
             if file.status != FileStageStatus::Staged
                 && widgets::clickable(ui.button("stage the whole file")).clicked()
             {
-                let path = file.file_path.clone();
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not stage the file", move |backend| {
-                        backend.stage_file(&for_call, &path)
-                    });
+                set_file_staging(app, session_id, &file.file_path, true);
                 ui.close();
             }
             if file.status != FileStageStatus::Unstaged
                 && widgets::clickable(ui.button("unstage the whole file")).clicked()
             {
-                let path = file.file_path.clone();
-                let for_call = session_id.to_string();
-                app.tasks
-                    .act(session_id, "could not unstage the file", move |backend| {
-                        backend.unstage_file(&for_call, &path)
-                    });
+                set_file_staging(app, session_id, &file.file_path, false);
                 ui.close();
             }
             ui.separator();
@@ -619,7 +653,54 @@ pub(crate) fn status_label(comment: &crate::api::ReviewCommentView) -> &'static 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{AgentKind, CommentDispatchStatus, CommentDispatchView, ReviewCommentView};
+    use crate::api::{
+        AgentKind, CommentDispatchStatus, CommentDispatchView, FileChangeKind, ReviewCommentView,
+    };
+
+    fn half_staged_file() -> SidebarFile {
+        SidebarFile {
+            file_path: "src/a.rs".to_string(),
+            file_name: "a.rs".to_string(),
+            change_kind: FileChangeKind::Modified,
+            status: FileStageStatus::Partial,
+            added_line_count: 3,
+            removed_line_count: 1,
+            hunk_count: 4,
+            staged_hunk_count: 2,
+            moved_from_file_path: None,
+            moved_to_file_path: None,
+        }
+    }
+
+    #[test]
+    fn a_file_the_click_asked_to_stage_reads_staged_before_git_answers() {
+        let mut files = vec![half_staged_file()];
+        wear_asked_staging(&HashMap::from([("src/a.rs".to_string(), true)]), &mut files);
+
+        assert_eq!(files[0].status, FileStageStatus::Staged);
+        assert_eq!(files[0].staged_hunk_count, files[0].hunk_count);
+    }
+
+    #[test]
+    fn a_file_the_click_asked_to_unstage_reads_unstaged_before_git_answers() {
+        let mut files = vec![half_staged_file()];
+        wear_asked_staging(
+            &HashMap::from([("src/a.rs".to_string(), false)]),
+            &mut files,
+        );
+
+        assert_eq!(files[0].status, FileStageStatus::Unstaged);
+        assert_eq!(files[0].staged_hunk_count, 0);
+    }
+
+    #[test]
+    fn a_file_nobody_clicked_keeps_what_git_said() {
+        let mut files = vec![half_staged_file()];
+        wear_asked_staging(&HashMap::from([("src/b.rs".to_string(), true)]), &mut files);
+
+        assert_eq!(files[0].status, FileStageStatus::Partial);
+        assert_eq!(files[0].staged_hunk_count, 2);
+    }
 
     fn comment(resolved: bool, status: CommentDispatchStatus) -> ReviewCommentView {
         ReviewCommentView {

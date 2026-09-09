@@ -117,6 +117,14 @@ impl App {
                             {
                                 review.active_hunk_id = None;
                             }
+                            // A staging dot drawn from a click rather than from git keeps
+                            // its colour only until a diff arrives that has the file the way
+                            // the click asked for - or has lost the file altogether.
+                            review.asked_file_staging.retain(|file_path, staged| {
+                                payload.hunks.iter().any(|hunk| {
+                                    &hunk.file_path == file_path && hunk.staged != *staged
+                                })
+                            });
                             review.history_has_more = payload.history_has_more;
                             if review.history_loaded.is_empty() {
                                 review.history_loaded = payload.history_commits.clone();

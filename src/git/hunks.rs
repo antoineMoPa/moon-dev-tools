@@ -113,6 +113,11 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         let diff = run_git_allow_status(repo_path, &untracked_args, &[0, 1])?;
         hunks.extend(parse_diff(repo_path, &diff, false)?);
     }
+    // The three diffs above each list their own files, so a file staged whole would jump from
+    // the first group to the second and move down the review. Grouping by path holds every
+    // file still while its hunks are staged and unstaged; within a file the hunks keep the
+    // order the diffs gave them, unstaged first.
+    hunks.sort_by(|left, right| left.file_path.cmp(&right.file_path));
     Ok(hunks)
 }
 

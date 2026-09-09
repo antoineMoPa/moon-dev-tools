@@ -12,7 +12,7 @@ use egui_kittest::Harness;
 
 use crate::{api::OpenSessionRequest, backend::local::LocalBackend, native::theme::ThemeMode};
 
-use super::{Fixture, app_for, click_at, seeded_fixture, settle};
+use super::{Fixture, app_for, click_at, hunk_with_the_most_lines, seeded_fixture, settle};
 
 /// Clicking a diff line selects it and opens the comment composer in one gesture, the way
 /// selecting text does.
@@ -46,8 +46,8 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                seen.hunk_id = review.hunks().first().map(|hunk| hunk.id.clone());
-                if let Some(hunk) = review.hunks().first() {
+                seen.hunk_id = hunk_with_the_most_lines(review).map(|hunk| hunk.id.clone());
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.patch = hunk.patch_preview.clone();
                 }
                 seen.selected_lines = review
@@ -168,7 +168,7 @@ fn reselecting_lines_keeps_the_note_being_typed() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
-                if let Some(hunk) = review.hunks().first() {
+                if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
                 }
@@ -460,11 +460,13 @@ fn clicking_a_file_staging_dot_stages_the_whole_file() {
     let fixture = seeded_fixture("stage-dot");
     let app = app_for(&fixture.root, ThemeMode::Dark);
 
-    /// What the file's hunks say about the index, read from inside the UI closure.
+    /// What the file's hunks say about the index, and what a click has asked of it, read from
+    /// inside the UI closure.
     #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
     struct Staging {
         hunks: usize,
         staged: usize,
+        asked: Option<bool>,
     }
 
     let staging = Arc::new(Mutex::new(Staging::default()));
@@ -481,7 +483,7 @@ fn clicking_a_file_staging_dot_stages_the_whole_file() {
             let Some(review) = app.model.review_ref(&app.model.root_session_id) else {
                 return;
             };
-            let of_file = review
+            let mut of_file = review
                 .hunks()
                 .iter()
                 .filter(|hunk| hunk.file_path == "src/lib.rs")
@@ -490,6 +492,7 @@ fn clicking_a_file_staging_dot_stages_the_whole_file() {
                     seen.staged += usize::from(hunk.staged);
                     seen
                 });
+            of_file.asked = review.asked_file_staging.get("src/lib.rs").copied();
             *staging_in_ui.lock().expect("poisoned") = of_file;
             ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
         });
@@ -516,6 +519,14 @@ fn clicking_a_file_staging_dot_stages_the_whole_file() {
         .rect;
     click_at(&mut harness, dot.center());
 
+    // The row says staged from the click onwards: either git has already caught up, or the
+    // click is still on its way there and the row is wearing what it asked for.
+    let asked_at_once = *staging.lock().expect("poisoned");
+    assert!(
+        asked_at_once.asked == Some(true) || asked_at_once.staged == asked_at_once.hunks,
+        "the row should read staged on the click itself, saw {asked_at_once:?}"
+    );
+
     // Staging runs on a worker thread and the review is refetched after it, so the model
     // catches up over the next few frames rather than on the click itself.
     let all_staged = settle(&mut harness, || {
@@ -530,6 +541,11 @@ fn clicking_a_file_staging_dot_stages_the_whole_file() {
 
     // The dot now reads staged, so the same click has to be the way back out.
     click_at(&mut harness, dot.center());
+    let asked_at_once = *staging.lock().expect("poisoned");
+    assert!(
+        asked_at_once.asked == Some(false) || asked_at_once.staged == 0,
+        "the row should read unstaged on the click itself, saw {asked_at_once:?}"
+    );
     let all_unstaged = settle(&mut harness, || {
         let seen = *staging.lock().expect("poisoned");
         seen.hunks > 0 && seen.staged == 0

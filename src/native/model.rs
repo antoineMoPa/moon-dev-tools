@@ -168,6 +168,10 @@ pub(crate) struct ReviewState {
     pub(crate) history_has_more: bool,
     pub(crate) loading_history: bool,
     pub(crate) pending_discard: Option<String>,
+    /// What a click on a file's staging dot asked for - staged or not - by file path, while
+    /// git is still being told. The row wears it at once rather than waiting out the round
+    /// trip, and it is dropped as soon as a fetched diff says the same thing.
+    pub(crate) asked_file_staging: HashMap<String, bool>,
 }
 
 impl ReviewState {
@@ -192,6 +196,7 @@ impl ReviewState {
             history_has_more: false,
             loading_history: false,
             pending_discard: None,
+            asked_file_staging: HashMap::new(),
         }
     }
 
