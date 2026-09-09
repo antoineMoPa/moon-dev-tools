@@ -1,11 +1,11 @@
 //! The windows running on this machine, and how a shell reaches one.
 //!
-//! `moon open <file>` is meant to land in a window that is already open on that file's
-//! project rather than start another one, so every window writes down where it is and
-//! listens on a socket of its own: `~/.moonreview/instances/<pid>.json` says which project
-//! the window with that pid is on, and `<pid>.sock` beside it is where it is asked to open
-//! a file. Both are written when the window opens a project and taken away when it closes;
-//! a window that was killed leaves them behind, and the next read clears those out.
+//! `moon open <file>` is meant to land in a window that is already open rather than start
+//! another one, so every window writes down where it is and listens on a socket of its own:
+//! `~/.moonreview/instances/<pid>.json` says which project the window with that pid is on
+//! and when it was last in front, and `<pid>.sock` beside it is where it is asked to open a
+//! file. Both are written when the window opens a project and taken away when it closes; a
+//! window that was killed leaves them behind, and the next read clears those out.
 
 pub(crate) mod window;
 
@@ -45,6 +45,11 @@ pub(crate) struct Instance {
     /// The project the window is open on, absolute and with symlinks followed - the paths a
     /// file is measured against have been through the same resolution.
     pub(crate) project_path: String,
+    /// When this window was last brought to the front, in seconds since the epoch, and 0 for
+    /// a window that has not been in front since it opened. It is what decides where a file
+    /// goes when no window is open on its project: the window being looked at.
+    #[serde(default)]
+    pub(crate) focused_at_unix: u64,
 }
 
 /// What a shell asks a window for.
@@ -61,8 +66,8 @@ pub(crate) enum Ask {
 pub(crate) enum Answer {
     /// The window has the file and is opening it.
     Opened,
-    /// The window will not open it, and says why - the file is in another project than the
-    /// one this window is on, or the window has no project open yet.
+    /// The window will not open it, and says why - it has no project open yet, or the repo
+    /// it is open on is on another machine, so the file the shell named is not one it reads.
     Refused { reason: String },
 }
 
@@ -211,29 +216,36 @@ pub(crate) fn running() -> Vec<Instance> {
 }
 
 /// The windows that could open this file, the likeliest first: the window whose shell the
-/// ask was typed in, and then every window whose project holds the file, the innermost
-/// project first - a window on a submodule is a better answer than one on the repo around it.
+/// ask was typed in, then every window whose project holds the file, the innermost project
+/// first - a window on a submodule is a better answer than one on the repo around it - and
+/// then the rest of the windows, the one most recently in front first.
+///
+/// The rest are there because a file whose project no window is open on still has to land
+/// somewhere: the window being looked at opens a session on that project and puts the file
+/// in a tab of it, which beats an error telling somebody to open a window first.
 ///
 /// `file` has to be absolute and resolved, as the project paths in the records are, or a
 /// project holding it cannot be recognised.
 pub(crate) fn windows_for(
     file: &Path,
     shell_window: Option<u32>,
-    running: Vec<Instance>,
+    mut running: Vec<Instance>,
 ) -> Vec<Instance> {
-    let mut reachable: Vec<Instance> = running
-        .into_iter()
-        .filter(|instance| {
-            Some(instance.pid) == shell_window || file.starts_with(&instance.project_path)
-        })
-        .collect();
-    reachable.sort_by_key(|instance| {
+    running.sort_by_key(|instance| {
+        let holds_the_file = file.starts_with(&instance.project_path);
         (
             Some(instance.pid) != shell_window,
-            usize::MAX - instance.project_path.len(),
+            !holds_the_file,
+            // The innermost project wins among the windows that hold the file, and says
+            // nothing about the ones that do not - they are ordered by their time in front.
+            match holds_the_file {
+                true => usize::MAX - instance.project_path.len(),
+                false => 0,
+            },
+            std::cmp::Reverse(instance.focused_at_unix),
         )
     });
-    reachable
+    running
 }
 
 /// The window a `moon open` was typed in, when it was typed in one of a window's shells.
@@ -248,7 +260,7 @@ pub(crate) fn open_file(file: &Path, line: Option<usize>) -> Result<Instance> {
     let candidates = windows_for(file, shell_window(), running());
     if candidates.is_empty() {
         bail!(
-            "no moon window is open on a project holding {}",
+            "no moon window is open on this machine to put {} in",
             file.display()
         );
     }

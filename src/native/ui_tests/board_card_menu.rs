@@ -119,7 +119,9 @@ fn a_right_click_on_a_card_copies_its_path_and_opens_a_shell_in_its_folder() {
         "a right click on a card should offer its path"
     );
     assert!(
-        harness.query_by_label("open shell in the task folder").is_some(),
+        harness
+            .query_by_label("open shell in the task folder")
+            .is_some(),
         "and a shell standing in its folder"
     );
     assert!(

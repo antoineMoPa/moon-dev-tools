@@ -173,6 +173,12 @@ pub(crate) struct App {
     /// Files shells have asked for, waiting their turn: opening a tab goes through the one
     /// deferred slot every other pane change does, so they are opened one to a frame.
     pub(crate) asked_files: VecDeque<crate::instances::window::OpenFileAsked>,
+    /// The sessions this window opened so it could take files of projects it is not itself
+    /// on - see [`crate::native::open_from_shell`].
+    pub(crate) sessions_for_asked_files: crate::native::open_from_shell::SessionsForAskedFiles,
+    /// Whether the window was in front on the last frame, so the frame it comes forward on
+    /// is the one that writes that down for the shells to read.
+    pub(crate) window_is_in_front: bool,
     /// What `~/.moonreview/settings.json` said, and what it will be written back as.
     settings: crate::settings::Settings,
 }
@@ -302,6 +308,8 @@ impl App {
             shell_asks: None,
             project_asks_reach_this_window_on: None,
             asked_files: VecDeque::new(),
+            sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
+            window_is_in_front: false,
             settings,
         };
 

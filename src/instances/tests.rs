@@ -8,10 +8,17 @@ use super::{
 };
 
 fn instance(pid: u32, project_path: &str) -> Instance {
+    in_front_at(pid, project_path, 0)
+}
+
+/// The same, for a window that was last in front at this time - which is what orders the
+/// windows a file can fall back to.
+fn in_front_at(pid: u32, project_path: &str, focused_at_unix: u64) -> Instance {
     Instance {
         pid,
         program: "moon shell".to_string(),
         project_path: project_path.to_string(),
+        focused_at_unix,
     }
 }
 
@@ -24,8 +31,9 @@ fn this_process(project_path: &str) -> Instance {
 /// Higher than any pid a system hands out, so it cannot come to be running mid-test.
 const PID_OF_NOTHING: u32 = 4_194_303;
 
+/// The window open on the file's project is asked before the one that is not.
 #[test]
-fn the_window_holding_the_file_is_the_one_to_ask() {
+fn the_window_holding_the_file_is_asked_first() {
     let windows = windows_for(
         Path::new("/repos/project/src/main.rs"),
         None,
@@ -37,7 +45,7 @@ fn the_window_holding_the_file_is_the_one_to_ask() {
 
     assert_eq!(
         windows.iter().map(|window| window.pid).collect::<Vec<_>>(),
-        vec![2]
+        vec![2, 1]
     );
 }
 
@@ -76,16 +84,42 @@ fn the_shells_own_window_comes_first() {
     );
 }
 
-/// A window whose project does not hold the file has nothing to open, so it is not asked.
+/// No window is open on the file's project, so the file falls to the window that was in
+/// front most recently rather than to an error.
 #[test]
-fn a_window_on_another_project_is_not_asked() {
+fn a_file_no_window_is_open_on_goes_to_the_window_last_in_front() {
     let windows = windows_for(
         Path::new("/repos/project/src/main.rs"),
         None,
-        vec![instance(1, "/repos/elsewhere")],
+        vec![
+            in_front_at(1, "/repos/elsewhere", 100),
+            in_front_at(2, "/repos/somewhere-else", 200),
+        ],
     );
 
-    assert!(windows.is_empty(), "got {windows:?}");
+    assert_eq!(
+        windows.iter().map(|window| window.pid).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+}
+
+/// A window that holds the file is a better answer than the one that happens to be in front,
+/// however long ago it was last looked at.
+#[test]
+fn the_window_holding_the_file_beats_the_one_in_front() {
+    let windows = windows_for(
+        Path::new("/repos/project/src/main.rs"),
+        None,
+        vec![
+            in_front_at(1, "/repos/elsewhere", 900),
+            in_front_at(2, "/repos/project", 0),
+        ],
+    );
+
+    assert_eq!(
+        windows.iter().map(|window| window.pid).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
 }
 
 #[test]
@@ -133,7 +167,7 @@ fn a_file_of_the_project_is_taken_and_waits_for_the_next_frame() {
     let file = project.join("notes.md");
     std::fs::write(&file, "# notes").expect("expected a file");
 
-    let asks = ShellAsks::listen("moon shell".to_string(), egui::Context::default())
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
         .expect("expected a socket");
     asks.on_project(&project.display().to_string())
         .expect("expected the record to be written");
@@ -152,12 +186,12 @@ fn a_file_of_the_project_is_taken_and_waits_for_the_next_frame() {
     assert_eq!(arrived[0].line, Some(12));
 }
 
-/// A window only opens files of the project it is on: a tab is opened on a file of that
-/// project, named by its path inside it, so there is no tab for anything else.
+/// A window takes a file of another project too: it opens a session on that project and puts
+/// the file in a tab of it, which is what a shell asks it for when no window is open there.
 #[test]
-fn a_file_of_another_project_is_refused_with_the_reason() {
-    let project = temporary_project("refused");
-    let asks = ShellAsks::listen("moon shell".to_string(), egui::Context::default())
+fn a_file_of_another_project_is_taken_as_well() {
+    let project = temporary_project("another");
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
         .expect("expected a socket");
     asks.on_project(&project.display().to_string())
         .expect("expected the record to be written");
@@ -169,13 +203,56 @@ fn a_file_of_another_project_is_refused_with_the_reason() {
         })
         .expect("expected an answer");
 
+    assert_eq!(answer, Answer::Opened);
+    let arrived = asks.drain();
+    assert_eq!(arrived.len(), 1);
+    assert_eq!(arrived[0].path, Path::new("/somewhere/else/main.rs"));
+}
+
+/// A window whose repo is on another machine reads none of the files a shell here can name,
+/// so it refuses and the shell tries the next window.
+#[test]
+fn a_window_on_another_machines_repo_is_refused_with_the_reason() {
+    let project = temporary_project("remote");
+    let asks = ShellAsks::listen("moon shell".to_string(), false, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+
+    let answer = this_process(&project.display().to_string())
+        .ask(&Ask::OpenFile {
+            path: project.join("notes.md").display().to_string(),
+            line: None,
+        })
+        .expect("expected an answer");
+
     assert_eq!(
         answer,
         Answer::Refused {
-            reason: format!("this window is open on {}", project.display())
+            reason: format!(
+                "this window is open on {} on another machine",
+                project.display()
+            )
         }
     );
     assert!(asks.drain().is_empty());
+}
+
+/// The window being looked at is where a file with no window on its project goes, so coming
+/// to the front is written into the record for a shell to read.
+#[test]
+fn a_window_that_comes_to_the_front_writes_when_it_did() {
+    let project = temporary_project("in-front");
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    assert_eq!(running()[0].focused_at_unix, 0);
+
+    asks.came_to_the_front()
+        .expect("expected the record to be written");
+
+    assert!(running()[0].focused_at_unix > 0, "got {:?}", running()[0]);
 }
 
 /// Closing a window takes its record and its socket with it, so nothing looks for a window
@@ -183,7 +260,7 @@ fn a_file_of_another_project_is_refused_with_the_reason() {
 #[test]
 fn a_window_that_closes_takes_its_record_away() {
     let project = temporary_project("closed");
-    let asks = ShellAsks::listen("moon shell".to_string(), egui::Context::default())
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
         .expect("expected a socket");
     asks.on_project(&project.display().to_string())
         .expect("expected the record to be written");

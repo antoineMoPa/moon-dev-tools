@@ -4,6 +4,11 @@
 //! shell: tab completion is the shell's own, it completes hidden files the same as any
 //! other, and `moon open .moontasks/notes.md` lands in the window it was typed in front of.
 //! Which window that is, and how it is reached, is [`crate::instances`]' business.
+//!
+//! A file of a project no window is open on lands in a window all the same - the one that
+//! was in front most recently - which opens a session on that project to put it in. So the
+//! command is worth typing wherever a window is open at all, rather than only where one
+//! happens to be open on the right repo.
 
 use std::path::PathBuf;
 

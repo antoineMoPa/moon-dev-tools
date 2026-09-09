@@ -10,7 +10,7 @@ installs one executable, `moon`, which opens on three things:
 | `moon tasks` | a sprint board for organizing tasks, agents and shells |
 | `moon review` | a local code review UI for git |
 | `moon shell` | a shell in the repo |
-| `moon open <file>` | opens a file in the window that is already open on it |
+| `moon open <file>` | opens a file in the window already open on its project, else the one last in front |
 
 ![Moontasks sprint board with a shell beside it](docs/assets/moontasks-workspace.png)
 

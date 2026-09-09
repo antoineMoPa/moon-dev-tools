@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -27,20 +28,27 @@ pub(crate) struct OpenFileAsked {
 /// What a window keeps so shells can reach it: the project it is written down as being on,
 /// and the asks that have arrived since the last frame.
 pub(crate) struct ShellAsks {
-    /// Read by the listening thread to decide whether a file is one this window can open,
-    /// and written by the window whenever it opens another project.
+    /// Read by the listening thread to decide whether this window has anything to open a
+    /// file into yet, and written by the window whenever it opens another project.
     project: Arc<Mutex<Option<String>>>,
     arrived: Arc<Mutex<Vec<OpenFileAsked>>>,
     /// What this window is called on the command line, which is what `moon list` prints
     /// beside the project.
     program: String,
+    /// When this window was last brought to the front, which is written into its record so a
+    /// shell can tell the window being looked at from the ones behind it.
+    focused_at_unix: Arc<Mutex<u64>>,
 }
 
 impl ShellAsks {
     /// Open the window's socket and start answering on it. The window is not written down
     /// yet: it has nothing to be found by until it is open on a project, which is what
     /// [`ShellAsks::on_project`] says.
-    pub(crate) fn listen(program: String, ctx: egui::Context) -> Result<Self> {
+    pub(crate) fn listen(
+        program: String,
+        reads_this_machine: bool,
+        ctx: egui::Context,
+    ) -> Result<Self> {
         let path = socket_path(std::process::id()).context("no home directory to listen in")?;
         let dir = path.parent().expect("the socket sits in the instances dir");
         std::fs::create_dir_all(dir)
@@ -55,6 +63,7 @@ impl ShellAsks {
             project: Arc::new(Mutex::new(None)),
             arrived: Arc::new(Mutex::new(Vec::new())),
             program,
+            focused_at_unix: Arc::new(Mutex::new(0)),
         };
         let project = asks.project.clone();
         let arrived = asks.arrived.clone();
@@ -65,7 +74,7 @@ impl ShellAsks {
                     // One ask per connection, and each is answered before the next is read:
                     // a shell waits for its answer, so nothing is gained by doing several at
                     // once, and the window is only ever asked as fast as somebody types.
-                    if let Err(error) = answer(stream, &project, &arrived) {
+                    if let Err(error) = answer(stream, reads_this_machine, &project, &arrived) {
                         eprintln!("[moonreview] could not answer a `moon` ask: {error}");
                         continue;
                     }
@@ -84,10 +93,34 @@ impl ShellAsks {
     /// window that reopened the same project does.
     pub(crate) fn on_project(&self, project_path: &str) -> Result<()> {
         *self.project.lock().expect("the project lock") = Some(project_path.to_string());
+        self.write_down(project_path.to_string())
+    }
+
+    /// Say this window has just been brought to the front. A file whose project no window is
+    /// open on goes to the window that was in front most recently, so the moment it comes
+    /// forward is the moment worth writing down.
+    ///
+    /// Nothing to write before the window is on a project: it has no record until then, and
+    /// [`ShellAsks::on_project`] carries the time in with it when it writes the first one.
+    pub(crate) fn came_to_the_front(&self) -> Result<()> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the clock is past 1970")
+            .as_secs();
+        *self.focused_at_unix.lock().expect("the focus lock") = now;
+
+        let Some(project_path) = self.project.lock().expect("the project lock").clone() else {
+            return Ok(());
+        };
+        self.write_down(project_path)
+    }
+
+    fn write_down(&self, project_path: String) -> Result<()> {
         write_record(&Instance {
             pid: std::process::id(),
             program: self.program.clone(),
-            project_path: project_path.to_string(),
+            project_path,
+            focused_at_unix: *self.focused_at_unix.lock().expect("the focus lock"),
         })
     }
 
@@ -105,11 +138,17 @@ impl Drop for ShellAsks {
 
 /// Read one ask off a connection and answer it.
 ///
-/// A file outside this window's project is refused rather than opened: a tab is opened on a
-/// file of the project the window is on, named by its path inside it, so there is no tab to
-/// be opened on anything else. The shell that asked tries the next window.
+/// A file of another project is taken as readily as one of this window's own: the window
+/// opens a session on the project holding it and puts the file in a tab of that - see
+/// [`crate::native::open_from_shell`]. Which window is asked first is the shell's business,
+/// and it asks the ones open on the file's project before any other.
+///
+/// What is refused is a window with nothing to open a file into: one still on its launch
+/// screen, and one whose repo is on another machine, where a path typed in a shell here
+/// names nothing at all.
 fn answer(
     stream: UnixStream,
+    reads_this_machine: bool,
     project: &Arc<Mutex<Option<String>>>,
     arrived: &Arc<Mutex<Vec<OpenFileAsked>>>,
 ) -> Result<()> {
@@ -121,7 +160,10 @@ fn answer(
         .with_context(|| format!("failed to read {asked:?} as an ask"))?;
 
     let answer = match project.lock().expect("the project lock").clone() {
-        Some(project) if std::path::Path::new(&path).starts_with(&project) => {
+        Some(project) if !reads_this_machine => Answer::Refused {
+            reason: format!("this window is open on {project} on another machine"),
+        },
+        Some(_) => {
             arrived
                 .lock()
                 .expect("the arrived lock")
@@ -131,9 +173,6 @@ fn answer(
                 });
             Answer::Opened
         }
-        Some(project) => Answer::Refused {
-            reason: format!("this window is open on {project}"),
-        },
         None => Answer::Refused {
             reason: "this window has no project open yet".to_string(),
         },

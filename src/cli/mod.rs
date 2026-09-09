@@ -211,7 +211,8 @@ pub(super) enum MoonCommand {
     },
     /// Write the desktop launcher of each frame, so the OS offers them too.
     InstallLaunchers,
-    /// One file, in the window that is already open on its project.
+    /// One file, in the window already open on its project - and in the window last in
+    /// front when no window is open on it.
     Open {
         path: String,
         line: Option<usize>,
@@ -479,7 +480,7 @@ Tiny local dev tools: a task board, a code review and a shell, one window each.
 
 Usage:
 {windows}
-  {PROGRAM} open <path>[:<line>]      a file, in the window already open on its project
+  {PROGRAM} open <path>[:<line>]      a file, in the window on its project or the one last in front
   {PROGRAM} list                      which windows are open, and what they are on
   {PROGRAM} serve [--logs]            the review server, for a window on another machine
   {PROGRAM} install-launchers         entries the OS offers for the three windows
