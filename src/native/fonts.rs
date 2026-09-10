@@ -59,6 +59,12 @@ const SYSTEM_FONTS: &[(&str, &str)] = &[
     // Braille - which is what most command line spinners are made of - and a good deal of
     // the miscellaneous symbols tools reach for.
     ("apple-symbols", "/System/Library/Fonts/Apple Symbols.ttf"),
+    // The dingbat stars Claude Code spins with (✢ ✶ ✻ ✽), which no other plain `.ttf`
+    // macOS ships has.
+    (
+        "arial-unicode",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    ),
 ];
 
 #[cfg(target_os = "linux")]
