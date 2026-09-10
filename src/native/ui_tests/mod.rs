@@ -17,6 +17,7 @@ mod diff_definition;
 mod diff_selection;
 mod file_editing;
 mod file_language_servers;
+mod file_written_elsewhere;
 mod files;
 mod finding;
 mod launch;

@@ -10,7 +10,12 @@
 //! [`crate::native::lsp_document`], which holds what it has heard on the pane it belongs to,
 //! and what that server offers to finish the word being typed with is
 //! [`crate::native::completing`]'s business - this pane hands the list in and hands the
-//! editor's answer back on.
+//! editor's answer back on. Whether the file was written under the pane by something else is
+//! [`on_disk`]'s.
+
+mod on_disk;
+
+use std::time::Instant;
 
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
@@ -20,6 +25,7 @@ use egui_moon_code_ide::{
 };
 use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
+use crate::api::FileContentPayload;
 use crate::native::{
     app::App,
     theme::{Palette, SMALL_SIZE},
@@ -32,6 +38,12 @@ const PANE_PADDING: i8 = 10;
 /// What the header reads on a file that is not in the repo, in place of the save it does not
 /// offer.
 const OUTSIDE_THE_REPO_NOTE: &str = "outside the repo · read-only";
+
+/// What the header reads on a file another program wrote while the tab had edits of its own.
+const WRITTEN_ELSEWHERE_NOTE: &str = "changed on disk";
+
+/// `[reload]` once it has been pressed, asking for the second press that drops the edits.
+const RELOAD_CONFIRM_LABEL: &str = "[reload · discard edits]";
 
 /// A file being read or edited, and what has happened to it since it was opened.
 pub(crate) struct FileEditor {
@@ -81,6 +93,19 @@ pub(crate) struct FileEditor {
     /// review it is a round trip - asking again every frame would be a call a frame for
     /// something already in hand.
     asked_what_opens_a_list: bool,
+    /// The file as another program wrote it while this pane had edits of its own. Held
+    /// rather than put on screen, since that would throw the edits away: `[reload]` takes it,
+    /// `[save]` writes the edits over it. `None` while what is on disk is what was saved.
+    written_elsewhere: Option<FileContentPayload>,
+    /// Set by a first press of `[reload]`: the second one drops the edits, the way closing a
+    /// tab with unsaved edits does.
+    reload_confirmed: bool,
+    /// When the file was last read to see whether it changed on disk - see [`on_disk`].
+    last_disk_check: Option<Instant>,
+    /// How many writes this pane has sent. A check of the disk started before a write can
+    /// come back with the file from before it, and would read as somebody else's change - so
+    /// a check only answers when no write went out while it was reading.
+    writes_sent: u64,
 }
 
 impl FileEditor {
@@ -106,6 +131,10 @@ impl FileEditor {
             completing: Completing::default(),
             triggers: Vec::new(),
             asked_what_opens_a_list: false,
+            written_elsewhere: None,
+            reload_confirmed: false,
+            last_disk_check: None,
+            writes_sent: 0,
         }
     }
 
@@ -424,15 +453,7 @@ impl App {
                     return;
                 };
                 match result {
-                    Ok(payload) => {
-                        editor.saved = Some(payload.content.clone());
-                        editor.code.set_text(payload.content);
-                        // What the fringe marks the new lines of the text against, so what has
-                        // been written since the last commit - saved or not - stands out.
-                        editor.code.set_base(payload.committed);
-                        editor.error = None;
-                        editor.outside_the_repo = payload.outside_the_repo;
-                    }
+                    Ok(payload) => editor.take_what_is_on_disk(payload),
                     Err(error) => editor.error = Some(format!("{error}")),
                 }
             },
@@ -451,6 +472,7 @@ impl App {
             return;
         }
         editor.saving = true;
+        editor.writes_sent += 1;
         let content = editor.code.text().to_string();
         let file_path = editor.file_path.clone();
 
@@ -471,6 +493,9 @@ impl App {
                         // What is on disk is what was sent, not whatever has been typed since.
                         editor.saved = Some(content);
                         editor.error = None;
+                        // Written over whatever another program had put there.
+                        editor.written_elsewhere = None;
+                        editor.reload_confirmed = false;
                     }
                     Err(error) => {
                         let message = format!("{error}");
@@ -506,11 +531,14 @@ impl App {
         self.sync_document(&ctx, pane_id, session_id);
         // A name ⌘-clicked in this pane on an earlier frame, once it has been looked up.
         crate::native::definition::follow(self, pane_id, session_id);
+        self.check_the_disk(pane_id, session_id);
         let Some(editor) = self.model.file_editors.get(&pane_id) else {
             return;
         };
         let dirty = editor.is_dirty();
         let saving = editor.saving;
+        let written_elsewhere = editor.written_elsewhere.is_some();
+        let reload_confirmed = editor.reload_confirmed;
         let outside_the_repo = editor.outside_the_repo;
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
@@ -540,6 +568,27 @@ impl App {
                             && widgets::quiet_button(ui, "[save]").clicked()
                         {
                             self.save_file_pane(pane_id, session_id);
+                        }
+                        // Left of `[save]`, the other way out of a file written under the
+                        // edits in the pane.
+                        if written_elsewhere
+                            && !saving
+                            && widgets::quiet_button(
+                                ui,
+                                if reload_confirmed {
+                                    RELOAD_CONFIRM_LABEL
+                                } else {
+                                    "[reload]"
+                                },
+                            )
+                            .on_hover_text(if reload_confirmed {
+                                "Press again to discard your edits and show the file as it is on disk"
+                            } else {
+                                "Show the file as it is on disk, discarding your edits"
+                            })
+                            .clicked()
+                        {
+                            self.reload_file_pane(pane_id);
                         }
                         if markdown
                             && loaded
@@ -571,7 +620,16 @@ impl App {
                                 "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
                             );
                         }
-                        if dirty && !outside_the_repo {
+                        if written_elsewhere && !saving {
+                            ui.label(
+                                RichText::new(WRITTEN_ELSEWHERE_NOTE)
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.warn),
+                            )
+                            .on_hover_text(
+                                "Another program wrote this file after it was opened here, while it had unsaved edits. [reload] shows its version and discards yours; [save] writes yours over it.",
+                            );
+                        } else if dirty && !outside_the_repo {
                             ui.label(
                                 RichText::new(if saving { "saving…" } else { "unsaved" })
                                     .size(SMALL_SIZE - 1.0)
@@ -761,7 +819,7 @@ struct Searching {
 mod tests {
     use super::*;
 
-    fn editor_with(saved: &str, edited: &str) -> FileEditor {
+    pub(super) fn editor_with(saved: &str, edited: &str) -> FileEditor {
         FileEditor {
             file_path: "src/lib.rs".to_string(),
             saved: Some(saved.to_string()),
@@ -778,6 +836,10 @@ mod tests {
             completing: Completing::default(),
             triggers: Vec::new(),
             asked_what_opens_a_list: false,
+            written_elsewhere: None,
+            reload_confirmed: false,
+            last_disk_check: None,
+            writes_sent: 0,
         }
     }
 
