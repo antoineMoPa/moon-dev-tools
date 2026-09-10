@@ -6,6 +6,8 @@ pub(crate) mod bindings;
 pub(crate) mod board;
 pub(crate) mod commit_pane;
 #[cfg(test)]
+mod commit_pane_request_tests;
+#[cfg(test)]
 mod commit_pane_tests;
 pub(crate) mod completing;
 pub(crate) mod definition;

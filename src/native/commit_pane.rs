@@ -140,10 +140,12 @@ pub(crate) struct CommitPane {
     /// for once and no more - staging happens a hunk at a time next door, and an agent run for
     /// every one of those would be a run for a commit that is still being put together.
     suggestion_asked: bool,
-    /// Whether the commit a board task wrote for this repo has been put in the box. Once, and
-    /// never again: a box someone has emptied is a message they are writing themselves, and
-    /// putting it back on the next frame would be arguing with them.
-    requested_commit_filled: bool,
+    /// The commit a board task wrote for this repo that was last put in the box. Each one goes
+    /// in once and never again: a box someone has emptied - by hand, or by making that commit -
+    /// is not to have it put back on the next frame. Kept as the message rather than as a yes
+    /// or no because the pane lives as long as the window, and the repo's next commit is asked
+    /// for by another line, with a message of its own.
+    requested_commit_put_in: Option<CommitSuggestion>,
     /// Set when a commit has just worked, and answered by the next reading of the repo: it is
     /// that reading which knows whether the review beside this pane has anything left to show.
     closes_review: bool,
@@ -162,7 +164,7 @@ impl CommitPane {
             suggestion: None,
             suggestion_error: None,
             suggestion_asked: false,
-            requested_commit_filled: false,
+            requested_commit_put_in: None,
             closes_review: false,
             reached: Reached::Nothing,
         }
@@ -442,9 +444,9 @@ impl App {
     /// Nothing to do with staging, unlike the message written from the diff - this one does not
     /// come from the diff. It is in the box as soon as git has said which branch the repo is on,
     /// so what is about to be committed is readable while the hunks are still being picked next
-    /// door. Not before that: which line wrote this commit is answered by the branch, and the
-    /// box is filled once and never again - so filling it a frame early would be filling it with
-    /// another task's message and keeping it there.
+    /// door. Not before that: which line wrote this commit is answered by the branch, and a box
+    /// that has been filled is not filled over - so filling it a frame early would be filling it
+    /// with another task's message and keeping it there.
     fn fill_in_the_requested_commit(&mut self, session_id: &str) {
         if self.commit_pane(session_id).state.is_none() {
             return;
@@ -456,13 +458,15 @@ impl App {
             return;
         };
         let pane = self.commit_pane(session_id);
-        // Only ever into an empty box, and only ever once - so a message someone is writing is
-        // never argued with, and neither is a box they have emptied on purpose.
-        if pane.requested_commit_filled || !pane.message.trim().is_empty() {
+        // Only ever into an empty box, and each message only ever once - so a message someone
+        // is writing is never argued with, and neither is a box they have emptied on purpose.
+        if pane.requested_commit_put_in.as_ref() == Some(&written)
+            || !pane.message.trim().is_empty()
+        {
             return;
         }
         pane.message = written.as_message();
-        pane.requested_commit_filled = true;
+        pane.requested_commit_put_in = Some(written);
     }
 
     /// The one time the pane asks on its own: something is staged, nothing has been written in
