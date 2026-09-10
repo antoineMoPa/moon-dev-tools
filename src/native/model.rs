@@ -637,6 +637,8 @@ pub(crate) struct Model {
     pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
+    /// The extensions open in tabs, keyed by the pane each one draws.
+    pub(crate) extension_panes: HashMap<PaneId, crate::native::extension_pane::ExtensionPane>,
     /// What the markdown renderer keeps between frames - loaded images above all - shared by
     /// every file pane that is previewing.
     pub(crate) markdown_cache: egui_commonmark::CommonMarkCache,

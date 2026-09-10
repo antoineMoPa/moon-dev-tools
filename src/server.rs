@@ -137,6 +137,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(run_project_command),
         )
         .route(
+            "/api/session/{session_id}/run-in-shell",
+            post(crate::terminal::run_in_shell),
+        )
+        .route(
             "/api/session/{session_id}/columns/{column_id}",
             delete(delete_column),
         )

@@ -318,6 +318,8 @@ impl App {
 
         self.quit_would_kill_shells(ctx);
         self.apply_shortcuts(ctx);
+        // After the window has taken the chords that are its own, so what is left is the pane's.
+        self.forward_keys_to_extension(ctx);
         match self.pending_tab_action.take() {
             Some(TabAction::New) => self.open_shell_tab(),
             Some(TabAction::Close) => self.close_active_tab(ctx),
@@ -333,6 +335,7 @@ impl App {
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
         self.follow_shell_asks(ctx);
+        self.follow_extensions(ctx);
         if std::mem::take(&mut self.model.project_pending) {
             self.load_project();
         }

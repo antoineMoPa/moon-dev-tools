@@ -13,6 +13,7 @@ mod cli;
 mod comments;
 mod commit_suggestion;
 mod committing;
+mod extensions;
 mod git;
 mod instances;
 mod lsp;

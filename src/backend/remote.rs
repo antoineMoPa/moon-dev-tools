@@ -580,6 +580,14 @@ impl Backend for RemoteBackend {
         Ok(outcome.exit_code)
     }
 
+    fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/run-in-shell"),
+            &json!({ "command": command }),
+        )?;
+        Ok(opened.terminal_id)
+    }
+
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         #[derive(serde::Deserialize)]
         struct Created {

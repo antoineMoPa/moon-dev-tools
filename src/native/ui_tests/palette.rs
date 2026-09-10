@@ -676,3 +676,160 @@ fn the_palette_still_offers_a_review_that_is_already_open() {
         "running it again should raise the open review, not open a second one"
     );
 }
+
+/// Opens the palette over a pane with the keyboard, presses Escape, and says whether the
+/// palette is still up.
+fn palette_survives_escape_over(
+    mut harness: Harness<'static>,
+    showing: Arc<AtomicBool>,
+) -> bool {
+    press_key(
+        &mut harness,
+        egui::Key::P,
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    );
+    harness.run_steps(2);
+    assert!(showing.load(Ordering::Relaxed), "cmd+shift+P should have opened the palette");
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    showing.load(Ordering::Relaxed)
+}
+
+#[test]
+fn escape_puts_the_palette_away_over_a_file() {
+    use crate::native::panes::Pane;
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("palette-escape-file");
+    fixture.write("src/lib.rs", "one\n");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let showing = Arc::new(AtomicBool::new(false));
+    let showing_in_ui = Arc::clone(&showing);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            if let Some((id, _)) = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+            {
+                loaded_in_ui.store(
+                    app.model
+                        .file_editors
+                        .get(&id)
+                        .and_then(|editor| editor.content_for_test())
+                        .is_some(),
+                    Ordering::Relaxed,
+                );
+            }
+        });
+    assert!(settle(&mut harness, || loaded.load(Ordering::Relaxed)), "the file never loaded");
+    harness.run_steps(2);
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).click();
+    harness.run_steps(2);
+
+    assert!(
+        !palette_survives_escape_over(harness, showing),
+        "Escape should have put the palette away over a file"
+    );
+}
+
+#[test]
+fn escape_puts_the_palette_away_over_a_shell() {
+    use crate::{
+        api::OpenSessionRequest,
+        backend::local::LocalBackend,
+        native::{Launch, app::App, panes::Pane},
+    };
+
+    let fixture = seeded_fixture("palette-escape-shell");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let backend = Arc::new(LocalBackend::new(state));
+    let request = || OpenSessionRequest {
+        repo_path: fixture.root.display().to_string(),
+        diff_target: None,
+        active_commit: None,
+    };
+    let opened = crate::backend::Backend::open_session(backend.as_ref(), request())
+        .expect("expected the session to open");
+    let terminal_id =
+        crate::backend::Backend::create_terminal(backend.as_ref(), &opened.session_id, None)
+            .expect("expected a shell to start");
+    let attachment = crate::backend::Backend::attach_terminal(
+        backend.as_ref(),
+        &opened.session_id,
+        &terminal_id,
+    )
+    .expect("expected to attach to the shell");
+    let terminal = egui_tty::Terminal::new(attachment)
+        .expect("expected the terminal emulator to start")
+        .with_label(terminal_id.clone());
+    let launch = Launch {
+        backend: Arc::clone(&backend) as Arc<dyn crate::backend::Backend>,
+        open: Some(request()),
+        frame: crate::cli::Frame::Review,
+    };
+    let mut app = App::new(egui::Context::default(), launch);
+    app.set_theme(ThemeMode::Dark);
+    app.terminals.insert(terminal_id.clone(), terminal);
+
+    let placed = Arc::new(AtomicBool::new(false));
+    let placed_in_ui = Arc::clone(&placed);
+    let shell_has_keyboard = Arc::new(AtomicBool::new(false));
+    let shell_in_ui = Arc::clone(&shell_has_keyboard);
+    let showing = Arc::new(AtomicBool::new(false));
+    let showing_in_ui = Arc::clone(&showing);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !placed_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame = app.model.layout.active_frame();
+                app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
+                        terminal_id: terminal_id.clone(),
+                        command: None,
+                        task_id: None,
+                    },
+                    None,
+                );
+                placed_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            shell_in_ui.store(
+                app.model.terminal_with_keyboard.is_some_and(|id| {
+                    ui.ctx().memory(|memory| memory.has_focus(id))
+                }),
+                Ordering::Relaxed,
+            );
+        });
+    assert!(
+        settle(&mut harness, || shell_has_keyboard.load(Ordering::Relaxed)),
+        "the shell never took the keyboard"
+    );
+    harness.run_steps(2);
+
+    assert!(
+        !palette_survives_escape_over(harness, showing),
+        "Escape should have put the palette away over a shell"
+    );
+}

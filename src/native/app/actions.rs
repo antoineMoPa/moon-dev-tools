@@ -403,6 +403,7 @@ impl App {
             CommandAction::SearchContent => self.model.palette.show_contents(),
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
+            CommandAction::RestartExtension(name) => self.restart_extension(&name),
         }
     }
 
@@ -614,9 +615,13 @@ impl App {
         // A shell gets every plain keystroke - `s` there is the letter s - and so does a text
         // box, the palette's search line included: a box the window owns is still a box the
         // user is typing in. Only the chords marked as reaching anywhere are the window's
-        // while either has the keyboard.
-        let typing =
-            ctx.egui_wants_keyboard_input() || self.active_pane_kind() == Some(PaneKind::Terminal);
+        // while either has the keyboard. An extension's pane is the same: its script is sent
+        // every key the window does not claim - see `App::forward_keys_to_extension`.
+        let typing = ctx.egui_wants_keyboard_input()
+            || matches!(
+                self.active_pane_kind(),
+                Some(PaneKind::Terminal | PaneKind::Extension)
+            );
 
         for action in self.keymap.resolve(ctx, typing) {
             self.apply_action(action);

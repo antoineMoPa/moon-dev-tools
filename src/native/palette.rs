@@ -89,6 +89,8 @@ pub(crate) enum CommandAction {
     Split(DropSide),
     /// Run one of the project's own commands in a shell of its own.
     RunProject(ProjectCommand),
+    /// Start an open extension over from its script - see [`crate::extensions`].
+    RestartExtension(String),
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -243,6 +245,38 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Messages),
         None,
     ));
+    // Every extension, shipped or the person's own - read again each time, so one written a
+    // moment ago is offered without a restart. See `crate::extensions`.
+    for extension in crate::extensions::all() {
+        let name = extension.name;
+        let opens = match extension.about.is_empty() {
+            true => format!("Open the {name} extension"),
+            false => extension.about,
+        };
+        let open = app
+            .model
+            .layout
+            .find_pane(|pane| pane.runs_extension(&name))
+            .is_some();
+        commands.push(single_pane_command(
+            open,
+            &name,
+            &opens,
+            &format!("Bring {name} forward"),
+            CommandAction::OpenPane(OpenPaneRequest::Extension { name: name.clone() }),
+            None,
+        ));
+        if open {
+            commands.push(Command {
+                title: format!("restart {name}"),
+                description: format!(
+                    "Read the {name} extension again and start it over from init, dropping what it holds"
+                ),
+                action: CommandAction::RestartExtension(name),
+                shortcut: None,
+            });
+        }
+    }
     commands.push(Command {
         title: "terminal".to_string(),
         description: "Open a new shell".to_string(),

@@ -243,6 +243,7 @@ impl App {
                 connection,
                 commit_panes: HashMap::new(),
                 file_editors: HashMap::new(),
+                extension_panes: HashMap::new(),
                 markdown_cache: Default::default(),
                 find: None,
                 terminal_with_keyboard: None,

@@ -411,6 +411,21 @@ impl App {
                 let frame = self.frame_for(PaneKind::Messages, active_frame);
                 self.model.layout.add_pane(frame, Pane::Messages, None);
             }
+            OpenPaneRequest::Extension { name } => {
+                // One pane an extension: asking again brings it forward.
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.runs_extension(&name))
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Extension, active_frame);
+                self.model
+                    .layout
+                    .add_pane(frame, Pane::Extension { name }, None);
+            }
             OpenPaneRequest::Tasks => {
                 if let Some((pane, _)) = self
                     .model
@@ -470,6 +485,20 @@ impl App {
             placement,
             restarts_when_exited,
             move |backend| backend.run_project_command(&started, which),
+        );
+    }
+
+    /// A shell on the window's repo with a command line typed into it and sent: what an
+    /// extension's `open_shell` asks for. It goes where shells go, beside the others.
+    pub(crate) fn run_in_shell(&mut self, command: String) {
+        let session_id = self.model.root_session_id.clone();
+        let started = session_id.clone();
+        self.spawn_shell(
+            session_id,
+            None,
+            TerminalPlacement::WithOtherShells,
+            false,
+            move |backend| backend.run_in_shell(&started, &command),
         );
     }
 

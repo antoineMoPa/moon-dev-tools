@@ -320,6 +320,10 @@ impl Backend for LocalBackend {
         crate::terminal::start_workspace_shell(&self.state, session_id, command)
     }
 
+    fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
+        crate::terminal::start_workspace_shell_running(&self.state, session_id, command)
+    }
+
     fn list_terminals(&self, _session_id: &str) -> Result<Vec<String>> {
         Ok(self.state.terminals.terminal_ids())
     }

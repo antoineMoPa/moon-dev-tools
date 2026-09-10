@@ -11,6 +11,7 @@ mod commit_pane_request_tests;
 mod commit_pane_tests;
 pub(crate) mod completing;
 pub(crate) mod definition;
+pub(crate) mod extension_pane;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;

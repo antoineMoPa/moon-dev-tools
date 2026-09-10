@@ -87,15 +87,17 @@ impl Settings {
     }
 }
 
-fn home_settings_path() -> Option<PathBuf> {
+/// `~/.moonreview`: where everything that is the person's rather than a repo's is kept - this
+/// file, and the extensions they write (see [`crate::extensions`]).
+pub(crate) fn moonreview_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .filter(|home| !home.is_empty())?;
-    Some(
-        PathBuf::from(home)
-            .join(SETTINGS_DIR_NAME)
-            .join(SETTINGS_FILE_NAME),
-    )
+    Some(PathBuf::from(home).join(SETTINGS_DIR_NAME))
+}
+
+fn home_settings_path() -> Option<PathBuf> {
+    Some(moonreview_dir()?.join(SETTINGS_FILE_NAME))
 }
 
 /// The file this run reads and writes.

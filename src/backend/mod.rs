@@ -175,6 +175,11 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn commit_run_outcome(&self, session_id: &str, terminal_id: &str) -> Result<Option<i32>>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
+    /// Start a shell on the repo with one command line typed into it and sent, and answer with
+    /// the shell it runs in: what an extension asks for when what it has to show is a program
+    /// of its own - `docker logs -f`, a shell inside a container. Attached with
+    /// [`Backend::attach_terminal`], like any other.
+    fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     /// The shells with something running in them right now, as opposed to the ones sitting at
     /// a prompt. This is what quitting would interrupt, and so what the window warns about.

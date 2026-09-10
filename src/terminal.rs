@@ -65,6 +65,12 @@ pub(crate) struct CreateTerminalRequest {
     command: Option<AgentKind>,
 }
 
+/// A command line to start a shell with - see [`start_workspace_shell_running`].
+#[derive(Deserialize)]
+pub(crate) struct RunInShellRequest {
+    command: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct TerminalCreated {
     terminal_id: String,
@@ -778,6 +784,25 @@ pub(crate) fn start_workspace_shell(
         .spawn(TerminalSpec::shell(repo_path, command, Some(name)))
 }
 
+/// The same shell with one command line typed into it and sent: what an extension opens when
+/// what it has to show is a program of its own, like a container's logs followed as they come.
+///
+/// The shell outlives the command, the way a project's build does - see
+/// [`TerminalSpec::running`].
+pub(crate) fn start_workspace_shell_running(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
+) -> anyhow::Result<String> {
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    let name = name_for_new_shell(state, &repo_path, None, &TerminalProgram::LoginShell)?;
+    state.terminals.spawn(TerminalSpec {
+        name: Some(name),
+        ..TerminalSpec::running(repo_path, command)
+    })
+}
+
 /// Call a shell something else. A task's run is renamed on the task as well, so the name is
 /// still there once the shell is gone and a resumed run takes it back.
 pub(crate) fn rename(
@@ -799,6 +824,15 @@ pub(crate) async fn create_terminal(
     Json(request): Json<CreateTerminalRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let terminal_id = start_workspace_shell(&state, &session_id, request.command)?;
+    Ok(Json(TerminalCreated { terminal_id }))
+}
+
+pub(crate) async fn run_in_shell(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<RunInShellRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let terminal_id = start_workspace_shell_running(&state, &session_id, &request.command)?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 

@@ -113,6 +113,10 @@ to make the board match your workflow.
 Task state lives in the repo's `.moontasks/` directory. See [Moontasks.md](Moontasks.md) for the
 complete board behavior and controls.
 
+### Extensions
+
+See [Extensions.md](Extensions.md) to build Rhai script extensions.
+
 ### Moonreview
 
 Pass two paths to compare arbitrary files in a read-only review:

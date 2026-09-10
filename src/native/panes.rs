@@ -36,6 +36,8 @@ pub(crate) enum PaneKind {
     Project,
     /// Every message the window has posted, the way emacs keeps a `*Messages*` buffer.
     Messages,
+    /// A pane a script draws - see [`crate::extensions`].
+    Extension,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -97,6 +99,11 @@ pub(crate) enum Pane {
     /// Everything the window has said, with the time it said it - what a click on the status
     /// bar opens. See [`crate::native::messages`].
     Messages,
+    /// A pane one of the extensions draws, by the extension's name. What the script holds is
+    /// not kept with the layout: a pane put back by the next run starts its script over.
+    Extension {
+        name: String,
+    },
 }
 
 impl Pane {
@@ -112,6 +119,7 @@ impl Pane {
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
             Self::Messages => PaneKind::Messages,
+            Self::Extension { .. } => PaneKind::Extension,
         }
     }
 
@@ -139,6 +147,7 @@ impl Pane {
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
             Self::Messages => "messages".to_string(),
+            Self::Extension { name } => name.clone(),
         }
     }
 
@@ -160,6 +169,11 @@ impl Pane {
     /// Whether this pane is the commit pane of one particular review.
     pub(crate) fn commits(&self, session_id: &str) -> bool {
         matches!(self, Self::Commit { session_id: open } if open == session_id)
+    }
+
+    /// Whether this pane is the one of a particular extension.
+    pub(crate) fn runs_extension(&self, name: &str) -> bool {
+        matches!(self, Self::Extension { name: open } if open == name)
     }
 }
 
@@ -214,6 +228,10 @@ pub(crate) enum OpenPaneRequest {
     Project,
     /// Everything the window has said.
     Messages,
+    /// One of the extensions, by name.
+    Extension {
+        name: String,
+    },
 }
 
 /// The match a file is opened at: the line to bring on screen, and the text that was
@@ -381,6 +399,7 @@ impl PaneView<Pane> for App {
             Pane::Submodules => crate::native::submodules::draw(self, ui),
             Pane::Project => crate::native::project_pane::draw(self, ui),
             Pane::Messages => crate::native::messages::draw(self, ui),
+            Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),
         }
     }
 
