@@ -399,12 +399,17 @@ pub(crate) fn session_file(
                 file_path: file_path.to_string(),
                 content: crate::git::read_file_named_outside_the_repo(&real_path)?,
                 outside_the_repo: true,
+                committed: None,
             });
         }
         Ok(FileContentPayload {
             file_path: file_path.to_string(),
             content: read_repo_file(&session.repo_path, file_path)?,
             outside_the_repo: false,
+            committed: Some(crate::git::read_committed_file(
+                &session.repo_path,
+                file_path,
+            )?),
         })
     })
 }

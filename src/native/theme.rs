@@ -384,6 +384,9 @@ impl Palette {
             ink: self.ink,
             line_number_font: FontId::new(CODE_SIZE - 1.0, FontFamily::Monospace),
             fringe_ink: self.muted,
+            // The green a review draws an added line in, so a line new in the file reads as
+            // the same thing it is in the diff.
+            new_line_ink: self.added,
             // The same tint a match gets in a review, which is strong enough to pick one out
             // of the code without hiding it.
             mark_ink: self.accent.linear_multiply(0.35),

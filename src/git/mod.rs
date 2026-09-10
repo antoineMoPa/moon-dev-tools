@@ -171,6 +171,13 @@ pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String
     Ok(content)
 }
 
+/// A file of the repo as HEAD has it - empty when HEAD does not have it, which is a file not
+/// committed yet or a repo with no commits at all.
+pub(crate) fn read_committed_file(repo_path: &Path, file_path: &str) -> Result<String> {
+    let head_spec = format!("HEAD:{file_path}");
+    run_git_allow_status(repo_path, &["show", &head_spec], &[0, 128])
+}
+
 /// Write a file in the working tree. Only a file that is already there can be written: this
 /// is an editor for what is being reviewed, not a way to create files anywhere on disk.
 pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {

@@ -82,6 +82,61 @@ fn a_file_opens_in_a_tab_of_its_own() {
     harness.snapshot("file-pane");
 }
 
+/// The lines written since the last commit get a green bar down the right of the fringe: a
+/// line changed and a line put in are marked, and the lines around them are not.
+#[test]
+fn the_lines_new_since_the_last_commit_are_marked_in_the_fringe() {
+    let fixture = Fixture::new("file-new-lines");
+    fixture.write(
+        "src/lib.rs",
+        "pub fn one() -> u32 {\n    1\n}\n\npub fn two() -> u32 {\n    2\n}\n",
+    );
+    fixture.commit("Add the library");
+    fixture.write(
+        "src/lib.rs",
+        "pub fn one() -> u32 {\n    10\n}\n\n/// The second one.\npub fn two() -> u32 {\n    2\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let new_lines = Arc::new(Mutex::new(None));
+    let new_lines_in_ui = Arc::clone(&new_lines);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "src/lib.rs");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *new_lines_in_ui.lock().unwrap() = app
+                .model
+                .file_editors
+                .values()
+                .find(|editor| editor.content_for_test().is_some())
+                .map(|editor| editor.new_lines_for_test());
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && new_lines.lock().unwrap().is_none() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // The `10` on line two, and the doc comment put in above the second function.
+    assert_eq!(*new_lines.lock().unwrap(), Some(vec![1..2, 4..5]));
+
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.run_steps(3);
+    harness.snapshot("file-pane-new-lines");
+}
+
 /// A markdown file opens on the rendered page, and `[edit]` is the way back to the text.
 #[test]
 fn a_markdown_file_opens_rendered() {

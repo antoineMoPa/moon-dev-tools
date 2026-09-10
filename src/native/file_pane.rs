@@ -228,6 +228,12 @@ impl FileEditor {
         self.code.text()
     }
 
+    /// The lines the fringe marks as new since the last commit, counted from zero.
+    #[cfg(test)]
+    pub(crate) fn new_lines_for_test(&self) -> Vec<std::ops::Range<usize>> {
+        self.code.new_lines().to_vec()
+    }
+
     /// How many rows the pane is offering to finish the word being typed with.
     #[cfg(test)]
     pub(crate) fn rows_offered_for_test(&self) -> usize {
@@ -421,6 +427,9 @@ impl App {
                     Ok(payload) => {
                         editor.saved = Some(payload.content.clone());
                         editor.code.set_text(payload.content);
+                        // What the fringe marks the new lines of the text against, so what has
+                        // been written since the last commit - saved or not - stands out.
+                        editor.code.set_base(payload.committed);
                         editor.error = None;
                         editor.outside_the_repo = payload.outside_the_repo;
                     }
