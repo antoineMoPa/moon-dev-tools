@@ -25,8 +25,8 @@ use crate::{
     },
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        LinkFileRequest, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest,
-        TaskTitleRequest, TaskView, TerminalOpened,
+        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload,
+        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
     service,
@@ -700,13 +700,14 @@ async fn list_columns(
 async fn add_column(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<ColumnLabelRequest>,
+    Json(request): Json<NewColumnRequest>,
 ) -> Result<Json<BoardColumn>, AppError> {
     mark_activity(&state);
     Ok(Json(moontasks::service::add_column(
         &state,
         &session_id,
         &request.label,
+        request.at,
     )?))
 }
 

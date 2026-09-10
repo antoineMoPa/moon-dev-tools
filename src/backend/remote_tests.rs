@@ -534,3 +534,42 @@ fn a_remote_shell_is_renamed_over_http() {
         .close_terminal(&opened.session_id, &terminal_id)
         .expect("expected the remote shell to close");
 }
+
+/// A column added from the middle of the board goes where it was asked for, not on the end.
+/// Over HTTP because the place is carried in the request body rather than the path.
+#[test]
+fn a_column_is_added_where_it_was_asked_for() {
+    let served = serve_a_repo("columns");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let added = backend
+        .add_column(&opened.session_id, "Blocked", Some(1))
+        .expect("expected the column to be added");
+
+    let labels: Vec<String> = backend
+        .list_columns(&opened.session_id)
+        .expect("expected the columns to be listed")
+        .into_iter()
+        .map(|column| column.label)
+        .collect();
+    assert_eq!(labels, ["TODO", "Blocked", "IN PROGRESS", "DONE"]);
+    assert_eq!(added.label, "Blocked");
+
+    // Nothing said where this one goes, so it joins the right-hand end.
+    backend
+        .add_column(&opened.session_id, "Shipped", None)
+        .expect("expected the column to be added");
+    let last = backend
+        .list_columns(&opened.session_id)
+        .expect("expected the columns to be listed")
+        .pop()
+        .expect("expected a last column");
+    assert_eq!(last.label, "Shipped");
+}

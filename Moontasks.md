@@ -169,12 +169,25 @@ folder — so it ignores itself from the moment it is created, and opening moonr
 leaves `git status` exactly as it was. To share the board with the rest of the team instead,
 delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 
+## A card from the command line
+
+```bash
+moon tasks new "fix the races"
+```
+
 ## What the agents are told
 
 An agent started on a task does not have to be asked twice. It is given a brief — the same
 text `brief.md` holds — naming the task, its folder, and asking it to say plainly when the
 work is ready to be looked at. It is also pointed at `notes.md` there: the task's description
 and shared notes, which the card shows and either of you may write.
+
+The three take it three different ways, because that is what they each offer: Claude has a
+system-prompt flag, Codex takes developer instructions as a config override, and OpenCode has
+neither but reads a config out of the environment that can name files to load as instructions
+— so it is handed one naming this task's `brief.md`. None of them is typed at: an agent's
+input box does not exist yet at the moment a run begins, and what is typed then is dropped.
+OpenCode's config is merged over your own rather than replacing it.
 
 The card's title is then typed into its box, as if you had typed it: once the agent has
 stopped printing, which is it having drawn an input to type into and being sat waiting — a

@@ -752,3 +752,90 @@ fn a_shell_pages_utf8_text_as_characters_rather_than_escapes() {
         "the pager should not have drawn the bytes of it, printed {printed:?}"
     );
 }
+
+/// OpenCode is told which task it is on through its environment, and this is that reaching
+/// the process it was meant for: a card starts an agent, and the config OpenCode reads names
+/// the `brief.md` that card just wrote.
+///
+/// Ignored because it starts a real OpenCode - run it with `--ignored` on a machine that has
+/// one. Everything about it that can be checked without one is in
+/// `moontasks::service::tests`.
+#[test]
+#[ignore]
+fn opencode_is_started_with_a_config_naming_this_task_s_brief() {
+    use crate::{
+        api::OpenSessionRequest,
+        backend::{Backend, local::LocalBackend},
+        moontasks::{
+            ColumnEnd, ColumnId, CreateTaskRequest, StartFolder, StartResourceRequest,
+            TaskResourceKind,
+        },
+    };
+
+    let repo = std::env::temp_dir().join("moonreview-opencode-brief");
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).expect("failed to create the fixture directory");
+    crate::git::run_git_no_output(&repo, &["init"]).expect("failed to init the fixture repo");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let terminals = Arc::clone(&state.terminals);
+    let backend = LocalBackend::new(state);
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: repo.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the session to open");
+    let task = backend
+        .create_task(
+            &opened.session_id,
+            &CreateTaskRequest {
+                title: "Repaint the retro encabulator".to_string(),
+                status: ColumnId::new("todo"),
+                joins: ColumnEnd::Top,
+            },
+        )
+        .expect("expected the task to be created");
+    let terminal_id = backend
+        .start_task_resource(
+            &opened.session_id,
+            &task.id,
+            StartResourceRequest {
+                kind: TaskResourceKind::Agent,
+                agent: crate::api::AgentKind::OpenCode,
+                opens_in: StartFolder::Repo,
+            },
+        )
+        .expect("expected OpenCode to start");
+    let session = terminals.get(&terminal_id).expect("expected the shell");
+
+    // What the child was actually given, read off the process rather than taken on trust.
+    std::thread::sleep(Duration::from_secs(3));
+    let pid = session
+        .child_pid
+        .expect("expected the agent to have a process");
+    let environment = std::process::Command::new("ps")
+        .args(["eww", "-p", &pid.to_string()])
+        .output()
+        .expect("expected to read the process environment");
+    let environment = String::from_utf8_lossy(&environment.stdout).to_string();
+    terminals.remove(&terminal_id);
+
+    let carried = environment
+        .split_whitespace()
+        .find(|word| word.starts_with("OPENCODE_CONFIG_CONTENT="))
+        .unwrap_or_else(|| panic!("OpenCode was started with no config: {environment}"));
+
+    let brief_path = std::path::Path::new(&task.dir_path).join("brief.md");
+    assert!(
+        carried.contains(&brief_path.display().to_string()),
+        "the config should name this task's brief, got {carried}"
+    );
+    let brief = std::fs::read_to_string(&brief_path)
+        .expect("the brief is written before the agent is started");
+    assert!(
+        brief.contains("Repaint the retro encabulator"),
+        "and the file it names has to be the brief: {brief}"
+    );
+}

@@ -307,9 +307,13 @@ pub(crate) struct BoardState {
     /// The column whose delete mark has been pressed once, so a stray click cannot take a
     /// column off the board.
     pub(crate) pending_column_delete: Option<crate::moontasks::ColumnId>,
-    /// The new-column box at the right-hand end of the board, and what is being typed into it.
+    /// The new-column box and what is being typed into it.
     pub(crate) column_composer_open: bool,
     pub(crate) column_composer_focus: bool,
+    /// Where the box is standing, counted in columns from the left - so the column it is
+    /// standing in for is added there rather than at the end. `None` is the right-hand end,
+    /// which is where the board's own `+` opens it.
+    pub(crate) column_composer_at: Option<usize>,
     pub(crate) new_column_label: String,
     /// Where the column being dragged would land, counted in columns from the left. Worked out
     /// at the end of a frame and read by the next one, the same way a card's landing is.

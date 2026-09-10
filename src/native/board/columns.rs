@@ -108,11 +108,22 @@ pub(super) fn draw_heading(
         .is_some_and(|rename| rename.column_id == column.id);
     let pending_delete = app.model.board.pending_column_delete.as_ref() == Some(&column.id);
 
+    // Where this column stands among the others, which is what a new column beside it is
+    // placed by. The board's own order rather than the row being drawn: the two differ only
+    // while a column is in the air, and a menu cannot be opened then.
+    let at = app
+        .model
+        .board
+        .columns
+        .iter()
+        .position(|other| other.id == column.id)
+        .unwrap_or(0);
+
     ui.horizontal(|ui| {
         if editing {
             draw_heading_editor(app, ui, column, actions);
         } else {
-            draw_heading_handle(app, ui, column, palette, actions);
+            draw_heading_handle(app, ui, column, at, palette, actions);
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
@@ -161,6 +172,7 @@ fn draw_heading_handle(
     app: &mut App,
     ui: &mut Ui,
     column: &BoardColumn,
+    at: usize,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
@@ -183,7 +195,10 @@ fn draw_heading_handle(
             egui::Sense::click_and_drag(),
         )
         .on_hover_cursor(egui::CursorIcon::Grab)
-        .on_hover_text("Drag to move this column, double click to rename it");
+        .on_hover_text(
+            "Drag to move this column, double click to rename it, right click to add one \
+             beside it",
+        );
 
     if handle.double_clicked() {
         app.model.board.renaming_column = Some(ColumnRename {
@@ -193,19 +208,46 @@ fn draw_heading_handle(
         });
     }
 
-    draw_heading_menu(&handle, column, actions);
+    draw_heading_menu(&handle, column, at, actions);
 }
 
-/// What a column can be told about itself: where cards moved into it land. A menu rather than
-/// a mark on the heading, because it is set once for a column and then left alone.
+/// What a column can be told about itself: where cards moved into it land, and where a new
+/// column beside it would go. A menu rather than marks on the heading, because both are asked
+/// for rarely and neither is worth a permanent mark on every column.
+///
+/// `at` is how many columns are to this one's left, which is what a new column to either side
+/// of it is placed by.
 fn draw_heading_menu(
     handle: &egui::Response,
     column: &BoardColumn,
+    at: usize,
     actions: &mut Vec<BoardAction>,
 ) {
     egui::Popup::context_menu(handle)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
+            for (label, hover, place) in [
+                (
+                    "new column to the left",
+                    "the box to name it opens here, before this column",
+                    at,
+                ),
+                (
+                    "new column to the right",
+                    "the box to name it opens here, after this column",
+                    at + 1,
+                ),
+            ] {
+                if widgets::clickable(ui.button(label))
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    actions.push(BoardAction::OpenColumnComposer { at: Some(place) });
+                    ui.close();
+                }
+            }
+            ui.separator();
+
             ui.label(
                 RichText::new("a card moved in from another column goes").size(SMALL_SIZE - 1.0),
             );
@@ -329,23 +371,40 @@ pub(super) fn landing_for(dragged_centre: f32, headings: &[(ColumnId, f32)]) -> 
         .count()
 }
 
-/// The box a new column is named in, at the right-hand end of the board.
+/// Whether the new-column box is standing at this place in the row.
+pub(super) fn composer_stands_at(app: &App, at: usize) -> bool {
+    app.model.board.column_composer_open && app.model.board.column_composer_at == Some(at)
+}
+
+/// Whether the box belongs past the last of `columns` - either because it was opened at the
+/// right-hand end, or because the place it was opened at is no longer on the board.
+pub(super) fn composer_is_past(app: &App, columns: usize) -> bool {
+    app.model.board.column_composer_open
+        && app
+            .model
+            .board
+            .column_composer_at
+            .is_none_or(|at| at >= columns)
+}
+
+/// The `+` at the right-hand end of the board, which opens the box there.
+pub(super) fn draw_new_column_plus(ui: &mut Ui, palette: &Palette, actions: &mut Vec<BoardAction>) {
+    if plus_button(ui, palette)
+        .on_hover_text("New column at the end - right click a heading to add one beside it")
+        .clicked()
+    {
+        actions.push(BoardAction::OpenColumnComposer { at: None });
+    }
+}
+
+/// The box a new column is named in, wherever on the board it was opened.
 pub(super) fn draw_new_column(
     app: &mut App,
     ui: &mut Ui,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    if !app.model.board.column_composer_open {
-        if plus_button(ui, palette)
-            .on_hover_text("New column")
-            .clicked()
-        {
-            app.model.board.column_composer_open = true;
-            app.model.board.column_composer_focus = true;
-        }
-        return;
-    }
+    let at = app.model.board.column_composer_at;
 
     egui::Frame::new()
         .fill(palette.composer_bg)
@@ -374,9 +433,10 @@ pub(super) fn draw_new_column(
                     .clicked()
                     || (submitted && ready)
                 {
-                    actions.push(BoardAction::AddColumn(
-                        app.model.board.new_column_label.trim().to_string(),
-                    ));
+                    actions.push(BoardAction::AddColumn {
+                        label: app.model.board.new_column_label.trim().to_string(),
+                        at,
+                    });
                 }
                 if close_button(ui, palette)
                     .on_hover_text("Discard this column")

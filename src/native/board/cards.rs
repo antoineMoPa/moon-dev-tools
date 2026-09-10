@@ -8,7 +8,7 @@
 use egui::{Align, CornerRadius, Layout as UiLayout, Ui, vec2};
 
 use crate::{
-    moontasks::{ColumnId, TaskView},
+    moontasks::{ColumnEnd, ColumnId, TaskView},
     native::{
         app::App,
         board::{
@@ -268,9 +268,27 @@ pub(super) fn draw_pending_card(
     palette: &Palette,
     controls: &mut gesture::Controls,
     actions: &mut Vec<BoardAction>,
+    column: &ColumnId,
+    joins: ColumnEnd,
 ) {
     let (_, slot) = ui.allocate_space(vec2(ui.available_width(), PENDING_CARD_HEIGHT));
     draw_empty_slot(ui, slot, palette);
+
+    // The empty card is the task as it stands, so clicking it brings the pane it is being
+    // written on back in front - the same offer a made card's title makes. It is worth having
+    // because the board and the writing are two different tabs: from a shell the card is what
+    // is in front of you, and the half-named task it stands for is not.
+    //
+    // Registered before the cross so that the cross, drawn over it, keeps its own clicks.
+    let body = ui
+        .interact(slot, pending_card_id(column), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Back to naming this task");
+    if controls.pressed(&body) {
+        // The same thing the `+` that opened it does: one new-task pane at a time, and asking
+        // for it again brings the open one forward with what is already written on it.
+        actions.push(BoardAction::OpenNewTask(column.clone(), joins));
+    }
 
     // The cross a made card carries, in the place it sits there: the empty card is the task
     // as it stands, and this is how it is said no to without going looking for the tab it is
@@ -289,6 +307,12 @@ pub(super) fn draw_pending_card(
     if controls.pressed(&cross) {
         actions.push(BoardAction::CancelNewTask);
     }
+}
+
+/// The id the empty card is interacted by - named the way a card's and a column's handles are,
+/// so it can be read back by whatever needs to know where it was drawn.
+pub(crate) fn pending_card_id(column: &ColumnId) -> egui::Id {
+    egui::Id::new(("moontask-pending-card", column.as_str()))
 }
 
 /// How tall the empty card is: about what a card with a title of one line and nothing else on

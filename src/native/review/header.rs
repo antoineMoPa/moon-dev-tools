@@ -55,6 +55,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         ui.label(RichText::new(repo_name).strong())
             .on_hover_text(repo_path);
         ui.label(RichText::new("·").color(palette.line));
+        // Between the repo and what is being reviewed, because that is the order the answer is
+        // wanted in: which repo, which branch of it, which changes. A detached HEAD is on no
+        // branch and says nothing here rather than saying so.
+        if let Some(branch) = payload.branch_name.as_deref() {
+            ui.add(egui::Label::new(RichText::new(branch).color(palette.muted)).truncate())
+                .on_hover_text(format!("{branch}\n\nthe branch this repo is on"));
+            ui.label(RichText::new("·").color(palette.line));
+        }
         // The header is one line: a long subject is cut short here and read in full on hover.
         ui.add(egui::Label::new(RichText::new(label.as_str()).color(palette.accent)).truncate())
             .on_hover_text(format!("{label}\n\nwhat this review is pointed at"));

@@ -11,7 +11,7 @@ DOWNLOAD_BASE_URL="${MOONREVIEW_DOWNLOAD_BASE_URL:-}"
 
 need_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
-        echo "moonreview installer: missing required command: $1" >&2
+        echo "moon dev tools installer: missing required command: $1" >&2
         exit 1
     fi
 }
@@ -75,7 +75,7 @@ verify_platform() {
             echo "moonreview-aarch64-unknown-linux-gnu"
             ;;
         *)
-            echo "moonreview installer supports macOS arm64, Linux amd64, and Linux arm64 only (detected ${os} ${arch})." >&2
+            echo "moon dev tools installer supports macOS arm64, Linux amd64, and Linux arm64 only (detected ${os} ${arch})." >&2
             exit 1
             ;;
     esac
@@ -105,7 +105,7 @@ CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 
 SUM_CMD="$(checksum_cmd)"
 if [ -z "$SUM_CMD" ]; then
-    echo "moonreview installer: missing checksum tool (shasum or sha256sum)." >&2
+    echo "moon dev tools installer: missing checksum tool (shasum or sha256sum)." >&2
     exit 1
 fi
 
@@ -123,7 +123,7 @@ else
     CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/${CHECKSUM_NAME}"
 fi
 
-echo "Downloading moonreview from ${REPO}..."
+echo "Downloading moon dev tools from ${REPO}..."
 curl -fsSL "$ARCHIVE_URL" -o "${TMP_DIR}/${ARCHIVE_NAME}"
 curl -fsSL "$CHECKSUM_URL" -o "${TMP_DIR}/${CHECKSUM_NAME}"
 
@@ -136,7 +136,7 @@ mkdir -p "$INSTALL_DIR"
 tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TMP_DIR"
 
 if [ ! -f "${TMP_DIR}/${PROGRAM}" ]; then
-    echo "moonreview installer: the archive does not contain ${PROGRAM}." >&2
+    echo "moon dev tools installer: the archive does not contain ${PROGRAM}." >&2
     exit 1
 fi
 

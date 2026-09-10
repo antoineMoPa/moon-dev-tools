@@ -27,8 +27,8 @@ use crate::{
     backend::Backend,
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, LinkFileRequest, StartResourceRequest, TaskNotesPayload,
-        TaskPlacementRequest, TaskView, TerminalOpened,
+        CreateTaskRequest, LinkFileRequest, NewColumnRequest, StartResourceRequest,
+        TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened,
     },
     project::{ProjectCommand, ProjectConfig},
 };
@@ -399,11 +399,12 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/columns"))
     }
 
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
+    fn add_column(&self, session_id: &str, label: &str, at: Option<usize>) -> Result<BoardColumn> {
         self.post_json(
             &format!("/api/session/{session_id}/columns"),
-            &ColumnLabelRequest {
+            &NewColumnRequest {
                 label: label.to_string(),
+                at,
             },
         )
     }

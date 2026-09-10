@@ -137,7 +137,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The board's columns, left to right. A board that has never had them changed answers
     /// with the three defaults.
     fn list_columns(&self, session_id: &str) -> Result<Vec<BoardColumn>>;
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn>;
+    /// Add a column, `at` columns from the left. `None` puts it at the right-hand end.
+    fn add_column(&self, session_id: &str, label: &str, at: Option<usize>) -> Result<BoardColumn>;
     fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()>;
     /// Which end of a column a card moved in from another column goes to. `None` puts it where
     /// it was dropped, which is what a column says by saying nothing.

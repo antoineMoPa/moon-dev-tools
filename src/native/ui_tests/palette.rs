@@ -141,12 +141,15 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
     // The highlighted row, and the command Enter would run.
     let highlight = Arc::new(Mutex::new((0usize, String::new())));
     let highlight_in_ui = Arc::clone(&highlight);
+    let showing = Arc::new(AtomicBool::new(false));
+    let showing_in_ui = Arc::clone(&showing);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
+            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
             let matches = crate::native::palette::filter(
                 crate::native::palette::commands_for(&app),
                 &app.model.palette.query,
@@ -169,6 +172,21 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
         "the review never loaded"
     );
     harness.run_steps(2);
+
+    // M-x is the same palette under the name emacs gives it, and it is the hand that reaches
+    // for it that has to find it there.
+    press_key(&mut harness, egui::Key::X, egui::Modifiers::ALT);
+    harness.run_steps(2);
+    assert!(
+        showing.load(Ordering::Relaxed),
+        "M-x should have opened the palette"
+    );
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    assert!(
+        !showing.load(Ordering::Relaxed),
+        "Escape should have put it away again"
+    );
 
     press_key(
         &mut harness,

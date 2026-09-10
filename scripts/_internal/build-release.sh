@@ -112,7 +112,7 @@ EOF
 }
 
 build_macos_arm64() {
-    echo "Building moonreview $TAG for $MACOS_TARGET_TRIPLE..."
+    echo "Building moon dev tools $TAG for $MACOS_TARGET_TRIPLE..."
     cargo build --release --locked
     package_binaries "$MACOS_TARGET_TRIPLE" "$ROOT_DIR/target/release"
 }
@@ -142,7 +142,7 @@ build_linux() {
         -f scripts/_internal/linux-build.Dockerfile \
         scripts
 
-    echo "Building moonreview $TAG for $target_triple with Docker..."
+    echo "Building moon dev tools $TAG for $target_triple with Docker..."
     docker run --rm \
         "${platform_args[@]}" \
         -e DEBIAN_FRONTEND=noninteractive \

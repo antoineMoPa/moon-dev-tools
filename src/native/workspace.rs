@@ -308,11 +308,24 @@ impl App {
                 {
                     // The empty card stays where the pane that is open is writing it, not where
                     // the `+` just pressed would have put one.
-                    if let Pane::NewTask { column, joins, .. } = open {
+                    if let Pane::NewTask {
+                        column,
+                        joins,
+                        draft_id: written_on,
+                    } = open
+                    {
                         self.model.board.card_being_written = Some(PendingCard {
                             column: column.clone(),
                             joins: *joins,
                         });
+                        // Back in the title box, which is what was being asked for: the pane
+                        // was asked for again because the naming is not finished. The draft is
+                        // the open pane's own - the one made for this request is thrown away
+                        // below, and the keyboard must not be promised to it.
+                        self.model.board.task_box_focus = Some((
+                            written_on.clone(),
+                            crate::native::board::actions::TaskPaneBox::Title,
+                        ));
                     }
                     self.model.board.drafts.remove(&draft_id);
                     self.model.layout.focus_pane(pane);

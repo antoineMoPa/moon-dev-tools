@@ -38,7 +38,7 @@ else
     echo "Creating release $TAG and uploading assets..."
     gh release create "$TAG" "${ASSET_PATHS[@]}" \
         --title "$TAG" \
-        --notes "moonreview ${TAG#v}"
+        --notes "moon dev tools ${TAG#v}"
 fi
 
 echo "Release ready: $TAG"

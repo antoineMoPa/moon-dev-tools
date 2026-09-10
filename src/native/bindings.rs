@@ -7,7 +7,10 @@
 //!
 //! Chords can be more than one press. `C-x o` is `Ctrl+X` followed by a bare `o`, which is
 //! how emacs-style prefixes work: the first press arms the map, the second one resolves it.
-//! `M-x` prefixes fit the same shape, with Alt on the first press.
+//! `M-x` is the one-press emacs chord, and it opens the palette.
+//!
+//! An action may be bound more than once - `M-x` and `⌘⇧P` both open the palette. The first
+//! row for an action is the chord shown to the user; every row fires.
 
 use egui::{Key, Modifiers};
 
@@ -80,6 +83,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::OpenPalette,
         chord: &[press(COMMAND_SHIFT, Key::P)],
+        reach: Reach::Anywhere,
+    },
+    // The same palette under the name emacs gives it. Two chords for one action is what this
+    // table's shape allows for: the first row is the one shown to the user - see
+    // [`chord_of`] - and both fire.
+    Binding {
+        action: Action::OpenPalette,
+        chord: &[press(Modifiers::ALT, Key::X)],
         reach: Reach::Anywhere,
     },
     Binding {
@@ -385,7 +396,8 @@ pub(crate) fn tab_shortcut_label(index: usize) -> Option<String> {
     Some(describe(chord_of(Action::SelectTab(index))?))
 }
 
-/// The chord that fires an action, for anything that shows the keyboard to the user.
+/// The chord that fires an action, for anything that shows the keyboard to the user. An
+/// action bound twice is shown by its first row.
 pub(crate) fn chord_of(action: Action) -> Option<&'static [Press]> {
     BINDINGS
         .iter()
@@ -573,6 +585,32 @@ mod tests {
         assert!(left.is_empty(), "the shell must not be sent it as well");
     }
 
+    /// The palette answers to the emacs chord as well as the platform one, and from inside a
+    /// shell - which is where a hand that reaches for `M-x` usually is.
+    ///
+    /// Written the way macOS really delivers it. Option+X there composes a character, so the
+    /// press arrives as `Key::X` - which egui takes off the physical key, the logical one
+    /// being `≈` and no key it knows - followed by the `≈` itself as text. Both halves have
+    /// to be claimed, or the palette opens with `≈` typed into whatever is underneath.
+    #[test]
+    fn m_x_opens_the_palette_too() {
+        let mut keymap = Keymap::default();
+        let (fired, left) = run(
+            &mut keymap,
+            true,
+            vec![
+                key_event(Modifiers::ALT, Key::X),
+                egui::Event::Text("≈".to_string()),
+            ],
+        );
+
+        assert_eq!(fired, vec![Action::OpenPalette]);
+        assert!(
+            left.is_empty(),
+            "neither the press nor the character it composed may reach the shell: {left:?}"
+        );
+    }
+
     #[test]
     fn chords_read_the_way_they_are_spoken() {
         assert_eq!(
@@ -584,6 +622,7 @@ mod tests {
             describe(chord_of(Action::OpenPalette).expect("bound")),
             "⌘ shift P"
         );
+        assert_eq!(describe(&[press(Modifiers::ALT, Key::X)]), "M-x");
         // The label a tab wears at the right of its title breathes between glyph and digit.
         assert_eq!(tab_shortcut_label(0).expect("bound"), "⌘ 1");
         assert_eq!(

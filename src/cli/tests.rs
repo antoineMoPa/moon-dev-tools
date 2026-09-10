@@ -360,3 +360,53 @@ fn a_window_started_at_the_root_of_the_filesystem_opens_on_the_last_project() {
     }
     assert_eq!(opened, last_project);
 }
+
+/// `moon tasks new <title>` writes a card rather than opening a window, and the title is the
+/// whole of the rest of the line so an unquoted one still reads as one title.
+#[test]
+fn the_board_makes_a_card_from_the_command_line() {
+    assert_eq!(
+        parse_command(
+            None,
+            vec![
+                "tasks".to_string(),
+                "new".to_string(),
+                "fix the races".to_string()
+            ]
+        )
+        .expect("expected it to parse"),
+        MoonCommand::NewTask {
+            title: "fix the races".to_string()
+        }
+    );
+    assert_eq!(
+        parse_command(
+            None,
+            vec![
+                "tasks".to_string(),
+                "new".to_string(),
+                "fix".to_string(),
+                "the".to_string(),
+                "races".to_string()
+            ]
+        )
+        .expect("expected it to parse"),
+        MoonCommand::NewTask {
+            title: "fix the races".to_string()
+        }
+    );
+
+    let error = parse_command(None, vec!["tasks".to_string(), "new".to_string()])
+        .expect_err("a card with no title is refused");
+    assert!(error.to_string().contains("title"), "{error}");
+
+    // The other two windows have no such word: `moon review new` is a path called `new`.
+    assert_eq!(
+        parse_command(None, vec!["review".to_string(), "new".to_string()])
+            .expect("expected it to parse"),
+        MoonCommand::Window {
+            frame: Frame::Review,
+            args: vec!["new".to_string()]
+        }
+    );
+}

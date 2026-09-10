@@ -170,10 +170,20 @@ pub(crate) struct TerminalOpened {
     pub(crate) terminal_id: String,
 }
 
-/// A column being added, or one being renamed: in both cases what it is to be called.
+/// A column being renamed: what it is to be called.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ColumnLabelRequest {
     pub(crate) label: String,
+}
+
+/// A column being added: what it is called, and where among the others it goes.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct NewColumnRequest {
+    pub(crate) label: String,
+    /// How many columns are to its left. Nothing puts it at the right-hand end, which is
+    /// where the board's own `+` adds one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) at: Option<usize>,
 }
 
 /// Which end of a column cards moved into it go to, or nothing for wherever they were dropped.
@@ -197,15 +207,23 @@ pub(crate) struct ColumnPlacementRequest {
 /// | --- | --- |
 /// | `{session}` | the session id moontasks generated for this run |
 /// | `{brief}` | the standing instructions: which task, and where its notes go |
+/// | `{brief_file}` | the path of `brief.md`, for an agent given a config that names it |
 ///
 /// No agent is handed the work as a prompt. Starting one is opening a conversation, not
 /// firing a job off: it comes up knowing which task it is on, and waits to be told what to do
-/// about it. `brief.md` in the task folder is the same text, for an agent with no system
-/// prompt to be given it in.
+/// about it. `brief.md` in the task folder is the same text, for a person to read.
+///
+/// The three take the brief three different ways, which is why [`AgentLaunch`] carries both
+/// args and environment: Claude has a system-prompt flag, Codex takes developer instructions
+/// as a config override, and OpenCode has neither but reads a config out of the environment
+/// that can name files to load as instructions. Typing it at them is not an option - an
+/// agent's box does not exist yet when the run begins, and what is typed then is dropped.
 ///
 /// The card's title is typed into its box a moment after it starts - see
 /// [`crate::terminal::TerminalSpec::type_ahead`] - so the conversation opens with something
-/// written and nothing sent. That is a keystroke short of firing the job off, and the
+/// written and nothing sent. That is a convenience and nothing rests on it: OpenCode's TUI
+/// takes the terminal over a second or so in and drops whatever was typed before then, which
+/// is exactly why the brief goes through the environment instead. That is a keystroke short of firing the job off, and the
 /// keystroke is the person's.
 ///
 /// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
@@ -222,6 +240,10 @@ pub(crate) struct AgentLaunch {
     /// resuming a run that recorded one, and attaching a session picked off the agent's own
     /// records.
     pub(crate) attach: &'static [&'static str],
+    /// Environment every run of this agent is given, for one that reads its instructions out
+    /// of the environment rather than off its command line. Filled in the same way the args
+    /// are, and a variable whose value has nothing to fill it is left unset.
+    pub(crate) env: &'static [(&'static str, &'static str)],
 }
 
 pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
@@ -241,18 +263,37 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         // agent's own records would never have had one at all.
         resume: &["--append-system-prompt", "{brief}"],
         attach: &["--resume", "{session}", "--append-system-prompt", "{brief}"],
+        env: &[],
     },
     AgentLaunch {
         kind: AgentKind::Codex,
-        start: &[],
-        resume: &["resume", "--last"],
-        attach: &["resume", "{session}"],
+        // Codex has no system-prompt flag, but developer instructions are a config value and
+        // every config value can be overridden on the command line. `-c` is a global option,
+        // so it leads - `resume` is a subcommand and everything of the program's own comes
+        // before it.
+        start: &["-c", "developer_instructions={brief}"],
+        resume: &["-c", "developer_instructions={brief}", "resume", "--last"],
+        attach: &[
+            "-c",
+            "developer_instructions={brief}",
+            "resume",
+            "{session}",
+        ],
+        env: &[],
     },
     AgentLaunch {
         kind: AgentKind::OpenCode,
         start: &[],
         resume: &["--continue"],
         attach: &["--session", "{session}"],
+        // OpenCode has no flag of either kind, and an inline config in the environment is
+        // what it does have. It is merged over the user's own config rather than replacing
+        // it, and `instructions` names files to load as instructions - which is what
+        // `brief.md` is written for.
+        env: &[(
+            "OPENCODE_CONFIG_CONTENT",
+            r#"{"$schema":"https://opencode.ai/config.json","instructions":["{brief_file}"]}"#,
+        )],
     },
 ];
 
@@ -262,7 +303,7 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
 /// Which placeholders exist has to be written down, because a filled-in value can contain
 /// braces of its own - the brief is free text - and so cannot be told apart from an unfilled
 /// placeholder by looking at the result.
-pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}"];
+pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}", "{brief_file}"];
 
 /// What an agent working in a task is told, beyond the work itself.
 ///
@@ -275,7 +316,10 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          Task: {title}\n\
          Task folder: {task_dir}\n\
          \n\
-         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME}"
+         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME}\n\
+         \n\
+         New card on this board: `{program} tasks new \"<title>\"`, which prints its folder.",
+        program = crate::cli::PROGRAM
     )
 }
 

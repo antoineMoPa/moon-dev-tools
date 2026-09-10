@@ -152,12 +152,17 @@ pub(crate) fn list_columns(state: &AppState, session_id: &str) -> Result<Vec<Boa
     Ok(store::read_board(&repo_path).columns)
 }
 
-/// Add a column at the right-hand end of the board.
+/// Add a column, `at` columns from the left - or at the right-hand end when nothing says.
 ///
 /// Its id is made from its name the same way a task folder's is, so the board file stays
 /// readable - and made unique, because two columns sharing an id would be one column with two
 /// headings and every card in either would be in both.
-pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Result<BoardColumn> {
+pub(crate) fn add_column(
+    state: &AppState,
+    session_id: &str,
+    label: &str,
+    at: Option<usize>,
+) -> Result<BoardColumn> {
     let label = label.trim();
     if label.is_empty() {
         bail!("a column needs a name");
@@ -180,7 +185,8 @@ pub(crate) fn add_column(state: &AppState, session_id: &str, label: &str) -> Res
         label: label.to_string(),
         arrivals: None,
     };
-    board.columns.push(column.clone());
+    let at = at.unwrap_or(board.columns.len()).min(board.columns.len());
+    board.columns.insert(at, column.clone());
     store::write_board(&repo_path, &board)?;
     Ok(column)
 }
@@ -510,14 +516,24 @@ pub(crate) fn start_resource(
         Some(launch) => fillings.fill_all(launch.start.iter()),
         None => Vec::new(),
     };
-    let env = task_env(session_id, task_id, &repo_path);
+    let mut env = task_env(session_id, task_id, &repo_path);
+    if let Some(launch) = launch {
+        env.extend(fillings.fill_env(launch.env));
+    }
     let program = TerminalProgram::of_agent(Some(agent));
     let name =
         crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
+    let task_dir = store::task_dir(&repo_path, task_id)?;
     let cwd = match request.opens_in {
         StartFolder::Repo => repo_path.clone(),
-        StartFolder::TaskFolder => store::task_dir(&repo_path, task_id)?,
+        StartFolder::TaskFolder => task_dir.clone(),
     };
+
+    // An agent comes up with the card's title already written in its box, waiting on the
+    // Enter that sends it. It is still the person who starts the work - the title is a card's
+    // name and rarely the whole of what is wanted - but the common case, where it is, is one
+    // keystroke away. A task's plain shell gets nothing typed at it.
+    let type_ahead = (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone());
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd,
@@ -526,11 +542,7 @@ pub(crate) fn start_resource(
         env,
         owner: Some(task_id.to_string()),
         name: Some(name.clone()),
-        // An agent comes up with the card's title already written in its box, waiting on the
-        // Enter that sends it. It is still the person who starts the work - the title is a
-        // card's name and rarely the whole of what is wanted - but the common case, where it
-        // is, is one keystroke away. A task's plain shell gets nothing typed at it.
-        type_ahead: (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone()),
+        type_ahead,
     })?;
 
     // A shell is not written down: nothing survives its pty, so a record of one from a run of
@@ -822,6 +834,15 @@ impl Fillings {
         Some(filled)
     }
 
+    /// Fill an agent's environment in, leaving unset any variable whose value has a
+    /// placeholder with nothing to fill it.
+    fn fill_env(&self, template: &'static [(&'static str, &'static str)]) -> Vec<(String, String)> {
+        template
+            .iter()
+            .filter_map(|(name, value)| Some((name.to_string(), self.fill(value)?)))
+            .collect()
+    }
+
     /// Fill an argument list in, dropping any argument that cannot be filled - along with the
     /// flag in front of it, which would otherwise be left dangling.
     fn fill_all<'a>(&self, template: impl Iterator<Item = &'a &'static str>) -> Vec<String> {
@@ -869,9 +890,9 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     let dir = store::task_dir(repo_path, task_id)?;
 
     let brief = super::brief_for(&metadata.title, &dir.display().to_string());
-    let path = dir.join(super::BRIEF_FILE_NAME);
-    std::fs::write(&path, format!("{brief}\n"))
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let brief_path = dir.join(super::BRIEF_FILE_NAME);
+    std::fs::write(&brief_path, format!("{brief}\n"))
+        .with_context(|| format!("failed to write {}", brief_path.display()))?;
 
     // The brief points the agent at notes.md, so by the time one reads it the file is there.
     // Only made, never rewritten - it is the task's own record, unlike the brief.
@@ -888,7 +909,10 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     .with_context(|| format!("failed to write {}", path.display()))?;
 
     Ok(Fillings {
-        values: vec![("{brief}", brief)],
+        values: vec![
+            ("{brief}", brief),
+            ("{brief_file}", brief_path.display().to_string()),
+        ],
     })
 }
 
@@ -952,7 +976,10 @@ mod tests {
                 AgentKind::Claude,
                 &["--resume", session, "--append-system-prompt", "the brief"],
             ),
-            (AgentKind::Codex, &["resume", session]),
+            (
+                AgentKind::Codex,
+                &["-c", "developer_instructions=the brief", "resume", session],
+            ),
             (AgentKind::OpenCode, &["--session", session]),
         ];
 
@@ -975,21 +1002,25 @@ mod tests {
 
         let args = fillings().fill_all(launch.resume.iter());
 
-        assert_eq!(args, ["resume", "--last"]);
+        assert_eq!(
+            args,
+            ["-c", "developer_instructions=the brief", "resume", "--last"],
+            "the brief goes on a resumed run too - a session resumed comes back with what it \
+             was opened on and never hears anything new"
+        );
     }
 
-    /// OpenCode and Codex are handed nothing at all on a fresh run: they come up in the repo
-    /// waiting, with the brief in the task folder for whoever needs it.
+    /// OpenCode is started with no arguments at all: what it is told comes through the
+    /// environment, so its command line is bare.
     #[test]
-    fn an_agent_with_no_start_args_comes_up_waiting_rather_than_working() {
-        for kind in [AgentKind::Codex, AgentKind::OpenCode] {
-            let launch = agent_launch(kind).expect("expected the agent to be launchable");
+    fn opencode_starts_with_a_bare_command_line() {
+        let launch =
+            agent_launch(AgentKind::OpenCode).expect("expected the agent to be launchable");
 
-            assert!(
-                fillings().fill_all(launch.start.iter()).is_empty(),
-                "{kind:?} should come up waiting rather than working"
-            );
-        }
+        assert!(
+            fillings().fill_all(launch.start.iter()).is_empty(),
+            "OpenCode takes its instructions from the environment, not its arguments"
+        );
     }
 
     /// Starting an agent opens a conversation rather than firing a job off, so none of the
@@ -1007,6 +1038,60 @@ mod tests {
                 launch.kind
             );
         }
+    }
+
+    /// Every agent has to come up knowing which task it is on, and the three take it three
+    /// different ways - a flag, a config override, an environment variable. What must not
+    /// happen is an agent that is told nowhere: typing it at them does not work, because the
+    /// box does not exist yet when a run begins.
+    #[test]
+    fn every_agent_is_told_which_task_it_is_on() {
+        let fillings = Fillings {
+            values: vec![
+                ("{brief}", "the brief".to_string()),
+                ("{brief_file}", "/repo/.moontasks/task/brief.md".to_string()),
+            ],
+        }
+        .with_session(Some("11111111-2222-4333-8444-555555555555"));
+
+        for launch in crate::moontasks::AGENT_LAUNCHES {
+            let args = fillings.fill_all(launch.start.iter()).join(" ");
+            let env = fillings
+                .fill_env(launch.env)
+                .into_iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            assert!(
+                args.contains("the brief") || env.contains("/repo/.moontasks/task/brief.md"),
+                "{:?} starts knowing nothing about the task: args {args:?}, env {env:?}",
+                launch.kind
+            );
+        }
+    }
+
+    /// OpenCode is the one told through the environment: an inline config naming the brief as
+    /// a file to load as instructions. It has to be the file's path rather than the text.
+    #[test]
+    fn opencode_is_handed_a_config_naming_the_brief_file() {
+        let launch = crate::moontasks::agent_launch(AgentKind::OpenCode).expect("a launch");
+        let env = Fillings {
+            values: vec![
+                ("{brief}", "the brief".to_string()),
+                ("{brief_file}", "/repo/.moontasks/task/brief.md".to_string()),
+            ],
+        }
+        .fill_env(launch.env);
+
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "OPENCODE_CONFIG_CONTENT");
+        let config: serde_json::Value =
+            serde_json::from_str(&env[0].1).expect("the config has to be JSON OpenCode can read");
+        assert_eq!(
+            config["instructions"],
+            serde_json::json!(["/repo/.moontasks/task/brief.md"])
+        );
     }
 
     /// The brief names the task and says where its notes go, which is all an agent needs to

@@ -219,6 +219,11 @@ pub(super) enum MoonCommand {
     },
     /// Which windows are open, and what they are open on.
     ListWindows,
+    /// A card on the board of the repo this shell is in, without opening a window on it. The
+    /// task folder it made is printed, which is what the caller wanted it for.
+    NewTask {
+        title: String,
+    },
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -251,6 +256,7 @@ pub(crate) fn run() -> Result<()> {
         MoonCommand::InstallLaunchers => install_launchers(),
         MoonCommand::Open { path, line } => open::open_file(&path, line),
         MoonCommand::ListWindows => open::list_windows(),
+        MoonCommand::NewTask { title } => new_task(&title),
         MoonCommand::Window { frame, args } => open_window(frame, args),
     }
 }
@@ -272,6 +278,12 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
     let rest: Vec<String> = args.collect();
 
     if let Some(frame) = frame_named(&command) {
+        // The one word after a window's name that is not something to open it on. The board
+        // is a folder of files, so a card can be made without a window - which is what an
+        // agent asked to write itself a task needs.
+        if frame == Frame::Tasks && rest.first().is_some_and(|word| word == "new") {
+            return parse_new_task(&rest[1..]);
+        }
         return Ok(MoonCommand::Window { frame, args: rest });
     }
 
@@ -324,6 +336,43 @@ fn frame_of_launcher() -> Result<Option<Frame>> {
     frame_named(&named)
         .map(Some)
         .with_context(|| format!("{FRAME_ENV}={named} is not a window this program has"))
+}
+
+/// `moon tasks new <title>`. The title is the whole of the rest, joined, so it needs no
+/// quoting - though it usually gets some.
+fn parse_new_task(args: &[String]) -> Result<MoonCommand> {
+    if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
+        bail!("`{PROGRAM} tasks new` takes the card's title and no options, not {option}");
+    }
+    let title = args.join(" ");
+    if title.trim().is_empty() {
+        bail!(
+            "`{PROGRAM} tasks new` needs the card's title, e.g. `{PROGRAM} tasks new \"fix the races\"`"
+        );
+    }
+    Ok(MoonCommand::NewTask { title })
+}
+
+/// Make a card on the board of the repo this shell is in and print the folder it was given.
+///
+/// It joins the top of the board's first column, which is where the board itself puts a card
+/// nobody said anything else about: the leftmost column is the one work starts in.
+fn new_task(title: &str) -> Result<()> {
+    use crate::moontasks::{ColumnEnd, store};
+
+    let repo_path =
+        project_root(&env::current_dir().context("failed to read the current directory")?)?;
+    let board = store::read_board(&repo_path);
+    let column = board
+        .columns
+        .first()
+        .context("the board has no columns to put a card in")?
+        .id
+        .clone();
+
+    let task_id = store::create_task(&repo_path, title, &column, ColumnEnd::Top)?;
+    println!("{}", store::task_dir(&repo_path, &task_id)?.display());
+    Ok(())
 }
 
 fn parse_serve(args: Vec<String>) -> Result<MoonCommand> {
@@ -480,6 +529,7 @@ Tiny local dev tools: a task board, a code review and a shell, one window each.
 
 Usage:
 {windows}
+  {PROGRAM} tasks new <title>         a card on this repo's board, with no window opened
   {PROGRAM} open <path>[:<line>]      a file, in the window on its project or the one last in front
   {PROGRAM} list                      which windows are open, and what they are on
   {PROGRAM} serve [--logs]            the review server, for a window on another machine
@@ -489,6 +539,7 @@ Usage:
 
 Examples:
   {PROGRAM} tasks
+  {PROGRAM} tasks new \"fix the races\"
   {PROGRAM} review src/main.rs
   {PROGRAM} shell
   {PROGRAM} open src/main.rs:42
@@ -529,13 +580,28 @@ that needs one.\n"
         ""
     };
 
+    // The board is the one window with a command that touches it without opening it.
+    let makes_a_card_usage = if frame == Frame::Tasks {
+        format!("\n  {command} new <title>")
+    } else {
+        String::new()
+    };
+    let makes_a_card = if frame == Frame::Tasks {
+        "\n`{command} new <title>` writes a card on this repo's board and prints the folder it was
+given, without opening a window. That folder is the task's: its notes, its brief, and whatever
+an agent working on it leaves behind.\n"
+            .replace("{command}", &command)
+    } else {
+        String::new()
+    };
+
     format!(
         "{command}
 
 Opens a window on {opens}.
 
 Usage:
-  {command}
+  {command}{makes_a_card_usage}
   {command} .
   {command} <path>
   {command} <before-path> <after-path>
@@ -555,7 +621,7 @@ Examples:
   {command} --remote dev-box --repo /home/you/project
 
 Run it inside any git repository you want to work in.
-{opens_without_a_repo}`--pick` opens the window on its launch screen instead, which is where recent projects and
+{opens_without_a_repo}{makes_a_card}`--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
 `--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
 what the Window menu's Restart hands the instance it starts.

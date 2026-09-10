@@ -26,7 +26,16 @@ pub(crate) enum BoardAction {
     Place(Vec<String>, ColumnId, usize),
     /// A column let go of on the board, at the place among the others it was dropped.
     PlaceColumn(ColumnId, usize),
-    AddColumn(String),
+    /// A column named in the new-column box: what it is called, and how many columns are to
+    /// its left. `None` is the right-hand end.
+    AddColumn {
+        label: String,
+        at: Option<usize>,
+    },
+    /// Open the new-column box, standing where the column it is naming will go.
+    OpenColumnComposer {
+        at: Option<usize>,
+    },
     RenameColumn(ColumnId, String),
     /// Which end of a column a card moved into it goes to, or `None` for where it was dropped.
     SetColumnArrivals(ColumnId, Option<ColumnEnd>),
@@ -405,16 +414,24 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         BoardAction::OpenFile { task_id, file_path } => {
             app.model.board.opened_file = Some(OpenedFile { file_path, task_id })
         }
-        BoardAction::AddColumn(label) => {
+        BoardAction::AddColumn { label, at } => {
             // The box closes on the way out: the column it was standing in for is on its way.
             app.model.board.new_column_label.clear();
             app.model.board.column_composer_open = false;
+            app.model.board.column_composer_at = None;
             act(app, "could not add the column", move |backend| {
-                backend.add_column(&session_id, &label).map(|_| ())
+                backend.add_column(&session_id, &label, at).map(|_| ())
             });
+        }
+        BoardAction::OpenColumnComposer { at } => {
+            app.model.board.column_composer_open = true;
+            app.model.board.column_composer_focus = true;
+            app.model.board.column_composer_at = at;
+            app.model.board.new_column_label.clear();
         }
         BoardAction::CloseColumnComposer => {
             app.model.board.column_composer_open = false;
+            app.model.board.column_composer_at = None;
             app.model.board.new_column_label.clear();
         }
         BoardAction::RenameColumn(column_id, label) => {

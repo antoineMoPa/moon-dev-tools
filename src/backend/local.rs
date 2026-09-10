@@ -193,8 +193,8 @@ impl Backend for LocalBackend {
         moontasks::service::list_columns(&self.state, session_id)
     }
 
-    fn add_column(&self, session_id: &str, label: &str) -> Result<BoardColumn> {
-        moontasks::service::add_column(&self.state, session_id, label)
+    fn add_column(&self, session_id: &str, label: &str, at: Option<usize>) -> Result<BoardColumn> {
+        moontasks::service::add_column(&self.state, session_id, label, at)
     }
 
     fn rename_column(&self, session_id: &str, column_id: &ColumnId, label: &str) -> Result<()> {

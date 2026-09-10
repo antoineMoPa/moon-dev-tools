@@ -290,6 +290,22 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     }
 }
 
+/// The place in the row the new-column box is standing in, at the width a column has.
+fn draw_new_column_slot(
+    app: &mut App,
+    ui: &mut Ui,
+    height: f32,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    ui.allocate_ui_with_layout(
+        vec2(COLUMN_WIDTH, height),
+        UiLayout::top_down(Align::Min),
+        |ui| columns::draw_new_column(app, ui, palette, actions),
+    );
+    ui.add_space(6.0);
+}
+
 /// The row of columns, and the drag that reorders it.
 fn draw_column_row(
     app: &mut App,
@@ -308,7 +324,13 @@ fn draw_column_row(
     // Where each column ended up, for working out what a dragged one is being held over. The
     // dragged one is left out: it is on the cursor rather than where it was laid out.
     let mut headings: Vec<(ColumnId, f32)> = Vec::new();
-    for column in &order {
+    for (at, column) in order.iter().enumerate() {
+        // The box for a column being named stands where that column will go, so the gap it
+        // leaves is the gap the column will fill. Out of the row while one is being dragged,
+        // for the same reason the `+` at the end is.
+        if dragged.is_none() && columns::composer_stands_at(app, at) {
+            draw_new_column_slot(app, ui, height, palette, actions);
+        }
         let rect = columns::with_column_drag(app, ui, column, origin, |app, ui| {
             draw_column(app, ui, column, height, palette, actions)
         });
@@ -321,11 +343,18 @@ fn draw_column_row(
     // At the right-hand end, where a new column would go - and out of the way while one is
     // being dragged, so it is never the thing a column is dropped onto.
     if dragged.is_none() {
-        ui.allocate_ui_with_layout(
-            vec2(COLUMN_WIDTH, height),
-            UiLayout::top_down(Align::Min),
-            |ui| columns::draw_new_column(app, ui, palette, actions),
-        );
+        // The box is here when it was opened here, and also when the place it was opened at is
+        // no longer on the board - a column it stood beside removed while it was open. It has
+        // to be drawn somewhere: a box nobody can see is a box nobody can close.
+        if columns::composer_is_past(app, order.len()) {
+            draw_new_column_slot(app, ui, height, palette, actions);
+        } else if !app.model.board.column_composer_open {
+            ui.allocate_ui_with_layout(
+                vec2(COLUMN_WIDTH, height),
+                UiLayout::top_down(Align::Min),
+                |ui| columns::draw_new_column_plus(ui, palette, actions),
+            );
+        }
     }
 
     let Some(dragged) = dragged else {
@@ -605,7 +634,14 @@ fn draw_column(
                         });
                         ui.add_space(CARD_SPACING);
                         if pending == Some(ColumnEnd::Top) {
-                            draw_pending_card(ui, palette, &mut controls, actions);
+                            draw_pending_card(
+                                ui,
+                                palette,
+                                &mut controls,
+                                actions,
+                                &status,
+                                ColumnEnd::Top,
+                            );
                             ui.add_space(CARD_SPACING);
                         }
                         for task in &tasks {
@@ -627,7 +663,14 @@ fn draw_column(
                             ui.add_space(CARD_SPACING);
                         }
                         if pending == Some(ColumnEnd::Bottom) {
-                            draw_pending_card(ui, palette, &mut controls, actions);
+                            draw_pending_card(
+                                ui,
+                                palette,
+                                &mut controls,
+                                actions,
+                                &status,
+                                ColumnEnd::Bottom,
+                            );
                             ui.add_space(CARD_SPACING);
                         }
                         if !tasks.is_empty() {
