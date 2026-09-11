@@ -290,6 +290,53 @@ pub(crate) struct FileContentPayload {
     pub(crate) committed: Option<String>,
 }
 
+/// Who last touched each stretch of a file, as `git blame` has it - see
+/// [`crate::git::blame_file`]. The stretches are in order, cover every line of the text they
+/// were asked about, and are cut where the commit changes.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) struct BlamePayload {
+    pub(crate) file_path: String,
+    pub(crate) chunks: Vec<BlameChunk>,
+}
+
+/// One stretch of lines that a single commit - or nothing yet - last touched.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) struct BlameChunk {
+    /// The lines of the text the stretch covers, as indexes from zero.
+    pub(crate) lines: std::ops::Range<usize>,
+    pub(crate) blamed: Blamed,
+}
+
+/// What a stretch of lines is put down to.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) enum Blamed {
+    Committed(BlamedCommit),
+    /// Lines no commit has: typed into the working tree, saved or not, since the last one.
+    NotYetCommitted,
+}
+
+/// The commit a stretch of lines was last changed in, as much of it as the column beside the
+/// lines and the note hung off it read out.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) struct BlamedCommit {
+    pub(crate) sha: String,
+    pub(crate) author: String,
+    /// The day it was authored, as `YYYY-MM-DD` in the author's own time zone - the day the
+    /// author would say they wrote it.
+    pub(crate) authored_on: String,
+    /// The first line of the commit message.
+    pub(crate) summary: String,
+}
+
+/// A blame asked about a text that may not be what is on disk: the tab's buffer, edits and
+/// all, so a line typed a moment ago reads as not committed rather than as whatever used to
+/// be on that line.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct BlameRequest {
+    pub(crate) file_path: String,
+    pub(crate) content: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct OpenSessionRequest {
     pub(crate) repo_path: String,

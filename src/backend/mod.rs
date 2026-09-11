@@ -14,10 +14,10 @@ use anyhow::Result;
 use crate::{
     agent_sessions::AgentSessionView,
     api::{
-        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
-        FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation, LspPosition, LspStatus,
-        LspWork, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleHubPayload,
+        AgentKind, AgentLogPayload, BlamePayload, CommentRequest, CommitHistoryPayload,
+        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation,
+        LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SessionOpened,
+        SessionPayload, SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -60,6 +60,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     fn hunk_patch(&self, session_id: &str, hunk_id: &str) -> Result<PatchPayload>;
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload>;
+    /// Who last touched each stretch of `content`, taken as the working-tree version of the
+    /// file - see [`crate::git::blame_file`].
+    fn blame_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<BlamePayload>;
     /// The files of the repo whose names match a search, for the palette's file finder.
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload>;
     /// The lines of the repo that hold what was typed, for the palette's content search.

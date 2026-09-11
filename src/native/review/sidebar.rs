@@ -527,7 +527,9 @@ fn draw_commits_section(
     }
 }
 
-fn select_commit(app: &mut App, session_id: &str, commit: Option<String>) {
+/// Make the review of a session about one commit - `None` is the local changes. Also how a
+/// stretch of a file's blame opens the commit it names - see `crate::native::blame`.
+pub(crate) fn select_commit(app: &mut App, session_id: &str, commit: Option<String>) {
     // The commit is what the review is *of*, so switching it resets what the pane shows.
     {
         let review = app.model.review(session_id);

@@ -408,6 +408,7 @@ impl App {
             CommandAction::FindPlaces(which) => crate::native::places::ask_in_front(self, which),
             CommandAction::FormatFile => crate::native::formatting::start_in_front(self),
             CommandAction::CodeActions => crate::native::code_actions::start_in_front(self),
+            CommandAction::ToggleBlame => crate::native::blame::toggle_in_front(self),
             CommandAction::ApplyCodeAction(index) => {
                 crate::native::code_actions::apply(self, index)
             }
@@ -664,6 +665,7 @@ impl App {
             Action::FindPlaces(which) => crate::native::places::ask_in_front(self, which),
             Action::FormatFile => crate::native::formatting::start_in_front(self),
             Action::CodeActions => crate::native::code_actions::start_in_front(self),
+            Action::ToggleBlame => crate::native::blame::toggle_in_front(self),
         }
     }
 

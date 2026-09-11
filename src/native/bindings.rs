@@ -56,6 +56,9 @@ pub(crate) enum Action {
     /// List what the language server offers to do at the caret of the file tab in front - see
     /// [`crate::native::code_actions`].
     CodeActions,
+    /// Put the blame of the file tab in front up beside its lines, or take it down - see
+    /// [`crate::native::blame`].
+    ToggleBlame,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -236,6 +239,12 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::CodeActions,
         chord: &[press(Modifiers::COMMAND, Key::Period)],
+        reach: Reach::OutsideShells,
+    },
+    // Beside ⌥⇧F, and a chord a terminal program is never sent.
+    Binding {
+        action: Action::ToggleBlame,
+        chord: &[press(ALT_SHIFT, Key::B)],
         reach: Reach::OutsideShells,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
@@ -747,6 +756,24 @@ mod tests {
             ],
         );
         assert_eq!(fired, vec![Action::FormatFile]);
+        assert!(left.is_empty(), "nothing may reach the text: {left:?}");
+    }
+
+    /// ⌥⇧B puts the blame up beside a file tab's lines, and like ⌥⇧F keeps the character
+    /// macOS composes with it out of the text.
+    #[test]
+    fn alt_shift_b_toggles_the_blame_and_its_composed_character_is_not_typed() {
+        let mut keymap = Keymap::default();
+        let (fired, left) = run_in(
+            &mut keymap,
+            true,
+            false,
+            vec![
+                key_event(ALT_SHIFT, Key::B),
+                egui::Event::Text("ı".to_string()),
+            ],
+        );
+        assert_eq!(fired, vec![Action::ToggleBlame]);
         assert!(left.is_empty(), "nothing may reach the text: {left:?}");
     }
 

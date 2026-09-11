@@ -1,9 +1,11 @@
 //! Finding a repository, running git inside it, and reading back its files and commits.
 
+mod blame;
 mod hunks;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use blame::blame_file;
 pub(crate) use hunks::{
     apply_patch, build_partial_patch_from_selection, collect_session_hunks,
     local_change_summary_from_status, preview_patch,

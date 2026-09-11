@@ -17,7 +17,7 @@ use axum::{
 use crate::{
     agent::detect_agent_availability,
     api::{
-        AgentLogPayload, AgentLogQuery, AppError, AppState, CommitHistoryPayload,
+        AgentLogPayload, AgentLogQuery, AppError, AppState, BlamePayload, CommitHistoryPayload,
         CommitHistoryQuery, CommitSelectionRequest, ContentMatchesPayload, FileContentPayload,
         FileMatchesPayload, FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload,
         SelectionRequest, ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload,
@@ -85,6 +85,7 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/file/new",
             post(create_session_file),
         )
+        .route("/api/session/{session_id}/blame", post(blame_session_file))
         .route("/api/session/{session_id}/files", get(find_session_files))
         .route(
             "/api/session/{session_id}/content",
@@ -486,6 +487,20 @@ async fn session_file(
         &state,
         &session_id,
         &query.file_path,
+    )?))
+}
+
+async fn blame_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::BlameRequest>,
+) -> Result<Json<BlamePayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(service::blame_session_file(
+        &state,
+        &session_id,
+        &request.file_path,
+        &request.content,
     )?))
 }
 

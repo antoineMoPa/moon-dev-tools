@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AppState, CommentRequest, CommitHistoryPayload,
+        AgentKind, AgentLogPayload, AppState, BlamePayload, CommentRequest, CommitHistoryPayload,
         ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation,
         LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SessionOpened,
         SessionPayload, SubmoduleHubPayload,
@@ -117,6 +117,10 @@ impl Backend for LocalBackend {
 
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         service::session_file(&self.state, session_id, file_path)
+    }
+
+    fn blame_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<BlamePayload> {
+        service::blame_session_file(&self.state, session_id, file_path, content)
     }
 
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {

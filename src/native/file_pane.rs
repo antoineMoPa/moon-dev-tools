@@ -134,6 +134,9 @@ pub(crate) struct FileEditor {
     /// The signature of the call being typed, and what has been asked about it - see
     /// [`crate::native::signature`].
     signing: egui_moon_code_ide::Signing,
+    /// Who last touched each stretch of the file, beside the lines when asked for - see
+    /// [`crate::native::blame`].
+    blaming: crate::native::blame::Blaming,
 }
 
 impl FileEditor {
@@ -170,6 +173,7 @@ impl FileEditor {
             diagnosed: Default::default(),
             hovering: Default::default(),
             signing: Default::default(),
+            blaming: Default::default(),
         }
     }
 
@@ -250,6 +254,14 @@ impl FileEditor {
 
     pub(super) fn signing_mut(&mut self) -> &mut egui_moon_code_ide::Signing {
         &mut self.signing
+    }
+
+    pub(super) fn blaming(&self) -> &crate::native::blame::Blaming {
+        &self.blaming
+    }
+
+    pub(super) fn blaming_mut(&mut self) -> &mut crate::native::blame::Blaming {
+        &mut self.blaming
     }
 
     /// The signature's state and the text it is followed through, handed out together
@@ -711,6 +723,8 @@ impl App {
         crate::native::diagnostics::follow(self, &ctx, pane_id, session_id);
         // A name ⌘-clicked in this pane on an earlier frame, once it has been looked up.
         crate::native::definition::follow(self, pane_id, session_id);
+        // Who last touched each stretch of the text, kept up with the text while it is shown.
+        crate::native::blame::follow(self, &ctx, pane_id, session_id);
         self.check_the_disk(pane_id, session_id);
         let Some(editor) = self.model.file_editors.get(&pane_id) else {
             return;
@@ -724,6 +738,7 @@ impl App {
         let problems = crate::native::diagnostics::said_in_header(editor.diagnosed.found());
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
+        let blaming = editor.blaming.is_on();
         let markdown = is_markdown(file_path);
         // The find bar selects matches in the laid-out text, so while it is on this pane the
         // text is what is shown, whatever the toggle says.
@@ -771,6 +786,25 @@ impl App {
                             .clicked()
                         {
                             self.reload_file_pane(pane_id);
+                        }
+                        // Who last touched each stretch of the text, beside the lines. Only
+                        // a file of the repo has a history here to ask about, and only the
+                        // text has lines to put it beside.
+                        if loaded
+                            && !outside_the_repo
+                            && !previewing
+                            && widgets::quiet_button(
+                                ui,
+                                if blaming { "[hide blame]" } else { "[blame]" },
+                            )
+                            .on_hover_text(if blaming {
+                                "Take the column of who last touched each stretch down"
+                            } else {
+                                "Show who last touched each stretch of the file, and in which commit, beside the lines"
+                            })
+                            .clicked()
+                        {
+                            crate::native::blame::toggle(self, pane_id);
                         }
                         if markdown
                             && loaded
@@ -947,6 +981,12 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
 
     let underlines =
         crate::native::diagnostics::underlines(editor.code.text(), editor.diagnosed.found(), palette);
+    // Who last touched each stretch of the text, when the tab has asked - see
+    // `crate::native::blame`. The editor draws the column and says which stretch the pointer
+    // is on; what the stretch is about stays here.
+    let notes = editor.blaming.notes(palette).to_vec();
+    let in_the_repo = !editor.outside_the_repo;
+    let blame_shown = editor.blaming.is_on();
     let output = editor.code.ui(
         ui,
         &style,
@@ -976,8 +1016,19 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
             // What the server behind the file found wrong with it - see
             // `crate::native::diagnostics`.
             underlines: &underlines,
+            notes: &notes,
         },
     );
+    // The stretch the pointer rests on, told in full, and the one clicked, opened in the
+    // review on its commit.
+    if let Some(note) = output.pointed_note
+        && let Some(chunk) = editor.blaming.chunk(note)
+    {
+        crate::native::blame::draw_tooltip(ui, palette, chunk);
+    }
+    let commit_asked = output
+        .note_clicked
+        .and_then(|note| editor.blaming.chunk(note).cloned());
     // The name that was ⌘-clicked, if one was, and where in the text it sits - which is
     // already the position a language server is asked about. Where it is defined is
     // `crate::native::definition`'s business rather than this pane's.
@@ -1013,6 +1064,9 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     if let Some(word) = navigated_to {
         crate::native::definition::look_up(app, pane_id, session_id, word);
     }
+    if let Some(chunk) = commit_asked {
+        crate::native::blame::show_commit(app, session_id, &chunk);
+    }
     // What the caret is on now, and what became of the list that was up: whether that is
     // worth a question is `completing`'s to answer.
     crate::native::completing::follow_the_caret(app, pane_id, session_id, ui.ctx(), &output);
@@ -1033,6 +1087,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     let mut rename_asked = false;
     let mut format_asked = false;
     let mut actions_asked = false;
+    let mut blame_asked = false;
     egui::Popup::context_menu(&output.response).show(|ui| {
         for kind in crate::native::places::KINDS {
             if menu_item(ui, finds_places, kind.command, Action::FindPlaces(kind.which)).clicked() {
@@ -1043,7 +1098,26 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
         actions_asked = menu_item(ui, edits, "code actions", Action::CodeActions).clicked();
         rename_asked = menu_item(ui, edits, "rename symbol", Action::RenameSymbol).clicked();
         format_asked = menu_item(ui, edits, "format file", Action::FormatFile).clicked();
+        // A file outside the repo has no history here, so the item is not there rather
+        // than greyed out with a note about language servers it is nothing to do with.
+        if in_the_repo {
+            ui.separator();
+            blame_asked = menu_item(
+                ui,
+                true,
+                if blame_shown {
+                    "hide blame"
+                } else {
+                    "show blame"
+                },
+                Action::ToggleBlame,
+            )
+            .clicked();
+        }
     });
+    if blame_asked {
+        crate::native::blame::toggle(app, pane_id);
+    }
     if format_asked {
         crate::native::formatting::start(app, pane_id);
     }
@@ -1111,6 +1185,7 @@ mod tests {
             diagnosed: Default::default(),
             hovering: Default::default(),
             signing: Default::default(),
+            blaming: Default::default(),
         }
     }
 

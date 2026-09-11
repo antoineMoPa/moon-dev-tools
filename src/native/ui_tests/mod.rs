@@ -16,6 +16,7 @@ mod diff_comments;
 mod diff_definition;
 mod diff_selection;
 mod extensions;
+mod file_blame;
 mod file_editing;
 mod file_language_servers;
 mod file_written_elsewhere;

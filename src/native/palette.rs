@@ -113,6 +113,9 @@ pub(crate) enum CommandAction {
     /// List what the language server offers to do at the caret of the file tab in front - see
     /// [`crate::native::code_actions`].
     CodeActions,
+    /// Put the blame of the file tab in front up beside its lines, or take it down - see
+    /// [`crate::native::blame`].
+    ToggleBlame,
     /// Carry out one of the code actions the palette is listing, by its place in the list.
     ApplyCodeAction(usize),
 }
@@ -345,6 +348,21 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             description: "Lay the file out the way its language's formatter does".to_string(),
             action: CommandAction::FormatFile,
             shortcut: bindings::chord_of(Action::FormatFile),
+        });
+    }
+    // Only while it can do something: a file tab in front on a file of the repo's own.
+    if crate::native::blame::front_tab_blames(app) {
+        let showing = crate::native::blame::front_tab_shows_blame(app);
+        commands.push(Command {
+            title: if showing { "hide blame" } else { "show blame" }.to_string(),
+            description: if showing {
+                "Take the column of who last touched each stretch of the file down"
+            } else {
+                "Show who last touched each stretch of the file, and in which commit, beside the lines"
+            }
+            .to_string(),
+            action: CommandAction::ToggleBlame,
+            shortcut: bindings::chord_of(Action::ToggleBlame),
         });
     }
     if crate::native::code_actions::front_tab_has_actions(app) {

@@ -205,7 +205,8 @@ Three pieces of the window are libraries in their own right, kept as submodules 
   What a shell tab holds.
 - [**egui_moon_editor**](crates/egui_moon_editor) - a code editor widget for egui: a text
   buffer, a fringe of line numbers that scrolls with the code and marks the lines new since the
-  last commit, and marks drawn into the text.
+  last commit, a column beside it for notes about stretches of lines - the blame a file tab
+  puts up - and marks drawn into the text.
   What a file tab holds.
 
 After cloning, pull them in:

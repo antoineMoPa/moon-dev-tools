@@ -3,6 +3,7 @@
 
 pub(crate) mod app;
 pub(crate) mod bindings;
+pub(crate) mod blame;
 pub(crate) mod board;
 pub(crate) mod code_actions;
 pub(crate) mod commit_pane;

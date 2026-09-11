@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::{
     agent::{agent_is_available, agent_options},
     api::{
-        AgentKind, AgentLogPayload, AppState, CommitHistoryPayload, CommitView,
+        AgentKind, AgentLogPayload, AppState, BlamePayload, CommitHistoryPayload, CommitView,
         ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
         OpenSessionRequest, PatchPayload, RepoSession, RepoStatusView, SessionOpened,
         SessionPayload, SubmoduleHubPayload,
@@ -410,6 +410,31 @@ pub(crate) fn session_file(
                 &session.repo_path,
                 file_path,
             )?),
+        })
+    })
+}
+
+/// Who last touched each stretch of a file, taken with `content` as its working-tree version -
+/// the tab's buffer, so a line typed a moment ago reads as not committed. Runs where the repo
+/// is. A file outside the repo has no history here to ask about, and says so rather than
+/// having git say something less clear about a path it cannot see.
+pub(crate) fn blame_session_file(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    content: &str,
+) -> Result<BlamePayload> {
+    crate::api::with_session(state, session_id, |session| {
+        if session
+            .files_named_outside_the_repo
+            .allows(file_path)
+            .is_some()
+        {
+            bail!("{file_path} is outside the repo, and has no history here");
+        }
+        Ok(BlamePayload {
+            file_path: file_path.to_string(),
+            chunks: crate::git::blame_file(&session.repo_path, file_path, content)?,
         })
     })
 }

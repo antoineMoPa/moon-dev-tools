@@ -17,12 +17,12 @@ use serde_json::json;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, CommentRequest, CommitHistoryPayload, ContentMatchesPayload,
-        FileContentPayload, FileMatchesPayload, LspCompletion, LspCompletionsPayload,
-        LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest,
-        LspStatus, LspStatusPayload, LspTriggersPayload, LspWork, LspWorkPayload,
-        OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
-        TerminalNameRequest, TerminalView,
+        AgentKind, AgentLogPayload, BlamePayload, CommentRequest, CommitHistoryPayload,
+        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion,
+        LspCompletionsPayload, LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition,
+        LspPositionRequest, LspStatus, LspStatusPayload, LspTriggersPayload, LspWork,
+        LspWorkPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
+        SubmoduleHubPayload, TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -279,6 +279,15 @@ impl Backend for RemoteBackend {
         self.get(&format!(
             "/api/session/{session_id}/file?file_path={encoded}"
         ))
+    }
+
+    fn blame_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<BlamePayload> {
+        // Posted rather than fetched: the text asked about goes with the question, and a
+        // file's worth of it has no place in a URL.
+        self.post_json(
+            &format!("/api/session/{session_id}/blame"),
+            &json!({ "file_path": file_path, "content": content }),
+        )
     }
 
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {

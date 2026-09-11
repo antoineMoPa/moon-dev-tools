@@ -391,6 +391,13 @@ impl Palette {
             // of the code without hiding it.
             mark_ink: self.accent.linear_multiply(0.35),
             current_mark_ink: self.accent,
+            // The blame beside the lines, in the line numbers' size: the title in the text's
+            // own ink, the summary under it in the fringe's, and the rule between stretches
+            // the line the rest of the window draws between things.
+            note_font: FontId::new(CODE_SIZE - 1.0, FontFamily::Monospace),
+            note_ink: self.ink,
+            note_detail_ink: self.muted,
+            note_rule_ink: self.line,
             syntax: egui_moon_editor::SyntaxTheme::from_fn(|style| {
                 let (face, italics) = syntax_face(style);
                 egui_moon_editor::TokenLook {
