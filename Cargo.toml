@@ -1,6 +1,6 @@
 [package]
 name = "moon-review"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2024"
 
 # One library, one executable. `moon` opens a window on a review, the task board or a shell —
