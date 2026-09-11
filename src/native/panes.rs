@@ -207,6 +207,12 @@ pub(crate) enum OpenPaneRequest {
         /// Where to open the file, for one opened from a content search rather than by name.
         at: Option<OpenAt>,
     },
+    /// A file of the repo nothing is at yet: the tab opens empty, and its first save is what
+    /// creates the file. How `moon edit` of a path with no file at it arrives.
+    NewFile {
+        session_id: String,
+        file_path: String,
+    },
     Tasks,
     /// One task, in a tab of its own.
     TaskStart {

@@ -12,10 +12,10 @@ use crate::{
     api::{AgentKind, AppState},
     moontasks::{
         AttachResourceRequest, CreateTaskRequest, StartFolder, StartResourceRequest,
-        TaskResourceView, TaskView, agent_launch,
+        TaskResourceView, TaskView, agent_launch, column_sort,
         store::{
-            self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource,
-            TaskResourceKind,
+            self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, ColumnSort, TaskMetadata,
+            TaskResource, TaskResourceKind,
         },
     },
     terminal::{TerminalProgram, TerminalSpec},
@@ -51,7 +51,11 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
 
     // One order for the whole board, which each column reads its own cards out of.
     tasks.sort_by_key(|(place, _)| *place);
-    Ok(tasks.into_iter().map(|(_, task)| task).collect())
+    let mut tasks: Vec<TaskView> = tasks.into_iter().map(|(_, task)| task).collect();
+    // And a column that keeps an order of its own is read out in that one instead - see
+    // [`column_sort`]. The places are left as they are underneath, for when it no longer does.
+    column_sort::arrange(&store::read_board(&repo_path).columns, &mut tasks);
+    Ok(tasks)
 }
 
 /// What a card is sorted by inside its column: where it was put, and - for cards off a board
@@ -184,6 +188,7 @@ pub(crate) fn add_column(
         id,
         label: label.to_string(),
         arrivals: None,
+        sort: None,
     };
     let at = at.unwrap_or(board.columns.len()).min(board.columns.len());
     board.columns.insert(at, column.clone());
@@ -224,6 +229,29 @@ pub(crate) fn set_column_arrivals(
     column_id: &ColumnId,
     arrivals: Option<ColumnEnd>,
 ) -> Result<()> {
+    change_column(state, session_id, column_id, |column| {
+        column.arrivals = arrivals
+    })
+}
+
+/// Which order a column keeps its cards in by itself - see [`column_sort`]. `None` is the
+/// order they are dragged into.
+pub(crate) fn set_column_sort(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    sort: Option<ColumnSort>,
+) -> Result<()> {
+    change_column(state, session_id, column_id, |column| column.sort = sort)
+}
+
+/// Change one of a column's settings in the board's file.
+fn change_column(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    change: impl FnOnce(&mut BoardColumn),
+) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
     let mut board = store::read_board(&repo_path);
     let Some(column) = board
@@ -233,7 +261,7 @@ pub(crate) fn set_column_arrivals(
     else {
         bail!("{column_id} is not a column of this board");
     };
-    column.arrivals = arrivals;
+    change(column);
     store::write_board(&repo_path, &board)
 }
 

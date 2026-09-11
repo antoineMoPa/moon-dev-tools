@@ -62,6 +62,26 @@ pub(crate) struct BoardColumn {
     /// top, so the most recently finished card is the one being looked at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) arrivals: Option<ColumnEnd>,
+    /// The order this column keeps its cards in by itself, whatever order they are dragged
+    /// into - see [`crate::moontasks::column_sort`]. Absent is the order they were dragged
+    /// into. A sorted column still remembers that order underneath, so turning its sort off
+    /// puts every card back where it was put.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sort: Option<ColumnSort>,
+}
+
+/// An order a column keeps its cards in by itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ColumnSort {
+    /// By title, with a run of digits read as the number it is: `2` before `10`, `01` before
+    /// `02`.
+    Alphabetical,
+    /// By the numbers in the title, the first of them first - a ticket number, a step of a
+    /// plan. A card with no number in its title goes after every card with one.
+    Numerical,
+    NewestFirst,
+    OldestFirst,
 }
 
 /// Which end of a column a new card joins.
@@ -124,6 +144,7 @@ impl Default for BoardConfig {
                     id: ColumnId::new(*id),
                     label: (*label).to_string(),
                     arrivals: *arrivals,
+                    sort: None,
                 })
                 .collect(),
         }
@@ -788,11 +809,13 @@ mod tests {
                     id: ColumnId::new("todo"),
                     label: "BACKLOG".to_string(),
                     arrivals: None,
+                    sort: Some(ColumnSort::Alphabetical),
                 },
                 BoardColumn {
                     id: ColumnId::new("shipped"),
                     label: "SHIPPED".to_string(),
                     arrivals: Some(ColumnEnd::Top),
+                    sort: None,
                 },
             ],
         };

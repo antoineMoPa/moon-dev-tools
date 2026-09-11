@@ -199,32 +199,17 @@ impl App {
                 file_path,
                 at,
             } => {
-                // The same file twice is the same tab: opening it again brings it forward.
-                let pane_id = match self.model.layout.find_pane(
-                    |pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path),
-                ) {
-                    Some((pane, _)) => {
-                        self.model.layout.focus_pane(pane);
-                        pane
-                    }
-                    None => {
-                        let frame = self.frame_for(PaneKind::File, active_frame);
-                        self.model.layout.add_pane(
-                            frame,
-                            Pane::File {
-                                session_id: session_id.clone(),
-                                file_path: file_path.clone(),
-                                // Opened by name or from a search, which is the repo's file
-                                // rather than any one task's.
-                                task_id: None,
-                            },
-                            None,
-                        )
-                    }
-                };
+                let pane_id = self.file_pane_for(&session_id, &file_path, active_frame);
                 if let Some(at) = at {
                     self.reveal_file_match(pane_id, &session_id, &file_path, at);
                 }
+            }
+            OpenPaneRequest::NewFile {
+                session_id,
+                file_path,
+            } => {
+                let pane_id = self.file_pane_for(&session_id, &file_path, active_frame);
+                self.begin_new_file(pane_id, &file_path);
             }
             OpenPaneRequest::Terminal { command } => {
                 let session_id = self.shell_session_for(active_frame);
@@ -444,6 +429,38 @@ impl App {
 
     /// Where a pane of this kind goes: with the others of its kind, else the frame whose tab
     /// strip is the app header.
+    /// The tab on a file: brought forward when one is open - the same file twice is the same
+    /// tab - and added beside the other file tabs when not.
+    fn file_pane_for(
+        &mut self,
+        session_id: &str,
+        file_path: &str,
+        active_frame: FrameId,
+    ) -> egui_frames::PaneId {
+        match self.model.layout.find_pane(
+            |pane| matches!(pane, Pane::File { file_path: open, .. } if open.as_str() == file_path),
+        ) {
+            Some((pane, _)) => {
+                self.model.layout.focus_pane(pane);
+                pane
+            }
+            None => {
+                let frame = self.frame_for(PaneKind::File, active_frame);
+                self.model.layout.add_pane(
+                    frame,
+                    Pane::File {
+                        session_id: session_id.to_string(),
+                        file_path: file_path.to_string(),
+                        // Opened by name or from a search, which is the repo's file rather
+                        // than any one task's.
+                        task_id: None,
+                    },
+                    None,
+                )
+            }
+        }
+    }
+
     fn frame_for(&self, kind: PaneKind, preferred: FrameId) -> FrameId {
         self.model
             .layout

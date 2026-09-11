@@ -9,6 +9,10 @@
 //! the rest of the time it says the last thing the window said - and a click on it opens the
 //! whole log, which is [`crate::native::messages`].
 //!
+//! The last thing said is not said forever, though. It stands for
+//! [`crate::native::messages::STATUS_BAR_READS_A_MESSAGE_FOR`] and then goes, and the cross at
+//! the right end of the strip puts it away sooner. Either way it stays in the log.
+//!
 //! **The bar is there from the first frame, and it stays.** In the one state where it has
 //! nothing to read out - a window that has said nothing and is waiting for nothing, which is
 //! the first seconds of a run - it is an empty strip rather than no strip, and a click on it
@@ -33,8 +37,9 @@ use crate::{
 };
 
 /// How tall the strip is. One line of the small face with a little air around it: enough to
-/// read, and little enough that the workspace above it does not notice.
-const BAR_HEIGHT: f32 = 24.0;
+/// read, and little enough that the workspace above it does not notice. The toasts are
+/// stacked above it, so the cross at its right end is never under one.
+pub(crate) const BAR_HEIGHT: f32 = 24.0;
 
 /// How wide the progress bar at the right end is drawn, for work that says how far along it
 /// is.
@@ -68,7 +73,7 @@ impl App {
         let palette = self.palette_of();
         let line = self.status_line();
 
-        let clicked = egui::Panel::bottom("moonreview-status-bar")
+        let pressed = egui::Panel::bottom("moonreview-status-bar")
             .exact_size(BAR_HEIGHT)
             .resizable(false)
             // It is a strip to read, not an edge to pull on.
@@ -83,17 +88,25 @@ impl App {
             .show(ui, |ui| draw_line(ui, line.as_ref(), &palette))
             .inner;
 
-        if clicked {
-            // Deferred like every other pane the window opens from inside a draw: the tree
-            // holding the panes is being drawn right now.
-            self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
-                OpenPaneRequest::Messages,
-            ));
+        match pressed {
+            StripPress::Nothing => {}
+            StripPress::Strip => {
+                // Deferred like every other pane the window opens from inside a draw: the
+                // tree holding the panes is being drawn right now.
+                self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
+                    OpenPaneRequest::Messages,
+                ));
+            }
+            StripPress::Dismiss => self.model.messages.dismiss_latest(),
         }
     }
 
-    /// What the bar has to read out this frame, or `None` for a window that has said nothing
-    /// and is waiting for nothing - which is an empty strip, not an absent one.
+    /// What the bar has to read out this frame, or `None` for a window with nothing standing
+    /// to say and waiting for nothing - which is an empty strip, not an absent one.
+    ///
+    /// No repaint is asked for the moment a message stops standing: the window already
+    /// repaints at least once a poll interval, under a second, which is soon enough
+    /// for a line that was up for twenty seconds.
     fn status_line(&self) -> Option<StatusLine> {
         if let Some(work) = self.language_server_work() {
             return Some(StatusLine::Working {
@@ -101,11 +114,11 @@ impl App {
                 others: self.language_server_work_count() - 1,
             });
         }
-        let latest = self.model.messages.latest()?;
+        let standing = self.model.messages.standing(Instant::now())?;
         Some(StatusLine::Said {
-            text: latest.text.clone(),
-            failed: matches!(latest.kind, crate::native::model::ToastKind::Error),
-            at_unix: latest.at_unix,
+            text: standing.text.clone(),
+            failed: matches!(standing.kind, crate::native::model::ToastKind::Error),
+            at_unix: standing.at_unix,
         })
     }
 
@@ -221,9 +234,18 @@ enum StatusLine {
     },
 }
 
-/// Draw the strip and answer whether it was clicked. A `line` of `None` is a strip with
+/// What a press on the strip this frame was on.
+enum StripPress {
+    Nothing,
+    /// Anywhere along the strip, which opens the log.
+    Strip,
+    /// The cross beside a message, which puts the message away.
+    Dismiss,
+}
+
+/// Draw the strip and answer what was pressed on it. A `line` of `None` is a strip with
 /// nothing on it, which is still there to be hovered and clicked.
-fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> bool {
+fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> StripPress {
     let hovered = ui.rect_contains_pointer(ui.max_rect());
     let response = ui.interact(
         ui.max_rect(),
@@ -240,32 +262,61 @@ fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> bool 
     // and a second one drawn inside this strip's margin reads as a double edge rather than as
     // a separation.
 
-    ui.horizontal_centered(|ui| match line {
-        None => {}
-        Some(StatusLine::Working { work, others }) => draw_working(ui, work, *others, palette),
-        Some(StatusLine::Said {
-            text,
-            failed,
-            at_unix,
-        }) => {
-            let ink = if *failed { palette.warn } else { palette.muted };
-            ui.label(
-                RichText::new(crate::native::messages::clock_label(*at_unix))
-                    .monospace()
-                    .size(SMALL_SIZE)
-                    .color(palette.muted),
+    // Right to left, so the cross beside a message takes its place at the end first and the
+    // line is cut to what is left of the strip rather than pushing the cross off it.
+    let dismissed = ui
+        .with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            let dismissed = match line {
+                Some(StatusLine::Said { .. }) => crate::native::widgets::close_button(ui, palette)
+                    .on_hover_text("Dismiss")
+                    .clicked(),
+                _ => false,
+            };
+            ui.with_layout(
+                egui::Layout::left_to_right(Align::Center),
+                |ui| match line {
+                    None => {}
+                    Some(StatusLine::Working { work, others }) => {
+                        draw_working(ui, work, *others, palette)
+                    }
+                    Some(StatusLine::Said {
+                        text,
+                        failed,
+                        at_unix,
+                    }) => draw_said(ui, text, *failed, *at_unix, palette),
+                },
             );
-            ui.add(
-                egui::Label::new(RichText::new(text).size(SMALL_SIZE).color(ink))
-                    .selectable(false)
-                    .truncate(),
-            );
-        }
-    });
+            dismissed
+        })
+        .inner;
 
     let _ = crate::native::widgets::clickable(response.clone())
         .on_hover_text("Every message this window has posted");
-    response.clicked()
+    // The cross is drawn over the strip, so a press on it is the cross's alone and does not
+    // also open the log.
+    if dismissed {
+        StripPress::Dismiss
+    } else if response.clicked() {
+        StripPress::Strip
+    } else {
+        StripPress::Nothing
+    }
+}
+
+/// The last thing the window said, with the time it said it.
+fn draw_said(ui: &mut Ui, text: &str, failed: bool, at_unix: u64, palette: &Palette) {
+    let ink = if failed { palette.warn } else { palette.muted };
+    ui.label(
+        RichText::new(crate::native::messages::clock_label(at_unix))
+            .monospace()
+            .size(SMALL_SIZE)
+            .color(palette.muted),
+    );
+    ui.add(
+        egui::Label::new(RichText::new(text).size(SMALL_SIZE).color(ink))
+            .selectable(false)
+            .truncate(),
+    );
 }
 
 /// A server at work: what it is doing, and how far through where it says.

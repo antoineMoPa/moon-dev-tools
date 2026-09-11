@@ -245,11 +245,13 @@ impl App {
                 ToastKind::Info,
                 said,
                 crate::native::messages::now_unix(),
+                std::time::Instant::now(),
             ),
             Effect::Failed(said) => self.model.messages.record(
                 ToastKind::Error,
                 said,
                 crate::native::messages::now_unix(),
+                std::time::Instant::now(),
             ),
         }
     }

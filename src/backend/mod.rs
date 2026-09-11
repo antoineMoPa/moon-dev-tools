@@ -65,6 +65,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The lines of the repo that hold what was typed, for the palette's content search.
     fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload>;
     fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
+    /// Create a file nothing is at yet, which is the first save of a tab opened on a new file.
+    /// Refused where something already is.
+    fn create_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;
     fn resolve_comment(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
@@ -147,6 +150,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
         session_id: &str,
         column_id: &ColumnId,
         arrivals: Option<crate::moontasks::ColumnEnd>,
+    ) -> Result<()>;
+    /// Which order a column keeps its cards in by itself. `None` is the order they are dragged
+    /// into.
+    fn set_column_sort(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        sort: Option<crate::moontasks::ColumnSort>,
     ) -> Result<()>;
     /// Take an empty column off the board. One still holding cards is refused rather than
     /// taking them with it.

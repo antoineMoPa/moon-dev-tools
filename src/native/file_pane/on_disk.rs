@@ -71,9 +71,9 @@ impl App {
         let due = editor
             .last_disk_check
             .is_none_or(|last| last.elapsed() >= DISK_CHECK_INTERVAL);
-        // Nothing to compare against before the text has arrived, and a file being written
-        // is about to be what this pane sent.
-        if editor.saved.is_none() || editor.saving || !due {
+        // Nothing to compare against before the text has arrived, a file being written is
+        // about to be what this pane sent, and a new file has nothing on disk to read yet.
+        if editor.saved.is_none() || editor.saving || !due || !editor.on_disk {
             return;
         }
         editor.last_disk_check = Some(Instant::now());

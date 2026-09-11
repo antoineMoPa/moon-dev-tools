@@ -150,6 +150,70 @@ fn the_status_bar_reads_out_the_last_message_and_opens_the_log_when_it_is_clicke
     harness.get_by_label_contains("Messages (");
 }
 
+#[test]
+fn the_cross_on_the_status_bar_puts_the_message_away_without_opening_the_log() {
+    // Arrange: a window that has said one thing, which the strip is reading out.
+    let fixture = seeded_fixture("status-bar-dismiss");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let said = Arc::new(AtomicBool::new(false));
+    let said_in_ui = Arc::clone(&said);
+    let standing = Arc::new(AtomicBool::new(false));
+    let standing_in_ui = Arc::clone(&standing);
+    let log_open = Arc::new(AtomicBool::new(false));
+    let log_open_in_ui = Arc::clone(&log_open);
+
+    let mut harness = Harness::builder()
+        .with_size(WINDOW)
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| {
+            if matches!(app.model.stage, crate::native::model::Stage::Ready)
+                && !said_in_ui.swap(true, Ordering::Relaxed)
+            {
+                app.model.info("staged the whole of src/lib.rs");
+            }
+            app.draw(ui);
+            standing_in_ui.store(
+                app.model.messages.standing(Instant::now()).is_some(),
+                Ordering::Relaxed,
+            );
+            log_open_in_ui.store(
+                app.model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Messages)
+                    .is_some(),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !standing.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        standing.load(Ordering::Relaxed),
+        "the strip never read out a message"
+    );
+    harness.run_steps(3);
+
+    // Act: a click on the cross, at the right end of the strip - in from the window's edge by
+    // its 8 point border, the strip's 10 point margin and half the 12 point cross, and up by
+    // the border and half the 24 point strip. The toast saying the same thing stands above
+    // the strip, so it is not what takes the click.
+    click_at(&mut harness, egui::pos2(WINDOW.x - 24.0, WINDOW.y - 20.0));
+    harness.run_steps(3);
+
+    // Assert
+    assert!(
+        !standing.load(Ordering::Relaxed),
+        "the cross should put the message away"
+    );
+    assert!(
+        !log_open.load(Ordering::Relaxed),
+        "a press on the cross is not a press on the strip"
+    );
+}
+
 /// The rule the log exists for: the corner folds a repeated message into the one already up,
 /// and the log records every time it was posted - "this happened four times" being exactly
 /// what a log is read to find out.

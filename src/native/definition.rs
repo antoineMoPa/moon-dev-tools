@@ -38,7 +38,7 @@
 //! closed underneath it.
 
 use egui_frames::PaneId;
-use egui_moon_code_ide::{AsksAbout, LanguageSource, asks_about, still_starting};
+use egui_moon_code_ide::{AsksAbout, LanguageSource, asks_about};
 use egui_moon_editor::Word;
 
 use crate::{
@@ -384,10 +384,12 @@ fn land(app: &mut App, session_id: &str, looked_up: LookedUp) {
         app.close_document_asked_about(&file_path, session_id);
     }
     match landing {
-        // Silence would read as the click having missed, so every one of these says so.
+        // Silence would read as the click having missed, so each of these says so - but for
+        // the wait, which the status bar is already reading out.
         Landing::Nowhere(why) => {
-            let said = said_about(why, &word, &file_path);
-            app.model.error(said);
+            if let Some(said) = said_about(why, &word, &file_path) {
+                app.model.error(said);
+            }
         }
         Landing::Place { place, others } => {
             if others > 0 {
@@ -408,19 +410,22 @@ fn land(app: &mut App, session_id: &str, looked_up: LookedUp) {
     }
 }
 
-/// What a lookup with nowhere to go says. Four sentences, because a person's next move about
-/// each of them is different: install a server, wait a moment, believe it, or read the file
-/// itself.
-fn said_about(why: WhyNot, word: &str, file_path: &str) -> String {
+/// What a lookup with nowhere to go says. Three sentences, because a person's next move about
+/// each of them is different: install a server, believe it, or read the file itself.
+///
+/// A server still reading the project says nothing here. The status bar is already saying
+/// what it is doing and how far through it is - see [`crate::native::status_bar`] - and a toast
+/// repeating it on every ⌘-click only covers the code being read.
+fn said_about(why: WhyNot, word: &str, file_path: &str) -> Option<String> {
     match why {
-        WhyNot::NoServer => {
-            format!("no language server serves {file_path}, so {word} cannot be looked up")
-        }
-        WhyNot::StillStarting => still_starting(file_path),
-        WhyNot::NoDefinition => format!("the language server has no definition for {word}"),
-        WhyNot::NotThatLineAnyMore => format!(
+        WhyNot::NoServer => Some(format!(
+            "no language server serves {file_path}, so {word} cannot be looked up"
+        )),
+        WhyNot::StillStarting => None,
+        WhyNot::NoDefinition => Some(format!("the language server has no definition for {word}")),
+        WhyNot::NotThatLineAnyMore => Some(format!(
             "{word} is not on that line of {file_path} any more - this review is of an older version"
-        ),
+        )),
     }
 }
 
@@ -455,23 +460,24 @@ mod tests {
 
     /// The distinction the whole of this hangs on: an empty answer from a server that has read
     /// the project means the name is defined nowhere, and one from a server that has not means
-    /// the wait - and the two say completely different things.
+    /// the wait - which is the status bar's to say, not a toast's.
     #[test]
-    fn nothing_from_a_ready_server_and_nothing_from_a_starting_one_say_different_things() {
+    fn nothing_from_a_ready_server_is_said_and_the_wait_is_left_to_the_status_bar() {
         let Landing::Nowhere(nowhere) = landing_of(Answer::Places(Vec::new())) else {
             panic!("a ready server with nothing to say has nowhere to send the window");
         };
         assert_eq!(
-            said_about(nowhere, "greet", "src/main.rs"),
-            "the language server has no definition for greet"
+            said_about(nowhere, "greet", "src/main.rs").as_deref(),
+            Some("the language server has no definition for greet")
         );
 
         let Landing::Nowhere(waiting) = landing_of(Answer::StillStarting) else {
             panic!("a starting server with nothing to say has nowhere to send the window");
         };
-        assert!(
-            said_about(waiting, "greet", "src/main.rs").contains("still indexing"),
-            "the wait has to read as a wait, not as an answer"
+        assert_eq!(
+            said_about(waiting, "greet", "src/main.rs"),
+            None,
+            "the wait must not read as an answer, and the status bar is already saying it"
         );
     }
 
@@ -483,8 +489,8 @@ mod tests {
             panic!("a file nothing serves has nowhere to send the window");
         };
         assert_eq!(
-            said_about(nowhere, "greet", "notes/plan.txt"),
-            "no language server serves notes/plan.txt, so greet cannot be looked up"
+            said_about(nowhere, "greet", "notes/plan.txt").as_deref(),
+            Some("no language server serves notes/plan.txt, so greet cannot be looked up")
         );
     }
 

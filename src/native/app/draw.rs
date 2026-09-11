@@ -175,7 +175,9 @@ impl App {
             });
     }
 
-    pub(super) fn draw_toasts(&mut self, ctx: &egui::Context) {
+    /// The toasts, stacked up from the bottom right corner, `clear_of` points above the
+    /// bottom edge so they stand on whatever strip is drawn along it rather than over it.
+    pub(super) fn draw_toasts(&mut self, ctx: &egui::Context, clear_of: f32) {
         if self.model.toasts.is_empty() {
             return;
         }
@@ -183,7 +185,7 @@ impl App {
         let screen = ctx.viewport_rect();
 
         egui::Area::new("moonreview-toasts".into())
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-14.0, -14.0))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-14.0, -14.0 - clear_of))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_max_width((screen.width() * 0.4).min(420.0));
@@ -265,12 +267,14 @@ impl App {
         match self.model.stage {
             Stage::Prompt { .. } => {
                 self.draw_prompt(ui);
-                self.draw_toasts(ctx);
+                // No status bar in front of a prompt, so nothing to stand clear of.
+                self.draw_toasts(ctx, 0.0);
                 return;
             }
             Stage::Opening => {
                 self.draw_opening(ui);
-                self.draw_toasts(ctx);
+                // Nor while a project is opening: the bar comes with the workspace.
+                self.draw_toasts(ctx, 0.0);
                 return;
             }
             Stage::Ready => {}
@@ -363,7 +367,7 @@ impl App {
         palette::draw(self, ctx);
         find::draw(self, ctx);
         self.draw_armed_prefix(ctx);
-        self.draw_toasts(ctx);
+        self.draw_toasts(ctx, crate::native::status_bar::BAR_HEIGHT);
 
         // A place a language server named, gone to or listed now the tree is drawn.
         crate::native::places::follow(self);

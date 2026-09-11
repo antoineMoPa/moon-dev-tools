@@ -3,6 +3,7 @@
 //! [`store`] is the `.moontasks` folder on disk and [`service`] is everything the board
 //! do to it.
 
+pub(crate) mod column_sort;
 pub(crate) mod review_request;
 pub(crate) mod service;
 pub(crate) mod store;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{api::AgentKind, commit_suggestion::CommitSuggestion};
 pub(crate) use review_request::REVIEW_REQUEST_BRIEF_FILE_NAME;
-pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, TaskResourceKind};
+pub(crate) use store::{BoardColumn, ColumnEnd, ColumnId, ColumnSort, TaskResourceKind};
 
 /// One task, as the board draws it.
 #[derive(Clone, Serialize, Deserialize)]
@@ -191,6 +192,14 @@ pub(crate) struct NewColumnRequest {
 pub(crate) struct ColumnArrivalsRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) arrivals: Option<ColumnEnd>,
+}
+
+/// The order a column keeps its cards in by itself, or nothing for the order they are dragged
+/// into.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ColumnSortRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sort: Option<ColumnSort>,
 }
 
 /// Where a dragged column was let go of: how many of the other columns are to its left.

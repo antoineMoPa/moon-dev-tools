@@ -39,6 +39,9 @@ pub(crate) enum BoardAction {
     RenameColumn(ColumnId, String),
     /// Which end of a column a card moved into it goes to, or `None` for where it was dropped.
     SetColumnArrivals(ColumnId, Option<ColumnEnd>),
+    /// Which order a column keeps its cards in by itself, or `None` for the order they are
+    /// dragged into.
+    SetColumnSort(ColumnId, Option<crate::moontasks::ColumnSort>),
     CancelColumnRename,
     DeleteColumn(ColumnId),
     CloseColumnComposer,
@@ -443,6 +446,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         BoardAction::SetColumnArrivals(column_id, arrivals) => {
             act(app, "could not change the column", move |backend| {
                 backend.set_column_arrivals(&session_id, &column_id, arrivals)
+            });
+        }
+        BoardAction::SetColumnSort(column_id, sort) => {
+            act(app, "could not sort the column", move |backend| {
+                backend.set_column_sort(&session_id, &column_id, sort)
             });
         }
         BoardAction::CancelColumnRename => app.model.board.renaming_column = None,

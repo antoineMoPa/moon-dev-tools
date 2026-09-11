@@ -507,6 +507,105 @@ fn a_column_can_say_which_end_arrivals_go_to() {
     assert_eq!(column("todo"), ["third", "first"]);
 }
 
+/// A sorted column lists its cards in its own order whatever order they were put in, and
+/// remembers the order they were put in for when it is sorted no longer.
+#[test]
+fn a_sorted_column_keeps_its_own_order() {
+    let served = serve("column-sort");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let create = |title: &str| {
+        served
+            .client
+            .post(&tasks_url)
+            .json(&serde_json::json!({ "title": title, "status": "todo", "joins": "bottom" }))
+            .send()
+            .expect("failed to create a task")
+            .error_for_status()
+            .expect("the server refused to create a task");
+    };
+    let column = || -> Vec<String> {
+        let board: serde_json::Value = served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board");
+        board
+            .as_array()
+            .expect("expected an array")
+            .iter()
+            .filter(|task| task["status"] == "todo")
+            .map(|task| {
+                task["title"]
+                    .as_str()
+                    .expect("expected a title")
+                    .to_string()
+            })
+            .collect()
+    };
+    let sort = |sort: Option<&str>| {
+        served
+            .client
+            .post(format!(
+                "{}/api/session/{session_id}/columns/todo/sort",
+                served.base_url
+            ))
+            .json(&serde_json::json!({ "sort": sort }))
+            .send()
+            .expect("failed to sort the column")
+            .error_for_status()
+            .expect("the server refused to sort the column");
+    };
+
+    for title in [
+        "Step 10 - ship",
+        "step 2 - test",
+        "Step 01 - build",
+        "fix login",
+    ] {
+        create(title);
+    }
+
+    sort(Some("alphabetical"));
+    assert_eq!(
+        column(),
+        [
+            "fix login",
+            "Step 01 - build",
+            "step 2 - test",
+            "Step 10 - ship"
+        ],
+        "numbers are read as numbers, and case is not an order"
+    );
+
+    sort(Some("numerical"));
+    assert_eq!(
+        column(),
+        [
+            "Step 01 - build",
+            "step 2 - test",
+            "Step 10 - ship",
+            "fix login"
+        ],
+        "a title with no number goes last"
+    );
+
+    sort(None);
+    assert_eq!(
+        column(),
+        [
+            "Step 10 - ship",
+            "step 2 - test",
+            "Step 01 - build",
+            "fix login"
+        ],
+        "unsorted, the column is back in the order the cards were put in"
+    );
+}
+
 /// The columns are the board's own: they can be added, renamed, reordered and removed, and a
 /// board nobody has touched answers with its three defaults.
 #[test]

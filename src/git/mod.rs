@@ -205,6 +205,38 @@ pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) 
     fs::write(&resolved, content).with_context(|| format!("failed to write {}", resolved.display()))
 }
 
+/// Create a file in the working tree that is not there yet: the first save of a tab opened on a
+/// path nothing was at, which is how `moon edit` starts a new file.
+///
+/// Only in a folder the repo already has, and only where nothing is. A file that turned up at
+/// the path after the tab was opened is somebody else's, and is not written over.
+pub(crate) fn create_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {
+    if file_path.trim().is_empty() {
+        bail!("file path cannot be empty");
+    }
+
+    let repo_root = repo_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", repo_path.display()))?;
+    let named = Path::new(file_path);
+    let name = named
+        .file_name()
+        .with_context(|| format!("{file_path} does not name a file"))?;
+    let folder = repo_root
+        .join(named.parent().unwrap_or(Path::new("")))
+        .canonicalize()
+        .with_context(|| format!("there is no folder to put {file_path} in"))?;
+    if !folder.starts_with(&repo_root) {
+        bail!("file path is outside the repository");
+    }
+
+    let path = folder.join(name);
+    let mut file = fs::File::create_new(&path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    std::io::Write::write_all(&mut file, content.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
 pub(crate) fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {
     if let Some(pathspec) = pathspec.filter(|value| !value.is_empty()) {
         args.push("--");

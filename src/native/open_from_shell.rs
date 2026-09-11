@@ -194,6 +194,19 @@ impl App {
         let file_path = file_path.display().to_string();
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        // A path nothing is at yet is a file about to be written, the way `vim notes.md` is:
+        // the tab opens empty and its first save creates the file, so a tab closed unsaved
+        // leaves nothing behind. A shell only reaches a window that reads this machine - see
+        // [`crate::instances::window`] - so this is the disk the path was typed against.
+        if !asked.path.exists() {
+            self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
+                crate::native::panes::OpenPaneRequest::NewFile {
+                    session_id: session_id.to_string(),
+                    file_path,
+                },
+            ));
+            return;
+        }
         // A line is a place in the text, so a tab opened at one opens on the text: the
         // rendered page a markdown file otherwise opens on has no line 40 to show.
         let at = asked.line.map(|line| OpenAt {

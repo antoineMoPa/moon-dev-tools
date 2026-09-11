@@ -111,6 +111,10 @@ impl Backend for LocalBackend {
         service::write_session_file(&self.state, session_id, file_path, content)
     }
 
+    fn create_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()> {
+        service::create_session_file(&self.state, session_id, file_path, content)
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         service::session_file(&self.state, session_id, file_path)
     }
@@ -208,6 +212,15 @@ impl Backend for LocalBackend {
         arrivals: Option<crate::moontasks::ColumnEnd>,
     ) -> Result<()> {
         moontasks::service::set_column_arrivals(&self.state, session_id, column_id, arrivals)
+    }
+
+    fn set_column_sort(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        sort: Option<crate::moontasks::ColumnSort>,
+    ) -> Result<()> {
+        moontasks::service::set_column_sort(&self.state, session_id, column_id, sort)
     }
 
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {

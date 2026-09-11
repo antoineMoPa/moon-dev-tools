@@ -762,6 +762,10 @@ fn draw_column(
             // The cards are already drawn where they landed, and they are the marked ones -
             // which is how a run let go of between two others is picked back out.
             app.model.board.landing = None;
+            if cards::sort_of(&app.model.board.columns, &status).is_some() {
+                drop_into_sorted_column(app, &status, &carrying.task_ids, actions);
+                return;
+            }
             // `at` counts the cards the filter is showing; the place they are going to is a
             // place in the column itself.
             let into = cards::column_index_of(
@@ -796,6 +800,46 @@ fn draw_column(
     )
     .response
     .rect
+}
+
+/// Cards let go of over a column that keeps an order of its own, where the place they were let
+/// go of at says nothing - see [`crate::moontasks::column_sort`].
+///
+/// Cards shuffled about within it stay where its order has them, so nothing is sent: a place
+/// counted against the sorted cards on screen would scramble the order the column remembers
+/// for when it is no longer sorted. Cards arriving from another column are moved into it, at
+/// the end of that remembered order its arrivals go to - the bottom when it names none.
+fn drop_into_sorted_column(
+    app: &mut App,
+    status: &ColumnId,
+    task_ids: &[String],
+    actions: &mut Vec<BoardAction>,
+) {
+    let arriving = app
+        .model
+        .board
+        .tasks
+        .iter()
+        .any(|task| task.status != *status && task_ids.contains(&task.id));
+    if !arriving {
+        return;
+    }
+    let into = arrivals_place(app, status, task_ids).unwrap_or_else(|| {
+        app.model
+            .board
+            .tasks
+            .iter()
+            .filter(|task| task.status == *status && !task_ids.contains(&task.id))
+            .count()
+    });
+    app.model.board.pending_place = Some(PendingPlace {
+        task_ids: task_ids.to_vec(),
+        status: status.clone(),
+        index: into,
+    });
+    place_in(&mut app.model.board.tasks, task_ids, status, into);
+    crate::moontasks::column_sort::arrange(&app.model.board.columns, &mut app.model.board.tasks);
+    actions.push(BoardAction::Place(task_ids.to_vec(), status.clone(), into));
 }
 
 /// Which end a column insists cards go to, if it insists at all and if these cards are

@@ -10,7 +10,7 @@
 //! command is worth typing wherever a window is open at all, rather than only where one
 //! happens to be open on the right repo.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
@@ -50,26 +50,60 @@ fn split_line_number(named: &str) -> (String, Option<usize>) {
 ///
 /// The path is resolved here rather than in the window: it is typed against the directory
 /// this shell is in, and the window is somewhere else entirely.
+///
+/// A path nothing is at yet is a file about to be written, the way `vim notes.md` is: the
+/// window opens an empty tab on it, and the file is only created when that tab is saved - see
+/// [`crate::native::panes::OpenPaneRequest::NewFile`]. Its folder has to exist: a folder that
+/// does not is more likely a typo than a place to start writing.
 pub(super) fn open_file(path: &str, line: Option<usize>) -> Result<()> {
-    let file = PathBuf::from(path)
-        .canonicalize()
-        .with_context(|| format!("there is no file at {path}"))?;
-    if !file.is_file() {
-        bail!("{} is not a file", file.display());
-    }
+    let (file, new) = file_to_open(path)?;
 
     let instance = instances::open_file(&file, line)?;
     let at = match line {
         Some(line) => format!(":{line}"),
         None => String::new(),
     };
+    let new = if new {
+        " (new file, created on save)"
+    } else {
+        ""
+    };
     println!(
-        "{}{at} → {} on {}",
+        "{}{at}{new} → {} on {}",
         file.display(),
         instance.program,
         instance.project_path
     );
     Ok(())
+}
+
+/// The file a path names, resolved the way the windows' records are, and whether nothing is
+/// at it yet. Nothing is written here: a new file is the window's to create, when its tab is
+/// saved.
+fn file_to_open(path: &str) -> Result<(PathBuf, bool)> {
+    let named = PathBuf::from(path);
+    if named.exists() {
+        let file = named
+            .canonicalize()
+            .with_context(|| format!("could not resolve {path}"))?;
+        if !file.is_file() {
+            bail!("{} is not a file", file.display());
+        }
+        return Ok((file, false));
+    }
+
+    let name = named
+        .file_name()
+        .with_context(|| format!("{path} does not name a file"))?;
+    // A bare `notes.md` is in the folder the shell is in, which is an empty parent.
+    let folder = match named.parent() {
+        Some(folder) if !folder.as_os_str().is_empty() => folder,
+        _ => Path::new("."),
+    };
+    let folder = folder
+        .canonicalize()
+        .with_context(|| format!("there is no folder to put {path} in"))?;
+    Ok((folder.join(name), true))
 }
 
 pub(super) fn list_windows() -> Result<()> {
@@ -147,5 +181,70 @@ mod tests {
         let error = parse(&["open", "one.rs", "two.rs"]).expect_err("expected a refusal");
 
         assert!(format!("{error}").contains("one file"), "got {error}");
+    }
+
+    /// A folder to stand in for the directory a shell is in, named after the test so two
+    /// cannot collide.
+    fn temporary_folder(name: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "moonreview-test-open-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("expected a folder");
+        folder
+            .canonicalize()
+            .expect("expected the folder to resolve")
+    }
+
+    /// The window creates a new file when its tab is saved, so naming one writes nothing.
+    #[test]
+    fn a_file_that_does_not_exist_yet_is_named_without_being_created() {
+        // Arrange
+        let folder = temporary_folder("new");
+        let path = folder.join("notes.md");
+
+        // Act
+        let (file, new) =
+            file_to_open(&path.display().to_string()).expect("expected the path to resolve");
+
+        // Assert
+        assert!(new);
+        assert_eq!(file, path);
+        assert!(!path.exists(), "nothing should be written before a save");
+    }
+
+    #[test]
+    fn a_file_that_exists_is_opened_as_it_is() {
+        // Arrange
+        let folder = temporary_folder("existing");
+        let path = folder.join("notes.md");
+        std::fs::write(&path, "already written").expect("expected to write the file");
+
+        // Act
+        let (file, new) =
+            file_to_open(&path.display().to_string()).expect("expected the file to resolve");
+
+        // Assert
+        assert!(!new);
+        assert_eq!(file, path);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("expected a file"),
+            "already written"
+        );
+    }
+
+    #[test]
+    fn a_file_in_a_folder_that_does_not_exist_is_refused() {
+        let folder = temporary_folder("missing-folder");
+        let path = folder.join("nowhere").join("notes.md");
+
+        let error = file_to_open(&path.display().to_string()).expect_err("expected a refusal");
+
+        assert!(
+            format!("{error}").contains("no folder to put"),
+            "got {error}"
+        );
+        assert!(!folder.join("nowhere").exists());
     }
 }

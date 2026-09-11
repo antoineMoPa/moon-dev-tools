@@ -81,6 +81,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/file",
             get(session_file).post(write_session_file),
         )
+        .route(
+            "/api/session/{session_id}/file/new",
+            post(create_session_file),
+        )
         .route("/api/session/{session_id}/files", get(find_session_files))
         .route(
             "/api/session/{session_id}/content",
@@ -151,6 +155,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/columns/{column_id}/arrivals",
             post(set_column_arrivals),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/sort",
+            post(set_column_sort),
         )
         .route(
             "/api/session/{session_id}/columns/{column_id}/placement",
@@ -455,6 +463,16 @@ async fn write_session_file(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     service::write_session_file(&state, &session_id, &request.file_path, &request.content)?;
+    Ok("ok")
+}
+
+async fn create_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::WriteFileRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    service::create_session_file(&state, &session_id, &request.file_path, &request.content)?;
     Ok("ok")
 }
 
@@ -773,6 +791,21 @@ async fn set_column_arrivals(
         &session_id,
         &ColumnId::new(column_id),
         request.arrivals,
+    )?;
+    Ok("ok")
+}
+
+async fn set_column_sort(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::ColumnSortRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_column_sort(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        request.sort,
     )?;
     Ok("ok")
 }

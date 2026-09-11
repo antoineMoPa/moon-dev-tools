@@ -450,6 +450,19 @@ pub(crate) fn write_session_file(
     })
 }
 
+/// Create a file of the repo nothing is at yet - see [`crate::git::create_repo_file`].
+pub(crate) fn create_session_file(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    content: &str,
+) -> Result<()> {
+    crate::api::ensure_session_is_writable(state, session_id)?;
+    crate::api::with_session(state, session_id, |session| {
+        crate::git::create_repo_file(&session.repo_path, file_path, content)
+    })
+}
+
 pub(crate) fn resolve_comment(
     state: &AppState,
     session_id: &str,

@@ -8,7 +8,7 @@
 use egui::{Align, CornerRadius, Layout as UiLayout, Ui, vec2};
 
 use crate::{
-    moontasks::{ColumnEnd, ColumnId, TaskView},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId, ColumnSort, TaskView, column_sort},
     native::{
         app::App,
         board::{
@@ -86,7 +86,17 @@ pub(super) fn column_cards(app: &App, status: &ColumnId) -> Vec<TaskView> {
             tasks.insert(at + offset, task);
         }
     }
+    // A sorted column keeps its order whatever is held over it: what is being carried is
+    // shown where the order will put it rather than where the pointer is.
+    if let Some(sort) = sort_of(&app.model.board.columns, status) {
+        column_sort::sort_cards(sort, &mut tasks);
+    }
     tasks
+}
+
+/// The order a column keeps by itself, if it keeps one.
+pub(super) fn sort_of(columns: &[BoardColumn], status: &ColumnId) -> Option<ColumnSort> {
+    columns.iter().find(|column| column.id == *status)?.sort
 }
 
 /// Where a card let go of among the cards a filter is showing belongs in the column itself.
@@ -154,20 +164,30 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
         .iter()
         .filter(|task| task.status == pending.status)
         .collect();
-    // Landed once the run of dropped cards is where it was dropped and in the order it was
-    // dropped in: the last of them can be no further down than the end of the column.
-    let first = pending
-        .index
-        .min(column.len().saturating_sub(pending.task_ids.len()));
-    let landed = pending
-        .task_ids
-        .iter()
-        .enumerate()
-        .all(|(offset, task_id)| {
-            column
-                .get(first + offset)
-                .is_some_and(|task| task.id == *task_id)
-        });
+    let landed = match sort_of(&model.board.columns, &pending.status) {
+        // A sorted column puts the cards where its order says rather than where they were
+        // dropped, so they have landed once they are in it at all.
+        Some(_) => pending
+            .task_ids
+            .iter()
+            .all(|task_id| column.iter().any(|task| task.id == *task_id)),
+        // Landed once the run of dropped cards is where it was dropped and in the order it
+        // was dropped in: the last of them can be no further down than the end of the column.
+        None => {
+            let first = pending
+                .index
+                .min(column.len().saturating_sub(pending.task_ids.len()));
+            pending
+                .task_ids
+                .iter()
+                .enumerate()
+                .all(|(offset, task_id)| {
+                    column
+                        .get(first + offset)
+                        .is_some_and(|task| task.id == *task_id)
+                })
+        }
+    };
 
     if landed {
         model.board.pending_place = None;
@@ -178,6 +198,7 @@ pub(crate) fn accept_board(model: &mut Model, mut tasks: Vec<TaskView>) {
             pending.index,
         );
         place_in(&mut tasks, &task_ids, &status, index);
+        column_sort::arrange(&model.board.columns, &mut tasks);
     }
     model.board.tasks = tasks;
 }

@@ -8,7 +8,7 @@
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, Ui, vec2};
 
 use crate::{
-    moontasks::{BoardColumn, ColumnEnd, ColumnId},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId, ColumnSort},
     native::{
         app::App,
         board::{
@@ -29,6 +29,58 @@ pub(super) struct DraggedColumn(pub(super) ColumnId);
 /// How wide the box for a new column's name is. Narrower than a column, because it is a name
 /// rather than a column of cards.
 const NEW_COLUMN_WIDTH: f32 = 150.0;
+
+/// One order a column can keep, as the heading's menu offers it and the heading marks it.
+struct SortChoice {
+    sort: Option<ColumnSort>,
+    /// What the menu calls it.
+    menu: &'static str,
+    /// What stands beside the column's name while the column keeps this order. Empty for the
+    /// order cards are dragged into, which is every column's until it is told otherwise.
+    mark: &'static str,
+    hover: &'static str,
+}
+
+/// Every order a column can keep, in the order the menu lists them.
+const SORT_CHOICES: &[SortChoice] = &[
+    SortChoice {
+        sort: None,
+        menu: "none",
+        mark: "",
+        hover: "a card stays where it is put",
+    },
+    SortChoice {
+        sort: Some(ColumnSort::Alphabetical),
+        menu: "alphabetical",
+        mark: "A→Z",
+        hover: "by title, with numbers read as numbers: 2 before 10, 01 before 02",
+    },
+    SortChoice {
+        sort: Some(ColumnSort::Numerical),
+        menu: "numerical",
+        mark: "1→9",
+        hover: "by the first number in each title, then the next; a title with no number goes last",
+    },
+    SortChoice {
+        sort: Some(ColumnSort::NewestFirst),
+        menu: "newest first",
+        mark: "newest",
+        hover: "the card made last is on top",
+    },
+    SortChoice {
+        sort: Some(ColumnSort::OldestFirst),
+        menu: "oldest first",
+        mark: "oldest",
+        hover: "the card made first is on top",
+    },
+];
+
+fn sort_choice(sort: Option<ColumnSort>) -> &'static SortChoice {
+    SORT_CHOICES
+        .iter()
+        .find(|choice| choice.sort == sort)
+        .expect("every order a column can keep is one of the choices")
+}
 
 /// The id a column is dragged by, which is also the layer its ghost is drawn into.
 pub(super) fn column_drag_id(column_id: &ColumnId) -> egui::Id {
@@ -187,6 +239,23 @@ fn draw_heading_handle(
             .selectable(false),
         )
         .rect;
+    // A sorted column says so beside its name, because it is the one thing that explains a
+    // card dragged to the top of it going somewhere else.
+    let sorted = sort_choice(column.sort);
+    if !sorted.mark.is_empty() {
+        ui.add(
+            egui::Label::new(
+                RichText::new(sorted.mark)
+                    .size(SMALL_SIZE - 2.0)
+                    .color(palette.muted),
+            )
+            .selectable(false),
+        )
+        .on_hover_text(format!(
+            "Sort: {} - {}. Right click the name to change it",
+            sorted.menu, sorted.hover
+        ));
+    }
 
     let handle = ui
         .interact(
@@ -248,6 +317,24 @@ fn draw_heading_menu(
             }
             ui.separator();
 
+            ui.label(RichText::new("Sort").size(SMALL_SIZE - 1.0));
+            for choice in SORT_CHOICES {
+                let chosen = column.sort == choice.sort;
+                if widgets::clickable(ui.selectable_label(chosen, choice.menu))
+                    .on_hover_text(choice.hover)
+                    .clicked()
+                {
+                    actions.push(BoardAction::SetColumnSort(column.id.clone(), choice.sort));
+                    ui.close();
+                }
+            }
+
+            // A sorted column puts an arriving card where its order says, so where arrivals go
+            // is only asked of a column that keeps the order cards are dragged into.
+            if column.sort.is_some() {
+                return;
+            }
+            ui.separator();
             ui.label(
                 RichText::new("a card moved in from another column goes").size(SMALL_SIZE - 1.0),
             );

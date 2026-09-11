@@ -15,7 +15,7 @@
 
 use std::{
     collections::VecDeque,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use egui::{Align, RichText, Ui};
@@ -35,25 +35,45 @@ use crate::native::{
 /// short lines.
 pub(crate) const KEPT_MESSAGES: usize = 500;
 
+/// How long the status bar reads out the last message after it was posted.
+///
+/// Long past the toast, which is the point of the bar - it is what is left once the toast in
+/// the corner has faded - and short enough that a line from a quarter of an hour ago is not
+/// still sitting along the bottom as though it were news. The log keeps it either way.
+pub(crate) const STATUS_BAR_READS_A_MESSAGE_FOR: Duration = Duration::from_secs(20);
+
 /// One thing the window said.
 pub(crate) struct Message {
     pub(crate) kind: ToastKind,
     pub(crate) text: String,
-    /// When it was said, in seconds since the epoch. Seconds rather than an [`std::time::Instant`]
+    /// When it was said, in seconds since the epoch. Seconds rather than an [`Instant`]
     /// because it is read out as a clock time, and an instant has no clock behind it.
     pub(crate) at_unix: u64,
+    /// The same moment on the monotonic clock, which is what the status bar measures how long
+    /// the message has stood against: a wall clock moved under a running window must neither
+    /// bring back an old line nor clear a new one.
+    pub(crate) posted_at: Instant,
 }
 
 /// The messages the window has posted, newest last, oldest dropped at [`KEPT_MESSAGES`].
 #[derive(Default)]
 pub(crate) struct MessageLog {
     posted: VecDeque<Message>,
+    /// Whether the last message was put away from the status bar by hand. The next message
+    /// posted is news again, so recording one clears it.
+    latest_dismissed: bool,
 }
 
 impl MessageLog {
     /// Write one down. The caller passes the time so the log has no clock of its own to be
     /// tested around.
-    pub(crate) fn record(&mut self, kind: ToastKind, text: String, at_unix: u64) {
+    pub(crate) fn record(
+        &mut self,
+        kind: ToastKind,
+        text: String,
+        at_unix: u64,
+        posted_at: Instant,
+    ) {
         if self.posted.len() == KEPT_MESSAGES {
             self.posted.pop_front();
         }
@@ -61,12 +81,30 @@ impl MessageLog {
             kind,
             text,
             at_unix,
+            posted_at,
         });
+        self.latest_dismissed = false;
     }
 
-    /// The most recent one, which is what the status bar reads out when nothing is working.
+    /// The most recent one.
     pub(crate) fn latest(&self) -> Option<&Message> {
         self.posted.back()
+    }
+
+    /// The message the status bar reads out at `now`: the most recent one, until it has stood
+    /// for [`STATUS_BAR_READS_A_MESSAGE_FOR`] or was dismissed.
+    pub(crate) fn standing(&self, now: Instant) -> Option<&Message> {
+        if self.latest_dismissed {
+            return None;
+        }
+        self.latest().filter(|latest| {
+            now.saturating_duration_since(latest.posted_at) < STATUS_BAR_READS_A_MESSAGE_FOR
+        })
+    }
+
+    /// Put the last message away from the status bar. It stays in the log.
+    pub(crate) fn dismiss_latest(&mut self) {
+        self.latest_dismissed = true;
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -174,7 +212,12 @@ mod tests {
     fn the_log_drops_the_oldest_message_once_it_is_full() {
         let mut log = MessageLog::default();
         for number in 0..KEPT_MESSAGES + 3 {
-            log.record(ToastKind::Info, format!("message {number}"), 1_700_000_000);
+            log.record(
+                ToastKind::Info,
+                format!("message {number}"),
+                1_700_000_000,
+                Instant::now(),
+            );
         }
 
         assert_eq!(log.len(), KEPT_MESSAGES);
@@ -187,6 +230,50 @@ mod tests {
             log.latest().expect("expected a last message").text,
             format!("message {}", KEPT_MESSAGES + 2)
         );
+    }
+
+    #[test]
+    fn the_status_bar_reads_a_message_out_until_it_has_stood_long_enough() {
+        // Arrange
+        let mut log = MessageLog::default();
+        let posted_at = Instant::now();
+        log.record(ToastKind::Info, "staged".to_string(), 0, posted_at);
+
+        // Act
+        let just_after = log.standing(posted_at + Duration::from_secs(1));
+        let long_after = log.standing(posted_at + STATUS_BAR_READS_A_MESSAGE_FOR);
+
+        // Assert
+        assert_eq!(just_after.expect("expected the message").text, "staged");
+        assert!(long_after.is_none(), "the line should have gone by now");
+        assert_eq!(log.len(), 1, "the log keeps it all the same");
+    }
+
+    #[test]
+    fn a_dismissed_message_is_off_the_status_bar_until_the_next_one() {
+        // Arrange
+        let mut log = MessageLog::default();
+        let posted_at = Instant::now();
+        log.record(
+            ToastKind::Error,
+            "failed to stage".to_string(),
+            0,
+            posted_at,
+        );
+
+        // Act
+        log.dismiss_latest();
+        let dismissed_is_off = log.standing(posted_at).is_none();
+        log.record(ToastKind::Info, "staged".to_string(), 0, posted_at);
+        let next = log.standing(posted_at);
+
+        // Assert
+        assert!(
+            dismissed_is_off,
+            "a dismissed message should be off the bar"
+        );
+        assert_eq!(next.expect("expected the next message").text, "staged");
+        assert_eq!(log.len(), 2, "dismissing takes nothing out of the log");
     }
 
     #[test]

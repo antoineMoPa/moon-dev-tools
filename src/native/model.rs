@@ -814,8 +814,12 @@ impl Model {
         // Written down before anything else, and every time it is posted: the toast below
         // folds a repeat into the one already up, and the log is where "it happened again"
         // is recorded - see [`crate::native::messages`].
-        self.messages
-            .record(kind, text.clone(), crate::native::messages::now_unix());
+        self.messages.record(
+            kind,
+            text.clone(),
+            crate::native::messages::now_unix(),
+            std::time::Instant::now(),
+        );
         // A repeated message means the same thing; refresh it instead of stacking copies.
         if let Some(existing) = self.toasts.iter_mut().find(|toast| toast.text == text) {
             existing.remaining = TOAST_LIFETIME;

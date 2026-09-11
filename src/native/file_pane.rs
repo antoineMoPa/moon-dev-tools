@@ -43,6 +43,9 @@ const OUTSIDE_THE_REPO_NOTE: &str = "outside the repo · read-only";
 /// What the header reads on a file another program wrote while the tab had edits of its own.
 const WRITTEN_ELSEWHERE_NOTE: &str = "changed on disk";
 
+/// What the header reads on a tab opened on a path nothing is at yet, until a save creates it.
+const NEW_FILE_NOTE: &str = "new file · not saved yet";
+
 /// `[reload]` once it has been pressed, asking for the second press that drops the edits.
 const RELOAD_CONFIRM_LABEL: &str = "[reload · discard edits]";
 
@@ -107,6 +110,10 @@ pub(crate) struct FileEditor {
     /// come back with the file from before it, and would read as somebody else's change - so
     /// a check only answers when no write went out while it was reading.
     writes_sent: u64,
+    /// Whether the file is on disk at all. False for a tab opened on a path nothing is at yet -
+    /// see [`FileEditor::new_file`] - until its first save creates the file: there is nothing
+    /// to read back from the disk before then, and that save creates rather than writes.
+    on_disk: bool,
     /// Where the caret was as the editor last drew, which is the place a rename asks about -
     /// see [`crate::native::renaming`]. Kept rather than asked for, because a rename is
     /// started from the palette and the key map as well as from the pane, and neither has
@@ -156,6 +163,7 @@ impl FileEditor {
             reload_confirmed: false,
             last_disk_check: None,
             writes_sent: 0,
+            on_disk: true,
             caret: None,
             caret_word: None,
             asked_to_format: None,
@@ -163,6 +171,20 @@ impl FileEditor {
             hovering: Default::default(),
             signing: Default::default(),
         }
+    }
+
+    /// A tab on a path nothing is at yet: empty, and not on disk until its first save creates
+    /// the file. Closing it unsaved leaves nothing behind.
+    fn new_file(file_path: String, asks_language_servers: bool) -> Self {
+        let mut editor = Self::loading(file_path, asks_language_servers);
+        editor.saved = Some(String::new());
+        // Every line of it is new, the same as a file HEAD does not have.
+        editor.code.set_base(Some(String::new()));
+        // Opened to be written, so a markdown file opens on its text rather than on an empty
+        // rendered page.
+        editor.preview = false;
+        editor.on_disk = false;
+        editor
     }
 
     /// The text on screen, unsaved edits and all.
@@ -556,6 +578,16 @@ impl App {
         editor.preview = false;
     }
 
+    /// Start a tab on a path nothing is at yet - see [`FileEditor::new_file`]. A tab already
+    /// open on the path keeps what it has: the new file is already being written there.
+    pub(crate) fn begin_new_file(&mut self, pane_id: PaneId, file_path: &str) {
+        let asks_language_servers = self.asks_language_servers;
+        self.model
+            .file_editors
+            .entry(pane_id)
+            .or_insert_with(|| FileEditor::new_file(file_path.to_string(), asks_language_servers));
+    }
+
     /// The file a pane is showing, fetched on first sight.
     fn ensure_file_editor(&mut self, pane_id: PaneId, session_id: &str, file_path: &str) {
         if self.model.file_editors.contains_key(&pane_id) {
@@ -595,7 +627,8 @@ impl App {
         // A file outside the repo is read-only, so there is nothing to write even if a chord
         // asked for it: the write would be refused repo-side, and the refusal would read as a
         // failure rather than as the answer it is.
-        if editor.saving || editor.outside_the_repo || !editor.is_dirty() {
+        // A new file is saved even with nothing typed in it: saving it is what makes it.
+        if editor.saving || editor.outside_the_repo || (editor.on_disk && !editor.is_dirty()) {
             return;
         }
         editor.saving = true;
@@ -608,10 +641,16 @@ impl App {
         let written = content.clone();
         let for_apply = pane_id;
         let tells_the_server = editor.server_heard().was_opened();
+        // The first save of a tab opened on a path nothing was at is what creates the file.
+        let creates = !editor.on_disk;
         self.tasks.spawn_keyed(
             Some(format!("save:{pane_id}")),
             move |backend| {
-                backend.write_file(&for_call, &for_write, &written)?;
+                if creates {
+                    backend.create_file(&for_call, &for_write, &written)?;
+                } else {
+                    backend.write_file(&for_call, &for_write, &written)?;
+                }
                 // The file is written whatever the server makes of it: one that did not hear
                 // only misses the check a save sets off, and hears the next save.
                 if tells_the_server {
@@ -628,6 +667,7 @@ impl App {
                     Ok(()) => {
                         // What is on disk is what was sent, not whatever has been typed since.
                         editor.saved = Some(content);
+                        editor.on_disk = true;
                         editor.error = None;
                         // Written over whatever another program had put there.
                         editor.written_elsewhere = None;
@@ -676,6 +716,7 @@ impl App {
             return;
         };
         let dirty = editor.is_dirty();
+        let new_file = !editor.on_disk;
         let saving = editor.saving;
         let written_elsewhere = editor.written_elsewhere.is_some();
         let reload_confirmed = editor.reload_confirmed;
@@ -703,7 +744,7 @@ impl App {
                 // buttons is worse than one that ends in a "…".
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if dirty
+                        if (dirty || new_file)
                             && !saving
                             && !outside_the_repo
                             && widgets::quiet_button(ui, "[save]").clicked()
@@ -776,6 +817,15 @@ impl App {
                             )
                             .on_hover_text(
                                 "Another program wrote this file after it was opened here, while it had unsaved edits. [reload] shows its version and discards yours; [save] writes yours over it.",
+                            );
+                        } else if new_file {
+                            ui.label(
+                                RichText::new(if saving { "creating…" } else { NEW_FILE_NOTE })
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.warn),
+                            )
+                            .on_hover_text(
+                                "Nothing is at this path yet. Saving creates the file; closing the tab without saving leaves nothing behind.",
                             );
                         } else if dirty && !outside_the_repo {
                             ui.label(
@@ -1054,6 +1104,7 @@ mod tests {
             reload_confirmed: false,
             last_disk_check: None,
             writes_sent: 0,
+            on_disk: true,
             caret: None,
             caret_word: None,
             asked_to_format: None,

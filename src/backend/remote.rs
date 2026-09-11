@@ -267,6 +267,13 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn create_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/file/new"),
+            &json!({ "file_path": file_path, "content": content }),
+        )
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         let encoded = urlencode(file_path);
         self.get(&format!(
@@ -427,6 +434,18 @@ impl Backend for RemoteBackend {
         self.post(
             &format!("/api/session/{session_id}/columns/{column_id}/arrivals"),
             &crate::moontasks::ColumnArrivalsRequest { arrivals },
+        )
+    }
+
+    fn set_column_sort(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        sort: Option<crate::moontasks::ColumnSort>,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/{column_id}/sort"),
+            &crate::moontasks::ColumnSortRequest { sort },
         )
     }
 
