@@ -5,8 +5,11 @@
 //! typed since the last commit reads as not committed rather than as whatever used to be on
 //! that line. The column gathers the lines into stretches, one per commit, with the short
 //! sha, the day and the author at the top of each and the commit's summary on the row under;
-//! the whole of it is in the note that opens on pointing at a stretch, and clicking one opens
-//! the review on that commit - on the local changes, for a stretch nothing has committed.
+//! the whole of it is in the note that opens on pointing at a stretch. A click on the hash
+//! opens the review on that commit - on the local changes, for a stretch nothing has
+//! committed. A click anywhere else on the stretch steps back: it opens the file as it was
+//! just before that change, read-only, with the blame of that version up - and a stretch of
+//! that blame can be clicked the same way, back through the file's history a change at a time.
 //!
 //! The blame follows the typing at a distance. While the column is up the text is hashed once
 //! every [`CHECK_INTERVAL`], and asked about again once it has held still for one interval
@@ -21,10 +24,10 @@ use std::{
 
 use egui::Color32;
 use egui_frames::PaneId;
-use egui_moon_editor::LineNote;
+use egui_moon_editor::{LineNote, NoteClick};
 
 use crate::{
-    api::{BlameChunk, Blamed},
+    api::{BlameChunk, BlameOf, Blamed},
     native::{
         app::App, palette::CommandAction, panes::OpenPaneRequest, panes::Pane, theme::Palette,
     },
@@ -39,6 +42,35 @@ const NOT_YET_COMMITTED_TITLE: &str = "not committed yet";
 
 /// How many characters of a sha the column shows: what `git log --oneline` shows.
 const SHORT_SHA: usize = 7;
+
+/// What a click on a stretch of the blame asks for, by where on the stretch it landed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClickAsks {
+    /// The review, on the commit the stretch names: a click on the note's link - see
+    /// [`link_of`].
+    TheCommit,
+    /// The file as it was just before that change, with its blame: a click anywhere else.
+    TheVersionBefore,
+}
+
+/// Where on a stretch a click landed, read as what it asks for: the link is the commit, the
+/// rest of the stretch the step back.
+pub(crate) fn what_a_click_asks(chunk: &BlameChunk, click: NoteClick) -> ClickAsks {
+    match click.row == 0 && link_of(chunk).contains(&click.column) {
+        true => ClickAsks::TheCommit,
+        false => ClickAsks::TheVersionBefore,
+    }
+}
+
+/// The stretch of a note's title that opens the review on the commit, in characters: the
+/// hash, or the whole of "not committed yet", which names the local changes the way a hash
+/// names a commit.
+fn link_of(chunk: &BlameChunk) -> std::ops::Range<usize> {
+    match &chunk.blamed {
+        Blamed::Committed(_) => 0..SHORT_SHA,
+        Blamed::NotYetCommitted => 0..NOT_YET_COMMITTED_TITLE.chars().count(),
+    }
+}
 
 /// The blame of one file tab: whether it is up, what it shows, and what it takes to keep
 /// that true of the text as it is typed into.
@@ -171,12 +203,14 @@ fn note_of(chunk: &BlameChunk, uncommitted_ink: Color32) -> LineNote {
             ),
             detail: commit.summary.clone(),
             ink: None,
+            link: Some(link_of(chunk)),
         },
         Blamed::NotYetCommitted => LineNote {
             lines: chunk.lines.clone(),
             title: NOT_YET_COMMITTED_TITLE.to_string(),
             detail: String::new(),
             ink: Some(uncommitted_ink),
+            link: Some(link_of(chunk)),
         },
     }
 }
@@ -262,14 +296,18 @@ pub(crate) fn follow(app: &mut App, ctx: &egui::Context, pane_id: PaneId, sessio
         return;
     }
     editor.blaming_mut().asking = true;
-    let text = editor.text().to_string();
+    // A tab on an old version asks about that version; every other tab about its own text.
+    let of = match editor.revision() {
+        Some(revision) => BlameOf::Revision(revision.to_string()),
+        None => BlameOf::Text(editor.text().to_string()),
+    };
     let file_path = editor.file_path.clone();
 
     let for_call = session_id.to_string();
     let for_ask = file_path.clone();
     app.tasks.spawn_keyed(
         Some(key),
-        move |backend| backend.blame_file(&for_call, &for_ask, &text),
+        move |backend| backend.blame_file(&for_call, &for_ask, &of),
         move |model, result| {
             let Some(editor) = model.file_editors.get_mut(&pane_id) else {
                 return;
@@ -286,18 +324,17 @@ pub(crate) fn follow(app: &mut App, ctx: &egui::Context, pane_id: PaneId, sessio
     );
 }
 
-/// The whole of a note, on pointing at its stretch: what the column had room for and the
-/// rest - the full sha, and what a click does.
-pub(crate) fn draw_tooltip(ui: &egui::Ui, palette: &Palette, chunk: &BlameChunk) {
-    let id = ui.id().with(("blame-tooltip", chunk.lines.start));
-    egui::Tooltip::always_open(
-        ui.ctx().clone(),
-        ui.layer_id(),
-        id,
-        egui::PopupAnchor::Pointer,
-    )
-    .show(|ui| {
+/// The whole of a note, once the pointer has rested on its stretch: what the column had room
+/// for and the rest - the full sha, and what a click does where. Hung off the stretch's
+/// response the way any tooltip is, so it waits for the pointer to rest and stays away while
+/// it moves: a column that spoke up every time the pointer crossed it would be a column
+/// nobody could read past.
+pub(crate) fn tell_on_hover(response: &egui::Response, palette: &Palette, chunk: &BlameChunk) {
+    response.clone().on_hover_ui_at_pointer(|ui| {
         ui.set_max_width(360.0);
+        let hint = |ui: &mut egui::Ui, said: &str| {
+            ui.label(egui::RichText::new(said).small().color(palette.muted));
+        };
         match &chunk.blamed {
             Blamed::Committed(commit) => {
                 ui.label(egui::RichText::new(&commit.summary).strong());
@@ -307,23 +344,66 @@ pub(crate) fn draw_tooltip(ui: &egui::Ui, palette: &Palette, chunk: &BlameChunk)
                         .monospace()
                         .color(palette.muted),
                 );
-                ui.label(
-                    egui::RichText::new("Click to open the review on this commit")
-                        .color(palette.muted),
+                hint(
+                    ui,
+                    match &chunk.before {
+                        Some(_) => "Click the hash for the review on this commit, elsewhere for the file as it was before it",
+                        None => "Click the hash for the review on this commit. It brought the file in: nothing comes before it",
+                    },
                 );
             }
             Blamed::NotYetCommitted => {
                 ui.label(egui::RichText::new(NOT_YET_COMMITTED_TITLE).strong());
-                ui.label(
-                    "These lines are not in any commit: typed since the last one, saved or not.",
-                );
-                ui.label(
-                    egui::RichText::new("Click to open the review on the local changes")
-                        .color(palette.muted),
+                ui.label("Typed since the last commit, saved or not.");
+                hint(
+                    ui,
+                    match &chunk.before {
+                        Some(_) => "Click the words for the review on the local changes, elsewhere on the stretch for the file as the last commit has it",
+                        None => "Click the words for the review on the local changes. No commit has this file yet",
+                    },
                 );
             }
         }
     });
+}
+
+/// What a click on a stretch does - see [`what_a_click_asks`].
+pub(crate) fn follow_click(app: &mut App, session_id: &str, chunk: &BlameChunk, click: NoteClick) {
+    match what_a_click_asks(chunk, click) {
+        ClickAsks::TheCommit => show_commit(app, session_id, chunk),
+        ClickAsks::TheVersionBefore => show_version_before(app, session_id, chunk),
+    }
+}
+
+/// Open the file as it was just before the change a stretch names, read-only and with the
+/// blame of that version up, on the line the stretch started at - the step back through the
+/// history. The commit that brought the file in has nothing before it, and says so.
+///
+/// Deferred like every other pane change made from inside a draw - see
+/// [`App::open_file_pane`]: the tree holding the file pane must not be rebuilt under it.
+pub(crate) fn show_version_before(app: &mut App, session_id: &str, chunk: &BlameChunk) {
+    let Some(before) = &chunk.before else {
+        let said = match &chunk.blamed {
+            Blamed::Committed(commit) => format!(
+                "{} brought the file in - there is no version before it",
+                short_sha(&commit.sha)
+            ),
+            Blamed::NotYetCommitted => {
+                "no commit has this file yet - there is no version before it".to_string()
+            }
+        };
+        app.model.error(said);
+        return;
+    };
+    if app.pending_action.is_some() {
+        return;
+    }
+    app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::FileAt {
+        session_id: session_id.to_string(),
+        file_path: before.file_path.clone(),
+        revision: before.sha.clone(),
+        line: chunk.line_in_commit,
+    }));
 }
 
 /// Open the review of the tab's session on the commit a stretch was last touched in - the
@@ -371,6 +451,8 @@ mod tests {
                 authored_on: "2024-01-02".to_string(),
                 summary: "Add the library".to_string(),
             }),
+            before: None,
+            line_in_commit: 1,
         }
     }
 
@@ -378,7 +460,52 @@ mod tests {
         BlameChunk {
             lines,
             blamed: Blamed::NotYetCommitted,
+            before: None,
+            line_in_commit: 1,
         }
+    }
+
+    /// The hash is the first seven characters of the title row; anything else on the
+    /// stretch - the rest of the title, the summary, a blank row - steps back. On a stretch
+    /// nothing has committed the words are the link, since there is no hash.
+    #[test]
+    fn a_click_on_the_hash_asks_for_the_commit_and_anywhere_else_for_the_version_before() {
+        let click = |row, column| NoteClick {
+            note: 0,
+            row,
+            column,
+        };
+        let chunk = committed(0..3);
+        assert_eq!(what_a_click_asks(&chunk, click(0, 0)), ClickAsks::TheCommit);
+        assert_eq!(what_a_click_asks(&chunk, click(0, 6)), ClickAsks::TheCommit);
+        assert_eq!(
+            what_a_click_asks(&chunk, click(0, 7)),
+            ClickAsks::TheVersionBefore
+        );
+        assert_eq!(
+            what_a_click_asks(&chunk, click(0, 20)),
+            ClickAsks::TheVersionBefore
+        );
+        assert_eq!(
+            what_a_click_asks(&chunk, click(1, 0)),
+            ClickAsks::TheVersionBefore
+        );
+        assert_eq!(
+            what_a_click_asks(&chunk, click(5, 3)),
+            ClickAsks::TheVersionBefore
+        );
+        assert_eq!(note_of(&chunk, Color32::GREEN).link, Some(0..7));
+
+        let typed = not_committed(0..1);
+        assert_eq!(
+            what_a_click_asks(&typed, click(0, 16)),
+            ClickAsks::TheCommit
+        );
+        assert_eq!(
+            what_a_click_asks(&typed, click(0, 17)),
+            ClickAsks::TheVersionBefore
+        );
+        assert_eq!(note_of(&typed, Color32::GREEN).link, Some(0..17));
     }
 
     #[test]

@@ -14,7 +14,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::{
     agent::{agent_is_available, agent_options},
     api::{
-        AgentKind, AgentLogPayload, AppState, BlamePayload, CommitHistoryPayload, CommitView,
+        AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommitHistoryPayload,
+        CommitView,
         ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
         OpenSessionRequest, PatchPayload, RepoSession, RepoStatusView, SessionOpened,
         SessionPayload, SubmoduleHubPayload,
@@ -414,15 +415,15 @@ pub(crate) fn session_file(
     })
 }
 
-/// Who last touched each stretch of a file, taken with `content` as its working-tree version -
-/// the tab's buffer, so a line typed a moment ago reads as not committed. Runs where the repo
-/// is. A file outside the repo has no history here to ask about, and says so rather than
-/// having git say something less clear about a path it cannot see.
+/// Who last touched each stretch of a file, in the version `of` names - the tab's buffer, so
+/// a line typed a moment ago reads as not committed, or the file as one commit has it. Runs
+/// where the repo is. A file outside the repo has no history here to ask about, and says so
+/// rather than having git say something less clear about a path it cannot see.
 pub(crate) fn blame_session_file(
     state: &AppState,
     session_id: &str,
     file_path: &str,
-    content: &str,
+    of: &BlameOf,
 ) -> Result<BlamePayload> {
     crate::api::with_session(state, session_id, |session| {
         if session
@@ -434,7 +435,25 @@ pub(crate) fn blame_session_file(
         }
         Ok(BlamePayload {
             file_path: file_path.to_string(),
-            chunks: crate::git::blame_file(&session.repo_path, file_path, content)?,
+            chunks: crate::git::blame_file(&session.repo_path, file_path, of)?,
+        })
+    })
+}
+
+/// A file of the repo as one commit has it, for a tab that shows an old version of it. Read
+/// only, and with nothing to be new against: it is not the working tree.
+pub(crate) fn session_file_at(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    revision: &str,
+) -> Result<FileContentPayload> {
+    crate::api::with_session(state, session_id, |session| {
+        Ok(FileContentPayload {
+            file_path: file_path.to_string(),
+            content: crate::git::read_file_at(&session.repo_path, file_path, revision)?,
+            outside_the_repo: false,
+            committed: None,
         })
     })
 }

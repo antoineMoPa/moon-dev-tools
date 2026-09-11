@@ -520,6 +520,7 @@ fn c_x_o_hands_the_keyboard_to_the_next_frame() {
                         session_id,
                         file_path: "src/lib.rs".to_string(),
                         task_id: None,
+                        revision: None,
                     },
                 );
                 split_in_ui.store(true, Ordering::Relaxed);
@@ -596,6 +597,7 @@ fn raising_a_tab_hands_it_the_keyboard() {
                         session_id,
                         file_path: "src/lib.rs".to_string(),
                         task_id: None,
+                        revision: None,
                     },
                     None,
                 );

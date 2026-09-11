@@ -305,6 +305,21 @@ pub(crate) struct BlameChunk {
     /// The lines of the text the stretch covers, as indexes from zero.
     pub(crate) lines: std::ops::Range<usize>,
     pub(crate) blamed: Blamed,
+    /// The file as it was just before the change the stretch is put down to: the blamed
+    /// commit's parent and the path there, or HEAD for lines not committed yet. `None` where
+    /// there is no before - the commit that brought the file in.
+    pub(crate) before: Option<FileVersion>,
+    /// The line the stretch started on in the version the change was made in, counted from
+    /// one - about where to look for it in the version before.
+    pub(crate) line_in_commit: usize,
+}
+
+/// A file as one commit has it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) struct FileVersion {
+    pub(crate) sha: String,
+    /// The path the file had in that commit, which a rename since has changed.
+    pub(crate) file_path: String,
 }
 
 /// What a stretch of lines is put down to.
@@ -328,13 +343,29 @@ pub(crate) struct BlamedCommit {
     pub(crate) summary: String,
 }
 
-/// A blame asked about a text that may not be what is on disk: the tab's buffer, edits and
-/// all, so a line typed a moment ago reads as not committed rather than as whatever used to
-/// be on that line.
+/// A blame asked about a file, and of which version of it.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct BlameRequest {
     pub(crate) file_path: String,
-    pub(crate) content: String,
+    pub(crate) of: BlameOf,
+}
+
+/// Which version of a file a blame is of.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(crate) enum BlameOf {
+    /// A text that may not be what is on disk: the tab's buffer, edits and all, so a line
+    /// typed a moment ago reads as not committed rather than as whatever used to be on that
+    /// line.
+    Text(String),
+    /// The file as one commit has it - a blame with no uncommitted lines in it.
+    Revision(String),
+}
+
+/// A file as one commit has it, asked for by path and revision.
+#[derive(Deserialize)]
+pub(crate) struct FileAtQuery {
+    pub(crate) file_path: String,
+    pub(crate) revision: String,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -7,10 +7,10 @@ use anyhow::Result;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AppState, BlamePayload, CommentRequest, CommitHistoryPayload,
-        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation,
-        LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleHubPayload,
+        AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommentRequest,
+        CommitHistoryPayload, ContentMatchesPayload, FileContentPayload, FileMatchesPayload,
+        LspCompletion, LspLocation, LspPosition, LspStatus, LspWork, OpenSessionRequest,
+        PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
     },
     backend::Backend,
     moontasks::{
@@ -119,8 +119,17 @@ impl Backend for LocalBackend {
         service::session_file(&self.state, session_id, file_path)
     }
 
-    fn blame_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<BlamePayload> {
-        service::blame_session_file(&self.state, session_id, file_path, content)
+    fn file_content_at(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        revision: &str,
+    ) -> Result<FileContentPayload> {
+        service::session_file_at(&self.state, session_id, file_path, revision)
+    }
+
+    fn blame_file(&self, session_id: &str, file_path: &str, of: &BlameOf) -> Result<BlamePayload> {
+        service::blame_session_file(&self.state, session_id, file_path, of)
     }
 
     fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {

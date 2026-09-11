@@ -5,7 +5,7 @@ mod hunks;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use blame::blame_file;
+pub(crate) use blame::{blame_file, read_file_at};
 pub(crate) use hunks::{
     apply_patch, build_partial_patch_from_selection, collect_session_hunks,
     local_change_summary_from_status, preview_patch,

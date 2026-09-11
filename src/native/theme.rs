@@ -398,6 +398,8 @@ impl Palette {
             note_ink: self.ink,
             note_detail_ink: self.muted,
             note_rule_ink: self.line,
+            // The hash lit up under the pointer, in the accent everything clickable is.
+            note_link_ink: self.accent,
             syntax: egui_moon_editor::SyntaxTheme::from_fn(|style| {
                 let (face, italics) = syntax_face(style);
                 egui_moon_editor::TokenLook {

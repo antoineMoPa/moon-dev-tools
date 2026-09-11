@@ -137,6 +137,10 @@ pub(crate) struct FileEditor {
     /// Who last touched each stretch of the file, beside the lines when asked for - see
     /// [`crate::native::blame`].
     blaming: crate::native::blame::Blaming,
+    /// The commit whose version of the file this tab shows, for a tab opened off a blame onto
+    /// the file as it was. Read-only: the text is not the working tree's, so there is nothing
+    /// to save it to, no disk to check under it, and no language server to tell about it.
+    revision: Option<String>,
 }
 
 impl FileEditor {
@@ -174,7 +178,21 @@ impl FileEditor {
             hovering: Default::default(),
             signing: Default::default(),
             blaming: Default::default(),
+            revision: None,
         }
+    }
+
+    /// A tab on the file as one commit had it - see [`FileEditor::revision`]. Its blame is up
+    /// from the start, because looking at who touched what is what such a tab is opened for,
+    /// and it asks no language server anything: the text is not a document of the project.
+    fn at_revision(file_path: String, revision: String) -> Self {
+        let mut editor = Self::loading(file_path, false);
+        editor.revision = Some(revision);
+        // Opened to be read line by line beside the blame, so a markdown file opens on its
+        // text rather than on the rendered page.
+        editor.preview = false;
+        editor.blaming.toggle();
+        editor
     }
 
     /// A tab on a path nothing is at yet: empty, and not on disk until its first save creates
@@ -285,11 +303,22 @@ impl FileEditor {
         self.outside_the_repo
     }
 
+    /// The commit whose version of the file the tab shows, for a tab on an old version.
+    pub(super) fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
+
+    /// Whether the text can only be read: a file outside the repo, or a file as an old
+    /// commit had it. Neither has anywhere for an edit to go.
+    pub(super) fn is_read_only(&self) -> bool {
+        self.outside_the_repo || self.revision.is_some()
+    }
+
     /// Whether the server behind this file may be asked for edits to it - a rename, a format:
     /// a server is behind the file, and the file is one of the repo's own. Edits to a
     /// dependency's source are edits nobody may write.
     pub(crate) fn offers_edits(&self) -> bool {
-        self.asks_language_servers && self.served.has_a_server() && !self.outside_the_repo
+        self.asks_language_servers && self.served.has_a_server() && !self.is_read_only()
     }
 
     /// Put a rename's edits into the text, as byte ranges of it in order - see
@@ -484,7 +513,7 @@ impl App {
     /// asking for it, and the tree holding that pane must not be rebuilt underneath it.
     pub(crate) fn open_file_pane(&mut self, session_id: &str, file_path: &str) {
         let already_open = self.model.layout.panes().any(|(_, pane)| {
-            matches!(pane, crate::native::panes::Pane::File { file_path: open, .. }
+            matches!(pane, crate::native::panes::Pane::File { file_path: open, revision: None, .. }
                 if open == file_path)
         });
         if already_open || self.pending_action.is_some() {
@@ -529,9 +558,9 @@ impl App {
     ) {
         use crate::native::panes::{Pane, PaneKind};
 
-        let pane_id = match self.model.layout.find_pane(
-            |pane| matches!(pane, Pane::File { file_path: open, .. } if *open == file_path),
-        ) {
+        let pane_id = match self.model.layout.find_pane(|pane| {
+            matches!(pane, Pane::File { file_path: open, revision: None, .. } if *open == file_path)
+        }) {
             Some((pane, _)) => {
                 // The tab was already open, on the file of the repo rather than on the task's
                 // copy of it: opening it from a card is what puts it on that task, and what
@@ -547,6 +576,7 @@ impl App {
                     session_id: session_id.clone(),
                     file_path: file_path.clone(),
                     task_id: Some(task_id.clone()),
+                    revision: None,
                 };
                 let active = self.model.layout.active_frame();
                 match self
@@ -564,7 +594,7 @@ impl App {
                 }
             }
         };
-        self.ensure_file_editor(pane_id, &session_id, &file_path);
+        self.ensure_file_editor(pane_id, &session_id, &file_path, None);
         if let Some(editor) = self.model.file_editors.get_mut(&pane_id) {
             editor.preview = false;
         }
@@ -580,7 +610,7 @@ impl App {
         file_path: &str,
         at: crate::native::panes::OpenAt,
     ) {
-        self.ensure_file_editor(pane_id, session_id, file_path);
+        self.ensure_file_editor(pane_id, session_id, file_path, None);
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };
@@ -588,6 +618,28 @@ impl App {
         // A match is in the text of the file, so the text is what the pane shows - a markdown
         // file opens rendered otherwise, where the line does not exist.
         editor.preview = false;
+    }
+
+    /// Put a line of an old version of a file on screen, for a tab opened off a blame onto
+    /// the version before a change - see [`crate::native::blame`]. The text may not have
+    /// arrived yet, so the line is left with the editor the way a search's match is, with
+    /// nothing to mark on it.
+    pub(crate) fn reveal_file_line(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        file_path: &str,
+        revision: &str,
+        line: usize,
+    ) {
+        self.ensure_file_editor(pane_id, session_id, file_path, Some(revision));
+        let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
+            return;
+        };
+        editor.reveal = Some(crate::native::panes::OpenAt {
+            line,
+            query: String::new(),
+        });
     }
 
     /// Start a tab on a path nothing is at yet - see [`FileEditor::new_file`]. A tab already
@@ -600,25 +652,43 @@ impl App {
             .or_insert_with(|| FileEditor::new_file(file_path.to_string(), asks_language_servers));
     }
 
-    /// The file a pane is showing, fetched on first sight.
-    fn ensure_file_editor(&mut self, pane_id: PaneId, session_id: &str, file_path: &str) {
+    /// The file a pane is showing, fetched on first sight - as it is, or as the commit
+    /// `revision` had it.
+    fn ensure_file_editor(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        file_path: &str,
+        revision: Option<&str>,
+    ) {
         if self.model.file_editors.contains_key(&pane_id) {
             return;
         }
-        self.model.file_editors.insert(
-            pane_id,
-            FileEditor::loading(file_path.to_string(), self.asks_language_servers),
-        );
-        self.load_file(pane_id, session_id, file_path);
+        let editor = match revision {
+            Some(revision) => FileEditor::at_revision(file_path.to_string(), revision.to_string()),
+            None => FileEditor::loading(file_path.to_string(), self.asks_language_servers),
+        };
+        self.model.file_editors.insert(pane_id, editor);
+        self.load_file(pane_id, session_id, file_path, revision);
     }
 
-    fn load_file(&mut self, pane_id: PaneId, session_id: &str, file_path: &str) {
+    fn load_file(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        file_path: &str,
+        revision: Option<&str>,
+    ) {
         let for_call = session_id.to_string();
         let path = file_path.to_string();
+        let revision = revision.map(str::to_string);
         let for_apply = pane_id;
         self.tasks.spawn_keyed(
             Some(format!("file:{pane_id}")),
-            move |backend| backend.file_content(&for_call, &path),
+            move |backend| match &revision {
+                Some(revision) => backend.file_content_at(&for_call, &path, revision),
+                None => backend.file_content(&for_call, &path),
+            },
             move |model, result| {
                 let Some(editor) = model.file_editors.get_mut(&for_apply) else {
                     return;
@@ -636,11 +706,11 @@ impl App {
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };
-        // A file outside the repo is read-only, so there is nothing to write even if a chord
-        // asked for it: the write would be refused repo-side, and the refusal would read as a
-        // failure rather than as the answer it is.
+        // A file outside the repo, or an old version of one, is read-only, so there is nothing
+        // to write even if a chord asked for it: the write would be refused repo-side, and the
+        // refusal would read as a failure rather than as the answer it is.
         // A new file is saved even with nothing typed in it: saving it is what makes it.
-        if editor.saving || editor.outside_the_repo || (editor.on_disk && !editor.is_dirty()) {
+        if editor.saving || editor.is_read_only() || (editor.on_disk && !editor.is_dirty()) {
             return;
         }
         editor.saving = true;
@@ -710,9 +780,10 @@ impl App {
         pane_id: PaneId,
         session_id: &str,
         file_path: &str,
+        revision: Option<&str>,
     ) {
         let palette = self.palette_of();
-        self.ensure_file_editor(pane_id, session_id, file_path);
+        self.ensure_file_editor(pane_id, session_id, file_path, revision);
         // What the language server behind this file has been told about it, brought up with
         // what the pane is showing.
         let ctx = ui.ctx().clone();
@@ -735,6 +806,7 @@ impl App {
         let written_elsewhere = editor.written_elsewhere.is_some();
         let reload_confirmed = editor.reload_confirmed;
         let outside_the_repo = editor.outside_the_repo;
+        let read_only = editor.is_read_only();
         let problems = crate::native::diagnostics::said_in_header(editor.diagnosed.found());
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
@@ -761,7 +833,7 @@ impl App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if (dirty || new_file)
                             && !saving
-                            && !outside_the_repo
+                            && !read_only
                             && widgets::quiet_button(ui, "[save]").clicked()
                         {
                             self.save_file_pane(pane_id, session_id);
@@ -836,6 +908,21 @@ impl App {
                                 "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
                             );
                         }
+                        // The same for a tab on an old version of a file: which one, and
+                        // that it is there to be read.
+                        if let Some(revision) = revision {
+                            ui.label(
+                                RichText::new(format!(
+                                    "as of {} · read-only",
+                                    crate::native::panes::short_revision(revision)
+                                ))
+                                .size(SMALL_SIZE - 1.0)
+                                .color(palette.muted),
+                            )
+                            .on_hover_text(format!(
+                                "The file as it was in commit {revision}, opened from a blame. It can only be read; the blame beside it is of this version."
+                            ));
+                        }
                         // What the server found wrong, where the eye goes after the file's name.
                         if let Some((said, worst)) = &problems {
                             ui.label(RichText::new(said).size(SMALL_SIZE - 1.0).color(
@@ -861,7 +948,7 @@ impl App {
                             .on_hover_text(
                                 "Nothing is at this path yet. Saving creates the file; closing the tab without saving leaves nothing behind.",
                             );
-                        } else if dirty && !outside_the_repo {
+                        } else if dirty && !read_only {
                             ui.label(
                                 RichText::new(if saving { "saving…" } else { "unsaved" })
                                     .size(SMALL_SIZE - 1.0)
@@ -1019,16 +1106,16 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
             notes: &notes,
         },
     );
-    // The stretch the pointer rests on, told in full, and the one clicked, opened in the
-    // review on its commit.
-    if let Some(note) = output.pointed_note
-        && let Some(chunk) = editor.blaming.chunk(note)
+    // The stretch the pointer rests on, told in full, and the one clicked - what a click
+    // asks for depends on where in the stretch it landed, which is `blame`'s to say.
+    if let Some(pointed) = &output.pointed_note
+        && let Some(chunk) = editor.blaming.chunk(pointed.note)
     {
-        crate::native::blame::draw_tooltip(ui, palette, chunk);
+        crate::native::blame::tell_on_hover(&pointed.response, palette, chunk);
     }
-    let commit_asked = output
+    let stretch_clicked = output
         .note_clicked
-        .and_then(|note| editor.blaming.chunk(note).cloned());
+        .and_then(|click| Some((editor.blaming.chunk(click.note)?.clone(), click)));
     // The name that was ⌘-clicked, if one was, and where in the text it sits - which is
     // already the position a language server is asked about. Where it is defined is
     // `crate::native::definition`'s business rather than this pane's.
@@ -1064,8 +1151,8 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     if let Some(word) = navigated_to {
         crate::native::definition::look_up(app, pane_id, session_id, word);
     }
-    if let Some(chunk) = commit_asked {
-        crate::native::blame::show_commit(app, session_id, &chunk);
+    if let Some((chunk, click)) = stretch_clicked {
+        crate::native::blame::follow_click(app, session_id, &chunk, click);
     }
     // What the caret is on now, and what became of the list that was up: whether that is
     // worth a question is `completing`'s to answer.
@@ -1186,6 +1273,7 @@ mod tests {
             hovering: Default::default(),
             signing: Default::default(),
             blaming: Default::default(),
+            revision: None,
         }
     }
 

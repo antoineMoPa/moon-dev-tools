@@ -211,6 +211,38 @@ impl App {
                 let pane_id = self.file_pane_for(&session_id, &file_path, active_frame);
                 self.begin_new_file(pane_id, &file_path);
             }
+            OpenPaneRequest::FileAt {
+                session_id,
+                file_path,
+                revision,
+                line,
+            } => {
+                // The same version of the same file twice is the same tab; another version
+                // of it is another tab, beside the file as it is.
+                let pane_id = match self.model.layout.find_pane(|pane| {
+                    matches!(pane, Pane::File { file_path: open, revision: Some(at), .. }
+                        if *open == file_path && *at == revision)
+                }) {
+                    Some((pane, _)) => {
+                        self.model.layout.focus_pane(pane);
+                        pane
+                    }
+                    None => {
+                        let frame = self.frame_for(PaneKind::File, active_frame);
+                        self.model.layout.add_pane(
+                            frame,
+                            Pane::File {
+                                session_id: session_id.clone(),
+                                file_path: file_path.clone(),
+                                task_id: None,
+                                revision: Some(revision.clone()),
+                            },
+                            None,
+                        )
+                    }
+                };
+                self.reveal_file_line(pane_id, &session_id, &file_path, &revision, line);
+            }
             OpenPaneRequest::Terminal { command } => {
                 let session_id = self.shell_session_for(active_frame);
                 self.spawn_terminal(session_id, command, TerminalPlacement::WithOtherShells);
@@ -437,9 +469,12 @@ impl App {
         file_path: &str,
         active_frame: FrameId,
     ) -> egui_frames::PaneId {
-        match self.model.layout.find_pane(
-            |pane| matches!(pane, Pane::File { file_path: open, .. } if open.as_str() == file_path),
-        ) {
+        // Not a tab on an old version of it: that is another thing, and opening the file by
+        // name is opening the file as it is.
+        match self.model.layout.find_pane(|pane| {
+            matches!(pane, Pane::File { file_path: open, revision: None, .. }
+                if open.as_str() == file_path)
+        }) {
             Some((pane, _)) => {
                 self.model.layout.focus_pane(pane);
                 pane
@@ -454,6 +489,7 @@ impl App {
                         // Opened by name or from a search, which is the repo's file rather
                         // than any one task's.
                         task_id: None,
+                        revision: None,
                     },
                     None,
                 )

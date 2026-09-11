@@ -577,6 +577,7 @@ fn the_commit_command_commits_the_review_in_front() {
             session_id: SUBMODULE.to_string(),
             file_path: "src/lib.rs".to_string(),
             task_id: None,
+            revision: None,
         },
         None,
     );

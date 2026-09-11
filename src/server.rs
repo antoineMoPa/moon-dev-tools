@@ -18,8 +18,8 @@ use crate::{
     agent::detect_agent_availability,
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, BlamePayload, CommitHistoryPayload,
-        CommitHistoryQuery, CommitSelectionRequest, ContentMatchesPayload, FileContentPayload,
-        FileMatchesPayload, FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload,
+        CommitHistoryQuery, CommitSelectionRequest, ContentMatchesPayload, FileAtQuery,
+        FileContentPayload, FileMatchesPayload, FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload,
         SelectionRequest, ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload,
         bind_host, port, server_url,
     },
@@ -86,6 +86,7 @@ pub(crate) fn router(state: AppState) -> Router {
             post(create_session_file),
         )
         .route("/api/session/{session_id}/blame", post(blame_session_file))
+        .route("/api/session/{session_id}/file-at", get(session_file_at))
         .route("/api/session/{session_id}/files", get(find_session_files))
         .route(
             "/api/session/{session_id}/content",
@@ -500,7 +501,21 @@ async fn blame_session_file(
         &state,
         &session_id,
         &request.file_path,
-        &request.content,
+        &request.of,
+    )?))
+}
+
+async fn session_file_at(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileAtQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<FileContentPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(service::session_file_at(
+        &state,
+        &session_id,
+        &query.file_path,
+        &query.revision,
     )?))
 }
 

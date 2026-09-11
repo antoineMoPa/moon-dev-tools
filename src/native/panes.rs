@@ -67,6 +67,11 @@ pub(crate) enum Pane {
         /// notes, or a file linked to it.
         #[serde(default)]
         task_id: Option<String>,
+        /// The commit whose version of the file the tab shows, for a tab opened off a blame
+        /// onto the file as it was - read-only, since it is not the working tree. `None` is
+        /// the file as it is, which is every tab opened by name.
+        #[serde(default)]
+        revision: Option<String>,
     },
     /// The moontasks board of the repo being reviewed.
     Tasks,
@@ -133,12 +138,20 @@ impl Pane {
                 Some(AgentKind::OpenCode) => "opencode".to_string(),
                 _ => "terminal".to_string(),
             },
-            // The name alone: the path is on the pane's own header and on the tab's hover.
-            Self::File { file_path, .. } => file_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(file_path)
-                .to_string(),
+            // The name alone: the path is on the pane's own header and on the tab's hover. A
+            // tab on an old version says which, so two versions of a file side by side read
+            // apart.
+            Self::File {
+                file_path,
+                revision,
+                ..
+            } => {
+                let name = file_path.rsplit('/').next().unwrap_or(file_path);
+                match revision {
+                    Some(revision) => format!("{name} @{}", short_revision(revision)),
+                    None => name.to_string(),
+                }
+            }
             Self::Tasks => "moontasks".to_string(),
             // The task's own name: the tab is that task's, and what it offers is on the pane.
             Self::Start { title, .. } => title.clone(),
@@ -207,6 +220,17 @@ pub(crate) enum OpenPaneRequest {
         /// Where to open the file, for one opened from a content search rather than by name.
         at: Option<OpenAt>,
     },
+    /// The file as one commit has it, read-only and with its blame up: what a stretch of a
+    /// blame opens, on the version just before the change it names - see
+    /// [`crate::native::blame`].
+    FileAt {
+        session_id: String,
+        /// The path the file had in that commit.
+        file_path: String,
+        revision: String,
+        /// The line to open on, counted from one.
+        line: usize,
+    },
     /// A file of the repo nothing is at yet: the tab opens empty, and its first save is what
     /// creates the file. How `moon edit` of a path with no file at it arrives.
     NewFile {
@@ -242,6 +266,11 @@ pub(crate) enum OpenPaneRequest {
 
 /// The match a file is opened at: the line to bring on screen, and the text that was
 /// searched for, which the pane marks the way the find bar does.
+/// How much of a sha a tab title or a header shows: what `git log --oneline` shows.
+pub(crate) fn short_revision(revision: &str) -> &str {
+    &revision[..7.min(revision.len())]
+}
+
 #[derive(Clone)]
 pub(crate) struct OpenAt {
     /// Counted from one, as the number in the fringe is.
@@ -294,7 +323,16 @@ impl PaneView<Pane> for App {
         // A file with edits that are not on disk carries a dot before its name.
         let unsaved = matches!(pane, Pane::File { .. }) && self.file_pane_is_dirty(pane_id);
         let hover = match pane {
-            Pane::File { file_path, .. } => file_path.clone(),
+            Pane::File {
+                file_path,
+                revision: None,
+                ..
+            } => file_path.clone(),
+            Pane::File {
+                file_path,
+                revision: Some(revision),
+                ..
+            } => format!("{file_path} as of {revision}"),
             Pane::Start { title, .. } => format!("Start something in {title}"),
             Pane::NewTask { .. } => "Name this task to make its card".to_string(),
             // The title the program set, which the tab of a named shell does not show - a
@@ -380,10 +418,12 @@ impl PaneView<Pane> for App {
             Pane::File {
                 session_id,
                 file_path,
+                revision,
                 ..
             } => {
-                let (session_id, file_path) = (session_id.clone(), file_path.clone());
-                self.draw_file_pane(ui, pane_id, &session_id, &file_path);
+                let (session_id, file_path, revision) =
+                    (session_id.clone(), file_path.clone(), revision.clone());
+                self.draw_file_pane(ui, pane_id, &session_id, &file_path, revision.as_deref());
             }
             Pane::Tasks => crate::native::board::draw(self, ui),
             Pane::Start { task_id, .. } => {

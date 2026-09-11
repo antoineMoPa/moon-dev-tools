@@ -17,7 +17,7 @@ use serde_json::json;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, BlamePayload, CommentRequest, CommitHistoryPayload,
+        AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
         ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion,
         LspCompletionsPayload, LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition,
         LspPositionRequest, LspStatus, LspStatusPayload, LspTriggersPayload, LspWork,
@@ -281,12 +281,25 @@ impl Backend for RemoteBackend {
         ))
     }
 
-    fn blame_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<BlamePayload> {
-        // Posted rather than fetched: the text asked about goes with the question, and a
+    fn file_content_at(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        revision: &str,
+    ) -> Result<FileContentPayload> {
+        let encoded = urlencode(file_path);
+        let revision = urlencode(revision);
+        self.get(&format!(
+            "/api/session/{session_id}/file-at?file_path={encoded}&revision={revision}"
+        ))
+    }
+
+    fn blame_file(&self, session_id: &str, file_path: &str, of: &BlameOf) -> Result<BlamePayload> {
+        // Posted rather than fetched: a text asked about goes with the question, and a
         // file's worth of it has no place in a URL.
         self.post_json(
             &format!("/api/session/{session_id}/blame"),
-            &json!({ "file_path": file_path, "content": content }),
+            &json!({ "file_path": file_path, "of": of }),
         )
     }
 
