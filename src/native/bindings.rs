@@ -44,6 +44,18 @@ pub(crate) enum Action {
     /// Open the palette on its content search, where what is typed is looked for in the text
     /// of the files.
     SearchContent,
+    /// Rename the name at the caret of the file tab in front - see
+    /// [`crate::native::renaming`].
+    RenameSymbol,
+    /// Go to, or list, the places of one kind of the name at the caret of the file tab in
+    /// front - see [`crate::native::places`].
+    FindPlaces(egui_moon_code_ide::LspPlaces),
+    /// Format the file tab in front with its language server - see
+    /// [`crate::native::formatting`].
+    FormatFile,
+    /// List what the language server offers to do at the caret of the file tab in front - see
+    /// [`crate::native::code_actions`].
+    CodeActions,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -66,6 +78,9 @@ pub(crate) enum Reach {
     /// Answered only when the keyboard is not in a shell or a text box, where a bare letter
     /// is text rather than a command.
     WhenNotTyping,
+    /// Answered in a text box too - a file tab's text is exactly where a rename is asked for -
+    /// but never in a shell, where a function key belongs to the program running there.
+    OutsideShells,
 }
 
 pub(crate) struct Binding {
@@ -76,6 +91,7 @@ pub(crate) struct Binding {
 }
 
 const COMMAND_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
+const ALT_SHIFT: Modifiers = Modifiers::ALT.plus(Modifiers::SHIFT);
 
 /// The whole keyboard, laid out as values. Order matters only in that the first exact match
 /// wins, which cannot happen while every chord here is distinct.
@@ -190,6 +206,38 @@ pub(crate) const BINDINGS: &[Binding] = &[
         chord: &[press(COMMAND_SHIFT, Key::S)],
         reach: Reach::Anywhere,
     },
+    // F2 is where every other editor puts rename, so a hand already reaches for it.
+    Binding {
+        action: Action::RenameSymbol,
+        chord: &[press(Modifiers::NONE, Key::F2)],
+        reach: Reach::OutsideShells,
+    },
+    // And the places of a name where the same editors put them.
+    Binding {
+        action: Action::FindPlaces(egui_moon_code_ide::LspPlaces::Definition),
+        chord: &[press(Modifiers::NONE, Key::F12)],
+        reach: Reach::OutsideShells,
+    },
+    Binding {
+        action: Action::FindPlaces(egui_moon_code_ide::LspPlaces::References),
+        chord: &[press(Modifiers::SHIFT, Key::F12)],
+        reach: Reach::OutsideShells,
+    },
+    Binding {
+        action: Action::FindPlaces(egui_moon_code_ide::LspPlaces::Implementation),
+        chord: &[press(Modifiers::COMMAND, Key::F12)],
+        reach: Reach::OutsideShells,
+    },
+    Binding {
+        action: Action::FormatFile,
+        chord: &[press(ALT_SHIFT, Key::F)],
+        reach: Reach::OutsideShells,
+    },
+    Binding {
+        action: Action::CodeActions,
+        chord: &[press(Modifiers::COMMAND, Key::Period)],
+        reach: Reach::OutsideShells,
+    },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
     // A program in that shell still gets it: `C-x` is only held while it is going somewhere,
     // and `C-x C-s` - which nothing here claims - arrives whole.
@@ -240,8 +288,14 @@ impl Keymap {
     ///
     /// Presses the map claims are removed from the input, so a shell below does not also
     /// receive them. `typing` says whether the keyboard is in a shell or a text box, which
-    /// is what holds back the bare-letter bindings.
-    pub(crate) fn resolve(&mut self, ctx: &egui::Context, typing: bool) -> Vec<Action> {
+    /// is what holds back the bare-letter bindings, and `in_a_shell` whether it is in a shell,
+    /// which is what holds back the ones a text box answers to.
+    pub(crate) fn resolve(
+        &mut self,
+        ctx: &egui::Context,
+        typing: bool,
+        in_a_shell: bool,
+    ) -> Vec<Action> {
         ctx.input_mut(|input| {
             let mut fired = Vec::new();
             let mut kept = Vec::with_capacity(input.events.len());
@@ -260,7 +314,7 @@ impl Keymap {
                     continue;
                 };
 
-                match self.step(press, typing) {
+                match self.step(press, typing, in_a_shell) {
                     Step::Fired(action) => {
                         fired.push(action);
                         drop_next_text = true;
@@ -286,13 +340,18 @@ impl Keymap {
         (!self.armed.is_empty()).then_some(&self.armed)
     }
 
-    fn step(&mut self, press: Press, typing: bool) -> Step {
+    fn step(&mut self, press: Press, typing: bool, in_a_shell: bool) -> Step {
         let held = std::mem::take(&mut self.armed);
         let mut chord = held.clone();
         chord.push(press);
 
         for binding in BINDINGS {
-            if binding.reach == Reach::WhenNotTyping && typing {
+            let out_of_reach = match binding.reach {
+                Reach::Anywhere => false,
+                Reach::WhenNotTyping => typing,
+                Reach::OutsideShells => in_a_shell,
+            };
+            if out_of_reach {
                 continue;
             }
             if matches(binding.chord, &chord) {
@@ -387,7 +446,13 @@ fn describe_press(press: &Press) -> String {
     if press.mods.shift {
         out.push_str("S-");
     }
-    out.push_str(&press.key.name().to_lowercase());
+    // A letter reads the way emacs writes it, `C-x o`; a key with a name of its own - `F2`,
+    // `Enter` - reads as the key cap says.
+    let name = press.key.name();
+    match name.chars().count() {
+        1 => out.push_str(&name.to_lowercase()),
+        _ => out.push_str(name),
+    }
     out
 }
 
@@ -419,10 +484,21 @@ mod tests {
         }
     }
 
-    /// Drive the map over a run of events, the way a frame's input would.
+    /// Drive the map over a run of events, the way a frame's input would. Typing here is
+    /// typing in a shell, which is what every test but the text box's one is about.
     fn run(
         keymap: &mut Keymap,
         typing: bool,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Action>, Vec<egui::Event>) {
+        run_in(keymap, typing, typing, events)
+    }
+
+    /// The same, saying apart whether the typing is in a shell or in a text box.
+    fn run_in(
+        keymap: &mut Keymap,
+        typing: bool,
+        in_a_shell: bool,
         events: Vec<egui::Event>,
     ) -> (Vec<Action>, Vec<egui::Event>) {
         let ctx = egui::Context::default();
@@ -434,7 +510,7 @@ mod tests {
         let fired;
         let left;
         ctx.begin_pass(input);
-        fired = keymap.resolve(&ctx, typing);
+        fired = keymap.resolve(&ctx, typing, in_a_shell);
         left = ctx.input(|input| input.events.clone());
         ctx.end_pass().drop_without_applying_deltas();
         (fired, left)
@@ -609,6 +685,82 @@ mod tests {
             left.is_empty(),
             "neither the press nor the character it composed may reach the shell: {left:?}"
         );
+    }
+
+    /// F2 renames from inside a file tab's text, which is a text box, and leaves a shell's F2
+    /// to the program running in it.
+    #[test]
+    fn f2_renames_from_a_text_box_but_not_from_a_shell() {
+        let mut keymap = Keymap::default();
+        let (fired, left) = run_in(
+            &mut keymap,
+            true,
+            false,
+            vec![key_event(Modifiers::NONE, Key::F2)],
+        );
+        assert_eq!(fired, vec![Action::RenameSymbol]);
+        assert!(left.is_empty(), "the text box must not see it too");
+
+        let (fired, left) = run_in(
+            &mut keymap,
+            true,
+            true,
+            vec![key_event(Modifiers::NONE, Key::F2)],
+        );
+        assert!(fired.is_empty(), "F2 in a shell is the program's");
+        assert_eq!(left.len(), 1);
+        assert_eq!(
+            describe(chord_of(Action::RenameSymbol).expect("bound")),
+            "F2"
+        );
+    }
+
+    /// The places of a name are on the function keys other editors put them on, and reach from
+    /// a file tab's text the way F2 does.
+    #[test]
+    fn the_places_of_a_name_are_on_f12() {
+        use egui_moon_code_ide::LspPlaces;
+
+        let mut keymap = Keymap::default();
+        for (mods, which) in [
+            (Modifiers::NONE, LspPlaces::Definition),
+            (Modifiers::SHIFT, LspPlaces::References),
+            (Modifiers::COMMAND, LspPlaces::Implementation),
+        ] {
+            let (fired, _) = run_in(&mut keymap, true, false, vec![key_event(mods, Key::F12)]);
+            assert_eq!(fired, vec![Action::FindPlaces(which)]);
+        }
+    }
+
+    /// ⌥⇧F formats from a file tab's text, and claims the character macOS composes with it so
+    /// it is not typed into the file on the way.
+    #[test]
+    fn alt_shift_f_formats_and_its_composed_character_is_not_typed() {
+        let mut keymap = Keymap::default();
+        let (fired, left) = run_in(
+            &mut keymap,
+            true,
+            false,
+            vec![
+                key_event(ALT_SHIFT, Key::F),
+                egui::Event::Text("Ï".to_string()),
+            ],
+        );
+        assert_eq!(fired, vec![Action::FormatFile]);
+        assert!(left.is_empty(), "nothing may reach the text: {left:?}");
+    }
+
+    /// ⌘. asks for the code actions at the caret, from a file tab's text.
+    #[test]
+    fn command_period_asks_for_code_actions() {
+        let mut keymap = Keymap::default();
+        let (fired, _) = run_in(
+            &mut keymap,
+            true,
+            false,
+            vec![key_event(Modifiers::COMMAND, Key::Period)],
+        );
+        assert_eq!(fired, vec![Action::CodeActions]);
     }
 
     #[test]

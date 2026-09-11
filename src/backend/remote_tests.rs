@@ -182,14 +182,112 @@ fn a_remote_review_answers_that_a_markdown_file_has_no_language_server() {
         .expect("expected closing an unserved file to be accepted");
     assert!(
         backend
-            .lsp_definition(
+            .lsp_places(
                 &opened.session_id,
                 "notes.md",
-                LspPosition { line: 0, column: 2 }
+                LspPosition { line: 0, column: 2 },
+                crate::api::LspPlaces::Definition
             )
             .expect("expected a definition answer")
             .is_empty(),
         "a file with no server behind it has no definitions"
+    );
+}
+
+/// Rename's two routes, over the wire. Markdown for the same reason as above: nothing serves it
+/// on any machine, so nothing in it can be renamed and a rename in it changes nothing - the
+/// same answer everywhere, in milliseconds, and what is checked is that both routes are wired
+/// up and their answers survive the trip.
+#[test]
+fn a_remote_review_is_answered_that_nothing_in_a_markdown_file_can_be_renamed() {
+    let served = serve_a_repo("lsp-rename");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let at = LspPosition { line: 0, column: 2 };
+
+    assert_eq!(
+        backend
+            .lsp_prepare_rename(&opened.session_id, "notes.md", at)
+            .expect("expected a prepareRename answer over HTTP"),
+        None,
+        "nothing in a file no server serves can be renamed"
+    );
+    assert!(
+        backend
+            .lsp_rename(&opened.session_id, "notes.md", at, "renamed")
+            .expect("expected a rename answer over HTTP")
+            .is_empty(),
+        "a rename in a file no server serves changes nothing"
+    );
+}
+
+/// Hover and diagnostics, over the wire: nothing to say about a file nothing serves, carried
+/// across the same way whatever there is to say.
+#[test]
+fn a_remote_review_hears_nothing_about_a_markdown_file_on_hover_or_diagnostics() {
+    let served = serve_a_repo("lsp-hover");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    assert_eq!(
+        backend
+            .lsp_hover(
+                &opened.session_id,
+                "notes.md",
+                LspPosition { line: 0, column: 2 }
+            )
+            .expect("expected a hover answer over HTTP"),
+        None
+    );
+    assert!(
+        backend
+            .lsp_diagnostics(&opened.session_id, "notes.md")
+            .expect("expected diagnostics over HTTP")
+            .is_empty()
+    );
+    backend
+        .lsp_did_save(&opened.session_id, "notes.md")
+        .expect("expected saving an unserved file to be accepted");
+}
+
+/// Code actions and signature help, over the wire: nothing on offer and no call around, in a
+/// file nothing serves.
+#[test]
+fn a_remote_review_is_offered_nothing_to_do_and_no_signature_in_a_markdown_file() {
+    let served = serve_a_repo("lsp-actions");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let at = LspPosition { line: 0, column: 2 };
+
+    assert!(
+        backend
+            .lsp_code_actions(&opened.session_id, "notes.md", at)
+            .expect("expected code actions over HTTP")
+            .is_empty()
+    );
+    assert_eq!(
+        backend
+            .lsp_signature_help(&opened.session_id, "notes.md", at)
+            .expect("expected a signature answer over HTTP"),
+        None
     );
 }
 

@@ -23,7 +23,9 @@ use std::{
 use anyhow::Result;
 use moon_lsp::Workspace;
 
-use crate::api::{AppState, LspCompletion, LspLocation, LspPosition, LspStatus, LspWork};
+use crate::api::{
+    AppState, LspCompletion, LspFileEdit, LspLocation, LspPosition, LspStatus, LspWork,
+};
 
 /// The servers are keyed per review session rather than per repo. Two sessions on the same
 /// repo get one each: a session is what a window is looking at, and closing it takes its
@@ -178,22 +180,24 @@ pub(crate) fn did_close(state: &AppState, session_id: &str, file_path: &str) -> 
         .did_close(&workspace(session_id, &repo_root), file_path)
 }
 
-/// Where the name at this place is defined.
+/// The places of one kind the server names for the name at this place: where it is defined,
+/// where its type is, where it is implemented, or everywhere it is used.
 ///
 /// The answer is also what says which files outside the repo this session may read: a
 /// definition in a dependency or in the standard library is a file the pane has to be able to
 /// open, and a server answering the person's own question is the only thing that legitimately
 /// names one - see [`FilesNamedOutsideTheRepo`].
-pub(crate) fn definition(
+pub(crate) fn places(
     state: &AppState,
     session_id: &str,
     file_path: &str,
     at: LspPosition,
+    which: crate::api::LspPlaces,
 ) -> Result<Vec<LspLocation>> {
     let repo_root = repo_root(state, session_id)?;
     let locations = state
         .lsp
-        .definition(&workspace(session_id, &repo_root), file_path, at)?;
+        .places(&workspace(session_id, &repo_root), file_path, at, which)?;
     remember_files_named(state, session_id, &locations)?;
     Ok(locations)
 }
@@ -206,6 +210,109 @@ pub(crate) fn definition(
 /// yet - the window asks once its file is `Ready`, which is when there is a reply to read.
 pub(crate) fn trigger_characters(state: &AppState, session_id: &str, file_path: &str) -> Vec<char> {
     state.lsp.trigger_characters(session_id, file_path)
+}
+
+/// What the name at this place is called, as the server would rename it.
+pub(crate) fn prepare_rename(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    at: LspPosition,
+) -> Result<Option<String>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .prepare_rename(&workspace(session_id, &repo_root), file_path, at)
+}
+
+/// Everything calling the name at this place `new_name` would change, file by file.
+///
+/// Unlike a definition, nothing here is remembered as readable: [`moon_lsp`] refuses a rename
+/// that would edit a file outside the repo whole, so every file in the answer is one of the
+/// repo's own.
+pub(crate) fn rename(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    at: LspPosition,
+    new_name: &str,
+) -> Result<Vec<LspFileEdit>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .rename(&workspace(session_id, &repo_root), file_path, at, new_name)
+}
+
+/// The edits that format the whole of one file, indented the way the repo says.
+pub(crate) fn format(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    options: moon_lsp::LspFormatting,
+) -> Result<Vec<moon_lsp::LspTextEdit>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .format(&workspace(session_id, &repo_root), file_path, options)
+}
+
+/// What the server says about the name at this place, as markdown.
+pub(crate) fn hover(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    at: LspPosition,
+) -> Result<Option<String>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .hover(&workspace(session_id, &repo_root), file_path, at)
+}
+
+/// What the server last said is wrong with a file open in it.
+pub(crate) fn diagnostics(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+) -> Result<Vec<moon_lsp::LspDiagnostic>> {
+    let repo_root = repo_root(state, session_id)?;
+    Ok(state
+        .lsp
+        .diagnostics(&workspace(session_id, &repo_root), file_path))
+}
+
+/// Tell the server a file open in it was written to disk.
+pub(crate) fn did_save(state: &AppState, session_id: &str, file_path: &str) -> Result<()> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .did_save(&workspace(session_id, &repo_root), file_path)
+}
+
+/// What the server offers to do to the code at this place.
+pub(crate) fn code_actions(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    at: LspPosition,
+) -> Result<Vec<moon_lsp::LspCodeAction>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .code_actions(&workspace(session_id, &repo_root), file_path, at)
+}
+
+/// The signature of the call around this place.
+pub(crate) fn signature_help(
+    state: &AppState,
+    session_id: &str,
+    file_path: &str,
+    at: LspPosition,
+) -> Result<Option<moon_lsp::LspSignature>> {
+    let repo_root = repo_root(state, session_id)?;
+    state
+        .lsp
+        .signature_help(&workspace(session_id, &repo_root), file_path, at)
 }
 
 /// What could be typed at this place.

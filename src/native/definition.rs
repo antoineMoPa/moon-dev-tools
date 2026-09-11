@@ -432,6 +432,7 @@ mod tests {
         LspLocation {
             file_path: file_path.to_string(),
             line_number,
+            line_text: None,
         }
     }
 

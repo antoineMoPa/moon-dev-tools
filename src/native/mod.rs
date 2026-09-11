@@ -4,6 +4,7 @@
 pub(crate) mod app;
 pub(crate) mod bindings;
 pub(crate) mod board;
+pub(crate) mod code_actions;
 pub(crate) mod commit_pane;
 #[cfg(test)]
 mod commit_pane_request_tests;
@@ -11,10 +12,13 @@ mod commit_pane_request_tests;
 mod commit_pane_tests;
 pub(crate) mod completing;
 pub(crate) mod definition;
+pub(crate) mod diagnostics;
 pub(crate) mod extension_pane;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;
+pub(crate) mod formatting;
+pub(crate) mod hover;
 pub(crate) mod language_source;
 pub(crate) mod launchers;
 pub(crate) mod logos;
@@ -24,10 +28,13 @@ pub(crate) mod messages;
 pub(crate) mod model;
 pub(crate) mod open_from_shell;
 pub(crate) mod palette;
+pub(crate) mod places;
 pub(crate) mod panes;
 mod programs;
 pub(crate) mod project_pane;
+pub(crate) mod renaming;
 pub(crate) mod review;
+pub(crate) mod signature;
 pub(crate) mod start_pane;
 pub(crate) mod status_bar;
 pub(crate) mod submodules;
@@ -37,6 +44,7 @@ pub(crate) mod theme;
 pub(crate) mod ui_tests;
 pub(crate) mod widgets;
 pub(crate) mod workspace;
+pub(crate) mod workspace_edits;
 pub(crate) mod workspace_color;
 
 use std::{

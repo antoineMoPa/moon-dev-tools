@@ -20,7 +20,7 @@ use std::time::Instant;
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
 use egui_moon_code_ide::{
-    Asked, AtTheCaret, CanAnswer, Completing, LspCompletion, LspPosition, LspStatus, Served,
+    Asked, AtTheCaret, CanAnswer, Completing, LanguageSource, LspCompletion, LspPosition, LspStatus, Served,
     before_the_caret, follows_the_caret,
 };
 use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
@@ -28,6 +28,7 @@ use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 use crate::api::FileContentPayload;
 use crate::native::{
     app::App,
+    language_source::SessionLanguages,
     theme::{Palette, SMALL_SIZE},
     widgets,
 };
@@ -106,6 +107,26 @@ pub(crate) struct FileEditor {
     /// come back with the file from before it, and would read as somebody else's change - so
     /// a check only answers when no write went out while it was reading.
     writes_sent: u64,
+    /// Where the caret was as the editor last drew, which is the place a rename asks about -
+    /// see [`crate::native::renaming`]. Kept rather than asked for, because a rename is
+    /// started from the palette and the key map as well as from the pane, and neither has
+    /// the editor's frame to read it off.
+    caret: Option<LspPosition>,
+    /// The word the caret sat in as the editor last drew, which is the name the places of a
+    /// name are asked about - see [`crate::native::places`]. Kept for the same reason.
+    caret_word: Option<egui_moon_editor::Word>,
+    /// When a format was asked for, while it waits for the tab's text to reach the server -
+    /// see [`crate::native::formatting`].
+    asked_to_format: Option<Instant>,
+    /// What the server behind the file last said is wrong with it - see
+    /// [`crate::native::diagnostics`].
+    diagnosed: crate::native::diagnostics::Diagnosed,
+    /// Where the pointer has rested and what the server said about the word under it - see
+    /// [`crate::native::hover`].
+    hovering: egui_moon_code_ide::Hovering,
+    /// The signature of the call being typed, and what has been asked about it - see
+    /// [`crate::native::signature`].
+    signing: egui_moon_code_ide::Signing,
 }
 
 impl FileEditor {
@@ -135,7 +156,113 @@ impl FileEditor {
             reload_confirmed: false,
             last_disk_check: None,
             writes_sent: 0,
+            caret: None,
+            caret_word: None,
+            asked_to_format: None,
+            diagnosed: Default::default(),
+            hovering: Default::default(),
+            signing: Default::default(),
         }
+    }
+
+    /// The text on screen, unsaved edits and all.
+    pub(super) fn text(&self) -> &str {
+        self.code.text()
+    }
+
+    /// Whether the file's text has arrived. A pane still fetching it has nothing in it to
+    /// rename, and nothing a rename could be put into.
+    pub(super) fn is_loaded(&self) -> bool {
+        self.saved.is_some()
+    }
+
+    /// Where the caret was as the editor last drew - see [`FileEditor::caret`].
+    pub(super) fn caret(&self) -> Option<LspPosition> {
+        self.caret
+    }
+
+    /// The word the caret sat in as the editor last drew - see [`FileEditor::caret_word`].
+    pub(super) fn caret_word(&self) -> Option<egui_moon_editor::Word> {
+        self.caret_word.clone()
+    }
+
+    /// Whether the places of a name can be asked for in this pane: a server is behind the
+    /// file. A dependency's source counts - finding what uses a name is reading, not writing.
+    pub(crate) fn offers_places(&self) -> bool {
+        self.asks_language_servers && self.served.has_a_server()
+    }
+
+    /// Ask for this tab to be formatted once its text has reached the server.
+    pub(super) fn ask_to_format(&mut self, now: Instant) {
+        self.asked_to_format = Some(now);
+    }
+
+    /// When a format was asked for, while it waits to be sent.
+    pub(super) fn asked_to_format(&self) -> Option<Instant> {
+        self.asked_to_format
+    }
+
+    pub(super) fn stop_asking_to_format(&mut self) {
+        self.asked_to_format = None;
+    }
+
+    pub(super) fn diagnosed(&self) -> &crate::native::diagnostics::Diagnosed {
+        &self.diagnosed
+    }
+
+    pub(super) fn diagnosed_mut(&mut self) -> &mut crate::native::diagnostics::Diagnosed {
+        &mut self.diagnosed
+    }
+
+    pub(super) fn hovering(&self) -> &egui_moon_code_ide::Hovering {
+        &self.hovering
+    }
+
+    pub(super) fn hovering_mut(&mut self) -> &mut egui_moon_code_ide::Hovering {
+        &mut self.hovering
+    }
+
+    pub(super) fn signing(&self) -> &egui_moon_code_ide::Signing {
+        &self.signing
+    }
+
+    pub(super) fn signing_mut(&mut self) -> &mut egui_moon_code_ide::Signing {
+        &mut self.signing
+    }
+
+    /// The signature's state and the text it is followed through, handed out together
+    /// because the one is worked out from the other.
+    pub(super) fn signing_and_text(&mut self) -> (&mut egui_moon_code_ide::Signing, &str) {
+        (&mut self.signing, self.code.text())
+    }
+
+    /// What the server found wrong with this file, for the test that waits on a real one.
+    #[cfg(test)]
+    pub(crate) fn diagnostics_for_test(&self) -> Vec<String> {
+        self.diagnosed
+            .found()
+            .iter()
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect()
+    }
+
+    /// Whether the file is outside the repo, and so read-only.
+    pub(super) fn is_outside_the_repo(&self) -> bool {
+        self.outside_the_repo
+    }
+
+    /// Whether the server behind this file may be asked for edits to it - a rename, a format:
+    /// a server is behind the file, and the file is one of the repo's own. Edits to a
+    /// dependency's source are edits nobody may write.
+    pub(crate) fn offers_edits(&self) -> bool {
+        self.asks_language_servers && self.served.has_a_server() && !self.outside_the_repo
+    }
+
+    /// Put a rename's edits into the text, as byte ranges of it in order - see
+    /// [`egui_moon_editor::Editor::replace_ranges`]. The pane is dirty afterwards, the way it
+    /// is after typing: the edit is the person's to save.
+    pub(super) fn take_edits(&mut self, ranges: Vec<(std::ops::Range<usize>, String)>) {
+        self.code.replace_ranges(ranges);
     }
 
     /// Whether this pane's ⌘-click asks a language server, which is the only thing that
@@ -480,9 +607,18 @@ impl App {
         let for_write = file_path.clone();
         let written = content.clone();
         let for_apply = pane_id;
+        let tells_the_server = editor.server_heard().was_opened();
         self.tasks.spawn_keyed(
             Some(format!("save:{pane_id}")),
-            move |backend| backend.write_file(&for_call, &for_write, &written),
+            move |backend| {
+                backend.write_file(&for_call, &for_write, &written)?;
+                // The file is written whatever the server makes of it: one that did not hear
+                // only misses the check a save sets off, and hears the next save.
+                if tells_the_server {
+                    let _ = SessionLanguages::new(backend, &for_call).did_save(&for_write);
+                }
+                Ok(())
+            },
             move |model, result| {
                 let Some(editor) = model.file_editors.get_mut(&for_apply) else {
                     return;
@@ -529,6 +665,10 @@ impl App {
         // what the pane is showing.
         let ctx = ui.ctx().clone();
         self.sync_document(&ctx, pane_id, session_id);
+        // A format asked for on an earlier frame, once the server has heard the text.
+        crate::native::formatting::follow(self, &ctx, pane_id, session_id);
+        // What its server has found wrong with it, asked for now and then.
+        crate::native::diagnostics::follow(self, &ctx, pane_id, session_id);
         // A name ⌘-clicked in this pane on an earlier frame, once it has been looked up.
         crate::native::definition::follow(self, pane_id, session_id);
         self.check_the_disk(pane_id, session_id);
@@ -540,6 +680,7 @@ impl App {
         let written_elsewhere = editor.written_elsewhere.is_some();
         let reload_confirmed = editor.reload_confirmed;
         let outside_the_repo = editor.outside_the_repo;
+        let problems = crate::native::diagnostics::said_in_header(editor.diagnosed.found());
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
         let markdown = is_markdown(file_path);
@@ -619,6 +760,13 @@ impl App {
                             .on_hover_text(
                                 "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
                             );
+                        }
+                        // What the server found wrong, where the eye goes after the file's name.
+                        if let Some((said, worst)) = &problems {
+                            ui.label(RichText::new(said).size(SMALL_SIZE - 1.0).color(
+                                crate::native::diagnostics::colour_of(*worst, &palette),
+                            ))
+                            .on_hover_text("What the language server found wrong with this file. Point at an underline to read it.");
                         }
                         if written_elsewhere && !saving {
                             ui.label(
@@ -747,6 +895,8 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
         None => Vec::new(),
     };
 
+    let underlines =
+        crate::native::diagnostics::underlines(editor.code.text(), editor.diagnosed.found(), palette);
     let output = editor.code.ui(
         ui,
         &style,
@@ -773,12 +923,22 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
             // What a Tab press puts in, as the repo's `.moonreview.json` has it - four spaces
             // until it says otherwise. A fact about the repo, so it is read from the repo.
             indent,
+            // What the server behind the file found wrong with it - see
+            // `crate::native::diagnostics`.
+            underlines: &underlines,
         },
     );
     // The name that was ⌘-clicked, if one was, and where in the text it sits - which is
     // already the position a language server is asked about. Where it is defined is
     // `crate::native::definition`'s business rather than this pane's.
     let navigated_to = output.navigated_to.clone();
+    editor.caret = output.caret.as_ref().map(|caret| LspPosition {
+        line: caret.line,
+        column: caret.column,
+    });
+    let edits = editor.offers_edits();
+    editor.caret_word = output.word_at_caret.clone();
+    let finds_places = editor.offers_places();
 
     // Only ever the once: the line is where the file was opened, not where it is held, and
     // scrolling away from it has to stick. The find bar takes it from here, marking every
@@ -806,6 +966,60 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     // What the caret is on now, and what became of the list that was up: whether that is
     // worth a question is `completing`'s to answer.
     crate::native::completing::follow_the_caret(app, pane_id, session_id, ui.ctx(), &output);
+    // The word the pointer rests on, and what its server says about it and about what is
+    // wrong under the pointer.
+    crate::native::hover::follow_the_pointer(app, ui.ctx(), pane_id, session_id, &output);
+    if let Some(told) = crate::native::hover::told(app, pane_id, &output, palette) {
+        crate::native::hover::draw_tooltip(app, &output.response, told);
+    }
+    // The signature of the call being typed, above the caret.
+    crate::native::signature::follow_the_caret(app, ui.ctx(), pane_id, session_id, &output);
+    crate::native::signature::draw(app, ui.ctx(), pane_id, &output, palette);
+
+    // A right-click has already put the caret on the name it was made on - the editor does
+    // that - so what the menu offers is about that name.
+    use crate::native::bindings::Action;
+    let mut places_asked = None;
+    let mut rename_asked = false;
+    let mut format_asked = false;
+    let mut actions_asked = false;
+    egui::Popup::context_menu(&output.response).show(|ui| {
+        for kind in crate::native::places::KINDS {
+            if menu_item(ui, finds_places, kind.command, Action::FindPlaces(kind.which)).clicked() {
+                places_asked = Some(kind.which);
+            }
+        }
+        ui.separator();
+        actions_asked = menu_item(ui, edits, "code actions", Action::CodeActions).clicked();
+        rename_asked = menu_item(ui, edits, "rename symbol", Action::RenameSymbol).clicked();
+        format_asked = menu_item(ui, edits, "format file", Action::FormatFile).clicked();
+    });
+    if format_asked {
+        crate::native::formatting::start(app, pane_id);
+    }
+    if actions_asked {
+        crate::native::code_actions::start(app, pane_id, session_id);
+    }
+    if let Some(which) = places_asked {
+        crate::native::places::ask(app, pane_id, session_id, which);
+    }
+    if rename_asked {
+        crate::native::renaming::start(app, pane_id, session_id);
+    }
+}
+
+/// One item of a file tab's context menu, with the key that does the same thing beside it.
+fn menu_item(
+    ui: &mut Ui,
+    enabled: bool,
+    title: &str,
+    action: crate::native::bindings::Action,
+) -> egui::Response {
+    let shortcut = crate::native::bindings::chord_of(action)
+        .map(crate::native::bindings::describe)
+        .unwrap_or_default();
+    ui.add_enabled(enabled, egui::Button::new(title).shortcut_text(shortcut))
+        .on_disabled_hover_text("No language server serves this file")
 }
 
 /// What the find bar is asking of a file pane this frame.
@@ -840,6 +1054,12 @@ mod tests {
             reload_confirmed: false,
             last_disk_check: None,
             writes_sent: 0,
+            caret: None,
+            caret_word: None,
+            asked_to_format: None,
+            diagnosed: Default::default(),
+            hovering: Default::default(),
+            signing: Default::default(),
         }
     }
 

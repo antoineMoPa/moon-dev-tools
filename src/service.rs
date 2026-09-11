@@ -739,6 +739,7 @@ mod tests {
                 &[crate::api::LspLocation {
                     file_path: file_path.to_string(),
                     line_number: 1,
+                    line_text: None,
                 }],
             )
             .expect("failed to record what the server named");

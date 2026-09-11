@@ -365,10 +365,16 @@ impl App {
         self.draw_armed_prefix(ctx);
         self.draw_toasts(ctx);
 
+        // A place a language server named, gone to or listed now the tree is drawn.
+        crate::native::places::follow(self);
         // Deferred so a pane is never mutated while the tree that holds it is being drawn.
         if let Some(action) = self.pending_action.take() {
             self.run_action(ctx, action);
         }
+        // After the action: a name picked in the palette this frame is already waiting to be
+        // renamed, rather than read as the palette having been put away.
+        crate::native::renaming::follow(self, ctx);
+        crate::native::code_actions::follow(self, ctx);
         if let Some(pane_id) = self.pending_close.take()
             && !self.close_would_lose_edits(pane_id)
         {

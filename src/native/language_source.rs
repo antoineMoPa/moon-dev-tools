@@ -1,8 +1,8 @@
-//! The window's answer to the seven questions an editor puts to a language server.
+//! The window's answer to the questions an editor puts to a language server.
 //!
 //! [`egui_moon_code_ide::LanguageSource`] is a trait rather than a registry precisely
 //! because of this window: a review of a repo on another machine has no files here to start a
-//! server on, so [`crate::backend::Backend`] carries the same seven questions over HTTP and the
+//! server on, so [`crate::backend::Backend`] carries the same questions over HTTP and the
 //! servers run beside the repo. A local review calls straight through instead. Which of the
 //! two is in play is the backend's business and nothing above it can tell.
 //!
@@ -12,7 +12,9 @@
 //! threads, so it drives them itself rather than letting the crate own one.
 
 use anyhow::Result;
-use egui_moon_code_ide::{LanguageSource, LspCompletion, LspLocation, LspPosition, LspStatus};
+use egui_moon_code_ide::{
+    LanguageSource, LspCompletion, LspFileEdit, LspLocation, LspPosition, LspStatus,
+};
 
 use crate::backend::Backend;
 
@@ -54,12 +56,66 @@ impl LanguageSource for SessionLanguages<'_> {
         self.backend.lsp_did_close(self.session_id, file_path)
     }
 
-    fn definition(&self, file_path: &str, at: LspPosition) -> Result<Vec<LspLocation>> {
-        self.backend.lsp_definition(self.session_id, file_path, at)
+    fn places(
+        &self,
+        file_path: &str,
+        at: LspPosition,
+        which: egui_moon_code_ide::LspPlaces,
+    ) -> Result<Vec<LspLocation>> {
+        self.backend
+            .lsp_places(self.session_id, file_path, at, which)
     }
 
     fn completion(&self, file_path: &str, at: LspPosition) -> Result<Vec<LspCompletion>> {
         self.backend.lsp_completion(self.session_id, file_path, at)
+    }
+
+    fn prepare_rename(&self, file_path: &str, at: LspPosition) -> Result<Option<String>> {
+        self.backend
+            .lsp_prepare_rename(self.session_id, file_path, at)
+    }
+
+    fn rename(&self, file_path: &str, at: LspPosition, new_name: &str) -> Result<Vec<LspFileEdit>> {
+        self.backend
+            .lsp_rename(self.session_id, file_path, at, new_name)
+    }
+
+    fn format(
+        &self,
+        file_path: &str,
+        options: egui_moon_code_ide::LspFormatting,
+    ) -> Result<Vec<egui_moon_code_ide::LspTextEdit>> {
+        self.backend.lsp_format(self.session_id, file_path, options)
+    }
+
+    fn hover(&self, file_path: &str, at: LspPosition) -> Result<Option<String>> {
+        self.backend.lsp_hover(self.session_id, file_path, at)
+    }
+
+    fn diagnostics(&self, file_path: &str) -> Result<Vec<egui_moon_code_ide::LspDiagnostic>> {
+        self.backend.lsp_diagnostics(self.session_id, file_path)
+    }
+
+    fn did_save(&self, file_path: &str) -> Result<()> {
+        self.backend.lsp_did_save(self.session_id, file_path)
+    }
+
+    fn code_actions(
+        &self,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<egui_moon_code_ide::LspCodeAction>> {
+        self.backend
+            .lsp_code_actions(self.session_id, file_path, at)
+    }
+
+    fn signature_help(
+        &self,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<egui_moon_code_ide::LspSignature>> {
+        self.backend
+            .lsp_signature_help(self.session_id, file_path, at)
     }
 
     /// What the server behind this file said opens a completion list on its own, carried

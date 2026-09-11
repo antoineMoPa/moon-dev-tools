@@ -692,17 +692,19 @@ impl Backend for RemoteBackend {
         )
     }
 
-    fn lsp_definition(
+    fn lsp_places(
         &self,
         session_id: &str,
         file_path: &str,
         at: LspPosition,
+        which: crate::api::LspPlaces,
     ) -> Result<Vec<LspLocation>> {
         let payload: LspLocationsPayload = self.post_json(
-            &format!("/api/session/{session_id}/lsp/definition"),
-            &LspPositionRequest {
+            &format!("/api/session/{session_id}/lsp/places"),
+            &crate::api::LspPlacesRequest {
                 file_path: file_path.to_string(),
                 at,
+                which,
             },
         )?;
         Ok(payload.locations)
@@ -722,6 +724,123 @@ impl Backend for RemoteBackend {
             },
         )?;
         Ok(payload.completions)
+    }
+
+    fn lsp_prepare_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>> {
+        let payload: crate::api::LspRenamablePayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/prepare-rename"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.name)
+    }
+
+    fn lsp_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+        new_name: &str,
+    ) -> Result<Vec<crate::api::LspFileEdit>> {
+        let payload: crate::api::LspFileEditsPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/rename"),
+            &crate::api::LspRenameRequest {
+                file_path: file_path.to_string(),
+                at,
+                new_name: new_name.to_string(),
+            },
+        )?;
+        Ok(payload.files)
+    }
+
+    fn lsp_format(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        options: moon_lsp::LspFormatting,
+    ) -> Result<Vec<moon_lsp::LspTextEdit>> {
+        let payload: crate::api::LspTextEditsPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/format"),
+            &crate::api::LspFormatRequest {
+                file_path: file_path.to_string(),
+                options,
+            },
+        )?;
+        Ok(payload.edits)
+    }
+
+    fn lsp_hover(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>> {
+        let payload: crate::api::LspHoverPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/hover"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.markdown)
+    }
+
+    fn lsp_diagnostics(
+        &self,
+        session_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<moon_lsp::LspDiagnostic>> {
+        let encoded = urlencode(file_path);
+        let payload: crate::api::LspDiagnosticsPayload = self.get(&format!(
+            "/api/session/{session_id}/lsp/diagnostics?file_path={encoded}"
+        ))?;
+        Ok(payload.diagnostics)
+    }
+
+    fn lsp_did_save(&self, session_id: &str, file_path: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/lsp/save"),
+            &json!({ "file_path": file_path }),
+        )
+    }
+
+    fn lsp_code_actions(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<moon_lsp::LspCodeAction>> {
+        let payload: crate::api::LspCodeActionsPayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/code-actions"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.actions)
+    }
+
+    fn lsp_signature_help(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<moon_lsp::LspSignature>> {
+        let payload: crate::api::LspSignaturePayload = self.post_json(
+            &format!("/api/session/{session_id}/lsp/signature"),
+            &LspPositionRequest {
+                file_path: file_path.to_string(),
+                at,
+            },
+        )?;
+        Ok(payload.signature)
     }
 
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

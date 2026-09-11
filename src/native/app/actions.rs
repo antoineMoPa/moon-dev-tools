@@ -404,6 +404,14 @@ impl App {
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
             CommandAction::RestartExtension(name) => self.restart_extension(&name),
+            CommandAction::RenameSymbol => crate::native::renaming::start_in_front(self),
+            CommandAction::FindPlaces(which) => crate::native::places::ask_in_front(self, which),
+            CommandAction::FormatFile => crate::native::formatting::start_in_front(self),
+            CommandAction::CodeActions => crate::native::code_actions::start_in_front(self),
+            CommandAction::ApplyCodeAction(index) => {
+                crate::native::code_actions::apply(self, index)
+            }
+            CommandAction::RenameTo(new_name) => crate::native::renaming::rename_to(self, new_name),
         }
     }
 
@@ -617,13 +625,13 @@ impl App {
         // user is typing in. Only the chords marked as reaching anywhere are the window's
         // while either has the keyboard. An extension's pane is the same: its script is sent
         // every key the window does not claim - see `App::forward_keys_to_extension`.
-        let typing = ctx.egui_wants_keyboard_input()
-            || matches!(
-                self.active_pane_kind(),
-                Some(PaneKind::Terminal | PaneKind::Extension)
-            );
+        let in_a_shell = matches!(
+            self.active_pane_kind(),
+            Some(PaneKind::Terminal | PaneKind::Extension)
+        );
+        let typing = ctx.egui_wants_keyboard_input() || in_a_shell;
 
-        for action in self.keymap.resolve(ctx, typing) {
+        for action in self.keymap.resolve(ctx, typing, in_a_shell) {
             self.apply_action(action);
         }
     }
@@ -652,6 +660,10 @@ impl App {
             Action::SearchContent => self.model.palette.show_contents(),
             Action::OpenReview => self.open_root_review(),
             Action::OpenSubmodules => self.open_pane(OpenPaneRequest::Submodules),
+            Action::RenameSymbol => crate::native::renaming::start_in_front(self),
+            Action::FindPlaces(which) => crate::native::places::ask_in_front(self, which),
+            Action::FormatFile => crate::native::formatting::start_in_front(self),
+            Action::CodeActions => crate::native::code_actions::start_in_front(self),
         }
     }
 

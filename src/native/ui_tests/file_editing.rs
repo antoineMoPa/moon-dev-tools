@@ -343,6 +343,7 @@ fn a_file_outside_the_repo_opens_read_only_and_offers_no_save() {
         &[crate::api::LspLocation {
             file_path: dependency.clone(),
             line_number: 1,
+            line_text: None,
         }],
     )
     .expect("failed to record what the server named");

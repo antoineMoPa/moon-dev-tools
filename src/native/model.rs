@@ -501,6 +501,11 @@ pub(crate) struct PaletteState {
     /// has to be known before this frame draws - the box takes the keyboard when it draws, and
     /// a click meant for a shell would lose it again.
     pub(crate) rect: Option<egui::Rect>,
+    /// Whether the line is to be selected whole on the next frame it draws: set when the
+    /// palette opens on a name to type over, so the first key typed replaces it.
+    pub(crate) select_query: bool,
+    /// The places the palette is listing, while it is - see [`crate::native::places`].
+    pub(crate) places: Option<crate::native::places::FoundPlaces>,
 }
 
 impl PaletteState {
@@ -516,6 +521,32 @@ impl PaletteState {
         self.highlighted = 0;
         self.highlight_query.clear();
         self.rect = None;
+        self.select_query = false;
+        self.places = None;
+    }
+
+    /// Open it on a name to rename, selected, so what is typed replaces it - see
+    /// [`crate::native::renaming`].
+    pub(crate) fn show_rename(&mut self, name: &str) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::Rename;
+        self.query = name.to_string();
+        self.highlight_query = self.query.clone();
+        self.select_query = true;
+    }
+
+    /// Open it on the code actions a language server offered, to pick one from - see
+    /// [`crate::native::code_actions`], which holds the list.
+    pub(crate) fn show_code_actions(&mut self) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::CodeActions;
+    }
+
+    /// Open it on a list of places a language server named, to pick one from.
+    pub(crate) fn show_places(&mut self, found: crate::native::places::FoundPlaces) {
+        self.show();
+        self.mode = crate::native::palette::PaletteMode::Places;
+        self.places = Some(found);
     }
 
     /// The same, on the file finder: what is typed names a file of the repo rather than a
@@ -558,6 +589,8 @@ impl Default for PaletteState {
             highlighted: 0,
             highlight_query: String::new(),
             rect: None,
+            select_query: false,
+            places: None,
         }
     }
 }
@@ -620,6 +653,13 @@ pub(crate) struct Model {
     /// submodule beside its repo has a set of servers per review.
     pub(crate) language_servers_working: HashMap<String, crate::native::status_bar::ServersWorking>,
     pub(crate) palette: PaletteState,
+    /// The rename under way, if there is one - see [`crate::native::renaming`].
+    pub(crate) renaming: Option<crate::native::renaming::Renaming>,
+    /// Places a language server named, waiting for a frame that can go to them or list them -
+    /// see [`crate::native::places`].
+    pub(crate) places_found: Option<crate::native::places::FoundPlaces>,
+    /// Code actions being asked for or picked from - see [`crate::native::code_actions`].
+    pub(crate) code_acting: Option<crate::native::code_actions::CodeActing>,
     pub(crate) board: BoardState,
     pub(crate) agent_log: Option<AgentLogView>,
     /// `local`, or the address of the server this window is reviewing through.

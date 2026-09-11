@@ -7,8 +7,9 @@ use axum::{
 };
 
 use crate::api::{
-    AppError, AppState, FileQuery, LspCompletionsPayload, LspDocumentRequest, LspLocationsPayload,
-    LspPositionRequest, LspStatusPayload, LspTriggersPayload, LspWorkPayload,
+    AppError, AppState, FileQuery, LspCompletionsPayload, LspDocumentRequest, LspFileEditsPayload,
+    LspLocationsPayload, LspPositionRequest, LspRenamablePayload, LspRenameRequest,
+    LspStatusPayload, LspTriggersPayload, LspWorkPayload,
 };
 
 pub(crate) async fn status(
@@ -78,14 +79,117 @@ pub(crate) async fn did_close(
     Ok("ok")
 }
 
-pub(crate) async fn definition(
+pub(crate) async fn places(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
-    Json(request): Json<LspPositionRequest>,
+    Json(request): Json<crate::api::LspPlacesRequest>,
 ) -> Result<Json<LspLocationsPayload>, AppError> {
     crate::api::mark_activity(&state.last_activity);
     Ok(Json(LspLocationsPayload {
-        locations: super::definition(&state, &session_id, &request.file_path, request.at)?,
+        locations: super::places(
+            &state,
+            &session_id,
+            &request.file_path,
+            request.at,
+            request.which,
+        )?,
+    }))
+}
+
+pub(crate) async fn prepare_rename(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<LspPositionRequest>,
+) -> Result<Json<LspRenamablePayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(LspRenamablePayload {
+        name: super::prepare_rename(&state, &session_id, &request.file_path, request.at)?,
+    }))
+}
+
+/// Everything a rename changes. Nothing is written here: which of those files a window has
+/// open in a tab is the window's to know - see `crate::native::renaming`.
+pub(crate) async fn rename(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<LspRenameRequest>,
+) -> Result<Json<LspFileEditsPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(LspFileEditsPayload {
+        files: super::rename(
+            &state,
+            &session_id,
+            &request.file_path,
+            request.at,
+            &request.new_name,
+        )?,
+    }))
+}
+
+pub(crate) async fn format(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::LspFormatRequest>,
+) -> Result<Json<crate::api::LspTextEditsPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(crate::api::LspTextEditsPayload {
+        edits: super::format(&state, &session_id, &request.file_path, request.options)?,
+    }))
+}
+
+pub(crate) async fn hover(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<LspPositionRequest>,
+) -> Result<Json<crate::api::LspHoverPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(crate::api::LspHoverPayload {
+        markdown: super::hover(&state, &session_id, &request.file_path, request.at)?,
+    }))
+}
+
+/// What a server last said is wrong with a file. A read of what it already published, so a
+/// `GET` beside the status rather than a question about a place.
+pub(crate) async fn diagnostics(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<crate::api::LspDiagnosticsPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(crate::api::LspDiagnosticsPayload {
+        diagnostics: super::diagnostics(&state, &session_id, &query.file_path)?,
+    }))
+}
+
+pub(crate) async fn did_save(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::FileRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    super::did_save(&state, &session_id, &request.file_path)?;
+    Ok("ok")
+}
+
+pub(crate) async fn code_actions(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<LspPositionRequest>,
+) -> Result<Json<crate::api::LspCodeActionsPayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(crate::api::LspCodeActionsPayload {
+        actions: super::code_actions(&state, &session_id, &request.file_path, request.at)?,
+    }))
+}
+
+pub(crate) async fn signature_help(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<LspPositionRequest>,
+) -> Result<Json<crate::api::LspSignaturePayload>, AppError> {
+    crate::api::mark_activity(&state.last_activity);
+    Ok(Json(crate::api::LspSignaturePayload {
+        signature: super::signature_help(&state, &session_id, &request.file_path, request.at)?,
     }))
 }
 

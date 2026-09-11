@@ -326,7 +326,75 @@ pub(crate) struct CommitRunOutcome {
 ///
 /// Re-exported rather than redefined so that the wire format and the client's own types are
 /// one thing: a `--remote` window serialises exactly what [`moon_lsp`] hands back.
-pub(crate) use moon_lsp::{LspCompletion, LspLocation, LspPosition, LspStatus, LspWork};
+pub(crate) use moon_lsp::{
+    LspCompletion, LspFileEdit, LspLocation, LspPlaces, LspPosition, LspStatus, LspWork,
+};
+
+/// A question about the places of one kind for the name at one place in one file.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspPlacesRequest {
+    pub(crate) file_path: String,
+    pub(crate) at: LspPosition,
+    pub(crate) which: LspPlaces,
+}
+
+/// A file to format, and how the repo indents.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspFormatRequest {
+    pub(crate) file_path: String,
+    pub(crate) options: moon_lsp::LspFormatting,
+}
+
+/// The edits that format one file.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspTextEditsPayload {
+    pub(crate) edits: Vec<moon_lsp::LspTextEdit>,
+}
+
+/// What a server says about a name, as markdown.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspHoverPayload {
+    pub(crate) markdown: Option<String>,
+}
+
+/// What a server last said is wrong with a file.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspDiagnosticsPayload {
+    pub(crate) diagnostics: Vec<moon_lsp::LspDiagnostic>,
+}
+
+/// What a server offers to do at a place.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspCodeActionsPayload {
+    pub(crate) actions: Vec<moon_lsp::LspCodeAction>,
+}
+
+/// The signature of the call around a place.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspSignaturePayload {
+    pub(crate) signature: Option<moon_lsp::LspSignature>,
+}
+
+/// A new name for the name at one place in one file.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspRenameRequest {
+    pub(crate) file_path: String,
+    pub(crate) at: LspPosition,
+    pub(crate) new_name: String,
+}
+
+/// What the name at a place is called, as the server would rename it. `None` is nothing there
+/// that can be renamed.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspRenamablePayload {
+    pub(crate) name: Option<String>,
+}
+
+/// Everything a rename changes, one entry per file.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LspFileEditsPayload {
+    pub(crate) files: Vec<LspFileEdit>,
+}
 
 /// A file the editor has opened or changed, and what is in it now.
 #[derive(Serialize, Deserialize)]

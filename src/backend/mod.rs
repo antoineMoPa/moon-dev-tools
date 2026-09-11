@@ -212,11 +212,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// call per keystroke would flood it: the pane sends this once the typing has paused.
     fn lsp_did_change(&self, session_id: &str, file_path: &str, text: &str) -> Result<()>;
     fn lsp_did_close(&self, session_id: &str, file_path: &str) -> Result<()>;
-    fn lsp_definition(
+    /// The places of one kind the server behind a file names for the name at a place: where
+    /// it is defined, where its type is, where it is implemented, or everywhere it is used.
+    fn lsp_places(
         &self,
         session_id: &str,
         file_path: &str,
         at: LspPosition,
+        which: crate::api::LspPlaces,
     ) -> Result<Vec<LspLocation>>;
     /// The characters the server behind this file said open a completion list on their own:
     /// the `.` of `thing.`, the `:` of a path, the `(` of a call. Empty for a file nothing
@@ -235,4 +238,65 @@ pub(crate) trait Backend: Send + Sync + 'static {
         file_path: &str,
         at: LspPosition,
     ) -> Result<Vec<LspCompletion>>;
+    /// What the name at a place is called, as the server behind the file would rename it:
+    /// the text a new name is typed over. `None` when nothing there can be renamed.
+    fn lsp_prepare_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>>;
+    /// Everything calling the name at a place `new_name` would change, file by file.
+    ///
+    /// Nothing is written. Whether a file's edit goes into a tab's buffer or onto disk is the
+    /// window's to decide, since only the window knows which files it has open - see
+    /// [`crate::native::renaming`].
+    fn lsp_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+        new_name: &str,
+    ) -> Result<Vec<crate::api::LspFileEdit>>;
+    /// The edits that format the whole of one file, indented the way the repo says. Nothing
+    /// is written: the window puts them into the tab showing the file.
+    fn lsp_format(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        options: moon_lsp::LspFormatting,
+    ) -> Result<Vec<moon_lsp::LspTextEdit>>;
+    /// What the server behind a file says about the name at a place, as markdown.
+    fn lsp_hover(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>>;
+    /// What the server behind a file last said is wrong with it.
+    ///
+    /// **The caller polls this on a timer, not per frame** - see
+    /// [`crate::native::diagnostics`]. It is a network round trip on a remote session.
+    fn lsp_diagnostics(
+        &self,
+        session_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<moon_lsp::LspDiagnostic>>;
+    /// Tell the server behind a file it was written to disk.
+    fn lsp_did_save(&self, session_id: &str, file_path: &str) -> Result<()>;
+    /// What the server behind a file offers to do to the code at a place, each action with
+    /// everything it changes. Nothing is written - see [`crate::native::code_actions`].
+    fn lsp_code_actions(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<moon_lsp::LspCodeAction>>;
+    /// The signature of the call around a place.
+    fn lsp_signature_help(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<moon_lsp::LspSignature>>;
 }

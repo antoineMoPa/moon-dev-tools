@@ -368,13 +368,14 @@ impl Backend for LocalBackend {
         crate::lsp::did_close(&self.state, session_id, file_path)
     }
 
-    fn lsp_definition(
+    fn lsp_places(
         &self,
         session_id: &str,
         file_path: &str,
         at: LspPosition,
+        which: crate::api::LspPlaces,
     ) -> Result<Vec<LspLocation>> {
-        crate::lsp::definition(&self.state, session_id, file_path, at)
+        crate::lsp::places(&self.state, session_id, file_path, at, which)
     }
 
     fn lsp_trigger_characters(&self, session_id: &str, file_path: &str) -> Result<Vec<char>> {
@@ -392,6 +393,73 @@ impl Backend for LocalBackend {
         at: LspPosition,
     ) -> Result<Vec<LspCompletion>> {
         crate::lsp::completion(&self.state, session_id, file_path, at)
+    }
+
+    fn lsp_prepare_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>> {
+        crate::lsp::prepare_rename(&self.state, session_id, file_path, at)
+    }
+
+    fn lsp_rename(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+        new_name: &str,
+    ) -> Result<Vec<crate::api::LspFileEdit>> {
+        crate::lsp::rename(&self.state, session_id, file_path, at, new_name)
+    }
+
+    fn lsp_format(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        options: moon_lsp::LspFormatting,
+    ) -> Result<Vec<moon_lsp::LspTextEdit>> {
+        crate::lsp::format(&self.state, session_id, file_path, options)
+    }
+
+    fn lsp_hover(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<String>> {
+        crate::lsp::hover(&self.state, session_id, file_path, at)
+    }
+
+    fn lsp_diagnostics(
+        &self,
+        session_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<moon_lsp::LspDiagnostic>> {
+        crate::lsp::diagnostics(&self.state, session_id, file_path)
+    }
+
+    fn lsp_did_save(&self, session_id: &str, file_path: &str) -> Result<()> {
+        crate::lsp::did_save(&self.state, session_id, file_path)
+    }
+
+    fn lsp_code_actions(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Vec<moon_lsp::LspCodeAction>> {
+        crate::lsp::code_actions(&self.state, session_id, file_path, at)
+    }
+
+    fn lsp_signature_help(
+        &self,
+        session_id: &str,
+        file_path: &str,
+        at: LspPosition,
+    ) -> Result<Option<moon_lsp::LspSignature>> {
+        crate::lsp::signature_help(&self.state, session_id, file_path, at)
     }
 
     fn attach_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {

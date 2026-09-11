@@ -231,12 +231,44 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::lsp::routes::did_close),
         )
         .route(
-            "/api/session/{session_id}/lsp/definition",
-            post(crate::lsp::routes::definition),
+            "/api/session/{session_id}/lsp/places",
+            post(crate::lsp::routes::places),
         )
         .route(
             "/api/session/{session_id}/lsp/completion",
             post(crate::lsp::routes::completion),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/prepare-rename",
+            post(crate::lsp::routes::prepare_rename),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/rename",
+            post(crate::lsp::routes::rename),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/format",
+            post(crate::lsp::routes::format),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/hover",
+            post(crate::lsp::routes::hover),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/diagnostics",
+            get(crate::lsp::routes::diagnostics),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/save",
+            post(crate::lsp::routes::did_save),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/code-actions",
+            post(crate::lsp::routes::code_actions),
+        )
+        .route(
+            "/api/session/{session_id}/lsp/signature",
+            post(crate::lsp::routes::signature_help),
         )
         .route(
             "/api/session/{session_id}/terminals",

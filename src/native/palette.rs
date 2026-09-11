@@ -25,6 +25,14 @@ pub(crate) enum PaletteMode {
     Files,
     /// A line of the repo, by the text on it, found the same way.
     Contents,
+    /// A new name for the name at a file tab's caret - see [`crate::native::renaming`].
+    Rename,
+    /// One of the places a language server named, filtered by what is typed - see
+    /// [`crate::native::places`].
+    Places,
+    /// One of the code actions a language server offered, filtered by what is typed - see
+    /// [`crate::native::code_actions`].
+    CodeActions,
 }
 
 /// What one of the palette's two searches has found. One search at a time, for whatever was
@@ -91,6 +99,22 @@ pub(crate) enum CommandAction {
     RunProject(ProjectCommand),
     /// Start an open extension over from its script - see [`crate::extensions`].
     RestartExtension(String),
+    /// Ask what the name at the caret of the file tab in front is, and open the palette on it
+    /// to type a new one - see [`crate::native::renaming`].
+    RenameSymbol,
+    /// Rename the name the palette was opened on to this.
+    RenameTo(String),
+    /// Go to, or list, the places of one kind of the name at the caret of the file tab in
+    /// front - see [`crate::native::places`].
+    FindPlaces(egui_moon_code_ide::LspPlaces),
+    /// Format the file tab in front with its language server - see
+    /// [`crate::native::formatting`].
+    FormatFile,
+    /// List what the language server offers to do at the caret of the file tab in front - see
+    /// [`crate::native::code_actions`].
+    CodeActions,
+    /// Carry out one of the code actions the palette is listing, by its place in the list.
+    ApplyCodeAction(usize),
 }
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
@@ -303,6 +327,46 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::SearchContent,
         shortcut: bindings::chord_of(Action::SearchContent),
     });
+    // Only while they can do something: a file tab in front with a language server behind it.
+    if crate::native::places::front_tab_finds_places(app) {
+        for kind in crate::native::places::KINDS {
+            commands.push(Command {
+                title: kind.command.to_string(),
+                description: kind.about.to_string(),
+                action: CommandAction::FindPlaces(kind.which),
+                shortcut: bindings::chord_of(Action::FindPlaces(kind.which)),
+            });
+        }
+    }
+    // Only while it can do something: a file tab in front with a language server behind it.
+    if crate::native::formatting::front_tab_formats(app) {
+        commands.push(Command {
+            title: "format file".to_string(),
+            description: "Lay the file out the way its language's formatter does".to_string(),
+            action: CommandAction::FormatFile,
+            shortcut: bindings::chord_of(Action::FormatFile),
+        });
+    }
+    if crate::native::code_actions::front_tab_has_actions(app) {
+        commands.push(Command {
+            title: "code actions".to_string(),
+            description:
+                "Fix what the language server found at the caret, or rewrite the code there"
+                    .to_string(),
+            action: CommandAction::CodeActions,
+            shortcut: bindings::chord_of(Action::CodeActions),
+        });
+    }
+    if crate::native::renaming::front_tab_renames(app) {
+        commands.push(Command {
+            title: "rename symbol".to_string(),
+            description:
+                "Rename the name at the caret, everywhere the language server knows it is used"
+                    .to_string(),
+            action: CommandAction::RenameSymbol,
+            shortcut: bindings::chord_of(Action::RenameSymbol),
+        });
+    }
     // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
     // repo that lives on the far side of a `--remote` connection.
     if app.backend().reads_this_machine() {
@@ -491,7 +555,76 @@ fn rows_for(app: &App) -> Vec<Command> {
         PaletteMode::Commands => filter(commands_for(app), &app.model.palette.query),
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
+        PaletteMode::Rename => rename_rows(app),
+        PaletteMode::Places => filter(place_rows(app), &app.model.palette.query),
+        PaletteMode::CodeActions => filter(code_action_rows(app), &app.model.palette.query),
     }
+}
+
+/// One row per code action the language server offered, in the order it put them.
+fn code_action_rows(app: &App) -> Vec<Command> {
+    let Some(actions) = crate::native::code_actions::offered(&app.model) else {
+        return Vec::new();
+    };
+    actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| Command {
+            title: action.title.clone(),
+            description: crate::native::code_actions::about(action),
+            action: CommandAction::ApplyCodeAction(index),
+            shortcut: None,
+        })
+        .collect()
+}
+
+/// One row per place the language server named: what its line reads, and where it is.
+fn place_rows(app: &App) -> Vec<Command> {
+    let Some(found) = &app.model.palette.places else {
+        return Vec::new();
+    };
+    found
+        .places
+        .iter()
+        .map(|place| Command {
+            title: place
+                .line_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .unwrap_or_else(|| file_name_of(&place.file_path))
+                .to_string(),
+            description: format!("{}:{}", place.file_path, place.line_number),
+            action: crate::native::places::open_at(&found.session_id, place, &found.word),
+            shortcut: None,
+        })
+        .collect()
+}
+
+/// The one row the rename asks for: the name the palette was opened on, to what is typed.
+/// None until what is typed is a name other than the one it has.
+fn rename_rows(app: &App) -> Vec<Command> {
+    let Some(target) = crate::native::renaming::naming(&app.model) else {
+        return Vec::new();
+    };
+    let new_name = app.model.palette.query.trim();
+    if new_name.is_empty() || new_name == target.name {
+        return Vec::new();
+    }
+    vec![Command {
+        title: format!("rename {} to {new_name}", target.name),
+        description: format!(
+            "Everywhere the language server knows it is used, from {}",
+            target.file_path
+        ),
+        action: CommandAction::RenameTo(new_name.to_string()),
+        shortcut: None,
+    }]
+}
+
+/// The name the rename mode is asking a new name for, as its hint and its empty line say it.
+fn renamed_name(app: &App) -> &str {
+    crate::native::renaming::naming(&app.model).map_or("the name", |target| target.name.as_str())
 }
 
 /// One row per file the search found: the name to read it by, and the path it is at.
@@ -559,7 +692,10 @@ fn content_rows(app: &App) -> Vec<Command> {
 /// Whether the list on screen is only the start of what the repo matched.
 fn truncated_of(app: &App) -> bool {
     match app.model.palette.mode {
-        PaletteMode::Commands => false,
+        PaletteMode::Commands
+        | PaletteMode::Rename
+        | PaletteMode::Places
+        | PaletteMode::CodeActions => false,
         PaletteMode::Files => app.model.palette.files.truncated,
         PaletteMode::Contents => app.model.palette.contents.truncated,
     }
@@ -577,6 +713,17 @@ fn hint_of(app: &App) -> String {
         }
         PaletteMode::Files => "Open a file by name…".to_string(),
         PaletteMode::Contents => "Find text in the files…".to_string(),
+        PaletteMode::Rename => format!("A new name for {}…", renamed_name(app)),
+        PaletteMode::Places => match &app.model.palette.places {
+            Some(found) => format!(
+                "{} {} ({}) - type to filter…",
+                crate::native::places::kind_of(found.which).listed,
+                found.word,
+                found.places.len()
+            ),
+            None => "Filter the places…".to_string(),
+        },
+        PaletteMode::CodeActions => "What to do at the caret…".to_string(),
     }
 }
 
@@ -602,6 +749,8 @@ fn empty_message(app: &App) -> String {
             )
             .unwrap_or_else(|| "no file of the repo holds that text".to_string())
         }
+        PaletteMode::Rename => format!("type a new name for {}", renamed_name(app)),
+        PaletteMode::Places | PaletteMode::CodeActions => "nothing matches".to_string(),
     }
 }
 
@@ -711,7 +860,10 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         return;
     }
     match app.model.palette.mode {
-        PaletteMode::Commands => {}
+        PaletteMode::Commands
+        | PaletteMode::Rename
+        | PaletteMode::Places
+        | PaletteMode::CodeActions => {}
         PaletteMode::Files => refresh_file_matches(app),
         PaletteMode::Contents => refresh_content_matches(app),
     }
@@ -780,6 +932,11 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                             .margin(egui::Margin::symmetric(7, 5)),
                     );
                     entry.request_focus();
+                    // Opened on a name to type over, which is selected so the first key typed
+                    // replaces it - see `PaletteState::show_rename`.
+                    if std::mem::take(&mut app.model.palette.select_query) {
+                        select_all(ui.ctx(), entry.id, &app.model.palette.query);
+                    }
 
                     ui.add_space(6.0);
                     if matches.is_empty() {
@@ -819,6 +976,20 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         app.model.palette.dismiss();
         app.pending_action = Some(command.action);
     }
+}
+
+/// Select the whole of the palette's line.
+fn select_all(ctx: &egui::Context, id: egui::Id, query: &str) {
+    let Some(mut state) = egui::TextEdit::load_state(ctx, id) else {
+        return;
+    };
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(query.chars().count()),
+        )));
+    state.store(ctx, id);
 }
 
 /// Whether a pointer button went down this frame away from where the palette drew last frame.
