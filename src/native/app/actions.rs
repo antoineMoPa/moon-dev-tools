@@ -261,10 +261,23 @@ impl App {
         );
     }
 
-    pub(super) fn poll_submodules(&mut self) {
+    /// Ask how many files are changed in the repo and each of its submodules, for the hub and
+    /// the status bar. On the review's clock: a `git status` of a repo with a lot changed is
+    /// not quick, and asked again the moment the last answer lands it would never stop
+    /// running - beside the diff the review itself is asking for at the same time.
+    pub(super) fn poll_submodules(&mut self, focused: bool) {
         if self.model.root_session_id.is_empty() {
             return;
         }
+        let interval = if focused {
+            POLL_INTERVAL
+        } else {
+            BACKGROUND_POLL_INTERVAL
+        };
+        if self.last_submodules_poll.elapsed() < interval {
+            return;
+        }
+        self.last_submodules_poll = Instant::now();
         let session_id = self.model.root_session_id.clone();
         self.tasks.spawn_keyed(
             Some("submodules".to_string()),
@@ -296,11 +309,18 @@ impl App {
             return;
         };
         self.last_review_requests_poll = Instant::now();
+        let amendments_when_started = self.model.review_request_amendments;
 
         self.tasks.spawn_keyed(
             Some(REVIEW_REQUESTS_KEY.to_string()),
             move |_| Ok(review_request::list_for_repo(&repo_path)),
-            |model, result| {
+            move |model, result| {
+                // A read that started before a row was dismissed or crossed off from the
+                // board may not have seen the change yet; the rows already show it, and the
+                // next tick reads the files as they are now.
+                if model.review_request_amendments != amendments_when_started {
+                    return;
+                }
                 // A failed read leaves the last answer standing, the way the hub's does: a list
                 // that is a poll out of date is worth more than an empty one.
                 if let Ok(requests) = result {
@@ -821,9 +841,14 @@ impl App {
         let found = crate::native::review::search::find_all(self, session_id, &query);
         let current = found.get(at).cloned();
         let review = self.model.review(session_id);
-        // Bringing the hunk into view is what makes a match in a file scrolled far away
-        // findable; the mark on the line itself says where in the hunk it is.
-        review.scroll_to_hunk = current.as_ref().map(|found| found.hunk_id.clone());
+        // Bringing the line into view is what makes a match in a file scrolled far away
+        // findable - the line rather than its hunk, which can be taller than the window.
+        review.scroll_to = current
+            .as_ref()
+            .map(|found| crate::native::model::ScrollTo {
+                hunk_id: found.hunk_id.clone(),
+                line_index: Some(found.line_index),
+            });
         review.find_match = current;
         if let Some(find) = &mut self.model.find {
             find.found(found.len());

@@ -175,13 +175,20 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
                         .selectable(true),
                     )
                     .on_hover_text(&comment.file_path);
-                // The row is a comment on a file, so the file is a ⌘-click away from it.
+                // The row is a comment on a file, so the file is a ⌘-click away from it -
+                // at the hunk the comment is on, for as long as the review still has it.
+                let changed_line = app
+                    .model
+                    .review_ref(&entry.session_id)
+                    .and_then(|review| review.hunk_by_id(&comment.hunk_id))
+                    .and_then(crate::native::review::diff::first_changed_line_of_hunk);
                 crate::native::review::opens_the_file_on_its_own(
                     app,
                     ui,
                     &path_label,
                     &entry.session_id,
                     &comment.file_path,
+                    changed_line,
                 );
                 if comment.dispatch.agent != crate::api::AgentKind::None {
                     ui.label(
@@ -216,7 +223,8 @@ fn draw_row(app: &mut App, ui: &mut Ui, entry: &Watched, palette: &Palette) {
                     if widgets::quiet_button(ui, "go to").clicked() {
                         let hunk_id = comment.hunk_id.clone();
                         let review = app.model.review(&entry.session_id);
-                        review.scroll_to_hunk = Some(hunk_id.clone());
+                        review.scroll_to =
+                            Some(crate::native::model::ScrollTo::hunk(hunk_id.clone()));
                         review.active_hunk_id = Some(hunk_id);
                     }
                 });

@@ -90,19 +90,33 @@ fn moved_hint(
             (hint.score * 100.0).round()
         ));
     // The hint names the other file, so it opens it the way every other mention of one does -
-    // and that click is not also the one that jumps to the hunk over there.
+    // at the hunk over there - and that click is not also the one that jumps to that hunk.
+    let changed_line = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.hunk_by_id(&hint.target_hunk_id))
+        .and_then(crate::native::review::diff::first_changed_line_of_hunk);
     let opened = crate::native::review::opens_the_file(
         app,
         ui,
         &hint_response,
         session_id,
         &hint.target_file_path,
+        changed_line,
     );
     if !opened && hint_response.clicked() {
         let review = app.model.review(session_id);
-        review.scroll_to_hunk = Some(hint.target_hunk_id.clone());
+        review.scroll_to = Some(crate::native::model::ScrollTo::hunk(
+            hint.target_hunk_id.clone(),
+        ));
     }
-    crate::native::review::open_file_menu(app, &hint_response, session_id, &hint.target_file_path);
+    crate::native::review::open_file_menu(
+        app,
+        &hint_response,
+        session_id,
+        &hint.target_file_path,
+        changed_line,
+    );
 }
 
 fn draw_hunk_actions(

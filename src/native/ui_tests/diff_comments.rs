@@ -414,7 +414,8 @@ fn jumping_to_a_hunk_reaches_one_that_was_being_skipped() {
         .build_ui(move |ui| {
             if let Some(hunk_id) = jump_in_ui.lock().expect("poisoned").take() {
                 let session_id = app.model.root_session_id.clone();
-                app.model.review(&session_id).scroll_to_hunk = Some(hunk_id);
+                app.model.review(&session_id).scroll_to =
+                    Some(crate::native::model::ScrollTo::hunk(hunk_id));
             }
             app.draw(ui);
             if let Some(review) = app.model.review_ref(&app.model.root_session_id) {

@@ -215,6 +215,6 @@ impl App {
             // was asked for.
             query: String::new(),
         });
-        self.open_file_pane_asked_for(session_id, &file_path, at);
+        self.open_file_pane_at(session_id, &file_path, at);
     }
 }

@@ -453,6 +453,13 @@ impl FileEditor {
         self.code.new_lines().to_vec()
     }
 
+    /// The line the tab was opened at and is still to scroll to, counted from one - held
+    /// only until the text has arrived and been laid out.
+    #[cfg(test)]
+    pub(crate) fn line_to_reveal_for_test(&self) -> Option<usize> {
+        self.reveal.as_ref().map(|at| at.line)
+    }
+
     /// How many rows the pane is offering to finish the word being typed with.
     #[cfg(test)]
     pub(crate) fn rows_offered_for_test(&self) -> usize {
@@ -528,10 +535,11 @@ impl App {
         ));
     }
 
-    /// Open a file somebody asked for from outside the window - `moon open <file>` typed in
-    /// a shell. A file already in a tab is brought forward rather than left where it is: the
-    /// ask was made to look at the file, and it may well be behind another tab.
-    pub(crate) fn open_file_pane_asked_for(
+    /// Open a file at a place in it - the line `moon open <file>:<line>` typed in a shell
+    /// named, or the change a mention of the file in the review stands beside. A file already
+    /// in a tab is brought forward and scrolled there rather than left where it is: the ask
+    /// was made to look at that place, and the tab may well be behind another one.
+    pub(crate) fn open_file_pane_at(
         &mut self,
         session_id: &str,
         file_path: &str,
@@ -600,9 +608,10 @@ impl App {
         }
     }
 
-    /// Put the match a content search found on screen, for a file opened at one of them. The
-    /// text may not have arrived yet, so the match is left with the editor and the scroll
-    /// happens on the frame that can measure where its line ended up.
+    /// Put a line of a file on screen - the match a content search found, or the change a
+    /// review pointed at - for a file opened at it. The text may not have arrived yet, so
+    /// the place is left with the editor and the scroll happens on the frame that can
+    /// measure where its line ended up.
     pub(crate) fn reveal_file_match(
         &mut self,
         pane_id: PaneId,

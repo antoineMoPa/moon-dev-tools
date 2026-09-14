@@ -458,6 +458,18 @@ impl TerminalRegistry {
         self.sessions.lock().unwrap().contains_key(terminal_id)
     }
 
+    /// How long since this shell last printed anything. Nothing for a shell the server does
+    /// not have, or one that has not printed yet - still starting up, which is not quiet.
+    ///
+    /// An agent draws a spinner for as long as it works and stops once it is waiting - on a
+    /// question it asked, or on the person - so a run that has been quiet for a while is one
+    /// to look at, and this is what the board reads it off.
+    pub(crate) fn quiet_for(&self, terminal_id: &str) -> Option<std::time::Duration> {
+        let session = self.get(terminal_id)?;
+        let last_output = *session.last_output.lock().unwrap();
+        last_output.map(|last| last.elapsed())
+    }
+
     /// The plain shells one task has open right now, oldest first.
     ///
     /// This is the whole record of them: a shell has nothing to come back to once it ends, so

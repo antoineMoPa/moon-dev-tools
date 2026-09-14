@@ -45,6 +45,13 @@ pub(crate) struct TaskResourceView {
     /// The shell it is attached to, while it is still running.
     pub(crate) terminal_id: Option<String>,
     pub(crate) running: bool,
+    /// How long the shell behind a running agent run has printed nothing, in whole seconds.
+    /// An agent draws a spinner while it works and stops once it is waiting - on the person,
+    /// or on a question it asked - so a run quiet for a while is one to look at, and the card
+    /// marks it. Nothing for a shell, a file, a run that has ended, or one that has not
+    /// printed yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) quiet_for_secs: Option<u64>,
     /// Whether the run can be started again where it left off, which needs the agent to have
     /// been told its session id when it started.
     pub(crate) resumable: bool,

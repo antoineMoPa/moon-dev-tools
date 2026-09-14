@@ -16,8 +16,8 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommitHistoryPayload,
         CommitView, ContentMatch, DiffTarget, FileContentPayload, HunkView, OpenSessionRequest,
-        PatchPayload, RepoSession, RepoStatusView, SearchScope, SessionOpened, SessionPayload,
-        SubmoduleHubPayload,
+        PatchPayload, RepoSession, RepoStatusView, ReviewTarget, SearchScope, SessionOpened,
+        SessionPayload, SubmoduleHubPayload,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -27,7 +27,7 @@ use crate::{
     },
     git::{
         apply_patch, branch_commits_since_default, build_partial_patch_from_selection,
-        collect_session_hunks, commit_history_page, commit_view, current_branch_name,
+        collect_review_hunks, commit_history_page, commit_view, current_branch_name,
         list_submodule_repos, local_change_summary_from_status, preview_patch, project_root,
         read_repo_file, run_git, run_git_no_output,
     },
@@ -161,33 +161,35 @@ struct GitReview {
     local_change_summary: crate::api::LocalChangeSummary,
 }
 
-fn read_git_review(session: &RepoSession) -> Result<GitReview> {
-    let hunks = collect_session_hunks(session)?;
-    let (commit_base, commits) = branch_commits_since_default(&session.repo_path)?;
+/// Everything git is asked for a review, run against a target taken off the session so the
+/// server's lock is not held while git works - see [`ReviewTarget`].
+fn read_git_review(target: &ReviewTarget) -> Result<GitReview> {
+    if !crate::git::is_git_repo(&target.repo_path) {
+        return Ok(GitReview::default());
+    }
+    let hunks = collect_review_hunks(target)?;
+    let (commit_base, commits) = branch_commits_since_default(&target.repo_path)?;
     let (mut history_commits, history_has_more) = commit_history_page(
-        &session.repo_path,
+        &target.repo_path,
         &branch_commit_shas(&commits),
         0,
         HISTORY_COMMIT_PAGE_SIZE,
     )?;
     ensure_active_commit_visible(
-        &session.repo_path,
+        &target.repo_path,
         &commits,
         &mut history_commits,
-        session.active_commit.as_deref(),
+        target.active_commit.as_deref(),
     )?;
-    let local_change_summary = if session.diff_target.comparison.is_some() {
+    let local_change_summary = if target.diff_target.comparison.is_some() {
         Default::default()
     } else {
-        local_change_summary_from_status(
-            &session.repo_path,
-            session.diff_target.pathspec.as_deref(),
-        )?
+        local_change_summary_from_status(&target.repo_path, target.diff_target.pathspec.as_deref())?
     };
 
     Ok(GitReview {
         hunks,
-        branch_name: current_branch_name(&session.repo_path)?,
+        branch_name: current_branch_name(&target.repo_path)?,
         commit_base,
         commits,
         history_commits,
@@ -198,89 +200,115 @@ fn read_git_review(session: &RepoSession) -> Result<GitReview> {
 
 pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<SessionPayload> {
     let available_agents = agent_options(state.agent_availability);
-    crate::api::with_session(state, session_id, |session| {
-        let GitReview {
-            hunks,
-            branch_name,
-            commit_base,
-            commits,
-            history_commits,
-            history_has_more,
-            local_change_summary,
-        } = if crate::git::is_git_repo(&session.repo_path) {
-            read_git_review(session)?
-        } else {
-            GitReview::default()
-        };
-        let full_file_path = unchanged_file_path(
-            &session.repo_path,
-            &session.diff_target,
-            session.active_commit.as_deref(),
-            !hunks.is_empty(),
-        );
-        let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
-        let read_only = session.diff_target.base.is_some()
-            || session.diff_target.comparison.is_some()
-            || session.active_commit.is_some();
-        let views = hunks
-            .into_iter()
-            .map(|hunk| {
-                let (added_line_count, removed_line_count) = diff_line_stats(&hunk.patch);
-                let comment = session
-                    .comments
-                    .get(&hunk.id)
-                    .map(|comment| anchored_comments_only(comment))
-                    .unwrap_or_default();
-                let comment_dispatches = parse_anchored_comments(&comment)
-                    .into_iter()
-                    .map(|entry| comment_dispatch_view(session, &hunk.id, &entry))
-                    .collect::<Vec<_>>();
-                let moved_from = move_hints.moved_from.get(&hunk.id).cloned();
-                let moved_to = move_hints.moved_to.get(&hunk.id).cloned();
+    // Git runs between two short holds of the lock rather than under one long one: what the
+    // review is of is read off the session, git is asked about it, and the answer is put
+    // against the session's comments and dispatches once it is back. Every other call the
+    // server takes - a shell starting, a hunk being staged - waits on the same lock, and a
+    // diff of a repo with a lot changed is the longest thing the server does. Should the
+    // session have been pointed elsewhere in the meantime, the answer is about the wrong
+    // thing and git is asked again.
+    loop {
+        let target =
+            crate::api::with_session(state, session_id, |session| Ok(session.review_target()))?;
+        let review = read_git_review(&target)?;
+        let payload = crate::api::with_session(state, session_id, |session| {
+            if session.review_target() != target {
+                return Ok(None);
+            }
+            build_session_payload(session_id, session, review, &available_agents).map(Some)
+        })?;
+        if let Some(payload) = payload {
+            return Ok(payload);
+        }
+    }
+}
 
-                HunkView {
-                    id: hunk.id,
-                    file_path: hunk.file_path,
-                    change_kind: hunk.change_kind,
-                    header: hunk.header,
-                    staged: hunk.staged,
-                    comment,
-                    comment_dispatches,
-                    patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
-                    patch_line_count: hunk.patch.lines().count(),
-                    added_line_count,
-                    removed_line_count,
-                    moved_from,
-                    moved_to,
-                    image_diff: hunk.image_diff,
-                }
-            })
-            .collect::<Vec<_>>();
+/// What a review looks like to a window: git's answer about the session's target, put
+/// against what the session holds of its own - the comments, and what the agents made of
+/// them. Called with the session held, and does no git of its own.
+fn build_session_payload(
+    session_id: &str,
+    session: &RepoSession,
+    review: GitReview,
+    available_agents: &[crate::api::AgentOption],
+) -> Result<SessionPayload> {
+    let GitReview {
+        hunks,
+        branch_name,
+        commit_base,
+        commits,
+        history_commits,
+        history_has_more,
+        local_change_summary,
+    } = review;
+    let full_file_path = unchanged_file_path(
+        &session.repo_path,
+        &session.diff_target,
+        session.active_commit.as_deref(),
+        !hunks.is_empty(),
+    );
+    let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
+    let read_only = session.diff_target.base.is_some()
+        || session.diff_target.comparison.is_some()
+        || session.active_commit.is_some();
+    let views = hunks
+        .into_iter()
+        .map(|hunk| {
+            let (added_line_count, removed_line_count) = diff_line_stats(&hunk.patch);
+            let comment = session
+                .comments
+                .get(&hunk.id)
+                .map(|comment| anchored_comments_only(comment))
+                .unwrap_or_default();
+            let comment_dispatches = parse_anchored_comments(&comment)
+                .into_iter()
+                .map(|entry| comment_dispatch_view(session, &hunk.id, &entry))
+                .collect::<Vec<_>>();
+            let moved_from = move_hints.moved_from.get(&hunk.id).cloned();
+            let moved_to = move_hints.moved_to.get(&hunk.id).cloned();
 
-        Ok(SessionPayload {
-            repo_name: session
-                .repo_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("repo")
-                .to_string(),
-            branch_name,
-            commit_base,
-            commits,
-            history_commits,
-            history_has_more,
-            local_change_summary,
-            active_commit: session.active_commit.clone(),
-            repo_path: session.repo_path.display().to_string(),
-            read_only,
-            patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
-            available_agents: available_agents.clone(),
-            selected_agent: session.selected_agent,
-            full_file_path,
-            review_comments: build_review_comments(session, &views),
-            export_text: build_export_text(session_id, &views),
-            hunks: views,
+            HunkView {
+                id: hunk.id,
+                file_path: hunk.file_path,
+                change_kind: hunk.change_kind,
+                header: hunk.header,
+                staged: hunk.staged,
+                comment,
+                comment_dispatches,
+                patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
+                patch_line_count: hunk.patch.lines().count(),
+                added_line_count,
+                removed_line_count,
+                moved_from,
+                moved_to,
+                image_diff: hunk.image_diff,
+            }
         })
+        .collect::<Vec<_>>();
+
+    Ok(SessionPayload {
+        repo_name: session
+            .repo_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("repo")
+            .to_string(),
+        branch_name,
+        commit_base,
+        commits,
+        history_commits,
+        history_has_more,
+        local_change_summary,
+        active_commit: session.active_commit.clone(),
+        repo_path: session.repo_path.display().to_string(),
+        read_only,
+        patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
+        available_agents: available_agents.to_vec(),
+        selected_agent: session.selected_agent,
+        full_file_path,
+        review_comments: build_review_comments(session, &views),
+        export_text: build_export_text(session_id, &views),
+        hunks: views,
     })
 }
 

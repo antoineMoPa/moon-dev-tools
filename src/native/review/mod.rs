@@ -20,10 +20,40 @@ pub(crate) use agents::draw as draw_agents;
 /// have - so a right-click on a file's name anywhere in the review is the way to the file.
 ///
 /// Drawn inside a context menu, which it closes once the tab has been asked for.
-pub(crate) fn open_file_item(app: &mut App, ui: &mut Ui, session_id: &str, file_path: &str) {
+///
+/// `changed_line` is where in the file the tab opens: the first changed line of the hunk the
+/// mention stands beside, counted from one - see [`open_the_file`].
+pub(crate) fn open_file_item(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    file_path: &str,
+    changed_line: Option<usize>,
+) {
     if crate::native::widgets::clickable(ui.button("open the file")).clicked() {
-        app.open_file_pane(session_id, file_path);
+        open_the_file(app, session_id, file_path, changed_line);
         ui.close();
+    }
+}
+
+/// Open the file every mention of one in the review leads to, scrolled to where the diff
+/// is: a review names a file for what changed in it, so the tab opens on the change rather
+/// than on line one, and a tab already showing the file is brought forward and scrolled
+/// there rather than left behind another tab. A mention with no hunk to point at - a comment
+/// on a hunk that has since gone - opens the file the plain way.
+fn open_the_file(app: &mut App, session_id: &str, file_path: &str, changed_line: Option<usize>) {
+    match changed_line {
+        Some(line) => app.open_file_pane_at(
+            session_id,
+            file_path,
+            Some(crate::native::panes::OpenAt {
+                line,
+                // Nothing was searched for, so nothing is marked - the line is the whole of
+                // what the diff points at.
+                query: String::new(),
+            }),
+        ),
+        None => app.open_file_pane(session_id, file_path),
     }
 }
 
@@ -42,6 +72,7 @@ pub(crate) fn opens_the_file(
     response: &egui::Response,
     session_id: &str,
     file_path: &str,
+    changed_line: Option<usize>,
 ) -> bool {
     if !response.contains_pointer()
         || !ui.input(|input| input.modifiers.matches_exact(egui::Modifiers::COMMAND))
@@ -52,7 +83,7 @@ pub(crate) fn opens_the_file(
     if !response.clicked() {
         return false;
     }
-    app.open_file_pane(session_id, file_path);
+    open_the_file(app, session_id, file_path, changed_line);
     true
 }
 
@@ -64,9 +95,10 @@ pub(crate) fn opens_the_file_on_its_own(
     response: &egui::Response,
     session_id: &str,
     file_path: &str,
+    changed_line: Option<usize>,
 ) {
-    let _taken = opens_the_file(app, ui, response, session_id, file_path);
-    open_file_menu(app, response, session_id, file_path);
+    let _taken = opens_the_file(app, ui, response, session_id, file_path, changed_line);
+    open_file_menu(app, response, session_id, file_path, changed_line);
 }
 
 /// A context menu offering nothing but the file, for the mentions of one that have nothing
@@ -76,8 +108,10 @@ pub(crate) fn open_file_menu(
     response: &egui::Response,
     session_id: &str,
     file_path: &str,
+    changed_line: Option<usize>,
 ) {
-    egui::Popup::context_menu(response).show(|ui| open_file_item(app, ui, session_id, file_path));
+    egui::Popup::context_menu(response)
+        .show(|ui| open_file_item(app, ui, session_id, file_path, changed_line));
 }
 
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str) {

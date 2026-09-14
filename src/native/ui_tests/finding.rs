@@ -179,6 +179,125 @@ fn find_searches_a_whole_review_and_steps_through_the_matches() {
     );
 }
 
+/// The match is what comes into view, not merely its hunk: a hunk can be taller than the
+/// window, and scrolling its top in left a match further down out of sight - and stepping
+/// between two matches of the same hunk moved nothing at all.
+#[test]
+fn find_brings_the_match_itself_into_view_inside_a_tall_hunk() {
+    let fixture = Fixture::new("find-tall-hunk");
+    let before: String = (1..=120).map(|n| format!("line {n}\n")).collect();
+    fixture.write("src/notes.txt", &before);
+    fixture.commit("Add the notes");
+    // Every line changes, so the file is one hunk of 240 rows - several windows tall - with
+    // the two matches far apart in it.
+    let after: String = (1..=120)
+        .map(|n| match n {
+            20 => "needle near the top, touched\n".to_string(),
+            100 => "needle near the bottom, touched\n".to_string(),
+            n => format!("line {n}, touched\n"),
+        })
+        .collect();
+    fixture.write("src/notes.txt", &after);
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    #[derive(Default, Clone)]
+    struct Seen {
+        at: usize,
+        total: usize,
+        current: Option<(String, usize)>,
+    }
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let seen_in_ui = Arc::clone(&seen);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            let session_id = app.model.root_session_id.clone();
+            *seen_in_ui.lock().expect("poisoned") = Seen {
+                at: app.model.find.as_ref().map(|find| find.at).unwrap_or(0),
+                total: app.model.find.as_ref().map(|find| find.total).unwrap_or(0),
+                current: app
+                    .model
+                    .review_ref(&session_id)
+                    .and_then(|review| review.find_match.as_ref())
+                    .map(|found| (found.hunk_id.clone(), found.line_index)),
+            };
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("needle".to_string()));
+    harness.run_steps(3);
+    let typed = seen.lock().expect("poisoned").clone();
+    assert_eq!(typed.total, 2, "both needles should have been found");
+    assert_eq!(typed.at, 0);
+
+    // The row of the current match, as drawn last frame: a row scrolled out of sight is
+    // never registered, so having a response at all is half of being in view.
+    let row_in_view = |harness: &Harness<'_>, current: &Option<(String, usize)>| {
+        let Some((hunk_id, line_index)) = current else {
+            return false;
+        };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 880.0));
+        harness
+            .ctx
+            .read_response(crate::native::review::hunks::diff_line_id(
+                hunk_id,
+                *line_index,
+            ))
+            .is_some_and(|row| screen.contains_rect(row.rect))
+    };
+    let mut settled = false;
+    for _ in 0..100 {
+        harness.step();
+        if row_in_view(&harness, &seen.lock().expect("poisoned").current) {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "the first match should have scrolled into view");
+    let first = typed.current.clone().expect("expected a current match");
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    let stepped = seen.lock().expect("poisoned").clone();
+    assert_eq!(stepped.at, 1, "Enter steps to the second match");
+    assert_ne!(stepped.current, Some(first.clone()));
+    // The scroll is animated, so the second row is in view for a few frames before the
+    // first has left; settled means the two are further apart than the window is tall.
+    let mut settled = false;
+    for _ in 0..100 {
+        harness.step();
+        let current = seen.lock().expect("poisoned").current.clone();
+        if row_in_view(&harness, &current) && !row_in_view(&harness, &Some(first.clone())) {
+            settled = true;
+            break;
+        }
+    }
+    assert!(
+        settled,
+        "stepping to the second match should have scrolled it into view, and the first out"
+    );
+}
+
 /// A search over an open file marks what it found in the text, and Enter only walks those
 /// matches while the query box is the thing being typed into. It used to step on any Enter
 /// the window saw, so typing into the file - or the shell in the next split - dragged the

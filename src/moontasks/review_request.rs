@@ -201,6 +201,37 @@ pub(crate) fn amend(repo_path: &Path, task_id: &str, index: usize, amend: Amend)
     std::fs::write(&path, kept).with_context(|| format!("failed to write {}", path.display()))
 }
 
+/// The same change, made to the rows a window is showing: what [`amend`] will do to the
+/// file, done to the list ahead of it so the board answers the click at once. A dismissed
+/// row goes, and the rows under it in the same file move up one - their index is their
+/// place in the file, and the file is one line shorter.
+pub(crate) fn amend_views(
+    requests: &mut Vec<ReviewRequestView>,
+    task_id: &str,
+    index: usize,
+    amend: Amend,
+) {
+    match amend {
+        Amend::Dismiss => {
+            requests.retain(|request| !(request.task_id == task_id && request.index == index));
+            for request in requests
+                .iter_mut()
+                .filter(|request| request.task_id == task_id && request.index > index)
+            {
+                request.index -= 1;
+            }
+        }
+        Amend::Done(done) => {
+            if let Some(request) = requests
+                .iter_mut()
+                .find(|request| request.task_id == task_id && request.index == index)
+            {
+                request.done = done;
+            }
+        }
+    }
+}
+
 /// One line of a task's file, against the repo the board belongs to.
 ///
 /// The path is resolved the way the submodule hub resolves a submodule's, so a request and a hub
@@ -850,5 +881,36 @@ mod tests {
         let fixture = crate::native::ui_tests::Fixture::new("review-request-none");
 
         assert!(list_for_repo(&fixture.root).is_empty());
+    }
+
+    /// The rows change the way the file will: a dismissed row goes and the ones under it in
+    /// the same task move up, so the next dismiss names the line that is now at that place.
+    #[test]
+    fn amending_the_views_matches_amending_the_file() {
+        let view = |task_id: &str, index: usize| ReviewRequestView {
+            task_id: task_id.to_string(),
+            index,
+            path_under_repo: format!("repos/r{index}"),
+            repo_path: String::new(),
+            name: format!("r{index}"),
+            branch: None,
+            suggestion: None,
+            changed_files: 1,
+            done: false,
+            task_finished: false,
+        };
+        let mut views = vec![view("a", 0), view("a", 1), view("a", 2), view("b", 0)];
+
+        amend_views(&mut views, "a", 1, Amend::Dismiss);
+        let places: Vec<(&str, usize, &str)> = views
+            .iter()
+            .map(|view| (view.task_id.as_str(), view.index, view.name.as_str()))
+            .collect();
+        assert_eq!(places, vec![("a", 0, "r0"), ("a", 1, "r2"), ("b", 0, "r0")]);
+
+        amend_views(&mut views, "b", 0, Amend::Done(true));
+        assert!(views[2].done, "crossing off marks the row");
+        amend_views(&mut views, "b", 0, Amend::Done(false));
+        assert!(!views[2].done, "and putting it back clears it");
     }
 }

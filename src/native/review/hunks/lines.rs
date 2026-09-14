@@ -25,6 +25,15 @@ use super::actions::{
 use super::comments::{draw_composer, draw_inline_comment};
 use super::{GUTTER_WIDTH, LINE_HEIGHT, body_text_x, column_at, diff_line_id, word_bounds_at};
 
+/// Draws the hunk's lines, and the comments and composers under them. `scroll_to_line` is
+/// the line the pane was asked to bring into view, if one - see
+/// [`crate::native::model::ScrollTo`]; answers whether that line was drawn and took the
+/// scroll, so the card can fall back to its own top when it was not.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 pub(super) fn draw_hunk_body(
     app: &mut App,
     ui: &mut Ui,
@@ -32,8 +41,10 @@ pub(super) fn draw_hunk_body(
     hunk: &HunkView,
     read_only: bool,
     preview_limit: usize,
+    scroll_to_line: Option<usize>,
     palette: &Palette,
-) {
+) -> bool {
+    let mut line_scrolled = false;
     // The server sends a preview; the whole patch is fetched only if asked for.
     let full_patch = app
         .model
@@ -100,7 +111,9 @@ pub(super) fn draw_hunk_body(
         if line.is_chrome() {
             continue;
         }
-        draw_diff_line(app, ui, session_id, hunk, index, line, palette);
+        let scroll_here = scroll_to_line == Some(index);
+        line_scrolled |= scroll_here;
+        draw_diff_line(app, ui, session_id, hunk, index, line, scroll_here, palette);
 
         for (_, comment_index) in comment_at.iter().filter(|(at, _)| *at == index) {
             if let Some(entry) = anchored.get(*comment_index) {
@@ -119,6 +132,7 @@ pub(super) fn draw_hunk_body(
     if hunk.patch_line_count > preview_limit && full_patch.is_none() {
         draw_truncation_notice(app, ui, session_id, hunk, preview_limit, palette);
     }
+    line_scrolled
 }
 
 fn draw_diff_line(
@@ -128,6 +142,7 @@ fn draw_diff_line(
     hunk: &HunkView,
     index: usize,
     line: &DiffLine,
+    scroll_here: bool,
     palette: &Palette,
 ) {
     let width = ui.available_width();
@@ -136,6 +151,11 @@ fn draw_diff_line(
     // tens of thousands of rows, and neither laying out text nor hit-testing a row that is
     // scrolled out of sight is work worth doing.
     let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_HEIGHT), Sense::hover());
+    // Asked for before the visibility check, which is the point: the row being scrolled to
+    // is the one that is not on screen yet. Mid-screen, so the lines around it show too.
+    if scroll_here {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+    }
     if !ui.is_rect_visible(rect) {
         return;
     }

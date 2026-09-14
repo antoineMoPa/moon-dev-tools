@@ -15,7 +15,10 @@ use crate::{
     },
     native::{
         app::App,
-        board::{BoardAction, close_button, file_mark, gesture::Controls, running_dot},
+        board::{
+            Activity, BoardAction, activity_dot, close_button, file_mark, gesture::Controls,
+            running_dot,
+        },
         submodules::changes_label,
         theme::{Palette, SMALL_SIZE},
         widgets,
@@ -218,6 +221,33 @@ fn draw_review_request(
 /// The end of a path is what tells files apart, so that is the part that is kept.
 const FILE_PATH_CHARS: usize = 34;
 
+/// How long a running agent has to have printed nothing before its dot turns amber. An agent
+/// at work redraws its spinner many times a second and a long tool call still ticks; one
+/// that has stopped is waiting - on a question it asked, or on the person - or is stuck.
+/// Long enough that a pause between two tool calls does not flicker the dot.
+const AGENT_QUIET_AFTER_SECS: u64 = 10;
+
+/// What a run's dot says - see [`Activity`]. Only an agent run reads as quiet, and only
+/// once it has been so for [`AGENT_QUIET_AFTER_SECS`].
+fn activity_of(resource: &TaskResourceView) -> Activity {
+    if !resource.running {
+        return Activity::Ended;
+    }
+    match resource.quiet_for_secs {
+        Some(quiet) if quiet >= AGENT_QUIET_AFTER_SECS => Activity::Quiet,
+        _ => Activity::Running,
+    }
+}
+
+/// `2m 05s` for a hover, `45s` under a minute.
+fn quiet_text(secs: u64) -> String {
+    match (secs / 3600, (secs % 3600) / 60, secs % 60) {
+        (0, 0, s) => format!("{s}s"),
+        (0, m, s) => format!("{m}m {s:02}s"),
+        (h, m, _) => format!("{h}h {m:02}m"),
+    }
+}
+
 /// One shell, agent run or linked file of a task: what it is, whether it is still going, and
 /// the way back to it.
 fn draw_resource(
@@ -239,12 +269,19 @@ fn draw_resource(
     let row = draw_row(ui, palette, opens, hover_of(resource.kind));
     let row_pressed = card.pressed(&row);
     draw_in_row(ui, row.rect, |ui| {
-        running_dot(ui, resource.running, palette);
+        let activity = activity_of(resource);
+        activity_dot(ui, activity, palette);
 
         match (&resource.terminal_id, resource.running) {
             (Some(terminal_id), true) => {
-                let name = widgets::quiet_button(ui, &resource.label)
-                    .on_hover_text("Open this shell in a tab");
+                let hover = match (activity, resource.quiet_for_secs) {
+                    (Activity::Quiet, Some(quiet)) => format!(
+                        "Open this shell in a tab\nnothing printed for {} - waiting on you?",
+                        quiet_text(quiet)
+                    ),
+                    _ => "Open this shell in a tab".to_string(),
+                };
+                let name = widgets::quiet_button(ui, &resource.label).on_hover_text(hover);
                 if card.pressed(&name) || row_pressed {
                     actions.push(BoardAction::OpenShell {
                         terminal_id: terminal_id.clone(),
@@ -403,4 +440,45 @@ fn draw_file_resource(
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(running: bool, quiet_for_secs: Option<u64>) -> TaskResourceView {
+        TaskResourceView {
+            id: "run".to_string(),
+            kind: TaskResourceKind::Agent,
+            agent: AgentKind::Claude,
+            label: "claude - 1".to_string(),
+            file_path: None,
+            terminal_id: running.then(|| "terminal-1".to_string()),
+            running,
+            quiet_for_secs,
+            resumable: true,
+            started_at_unix: 0,
+        }
+    }
+
+    /// The dot turns amber only for a run that is going and has been quiet long enough: a
+    /// run that ended is hollow however long ago it last printed, and one that only just went
+    /// quiet is still green.
+    #[test]
+    fn a_run_reads_as_quiet_once_it_has_printed_nothing_for_long_enough() {
+        assert_eq!(activity_of(&run(true, None)), Activity::Running);
+        assert_eq!(activity_of(&run(true, Some(3))), Activity::Running);
+        assert_eq!(
+            activity_of(&run(true, Some(AGENT_QUIET_AFTER_SECS))),
+            Activity::Quiet
+        );
+        assert_eq!(activity_of(&run(false, Some(600))), Activity::Ended);
+    }
+
+    #[test]
+    fn a_quiet_spell_reads_in_the_largest_unit_that_fits() {
+        assert_eq!(quiet_text(45), "45s");
+        assert_eq!(quiet_text(125), "2m 05s");
+        assert_eq!(quiet_text(3900), "1h 05m");
+    }
 }

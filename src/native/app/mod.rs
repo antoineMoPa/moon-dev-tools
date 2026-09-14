@@ -93,6 +93,9 @@ pub(crate) struct App {
     /// Panes whose terminal could not be attached, so the pane can say so.
     pub(crate) terminal_errors: HashMap<String, String>,
     last_poll: Instant,
+    /// When the repo and its submodules were last asked how much is changed in them - see
+    /// [`App::poll_submodules`].
+    last_submodules_poll: Instant,
     last_board_poll: Instant,
     /// When the window last asked which shells have something running in them.
     last_running_shells_poll: Instant,
@@ -232,6 +235,7 @@ impl App {
                 restart_on_shell_exit: None,
                 submodule_filter: String::new(),
                 review_requests: Vec::new(),
+                review_request_amendments: 0,
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
                 toasts: Vec::new(),
@@ -269,6 +273,9 @@ impl App {
             terminal_errors: HashMap::new(),
             // Backdated so the first frame fetches instead of waiting out an interval.
             last_poll: Instant::now()
+                .checked_sub(POLL_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            last_submodules_poll: Instant::now()
                 .checked_sub(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
             last_board_poll: Instant::now()

@@ -234,6 +234,37 @@ fn read_side(
     rows.into_iter().zip(tokens).collect()
 }
 
+/// The line of the file as it is now where a hunk's first change lands: the first added
+/// line, or the line that took the place of the first removed one. Counted from one, as the
+/// number in the fringe is. A preview cut off before the hunk's first change - or one with
+/// no `@@` line at all - answers with the hunk's start, which is as close as it can say.
+/// Nothing for a deleted file, whose hunk starts at `+0,0`: no line of it is left.
+///
+/// The header is asked for on its own because a preview may be cut short of it; the patch
+/// is walked from its `@@` line, which is what the line numbers are counted from.
+pub(crate) fn first_changed_line(header: &str, patch: &str) -> Option<usize> {
+    let (_, new_start) = parse_hunk_header(header);
+    let mut line = new_start.filter(|start| *start > 0)?;
+    for text in patch
+        .lines()
+        .skip_while(|text| !text.starts_with("@@"))
+        .skip(1)
+    {
+        if text.starts_with('+') || text.starts_with('-') {
+            return Some(line);
+        }
+        if text.starts_with(' ') {
+            line += 1;
+        }
+    }
+    Some(line)
+}
+
+/// [`first_changed_line`] of a hunk the review holds, read off its header and its preview.
+pub(crate) fn first_changed_line_of_hunk(hunk: &crate::api::HunkView) -> Option<usize> {
+    first_changed_line(&hunk.header, &hunk.patch_preview)
+}
+
 fn parse_hunk_header(header: &str) -> (Option<usize>, Option<usize>) {
     let Some(ranges) = header.split("@@").nth(1) else {
         return (None, None);
@@ -617,5 +648,40 @@ mod tests {
         let second = insertion_line(&lines, "same", &[first]).expect("expected a second line");
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn the_first_changed_line_is_the_first_added_or_removed_one() {
+        // Three lines of context, then a removal: the file's line 13 is where it was.
+        let patch = concat!(
+            "@@ -10,7 +10,8 @@ fn context()\n",
+            " one\n",
+            " two\n",
+            " three\n",
+            "-old\n",
+            "+new\n",
+            "+newer\n",
+            " four\n",
+        );
+        assert_eq!(
+            first_changed_line("@@ -10,7 +10,8 @@ fn context()", patch),
+            Some(13)
+        );
+        // An added file starts changing on its first line.
+        assert_eq!(
+            first_changed_line("@@ -0,0 +1,2 @@", "@@ -0,0 +1,2 @@\n+a\n+b"),
+            Some(1)
+        );
+        // A preview cut off before the change answers with the hunk's start.
+        assert_eq!(
+            first_changed_line("@@ -10,7 +10,8 @@", "diff --git a/x b/x\n--- a/x"),
+            Some(10)
+        );
+        assert_eq!(first_changed_line("not a header", ""), None);
+        // A deleted file has no line left to open at.
+        assert_eq!(
+            first_changed_line("@@ -1,2 +0,0 @@", "@@ -1,2 +0,0 @@\n-a\n-b"),
+            None
+        );
     }
 }

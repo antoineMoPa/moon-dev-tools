@@ -516,8 +516,17 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             let Some(repo_path) = app.model.root_repo_path() else {
                 return;
             };
-            // Straight to the file on a worker thread, the way the requests are read - see
-            // `App::poll_review_requests`, which picks the change up on its next tick.
+            // The rows show the change now, and the file gets it on a worker thread, the way
+            // the requests are read. Waiting for the file and the next read of it would leave
+            // the row up for a tick and the git it takes to tell how each row stands, which
+            // is long enough for a dismiss to look ignored - see `App::poll_review_requests`.
+            crate::moontasks::review_request::amend_views(
+                &mut app.model.review_requests,
+                &task_id,
+                index,
+                amend,
+            );
+            app.model.review_request_amendments += 1;
             app.tasks.spawn(
                 move |_| {
                     crate::moontasks::review_request::amend(&repo_path, &task_id, index, amend)

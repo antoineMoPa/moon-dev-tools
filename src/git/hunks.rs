@@ -9,7 +9,9 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use super::{append_pathspec, git_command, run_git, run_git_allow_status, run_git_bytes};
 use crate::{
     agent::ChildExt,
-    api::{DiffHunk, DiffTarget, FileChangeKind, ImageDiffView, RepoSession, stable_id},
+    api::{
+        DiffHunk, DiffTarget, FileChangeKind, ImageDiffView, RepoSession, ReviewTarget, stable_id,
+    },
 };
 
 const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
@@ -133,11 +135,17 @@ fn is_likely_binary_file(path: &Path) -> Result<bool> {
 }
 
 pub(crate) fn collect_session_hunks(session: &RepoSession) -> Result<Vec<DiffHunk>> {
-    if let Some(commit) = &session.active_commit {
-        return collect_commit_hunks(&session.repo_path, commit);
+    collect_review_hunks(&session.review_target())
+}
+
+/// The hunks of what a review is of - the same, for a target taken off its session so the
+/// diff can run with the server's lock released.
+pub(crate) fn collect_review_hunks(target: &ReviewTarget) -> Result<Vec<DiffHunk>> {
+    if let Some(commit) = &target.active_commit {
+        return collect_commit_hunks(&target.repo_path, commit);
     }
 
-    collect_hunks(&session.repo_path, &session.diff_target)
+    collect_hunks(&target.repo_path, &target.diff_target)
 }
 
 pub(crate) fn collect_commit_hunks(repo_path: &Path, commit: &str) -> Result<Vec<DiffHunk>> {

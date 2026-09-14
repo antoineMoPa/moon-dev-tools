@@ -18,6 +18,7 @@ use crate::{
     api::HunkView,
     native::{
         app::App,
+        model::ScrollTo,
         review::diff::DiffLine,
         review::image_diff,
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
@@ -110,7 +111,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
     let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
 
-    let scroll_target = app.model.review(session_id).scroll_to_hunk.take();
+    let scroll_target = app.model.review(session_id).scroll_to.take();
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -130,7 +131,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                     &hunks,
                     read_only,
                     preview_limit,
-                    scroll_target.as_deref(),
+                    scroll_target.as_ref(),
                     palette,
                 );
                 return;
@@ -144,7 +145,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                 &unstaged,
                 read_only,
                 preview_limit,
-                scroll_target.as_deref(),
+                scroll_target.as_ref(),
                 palette,
             );
             if !staged.is_empty() {
@@ -157,7 +158,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                     &staged,
                     read_only,
                     preview_limit,
-                    scroll_target.as_deref(),
+                    scroll_target.as_ref(),
                     palette,
                 );
             }
@@ -215,7 +216,7 @@ fn draw_section(
     hunks: &[&HunkView],
     read_only: bool,
     preview_limit: usize,
-    scroll_target: Option<&str>,
+    scroll_target: Option<&ScrollTo>,
     palette: &Palette,
 ) {
     ui.horizontal(|ui| {
@@ -251,7 +252,7 @@ fn draw_section(
         if current_file != Some(hunk.file_path.as_str()) {
             current_file = Some(&hunk.file_path);
             ui.add_space(6.0);
-            draw_file_heading(app, ui, session_id, &hunk.file_path, palette);
+            draw_file_heading(app, ui, session_id, hunk, palette);
         }
         draw_hunk_card(
             app,
@@ -267,13 +268,16 @@ fn draw_section(
     }
 }
 
+/// The heading over a file's hunks, drawn above `first_hunk` - the file's first, which is
+/// where the file opens from the heading.
 fn draw_file_heading(
     app: &mut App,
     ui: &mut Ui,
     session_id: &str,
-    file_path: &str,
+    first_hunk: &HunkView,
     palette: &Palette,
 ) {
+    let file_path = first_hunk.file_path.as_str();
     let collapsed = app
         .model
         .review_ref(session_id)
@@ -295,7 +299,14 @@ fn draw_file_heading(
         // file the diff is of.
         let heading =
             ui.add(egui::Label::new(RichText::new(file_path).color(palette.ink)).selectable(true));
-        crate::native::review::opens_the_file_on_its_own(app, ui, &heading, session_id, file_path);
+        crate::native::review::opens_the_file_on_its_own(
+            app,
+            ui,
+            &heading,
+            session_id,
+            file_path,
+            crate::native::review::diff::first_changed_line_of_hunk(first_hunk),
+        );
     });
 }
 
@@ -311,9 +322,18 @@ fn draw_hunk_card(
     hunk: &HunkView,
     read_only: bool,
     preview_limit: usize,
-    scroll_target: Option<&str>,
+    scroll_target: Option<&ScrollTo>,
     palette: &Palette,
 ) {
+    let scrolling_here = scroll_target.filter(|target| target.hunk_id == hunk.id);
+    // A jump to a hunk unfolds the file it is in: a match the find bar stepped to, or a
+    // hunk a hint jumped to, is asked for by name, and a folded file would swallow it.
+    if scrolling_here.is_some() {
+        app.model
+            .review(session_id)
+            .collapsed_files
+            .remove(&hunk.file_path);
+    }
     if app
         .model
         .review_ref(session_id)
@@ -333,7 +353,7 @@ fn draw_hunk_card(
     //
     // The card being scrolled to is always drawn, because it is the one that has to report
     // where it landed.
-    if scroll_target != Some(hunk.id.as_str())
+    if scrolling_here.is_none()
         && let Some(height) = app.hunk_heights.get(&hunk.id).copied()
     {
         let skipped = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
@@ -362,6 +382,8 @@ fn draw_hunk_card(
         .inner_margin(egui::Margin::same(1))
         .outer_margin(egui::Margin::symmetric(2, 0));
 
+    let scroll_to_line = scrolling_here.and_then(|target| target.line_index);
+    let mut line_scrolled = false;
     let response = frame
         .show(ui, |ui| {
             draw_hunk_toolbar(app, ui, session_id, hunk, read_only, palette);
@@ -369,7 +391,16 @@ fn draw_hunk_card(
                 image_diff::draw_image_diff(app, ui, &hunk.file_path, image, palette);
                 return;
             }
-            draw_hunk_body(app, ui, session_id, hunk, read_only, preview_limit, palette);
+            line_scrolled = draw_hunk_body(
+                app,
+                ui,
+                session_id,
+                hunk,
+                read_only,
+                preview_limit,
+                scroll_to_line,
+                palette,
+            );
         })
         .response;
 
@@ -384,8 +415,12 @@ fn draw_hunk_card(
         );
     }
 
-    if scroll_target == Some(hunk.id.as_str()) {
-        response.scroll_to_me(Some(egui::Align::TOP));
+    if scrolling_here.is_some() {
+        // The line asked for has scrolled itself into view; a hunk asked for by name, or a
+        // line of it that was not drawn, lands with its top at the top.
+        if !line_scrolled {
+            response.scroll_to_me(Some(egui::Align::TOP));
+        }
         app.model.review(session_id).active_hunk_id = Some(hunk.id.clone());
     }
 

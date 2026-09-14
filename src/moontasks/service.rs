@@ -344,6 +344,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     label: file_path.clone(),
                     file_path: Some(file_path),
                     running: false,
+                    quiet_for_secs: None,
                     terminal_id: None,
                     resumable: false,
                     started_at_unix: resource.started_at_unix,
@@ -366,6 +367,14 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     .terminal_id
                     .as_ref()
                     .is_some_and(|terminal_id| state.terminals.is_live(terminal_id)),
+                // Only a run's: a plain shell sits at its prompt printing nothing, and that
+                // is not a shell to look at.
+                quiet_for_secs: resource
+                    .terminal_id
+                    .as_ref()
+                    .filter(|_| resource.kind == TaskResourceKind::Agent)
+                    .and_then(|terminal_id| state.terminals.quiet_for(terminal_id))
+                    .map(|quiet| quiet.as_secs()),
                 terminal_id: resource.terminal_id.clone(),
                 resumable: agent_launch(resource.agent).is_some(),
                 started_at_unix: resource.started_at_unix,
@@ -385,6 +394,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 label: shell.name.unwrap_or_else(|| "shell".to_string()),
                 file_path: None,
                 running: true,
+                quiet_for_secs: None,
                 terminal_id: Some(shell.terminal_id),
                 resumable: false,
                 started_at_unix: shell.started_at_unix,

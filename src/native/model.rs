@@ -131,6 +131,27 @@ pub(crate) struct AgentLogView {
     pub(crate) text: String,
 }
 
+/// Where the diff pane is asked to scroll on its next draw: the top of a hunk, or one line
+/// of it. A sidebar row, a move hint and an agent row ask for the hunk; the find bar asks for
+/// the line its match is on, since a hunk can be taller than the window and its top says
+/// nothing about where in it the match is.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct ScrollTo {
+    pub(crate) hunk_id: String,
+    /// A line of the hunk, indexed the way its parsed lines are - see `App::diff_lines` -
+    /// which lands mid-screen. The hunk's top when there is none.
+    pub(crate) line_index: Option<usize>,
+}
+
+impl ScrollTo {
+    pub(crate) fn hunk(hunk_id: String) -> Self {
+        Self {
+            hunk_id,
+            line_index: None,
+        }
+    }
+}
+
 /// One review, and the UI state that belongs to it rather than to the window.
 pub(crate) struct ReviewState {
     pub(crate) session_id: String,
@@ -144,8 +165,9 @@ pub(crate) struct ReviewState {
 
     pub(crate) collapsed_files: HashSet<String>,
     pub(crate) active_hunk_id: Option<String>,
-    /// Set to ask the review pane to bring a hunk into view on the next frame.
-    pub(crate) scroll_to_hunk: Option<String>,
+    /// Set to ask the review pane to bring a hunk, or a line of one, into view on the next
+    /// frame - see [`ScrollTo`].
+    pub(crate) scroll_to: Option<ScrollTo>,
     pub(crate) selection: Option<LineSelection>,
     /// The hunk a drag is currently sweeping lines in, if the button is still down.
     pub(crate) selecting_in: Option<String>,
@@ -184,7 +206,7 @@ impl ReviewState {
             refresh_requested: false,
             collapsed_files: HashSet::new(),
             active_hunk_id: None,
-            scroll_to_hunk: None,
+            scroll_to: None,
             selection: None,
             selecting_in: None,
             drafts: Vec::new(),
@@ -205,6 +227,16 @@ impl ReviewState {
             .as_ref()
             .map(|payload| payload.hunks.as_slice())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn hunk_by_id(&self, hunk_id: &str) -> Option<&HunkView> {
+        self.hunks().iter().find(|hunk| hunk.id == hunk_id)
+    }
+
+    /// The first of a file's hunks in the order the diff lays them out, which is the order
+    /// of the file: the one nearest its top.
+    pub(crate) fn first_hunk_of(&self, file_path: &str) -> Option<&HunkView> {
+        self.hunks().iter().find(|hunk| hunk.file_path == file_path)
     }
 
     pub(crate) fn read_only(&self) -> bool {
@@ -667,6 +699,12 @@ pub(crate) struct Model {
     /// [`crate::moontasks::TaskView`] because the commit pane reads it too, and it has to be
     /// there whether or not a board is open.
     pub(crate) review_requests: Vec<ReviewRequestView>,
+    /// How many times the rows above have been changed from the board - a line dismissed or
+    /// crossed off - since the window opened. The change is made to the rows at once and to
+    /// the file on a worker thread, and a read of the files that started before the change
+    /// would put the row back for a tick: the read carries the count it started under, and
+    /// is dropped if the count has moved on - see `App::poll_review_requests`.
+    pub(crate) review_request_amendments: u64,
     /// The shells the server says have something running in them, as of the last poll. What
     /// quitting would interrupt is these rather than every open shell, so this is what the
     /// quit warning is about - see `App::quit_would_kill_shells`.

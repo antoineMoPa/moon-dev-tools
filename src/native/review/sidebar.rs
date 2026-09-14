@@ -330,19 +330,33 @@ fn draw_file_row(
     }
     let response = response.on_hover_text(hover_text);
 
-    // ⌘-click opens the file itself; the click that is not one still takes the diff to it.
-    let opened =
-        crate::native::review::opens_the_file(app, ui, &response, session_id, &file.file_path);
+    // Both clicks lead to the file's first hunk: ⌘-click opens the file itself, at the
+    // change; the click that is not one still takes the diff to it.
+    let first_hunk = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.first_hunk_of(&file.file_path))
+        .map(|hunk| {
+            (
+                hunk.id.clone(),
+                crate::native::review::diff::first_changed_line_of_hunk(hunk),
+            )
+        });
+    let changed_line = first_hunk.as_ref().and_then(|(_, line)| *line);
+    let opened = crate::native::review::opens_the_file(
+        app,
+        ui,
+        &response,
+        session_id,
+        &file.file_path,
+        changed_line,
+    );
 
     if dot_response.is_some_and(|dot| dot.clicked()) {
         toggle_file_stage(app, session_id, file);
     } else if !opened && response.clicked() {
-        let review = app.model.review(session_id);
-        review.scroll_to_hunk = review
-            .hunks()
-            .iter()
-            .find(|hunk| hunk.file_path == file.file_path)
-            .map(|hunk| hunk.id.clone());
+        app.model.review(session_id).scroll_to =
+            first_hunk.map(|(id, _)| crate::native::model::ScrollTo::hunk(id));
     }
 
     // A menu closes on any click inside it by default, which would take the discard away on
@@ -351,7 +365,13 @@ fn draw_file_row(
     egui::Popup::context_menu(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            crate::native::review::open_file_item(app, ui, session_id, &file.file_path);
+            crate::native::review::open_file_item(
+                app,
+                ui,
+                session_id,
+                &file.file_path,
+                changed_line,
+            );
 
             // The rest of the menu is what can be done to the whole file at once. A review
             // with no index behind it - a commit, a comparison - can do none of it, and is

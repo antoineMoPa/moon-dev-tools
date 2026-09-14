@@ -130,8 +130,15 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                     Ordering::Relaxed,
                 );
             }
+            // The review has answered too: a card's start menu lists the agents the review
+            // says are installed, and the board's read no longer queues behind the review's
+            // git, so either can land first.
+            let review_answered = app
+                .model
+                .review_ref(&app.model.root_session_id)
+                .is_some_and(|review| review.payload.is_some());
             ready_in_ui.store(
-                app.model.board.loaded && app.model.board.tasks.len() == 3,
+                app.model.board.loaded && app.model.board.tasks.len() == 3 && review_answered,
                 Ordering::Relaxed,
             );
         });

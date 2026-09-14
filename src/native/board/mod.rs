@@ -469,11 +469,36 @@ impl Axis {
 // [`widgets`] now and keep their old names here.
 pub(super) use crate::native::widgets::{close_button, close_mark};
 
+/// What a run's dot says about it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Activity {
+    /// Going, and printing: green.
+    Running,
+    /// Going, but it has printed nothing for a while - an agent waiting on a question it
+    /// asked, or on the person, or stuck: amber, the colour of a thing half done.
+    Quiet,
+    /// Over: hollow.
+    Ended,
+}
+
 /// Whether a resource is still going: a filled dot for running, a hollow one for ended.
+pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
+    activity_dot(
+        ui,
+        if running {
+            Activity::Running
+        } else {
+            Activity::Ended
+        },
+        palette,
+    );
+}
+
+/// The same dot, with the third state a run can be in - see [`Activity`].
 ///
 /// Drawn rather than typeset, because the bundled fonts have no circle glyph - the system
 /// font that a shell's output borrows is not there to fall back on in a snapshot.
-pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
+pub(super) fn activity_dot(ui: &mut Ui, activity: Activity, palette: &Palette) {
     const DIAMETER: f32 = 7.0;
 
     let (rect, _) = ui.allocate_exact_size(vec2(DIAMETER, DIAMETER), egui::Sense::hover());
@@ -481,16 +506,19 @@ pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
         return;
     }
     let center = rect.center();
-    if running {
-        ui.painter()
-            .circle_filled(center, DIAMETER / 2.0, palette.added);
-    } else {
-        ui.painter().circle_stroke(
+    match activity {
+        Activity::Running => ui
+            .painter()
+            .circle_filled(center, DIAMETER / 2.0, palette.added),
+        Activity::Quiet => ui
+            .painter()
+            .circle_filled(center, DIAMETER / 2.0, palette.partial),
+        Activity::Ended => ui.painter().circle_stroke(
             center,
             DIAMETER / 2.0 - 0.5,
             egui::Stroke::new(1.0, palette.muted),
-        );
-    }
+        ),
+    };
 }
 
 /// A linked file's mark, in the place a shell's or a run's dot goes: a small page, so the row

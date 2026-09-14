@@ -81,7 +81,31 @@ pub(crate) struct RepoSession {
     pub(crate) files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+impl RepoSession {
+    /// What this session's review is of - see [`ReviewTarget`].
+    pub(crate) fn review_target(&self) -> ReviewTarget {
+        ReviewTarget {
+            repo_path: self.repo_path.clone(),
+            diff_target: self.diff_target.clone(),
+            active_commit: self.active_commit.clone(),
+        }
+    }
+}
+
+/// What a session's review is of: the repo, and which of its changes - the part of a
+/// [`RepoSession`] that git is asked about. Taken off the session as a value of its own so
+/// git can be asked with the server's lock released: the diff of a repo with a lot changed
+/// takes a while, and everything else the server does - starting a shell, staging a hunk -
+/// waits on that one lock. Compared after the asking, so an answer about a target the
+/// session has since moved off is asked again rather than shown.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct ReviewTarget {
+    pub(crate) repo_path: PathBuf,
+    pub(crate) diff_target: DiffTarget,
+    pub(crate) active_commit: Option<String>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(crate) struct DiffTarget {
     pub(crate) base: Option<String>,
     pub(crate) pathspec: Option<String>,
@@ -732,9 +756,9 @@ pub(crate) fn mark_activity(last_activity: &Mutex<Instant>) {
     }
 }
 
-pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, mut f: F) -> Result<T>
+pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, f: F) -> Result<T>
 where
-    F: FnMut(&mut RepoSession) -> Result<T>,
+    F: FnOnce(&mut RepoSession) -> Result<T>,
 {
     let mut guard = state
         .inner

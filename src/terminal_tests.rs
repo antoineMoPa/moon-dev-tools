@@ -283,6 +283,38 @@ fn an_agent_that_ends_cleanly_is_reaped() {
     );
 }
 
+/// A run that has stopped printing says for how long, which is what the board turns amber
+/// on. Nothing until it has printed at all - starting up is not being quiet.
+#[cfg(unix)]
+#[test]
+fn a_quiet_agent_says_how_long_it_has_been_quiet() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = spawn_fake_claude(&registry, "#!/bin/sh\necho drawn\nsleep 30\n");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && registry.quiet_for(&terminal_id).is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let quiet = registry
+        .quiet_for(&terminal_id)
+        .expect("expected the run to have printed");
+    std::thread::sleep(Duration::from_millis(300));
+    let later = registry
+        .quiet_for(&terminal_id)
+        .expect("expected the run to still be there");
+    assert!(
+        later >= quiet + Duration::from_millis(300),
+        "the quiet spell should grow while nothing is printed: {quiet:?} then {later:?}"
+    );
+
+    registry.remove(&terminal_id);
+    assert_eq!(
+        registry.quiet_for(&terminal_id),
+        None,
+        "a shell that is gone is not quiet"
+    );
+}
+
 /// A login shell exits with whatever its last command returned, so a nonzero status there
 /// is everyday use - reaped, never kept.
 #[cfg(unix)]

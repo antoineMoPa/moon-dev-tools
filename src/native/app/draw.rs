@@ -336,7 +336,7 @@ impl App {
         }
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
-        self.poll_submodules();
+        self.poll_submodules(focused);
         self.poll_review_requests();
         self.poll_running_shells();
         self.poll_language_server_work();

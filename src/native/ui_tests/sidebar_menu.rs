@@ -9,7 +9,9 @@ use std::sync::{
 
 use egui_kittest::{Harness, kittest::Queryable as _};
 
-use super::{app_for, click_like_a_hand, press_modifiers, right_click_at, seeded_fixture, settle};
+use super::{
+    Fixture, app_for, click_like_a_hand, press_modifiers, right_click_at, seeded_fixture, settle,
+};
 use crate::native::theme::ThemeMode;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -316,5 +318,73 @@ fn a_command_click_on_a_file_opens_it() {
         in_a_tab,
         "⌘-clicking the file should have opened it, saw {:?}",
         *opened.lock().expect("poisoned")
+    );
+}
+
+/// The file opens where the diff is: a ⌘-click on the heading over a file's hunks lands the
+/// tab on the first changed line rather than on line one, and so does the menu's item.
+#[test]
+fn a_command_click_on_a_heading_opens_the_file_at_its_change() {
+    let fixture = Fixture::new("heading-opens-at-change");
+    let twenty_lines: String = (1..=20).map(|n| format!("pub fn f{n}() {{}}\n")).collect();
+    fixture.write("src/lib.rs", &twenty_lines);
+    fixture.commit("Add the library");
+    // Line 12 alone is rewritten, so the hunk starts three lines of context above it.
+    fixture.write(
+        "src/lib.rs",
+        &twenty_lines.replace("pub fn f12() {}", "pub fn twelve() {}"),
+    );
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let opened_at = Arc::new(Mutex::new(None::<usize>));
+    let opened_at_in_ui = Arc::clone(&opened_at);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 880.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+            // The line is held by the editor only until the text has arrived and been laid
+            // out, so it is caught on the frames it is there.
+            if let Some(line) = app
+                .model
+                .file_editors
+                .values()
+                .find_map(|editor| editor.line_to_reveal_for_test())
+            {
+                *opened_at_in_ui.lock().expect("poisoned") = Some(line);
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    let heading = harness.get_by_label("src/lib.rs").rect();
+    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
+    click_like_a_hand(&mut harness, heading.center(), egui::Modifiers::COMMAND);
+    press_modifiers(&mut harness, egui::Modifiers::NONE);
+
+    let landed = settle(&mut harness, || {
+        opened_at.lock().expect("poisoned").is_some()
+    });
+    assert!(
+        landed,
+        "⌘-clicking the heading should have opened the file at a line"
+    );
+    assert_eq!(
+        *opened_at.lock().expect("poisoned"),
+        Some(12),
+        "the tab should open on the first changed line"
     );
 }
