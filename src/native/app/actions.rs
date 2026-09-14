@@ -11,6 +11,7 @@ use crate::{
     native::{
         bindings::Action,
         board, find,
+        menu::{MenuAction, NativeMenu},
         model::{OpenedFile, ProjectEditor, Stage},
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
@@ -587,6 +588,53 @@ impl App {
                 picked.display(),
                 repo_root.display()
             )),
+        }
+    }
+
+    /// What the menu bar and the keyboard still do before a project is open. The launch
+    /// screen has no tabs and nothing of a repo to act on, so ⌘W - "close tab" everywhere
+    /// else - closes the window itself, ⌘N opens another and ⌘J switches the theme. The
+    /// project's items are dropped rather than kept for whichever project opens next: a
+    /// "Review" picked on the launch screen was not asked of it.
+    ///
+    /// On macOS a chord can arrive as its menu item and as the key both, so each is noted
+    /// and done once - the same reason `Action::NewWindow` is deferred into one slot.
+    pub(super) fn apply_launch_screen_shortcuts(&mut self, ctx: &egui::Context) {
+        let mut closes = false;
+        let mut new_window = None;
+        let mut toggles_theme = false;
+        for action in self
+            .menu
+            .as_ref()
+            .map(NativeMenu::drain)
+            .unwrap_or_default()
+        {
+            match action {
+                MenuAction::CloseTab => closes = true,
+                MenuAction::NewWindow(frame) => new_window = Some(frame),
+                MenuAction::ToggleTheme => toggles_theme = true,
+                _ => {}
+            }
+        }
+        // Read as if typing: a bare letter has nothing to do here, and the path box of a
+        // remote launch screen is the one place to type one.
+        for action in self.keymap.resolve(ctx, true, false) {
+            match action {
+                Action::CloseTab => closes = true,
+                Action::NewWindow => new_window = Some(self.frame),
+                Action::ToggleTheme => toggles_theme = true,
+                _ => {}
+            }
+        }
+
+        if let Some(frame) = new_window {
+            self.open_new_window(frame);
+        }
+        if toggles_theme {
+            self.set_theme(self.model.theme.toggled());
+        }
+        if closes {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 

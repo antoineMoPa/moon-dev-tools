@@ -23,6 +23,9 @@ pub(crate) enum MenuAction {
     OpenSubmodules,
     /// Bring this window's own review forward, opening it if it is not open.
     OpenReview,
+    /// Bring the task board forward, opening it if it is not open - the palette's
+    /// `moontasks` command, as a menu item.
+    OpenTasks,
     /// Run one of the project's own commands in a shell.
     RunProject(crate::project::ProjectCommand),
     /// Open the pane those commands are set in.
@@ -58,6 +61,7 @@ mod platform {
         new_tab: MenuId,
         close_tab: MenuId,
         open_review: MenuId,
+        open_tasks: MenuId,
         open_submodules: MenuId,
         /// One per command the Project menu runs, in the order the menu has them.
         project_commands: Vec<(MenuId, ProjectCommand)>,
@@ -260,9 +264,12 @@ mod platform {
                     Code::KeyS,
                 )),
             );
+            // The board is unbound: it is opened once and then lived in, so it is the item
+            // rather than a chord that gets to it.
+            let open_tasks = MenuItem::new("Tasks", true, None);
             let tools_menu = Submenu::new("Tools", true);
             tools_menu
-                .append_items(&[&open_review, &open_submodules])
+                .append_items(&[&open_review, &open_tasks, &open_submodules])
                 .ok()?;
 
             let window_menu = Submenu::new("Window", true);
@@ -303,6 +310,7 @@ mod platform {
                 new_tab: new_tab.id().clone(),
                 close_tab: close_tab.id().clone(),
                 open_review: open_review.id().clone(),
+                open_tasks: open_tasks.id().clone(),
                 open_submodules: open_submodules.id().clone(),
                 project_commands: project_commands
                     .iter()
@@ -338,6 +346,8 @@ mod platform {
                     MenuAction::CloseTab
                 } else if event.id == self.open_review {
                     MenuAction::OpenReview
+                } else if event.id == self.open_tasks {
+                    MenuAction::OpenTasks
                 } else if event.id == self.open_submodules {
                     MenuAction::OpenSubmodules
                 } else if event.id == self.open_project {

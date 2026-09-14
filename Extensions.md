@@ -113,7 +113,7 @@ A view is a tree of maps, each naming its `kind`. These build them:
 | `button(label, event)`, `button(label, event, disabled)` | `update(event)` on a click |
 | `table(columns, rows)` | each row a map of `cells` (one per column), and optionally `selected`, `on_click`, `on_double_click`, and `menu` - a right click's entries, each `#{ label, event }` |
 | `code(words)` | monospace, scrolled to its end |
-| `input(id, value, hint, event)` | a line to type in; `update` gets `event` - a map - with what is typed in its `value`, on every change. `id` tells it from any other box in the view |
+| `input(id, value, hint, event)`, `input(id, value, hint, event, options)` | a line to type in; `update` gets `event` - a map - with what is typed in its `value`, on every change. `id` tells it from any other box in the view. `options` is a map of any of `focus`: the box has the keyboard as soon as the pane opens, until Escape hands it back |
 | `separator()` | |
 
 `ink` is one of `normal`, `muted`, `accent`, `warn`, `added`, `removed` - the window's own

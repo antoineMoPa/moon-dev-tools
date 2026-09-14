@@ -68,6 +68,9 @@ pub(crate) struct ExtensionPane {
     /// What is typed in each of the view's inputs, by the input's id. Kept here rather than
     /// read back from the view, so a keystroke is on screen at once, not a round trip later.
     inputs: HashMap<String, String>,
+    /// Whether an input asking for the keyboard has been given it. Once per pane: an input
+    /// given the keyboard every frame could never be left with Escape.
+    focused_an_input: bool,
 }
 
 impl ExtensionPane {
@@ -80,6 +83,23 @@ impl ExtensionPane {
             takes_keys: false,
             visible: true,
             inputs: HashMap::new(),
+            focused_an_input: false,
+        }
+    }
+
+    /// A pane showing `view` with no script behind it, for the window tests: what the window
+    /// makes of a view, without a script to write one.
+    #[cfg(test)]
+    pub(crate) fn showing(view: Element) -> Self {
+        Self {
+            running: None,
+            view: Some(view),
+            error: None,
+            scrolled_to: None,
+            takes_keys: false,
+            visible: true,
+            inputs: HashMap::new(),
+            focused_an_input: false,
         }
     }
 }
@@ -184,6 +204,7 @@ impl App {
             takes_keys: false,
             visible: true,
             inputs: HashMap::new(),
+            focused_an_input: false,
         })
     }
 
@@ -338,6 +359,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
         scroll_to,
         ids: 0,
         inputs: &mut pane.inputs,
+        focused_an_input: &mut pane.focused_an_input,
     };
     egui::Frame::new()
         .inner_margin(Margin::symmetric(12, 10))
@@ -377,6 +399,8 @@ struct Drawing<'a> {
     ids: usize,
     /// The pane's inputs - see [`ExtensionPane::inputs`].
     inputs: &'a mut HashMap<String, String>,
+    /// See [`ExtensionPane::focused_an_input`].
+    focused_an_input: &'a mut bool,
 }
 
 impl Drawing<'_> {
@@ -472,6 +496,7 @@ impl Drawing<'_> {
                 value,
                 hint,
                 on_change,
+                focus,
             } => {
                 let typed = self
                     .inputs
@@ -490,6 +515,10 @@ impl Drawing<'_> {
                         .hint_text(hint.as_str())
                         .desired_width(INPUT_WIDTH),
                 );
+                if *focus && !*self.focused_an_input {
+                    response.request_focus();
+                    *self.focused_an_input = true;
+                }
                 if response.changed() {
                     let Value::Object(mut event) = on_change.clone() else {
                         unreachable!("an input's on_change is checked to be a map")

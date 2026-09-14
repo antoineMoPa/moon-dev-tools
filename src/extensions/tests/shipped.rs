@@ -236,6 +236,32 @@ fn docker_restarts_the_selected_container_and_follows_its_logs_in_a_shell() {
     }
 }
 
+/// The pane opens with the keyboard in its filter box: a container is found among many by
+/// typing part of its name, before any key of the list is reached for.
+#[test]
+fn docker_opens_with_the_keyboard_in_its_filter_box() {
+    // Arrange
+    let scratch = Scratch::new("docker-focus");
+    scratch.program("docker", FAKE_DOCKER);
+    let running = start(
+        named("docker").expect("docker is shipped"),
+        &scratch.dir,
+        scratch.path(),
+    );
+    let mut heard = Heard::default();
+
+    // Act
+    heard.until(&running, |heard| heard.shows("web-1"));
+
+    // Assert
+    assert_eq!(
+        heard.input_asking_for_the_keyboard().as_deref(),
+        Some("filter"),
+        "{:?}",
+        heard.texts()
+    );
+}
+
 #[test]
 fn docker_filters_its_list_by_what_is_typed_and_keeps_the_cursor_on_its_container() {
     // Arrange

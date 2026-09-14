@@ -33,4 +33,11 @@ fn code(words) { #{ kind: "code", text: words } }
 // typed in its `value`. `id` tells it from any other box in the view.
 fn input(id, value, hint, event) { #{ kind: "input", id: id, value: value, hint: hint, on_change: event } }
 
+// `options` takes any of: focus (the box has the keyboard as soon as the pane opens).
+fn input(id, value, hint, event, options) {
+    let element = input(id, value, hint, event);
+    element += options;
+    element
+}
+
 fn separator() { #{ kind: "separator" } }

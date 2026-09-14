@@ -12,10 +12,16 @@ use std::{
 use egui::{Key, Modifiers};
 use egui_kittest::{Harness, kittest::Queryable};
 
-use crate::native::{
-    model::Stage,
-    panes::{OpenPaneRequest, Pane},
-    theme::ThemeMode,
+use serde_json::json;
+
+use crate::{
+    extensions::Element,
+    native::{
+        extension_pane::ExtensionPane,
+        model::Stage,
+        panes::{OpenPaneRequest, Pane},
+        theme::ThemeMode,
+    },
 };
 
 use super::{Fixture, app_for, press_key};
@@ -167,5 +173,72 @@ fn escape_puts_the_palette_away_over_an_extension() {
             .query_by_role(egui::accesskit::Role::TextInput)
             .is_none(),
         "Escape should have put the palette away"
+    );
+}
+
+/// An input marked `focus` has the keyboard as soon as its pane is drawn, and Escape hands it
+/// back for good: the pane does not take it again on the next frame.
+#[test]
+fn an_input_asking_for_the_keyboard_has_it_when_the_pane_opens_until_escape() {
+    let fixture = Fixture::new("extension-input-focus");
+    fixture.write("notes.txt", "notes\n");
+    fixture.commit("start");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let shown = Arc::new(AtomicBool::new(false));
+    let shown_in_ui = Arc::clone(&shown);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| {
+            if !shown_in_ui.load(Ordering::Relaxed) && matches!(app.model.stage, Stage::Ready) {
+                app.open_pane(OpenPaneRequest::Extension {
+                    name: "docker".to_string(),
+                });
+                // The view as a script would write it, put in the script's place before the
+                // script is started: what docker says about this machine is not the test's.
+                let (pane_id, _) = app
+                    .model
+                    .layout
+                    .panes()
+                    .find(|(_, pane)| matches!(pane, Pane::Extension { .. }))
+                    .expect("the extension pane was just opened");
+                app.model.extension_panes.insert(
+                    pane_id,
+                    ExtensionPane::showing(Element::Column {
+                        children: vec![Element::Input {
+                            id: "filter".to_string(),
+                            value: String::new(),
+                            hint: "filter".to_string(),
+                            on_change: json!({ "filter": true }),
+                            focus: true,
+                        }],
+                    }),
+                );
+                shown_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    let until = Instant::now() + PATIENCE;
+    while !shown.load(Ordering::Relaxed) {
+        assert!(
+            Instant::now() < until,
+            "the window never opened its project"
+        );
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_some(),
+        "the input should have the keyboard as the pane opens"
+    );
+
+    press_key(&mut harness, Key::Escape, Modifiers::NONE);
+
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_none(),
+        "Escape should have handed the keyboard back, and the pane should not take it again"
     );
 }

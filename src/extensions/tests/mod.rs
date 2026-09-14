@@ -131,6 +131,22 @@ impl Heard {
         self.texts().iter().any(|shown| shown == text)
     }
 
+    /// The id of the view's input that asks for the keyboard as the pane opens, if one does.
+    fn input_asking_for_the_keyboard(&self) -> Option<String> {
+        fn find(element: &Element) -> Option<String> {
+            match element {
+                Element::Input {
+                    id, focus: true, ..
+                } => Some(id.clone()),
+                Element::Row { children } | Element::Column { children } => {
+                    children.iter().find_map(find)
+                }
+                _ => None,
+            }
+        }
+        self.view.as_ref().and_then(find)
+    }
+
     /// The one text of a view that is a single `text(..)`.
     fn only_text(&self) -> String {
         let texts = self.texts();

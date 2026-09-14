@@ -66,6 +66,11 @@ pub(crate) enum Element {
         hint: String,
         /// A map; what is typed goes in its `value`.
         on_change: Value,
+        /// Whether the box has the keyboard as soon as the pane opens - for a box that is
+        /// what the pane is for, a filter over a list. Given once: Escape hands the
+        /// keyboard back, and the next frame does not take it again.
+        #[serde(default)]
+        focus: bool,
     },
 }
 

@@ -266,12 +266,14 @@ impl App {
 
         match self.model.stage {
             Stage::Prompt { .. } => {
+                self.apply_launch_screen_shortcuts(ctx);
                 self.draw_prompt(ui);
                 // No status bar in front of a prompt, so nothing to stand clear of.
                 self.draw_toasts(ctx, 0.0);
                 return;
             }
             Stage::Opening => {
+                self.apply_launch_screen_shortcuts(ctx);
                 self.draw_opening(ui);
                 // Nor while a project is opening: the bar comes with the workspace.
                 self.draw_toasts(ctx, 0.0);
@@ -301,6 +303,9 @@ impl App {
                 MenuAction::OpenReview => {
                     self.open_root_review();
                     continue;
+                }
+                MenuAction::OpenTasks => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Tasks)
                 }
                 MenuAction::OpenSubmodules => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)

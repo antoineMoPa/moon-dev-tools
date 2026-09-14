@@ -17,7 +17,9 @@ use crate::{
     native::{Launch, app::App, panes::PaneKind, theme::ThemeMode},
 };
 
-use super::{Fixture, app_for, app_for_frame, harness_with_loaded_review, seeded_fixture};
+use super::{
+    Fixture, app_for, app_for_frame, asked_to_close, harness_with_loaded_review, seeded_fixture,
+};
 
 #[test]
 fn the_review_window_draws_the_diff_it_was_opened_on() {
@@ -170,6 +172,46 @@ fn the_launch_screen_of_the_board_does_not_offer_a_review() {
     assert!(
         harness.query_by_label_contains("board").is_some(),
         "expected the board's launch screen to ask which repo's board to open"
+    );
+}
+
+/// The launch screen has no tab for ⌘W to close, so the chord closes the window: an empty
+/// window is put away the way a tab is, without a trip to the red button.
+#[test]
+fn cmd_w_on_the_launch_screen_closes_the_window() {
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_theme(egui::Theme::Dark)
+        .build_ui(move |ui| app.draw(ui));
+    harness.run_steps(3);
+    assert!(
+        !asked_to_close(&harness),
+        "the launch screen should stay open until it is told to close"
+    );
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::W,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.step();
+
+    assert!(
+        asked_to_close(&harness),
+        "⌘W on the launch screen should have closed the window"
     );
 }
 
