@@ -15,9 +15,9 @@ use crate::{
     agent_sessions::AgentSessionView,
     api::{
         AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
-        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion, LspLocation,
-        LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SessionOpened,
-        SessionPayload, SubmoduleHubPayload,
+        ContentMatch, FileContentPayload, LspCompletion, LspLocation, LspPosition, LspStatus,
+        LspWork, OpenSessionRequest, PatchPayload, SearchScope, SessionOpened, SessionPayload,
+        SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -26,6 +26,7 @@ use crate::{
         TaskView,
     },
     project::{ProjectCommand, ProjectConfig},
+    search::SearchListener,
 };
 
 /// Every review operation the window performs. Calls block, so the UI runs them
@@ -71,9 +72,24 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// [`crate::git::blame_file`].
     fn blame_file(&self, session_id: &str, file_path: &str, of: &BlameOf) -> Result<BlamePayload>;
     /// The files of the repo whose names match a search, for the palette's file finder.
-    fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload>;
+    /// Reported to the listener as they are found; the call returns when the search is over,
+    /// or as soon as the listener stops wanting it.
+    fn find_files(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<String>,
+    ) -> Result<()>;
     /// The lines of the repo that hold what was typed, for the palette's content search.
-    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload>;
+    /// Reported the same way.
+    fn search_contents(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<ContentMatch>,
+    ) -> Result<()>;
     fn write_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
     /// Create a file nothing is at yet, which is the first save of a tab opened on a new file.
     /// Refused where something already is.

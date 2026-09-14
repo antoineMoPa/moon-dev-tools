@@ -2,18 +2,26 @@
 //!
 //! Everything ⌘⇧P offers, in one list.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 use egui::{Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind, vec2};
 use egui_frames::DropSide;
 
 use crate::{
-    api::AgentKind,
+    api::{AgentKind, SearchProgress, SearchScope},
     native::{
         app::App,
         bindings::{self, Action},
+        model::Model,
         panes::{OpenPaneRequest, PaneKind},
+        tasks::ModelEdits,
         theme::{Palette, SMALL_SIZE},
     },
     project::ProjectCommand,
+    search::SearchListener,
 };
 
 /// What the palette's query is picking.
@@ -35,15 +43,28 @@ pub(crate) enum PaletteMode {
     CodeActions,
 }
 
-/// What one of the palette's two searches has found. One search at a time, for whatever was
-/// typed when it started - `searched` says which query the matches belong to, and a query
-/// that has moved on since starts another search.
+/// One question put to a search: what was typed, and which files it was looked for in.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct SearchRequest {
+    pub(crate) query: String,
+    pub(crate) scope: SearchScope,
+}
+
+/// What one of the palette's two searches has found so far, for the request it was started
+/// on. The matches come in while the search runs and `done` says when it is over; a palette
+/// that has moved on since - a key typed, the scope box toggled - starts another search,
+/// whose ticket is what tells its reports from the old one's.
 pub(crate) struct Search<T> {
-    pub(crate) searched: Option<String>,
+    pub(crate) searched: Option<SearchRequest>,
+    /// The ticket the search was started on - see `PaletteState::latest_search`. A report
+    /// from a search with another ticket is not about this list.
+    pub(crate) ticket: u64,
     pub(crate) matches: Vec<T>,
     /// Set when the repo had more matches than the search hands back, so the palette can say
     /// that narrowing the query would show different rows rather than only fewer.
     pub(crate) truncated: bool,
+    /// Whether the search is over: until it is, the rows are what has been found so far.
+    pub(crate) done: bool,
     pub(crate) error: Option<String>,
 }
 
@@ -51,8 +72,10 @@ impl<T> Default for Search<T> {
     fn default() -> Self {
         Self {
             searched: None,
+            ticket: 0,
             matches: Vec::new(),
             truncated: false,
+            done: false,
             error: None,
         }
     }
@@ -119,6 +142,13 @@ pub(crate) enum CommandAction {
     /// Carry out one of the code actions the palette is listing, by its place in the list.
     ApplyCodeAction(usize),
 }
+
+/// How much of the window's height the palette's rows may take before they scroll. With the
+/// palette hung 12% of the way down, this keeps the whole of it on screen.
+const ROWS_HEIGHT_OF_SCREEN: f32 = 0.55;
+
+/// The height of one row of the list.
+const ROW_HEIGHT: f32 = 34.0;
 
 /// The agents that get a "open X in a terminal" command, when they are installed.
 const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
@@ -684,7 +714,8 @@ fn content_rows(app: &App) -> Vec<Command> {
         .palette
         .contents
         .searched
-        .clone()
+        .as_ref()
+        .map(|asked| asked.query.clone())
         .unwrap_or_default();
     app.model
         .palette
@@ -707,15 +738,15 @@ fn content_rows(app: &App) -> Vec<Command> {
         .collect()
 }
 
-/// Whether the list on screen is only the start of what the repo matched.
-fn truncated_of(app: &App) -> bool {
+/// What the searches have to say under their rows, if anything - see [`footnote_of`].
+fn footnote(app: &App, shown: usize) -> Option<String> {
     match app.model.palette.mode {
         PaletteMode::Commands
         | PaletteMode::Rename
         | PaletteMode::Places
-        | PaletteMode::CodeActions => false,
-        PaletteMode::Files => app.model.palette.files.truncated,
-        PaletteMode::Contents => app.model.palette.contents.truncated,
+        | PaletteMode::CodeActions => None,
+        PaletteMode::Files => footnote_of(&app.model.palette.files, shown),
+        PaletteMode::Contents => footnote_of(&app.model.palette.contents, shown),
     }
 }
 
@@ -747,39 +778,55 @@ fn hint_of(app: &App) -> String {
 
 /// What the palette says when it has no rows to show.
 fn empty_message(app: &App) -> String {
-    let query = app.model.palette.query.as_str();
     match app.model.palette.mode {
         PaletteMode::Commands => "nothing matches".to_string(),
-        PaletteMode::Files => {
-            let files = &app.model.palette.files;
-            searching_message(files.error.as_deref(), files.searched.as_deref(), query)
-                .unwrap_or_else(|| "no file of the repo has that name".to_string())
-        }
+        PaletteMode::Files => searching_message(&app.model.palette.files)
+            .unwrap_or_else(|| "no file of the repo has that name".to_string()),
         PaletteMode::Contents => {
-            let contents = &app.model.palette.contents;
-            if query.is_empty() {
+            if app.model.palette.query.is_empty() {
                 return "type what to look for in the files".to_string();
             }
-            searching_message(
-                contents.error.as_deref(),
-                contents.searched.as_deref(),
-                query,
-            )
-            .unwrap_or_else(|| "no file of the repo holds that text".to_string())
+            searching_message(&app.model.palette.contents)
+                .unwrap_or_else(|| "no file of the repo holds that text".to_string())
         }
         PaletteMode::Rename => format!("type a new name for {}", renamed_name(app)),
         PaletteMode::Places | PaletteMode::CodeActions => "nothing matches".to_string(),
     }
 }
 
-/// What a search has to say for itself before it has an answer to the query on screen, if
-/// anything: a search that has not answered for this query yet is still running - what was
-/// found for the query before it is gone, and saying "no matches" would be a lie.
-fn searching_message(error: Option<&str>, searched: Option<&str>, query: &str) -> Option<String> {
-    match error {
-        Some(error) => Some(error.to_string()),
-        None if searched != Some(query) => Some("searching…".to_string()),
+/// What a search has to say for itself while it has nothing to show, if anything: a search
+/// that is not over is still looking, and saying "no matches" would be a lie.
+fn searching_message<T>(search: &Search<T>) -> Option<String> {
+    match &search.error {
+        Some(error) => Some(error.clone()),
+        None if !search.done => Some("searching…".to_string()),
         None => None,
+    }
+}
+
+/// The line under a search's rows, if it has one to say: that the rows are still coming in,
+/// or that they are only the start of what the repo matched - a cut-short list is not the
+/// whole answer, and the rows alone cannot say so.
+fn footnote_of<T>(search: &Search<T>, shown: usize) -> Option<String> {
+    if search.error.is_some() {
+        None
+    } else if !search.done {
+        Some("searching…".to_string())
+    } else if search.truncated {
+        Some(format!(
+            "the first {shown} matches - narrow the search for the rest"
+        ))
+    } else {
+        None
+    }
+}
+
+/// What the palette is asking of a search right now: the query in its box, in the scope its
+/// checkbox has.
+fn asked_of(app: &App) -> SearchRequest {
+    SearchRequest {
+        query: app.model.palette.query.clone(),
+        scope: app.model.palette.search_scope,
     }
 }
 
@@ -787,11 +834,8 @@ fn searching_message(error: Option<&str>, searched: Option<&str>, query: &str) -
 fn refresh_file_matches(app: &mut App) {
     refresh_search(
         app,
-        PaletteMode::Files,
-        "palette-files",
-        |backend, session_id, query| {
-            let payload = backend.find_files(session_id, query)?;
-            Ok((payload.files, payload.truncated))
+        |backend, session_id, asked, listener| {
+            backend.find_files(session_id, &asked.query, asked.scope, listener)
         },
         |model| &mut model.palette.files,
     );
@@ -801,68 +845,103 @@ fn refresh_file_matches(app: &mut App) {
 fn refresh_content_matches(app: &mut App) {
     refresh_search(
         app,
-        PaletteMode::Contents,
-        "palette-content",
-        |backend, session_id, query| {
-            let payload = backend.search_contents(session_id, query)?;
-            Ok((payload.matches, payload.truncated))
+        |backend, session_id, asked, listener| {
+            backend.search_contents(session_id, &asked.query, asked.scope, listener)
         },
         |model| &mut model.palette.contents,
     );
 }
 
-/// Keep one of the searches on the query that is typed.
+/// Keep one of the searches on what is asked: the query that is typed, in the scope that is
+/// ticked.
 ///
 /// The repo can be on another machine, so this is a backend call on a worker thread like
-/// reading a file is. One search runs at a time; anything typed while it is out is searched
-/// for on the frame after it lands, which is what keeps a held key from starting a search a
-/// frame.
+/// reading a file is - one that reports as it goes, so the rows fill in while `ag` is still
+/// walking the tree. A new request starts a new search at once, on a ticket of its own; the
+/// one before it sees it is no longer the latest and stops.
 fn refresh_search<T: Send + 'static>(
     app: &mut App,
-    mode: PaletteMode,
-    key: &str,
-    find: fn(&dyn crate::backend::Backend, &str, &str) -> anyhow::Result<(Vec<T>, bool)>,
-    search_of: fn(&mut crate::native::model::Model) -> &mut Search<T>,
+    find: fn(
+        &dyn crate::backend::Backend,
+        &str,
+        &SearchRequest,
+        &mut dyn SearchListener<T>,
+    ) -> anyhow::Result<()>,
+    search_of: fn(&mut Model) -> &mut Search<T>,
 ) {
-    let query = app.model.palette.query.clone();
-    let search = search_of(&mut app.model);
-    if search.searched.as_deref() == Some(query.as_str()) {
+    let asked = asked_of(app);
+    if search_of(&mut app.model).searched.as_ref() == Some(&asked) {
         return;
     }
-    if app.model.root_session_id.is_empty() {
-        let search = search_of(&mut app.model);
-        search.searched = Some(query);
+    let ticket = app.model.palette.next_search_ticket();
+    let no_repo = app.model.root_session_id.is_empty();
+    let search = search_of(&mut app.model);
+    *search = Search {
+        searched: Some(asked.clone()),
+        ticket,
+        ..Search::default()
+    };
+    if no_repo {
+        search.done = true;
         search.error = Some("no repo is open in this window yet".to_string());
         return;
     }
 
     let session_id = app.model.root_session_id.clone();
-    let for_call = query.clone();
-    app.tasks.spawn_keyed(
-        Some(key.to_string()),
-        move |backend| find(backend, &session_id, &for_call),
+    let latest = Arc::clone(&app.model.palette.latest_search);
+    app.tasks.spawn_editing(
+        None,
+        move |backend, edits| {
+            let mut listener = ListReports {
+                edits: edits.clone(),
+                ticket,
+                latest,
+                search_of,
+            };
+            find(backend, &session_id, &asked, &mut listener)
+        },
         move |model, result| {
-            // The palette may have been put away, or turned to another of its lists, while
-            // the search was out. Its answer belongs to neither.
-            if !model.palette.open || model.palette.mode != mode {
+            let search = search_of(model);
+            if search.ticket != ticket {
                 return;
             }
-            let search = search_of(model);
-            search.searched = Some(query);
-            match result {
-                Ok((matches, truncated)) => {
-                    search.matches = matches;
-                    search.truncated = truncated;
-                    search.error = None;
-                }
-                Err(error) => {
-                    search.matches.clear();
-                    search.truncated = false;
-                    search.error = Some(format!("{error}"));
-                }
+            if let Err(error) = result {
+                search.matches.clear();
+                search.truncated = false;
+                search.error = Some(format!("{error}"));
             }
+            search.done = true;
         },
     );
+}
+
+/// A running search's listener: each report it hears becomes the list on screen, as long as
+/// the search is still the one the list is for.
+struct ListReports<T> {
+    edits: ModelEdits,
+    ticket: u64,
+    latest: Arc<AtomicU64>,
+    search_of: fn(&mut Model) -> &mut Search<T>,
+}
+
+impl<T: Send + 'static> SearchListener<T> for ListReports<T> {
+    fn wanted(&mut self) -> bool {
+        self.latest.load(Ordering::SeqCst) == self.ticket
+    }
+
+    fn found(&mut self, progress: SearchProgress<T>) {
+        let ticket = self.ticket;
+        let search_of = self.search_of;
+        self.edits.push(move |model| {
+            let search = search_of(model);
+            if search.ticket != ticket {
+                return;
+            }
+            search.matches = progress.matches;
+            search.truncated = progress.truncated;
+            search.done = progress.done;
+        });
+    }
 }
 
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
@@ -903,7 +982,8 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     }
     // Typed since the highlight was picked: the list underneath it is a different list, and
     // the first match of the new one is what Enter runs.
-    if app.model.palette.highlight_query != app.model.palette.query {
+    let retyped = app.model.palette.highlight_query != app.model.palette.query;
+    if retyped {
         app.model.palette.highlighted = 0;
         app.model.palette.highlight_query = app.model.palette.query.clone();
     }
@@ -955,6 +1035,12 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     if std::mem::take(&mut app.model.palette.select_query) {
                         select_all(ui.ctx(), entry.id, &app.model.palette.query);
                     }
+                    if matches!(
+                        app.model.palette.mode,
+                        PaletteMode::Files | PaletteMode::Contents
+                    ) {
+                        draw_scope_box(ui, &mut app.model.palette.search_scope, &palette);
+                    }
 
                     ui.add_space(6.0);
                     if matches.is_empty() {
@@ -962,26 +1048,40 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                         return;
                     }
 
-                    for (index, command) in matches.iter().enumerate() {
-                        let highlighted = index == app.model.palette.highlighted;
-                        let row = draw_row(ui, command, highlighted, &palette);
-                        if row.clicked() {
-                            chosen = Some(index);
-                        }
-                        if row.hovered() {
-                            app.model.palette.highlighted = index;
-                        }
-                    }
-                    // A cut-short list is not the whole answer, and the rows alone cannot say
-                    // so: the files left out could be the one being looked for.
-                    if truncated_of(app) {
+                    // The rows scroll rather than the box growing: a list taller than the
+                    // window would be pushed up to fit, search line and all, every time the
+                    // matches came in. The height is the rows' own, capped - an area hands
+                    // its contents last frame's rect to fit in, so a scroll area left to size
+                    // itself would stay as short as the empty palette was. The highlight is
+                    // kept in view when the keyboard moves it; a pointer over a row is
+                    // already looking at it.
+                    let keep_highlight_in_view = move_down || move_up || retyped;
+                    let rows_height = (matches.len() as f32 * ROW_HEIGHT)
+                        .min(screen.height() * ROWS_HEIGHT_OF_SCREEN);
+                    egui::ScrollArea::vertical()
+                        .max_height(rows_height)
+                        .min_scrolled_height(rows_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for (index, command) in matches.iter().enumerate() {
+                                let highlighted = index == app.model.palette.highlighted;
+                                let row = draw_row(ui, command, highlighted, &palette);
+                                if highlighted && keep_highlight_in_view {
+                                    row.scroll_to_me(None);
+                                }
+                                if row.clicked() {
+                                    chosen = Some(index);
+                                }
+                                if row.hovered() {
+                                    app.model.palette.highlighted = index;
+                                }
+                            }
+                        });
+                    if let Some(footnote) = footnote(app, matches.len()) {
                         ui.label(
-                            RichText::new(format!(
-                                "the first {} matches - narrow the search for the rest",
-                                matches.len()
-                            ))
-                            .size(SMALL_SIZE - 1.0)
-                            .color(palette.muted),
+                            RichText::new(footnote)
+                                .size(SMALL_SIZE - 1.0)
+                                .color(palette.muted),
                         );
                     }
                 });
@@ -993,6 +1093,20 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     {
         app.model.palette.dismiss();
         app.pending_action = Some(command.action);
+    }
+}
+
+/// The box under the two searches' line that widens them to the files the repo's
+/// `.gitignore` leaves out - the submodules of a repo that ignores them, say. The line keeps
+/// the keyboard; this is for the pointer.
+fn draw_scope_box(ui: &mut egui::Ui, scope: &mut SearchScope, palette: &Palette) {
+    ui.add_space(3.0);
+    let mut included = scope.includes_ignored();
+    let label = RichText::new("include gitignored")
+        .size(SMALL_SIZE - 1.0)
+        .color(palette.muted);
+    if ui.checkbox(&mut included, label).changed() {
+        *scope = SearchScope::including_ignored(included);
     }
 }
 
@@ -1033,7 +1147,7 @@ fn draw_row(
     palette: &Palette,
 ) -> egui::Response {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 34.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), egui::Sense::click());
     let response = crate::native::widgets::clickable(response);
 
     if ui.is_rect_visible(rect) {

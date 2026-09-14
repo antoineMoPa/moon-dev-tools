@@ -4,6 +4,7 @@
 //! involved.
 
 use std::{
+    io::{BufRead, BufReader},
     net::TcpStream,
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -18,11 +19,11 @@ use serde_json::json;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
-        ContentMatchesPayload, FileContentPayload, FileMatchesPayload, LspCompletion,
-        LspCompletionsPayload, LspDocumentRequest, LspLocation, LspLocationsPayload, LspPosition,
-        LspPositionRequest, LspStatus, LspStatusPayload, LspTriggersPayload, LspWork,
-        LspWorkPayload, OpenSessionRequest, PatchPayload, SessionOpened, SessionPayload,
-        SubmoduleHubPayload, TerminalNameRequest, TerminalView,
+        ContentMatch, FileContentPayload, LspCompletion, LspCompletionsPayload, LspDocumentRequest,
+        LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest, LspStatus,
+        LspStatusPayload, LspTriggersPayload, LspWork, LspWorkPayload, OpenSessionRequest,
+        PatchPayload, SearchLine, SearchScope, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        TerminalNameRequest, TerminalView,
     },
     backend::Backend,
     moontasks::{
@@ -31,9 +32,13 @@ use crate::{
         TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened,
     },
     project::{ProjectCommand, ProjectConfig},
+    search::SearchListener,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a streamed search may take: as long as `ag` needs on a large tree, which is not
+/// the half minute a plain request gets. A search nobody wants is stopped long before.
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub(crate) struct RemoteBackend {
     /// Base URL of the remote server, without a trailing slash, e.g. `http://dev-box:42000`.
@@ -108,6 +113,41 @@ impl RemoteBackend {
             .with_context(|| format!("GET {path} failed"))?
             .error_for_status()
             .map_err(remote_refusal)?;
+        Ok(())
+    }
+
+    /// A search the server streams, a line of JSON per report - see [`SearchLine`] - and an
+    /// empty line on every tick nothing changed. Each line is handed to the listener as it
+    /// comes; when the listener stops wanting the search, the response is dropped, which
+    /// closes the connection, which is what stops the search on the far side.
+    fn stream_search<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        listener: &mut dyn SearchListener<T>,
+    ) -> Result<()> {
+        let response = self
+            .client
+            .get(format!("{}{path}", self.base_url))
+            .timeout(SEARCH_TIMEOUT)
+            .send()
+            .with_context(|| format!("GET {path} failed"))?
+            .error_for_status()
+            .map_err(remote_refusal)?;
+        for line in BufReader::new(response).lines() {
+            let line = line.with_context(|| format!("GET {path} broke off"))?;
+            if !listener.wanted() {
+                return Ok(());
+            }
+            if line.is_empty() {
+                continue;
+            }
+            let heard: SearchLine<T> = serde_json::from_str(&line)
+                .with_context(|| format!("could not read a line of GET {path}"))?;
+            match heard {
+                SearchLine::Found(progress) => listener.found(progress),
+                SearchLine::Failed(reason) => bail!("{reason}"),
+            }
+        }
         Ok(())
     }
 
@@ -303,16 +343,38 @@ impl Backend for RemoteBackend {
         )
     }
 
-    fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {
+    fn find_files(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<String>,
+    ) -> Result<()> {
         let encoded = urlencode(query);
-        self.get(&format!("/api/session/{session_id}/files?query={encoded}"))
+        let include_ignored = scope.includes_ignored();
+        self.stream_search(
+            &format!(
+                "/api/session/{session_id}/files?query={encoded}&include_ignored={include_ignored}"
+            ),
+            listener,
+        )
     }
 
-    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload> {
+    fn search_contents(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<ContentMatch>,
+    ) -> Result<()> {
         let encoded = urlencode(query);
-        self.get(&format!(
-            "/api/session/{session_id}/content?query={encoded}"
-        ))
+        let include_ignored = scope.includes_ignored();
+        self.stream_search(
+            &format!(
+                "/api/session/{session_id}/content?query={encoded}&include_ignored={include_ignored}"
+            ),
+            listener,
+        )
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {

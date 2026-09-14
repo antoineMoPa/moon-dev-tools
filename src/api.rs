@@ -542,35 +542,79 @@ pub(crate) struct FileQuery {
     pub(crate) file_path: String,
 }
 
+/// Which files a search reads: the files of the repo, or those and the ones its `.gitignore`
+/// leaves out - a submodule some repos ignore, a vendored directory.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum SearchScope {
+    #[default]
+    RepoFiles,
+    IncludingIgnored,
+}
+
+impl SearchScope {
+    /// The scope a checkbox reading "include gitignored" stands for, ticked or not.
+    pub(crate) fn including_ignored(included: bool) -> Self {
+        if included {
+            Self::IncludingIgnored
+        } else {
+            Self::RepoFiles
+        }
+    }
+
+    pub(crate) fn includes_ignored(self) -> bool {
+        self == Self::IncludingIgnored
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct FileSearchQuery {
     pub(crate) query: String,
+    /// Whether the files the repo's `.gitignore` leaves out are searched too - see
+    /// [`SearchScope`], which this is on the wire.
+    pub(crate) include_ignored: bool,
 }
 
-/// The paths of the repo whose names match a search, and whether there were more of them
-/// than the search hands back.
-#[derive(Default, Serialize, Deserialize)]
-pub(crate) struct FileMatchesPayload {
-    pub(crate) files: Vec<String>,
+/// What a search has found so far. A search reports one of these every time what it has
+/// found changes, and once more, marked done, when it is over; each stands on its own - the
+/// matches are the whole of what is worth showing, not the ones since the report before.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SearchProgress<T> {
+    pub(crate) matches: Vec<T>,
+    /// Set when there were more matches than the search hands back, so the palette can say
+    /// that narrowing the query would show different rows rather than only fewer.
     pub(crate) truncated: bool,
+    pub(crate) done: bool,
+}
+
+impl<T> SearchProgress<T> {
+    /// A search that is over without having had anything to look for.
+    pub(crate) fn nothing() -> Self {
+        Self {
+            matches: Vec::new(),
+            truncated: false,
+            done: true,
+        }
+    }
+}
+
+/// One line of a search streamed over the wire: a report, or the reason the search failed,
+/// which comes last when it comes at all - the response is under way by then, so a status
+/// line cannot carry it.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SearchLine<T> {
+    Found(SearchProgress<T>),
+    Failed(String),
 }
 
 /// One line of the repo that a content search found.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ContentMatch {
     pub(crate) file_path: String,
     /// Counted from one, the way the number in an editor's fringe is.
     pub(crate) line_number: usize,
     /// The line itself, trimmed of its indentation and cut short if it was a long one.
     pub(crate) line: String,
-}
-
-/// The lines of the repo that hold what was searched for, and whether there were more of
-/// them than the search hands back.
-#[derive(Default, Serialize, Deserialize)]
-pub(crate) struct ContentMatchesPayload {
-    pub(crate) matches: Vec<ContentMatch>,
-    pub(crate) truncated: bool,
 }
 
 #[derive(Deserialize)]

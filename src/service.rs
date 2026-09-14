@@ -15,10 +15,9 @@ use crate::{
     agent::{agent_is_available, agent_options},
     api::{
         AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommitHistoryPayload,
-        CommitView,
-        ContentMatchesPayload, DiffTarget, FileContentPayload, FileMatchesPayload, HunkView,
-        OpenSessionRequest, PatchPayload, RepoSession, RepoStatusView, SessionOpened,
-        SessionPayload, SubmoduleHubPayload,
+        CommitView, ContentMatch, DiffTarget, FileContentPayload, HunkView, OpenSessionRequest,
+        PatchPayload, RepoSession, RepoStatusView, SearchScope, SessionOpened, SessionPayload,
+        SubmoduleHubPayload,
     },
     comments::{
         agent_dispatch_log, anchored_comment_key, anchored_comments_only,
@@ -32,6 +31,7 @@ use crate::{
         list_submodule_repos, local_change_summary_from_status, preview_patch, project_root,
         read_repo_file, run_git, run_git_no_output,
     },
+    search::SearchListener,
 };
 
 pub(crate) const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
@@ -464,10 +464,14 @@ pub(crate) fn find_session_files(
     state: &AppState,
     session_id: &str,
     query: &str,
-) -> Result<FileMatchesPayload> {
-    crate::api::with_session(state, session_id, |session| {
-        crate::search::file_names::matching_paths(&session.repo_path, query)
-    })
+    scope: SearchScope,
+    listener: &mut dyn SearchListener<String>,
+) -> Result<()> {
+    // The path is read under the sessions lock and the search runs without it: a walk of a
+    // large tree takes seconds, and nothing else about the sessions should wait on it.
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    crate::search::file_names::stream_matching_paths(&repo_path, query, scope, listener)
 }
 
 /// The lines of the repo that hold what was searched for. Runs where the repo is, the same
@@ -476,10 +480,12 @@ pub(crate) fn search_session_contents(
     state: &AppState,
     session_id: &str,
     query: &str,
-) -> Result<ContentMatchesPayload> {
-    crate::api::with_session(state, session_id, |session| {
-        crate::search::file_contents::matching_lines(&session.repo_path, query)
-    })
+    scope: SearchScope,
+    listener: &mut dyn SearchListener<ContentMatch>,
+) -> Result<()> {
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    crate::search::file_contents::stream_matching_lines(&repo_path, query, scope, listener)
 }
 
 pub(crate) fn write_session_file(

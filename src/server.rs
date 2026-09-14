@@ -2,6 +2,7 @@
 //! [`crate::service`], which a window on this machine calls directly.
 
 use std::{
+    convert::Infallible,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -9,17 +10,20 @@ use std::{
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, Query, State},
-    response::{Html, IntoResponse},
+    http::header,
+    response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
 };
+use serde::Serialize;
 
 use crate::{
     agent::detect_agent_availability,
     api::{
         AgentLogPayload, AgentLogQuery, AppError, AppState, BlamePayload, CommitHistoryPayload,
-        CommitHistoryQuery, CommitSelectionRequest, ContentMatchesPayload, FileAtQuery,
-        FileContentPayload, FileMatchesPayload, FileQuery, FileSearchQuery, OpenSessionRequest, PatchPayload,
+        CommitHistoryQuery, CommitSelectionRequest, FileAtQuery, FileContentPayload, FileQuery,
+        FileSearchQuery, OpenSessionRequest, PatchPayload, SearchLine, SearchProgress, SearchScope,
         SelectionRequest, ServerState, SessionOpened, SessionPayload, SubmoduleHubPayload,
         bind_host, port, server_url,
     },
@@ -29,6 +33,7 @@ use crate::{
         TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
+    search::SearchListener,
     service,
 };
 
@@ -523,26 +528,86 @@ async fn find_session_files(
     AxumPath(session_id): AxumPath<String>,
     Query(query): Query<FileSearchQuery>,
     State(state): State<AppState>,
-) -> Result<Json<FileMatchesPayload>, AppError> {
+) -> Response {
     mark_activity(&state);
-    Ok(Json(service::find_session_files(
-        &state,
-        &session_id,
-        &query.query,
-    )?))
+    streamed_search(state, move |state, listener| {
+        service::find_session_files(
+            state,
+            &session_id,
+            &query.query,
+            SearchScope::including_ignored(query.include_ignored),
+            listener,
+        )
+    })
 }
 
 async fn search_session_contents(
     AxumPath(session_id): AxumPath<String>,
     Query(query): Query<FileSearchQuery>,
     State(state): State<AppState>,
-) -> Result<Json<ContentMatchesPayload>, AppError> {
+) -> Response {
     mark_activity(&state);
-    Ok(Json(service::search_session_contents(
-        &state,
-        &session_id,
-        &query.query,
-    )?))
+    streamed_search(state, move |state, listener| {
+        service::search_session_contents(
+            state,
+            &session_id,
+            &query.query,
+            SearchScope::including_ignored(query.include_ignored),
+            listener,
+        )
+    })
+}
+
+/// A search answered as it runs: a line of JSON per report - see [`SearchLine`] - an empty
+/// line on every tick nothing changed, and the reason as the last line if it failed. The
+/// search runs on a blocking thread and stops when the client goes: the heartbeat is what
+/// notices the connection closing.
+fn streamed_search<T: Serialize + Send + 'static>(
+    state: AppState,
+    search: impl FnOnce(&AppState, &mut dyn SearchListener<T>) -> Result<()> + Send + 'static,
+) -> Response {
+    let (lines, streamed) = tokio::sync::mpsc::channel::<Bytes>(64);
+    tokio::task::spawn_blocking(move || {
+        let mut listener = WireListener { lines };
+        if let Err(error) = search(&state, &mut listener) {
+            listener.send(&SearchLine::<T>::Failed(format!("{error:#}")));
+        }
+    });
+    let body = Body::from_stream(futures::stream::unfold(
+        streamed,
+        |mut streamed| async move {
+            streamed
+                .recv()
+                .await
+                .map(|line| (Ok::<_, Infallible>(line), streamed))
+        },
+    ));
+    ([(header::CONTENT_TYPE, "application/x-ndjson")], body).into_response()
+}
+
+/// The search's listener on the server: what it hears goes down the wire, a line at a time.
+struct WireListener {
+    lines: tokio::sync::mpsc::Sender<Bytes>,
+}
+
+impl WireListener {
+    fn send<T: Serialize>(&mut self, line: &SearchLine<T>) {
+        let mut bytes = serde_json::to_vec(line).expect("a search line serializes");
+        bytes.push(b'\n');
+        // A failed send is the client gone, which the next `wanted` answers.
+        let _ = self.lines.blocking_send(Bytes::from(bytes));
+    }
+}
+
+impl<T: Serialize> SearchListener<T> for WireListener {
+    /// The heartbeat: an empty line, which fails to send once the client has hung up.
+    fn wanted(&mut self) -> bool {
+        self.lines.blocking_send(Bytes::from_static(b"\n")).is_ok()
+    }
+
+    fn found(&mut self, progress: SearchProgress<T>) {
+        self.send(&SearchLine::Found(progress));
+    }
 }
 
 async fn resolve_comment(

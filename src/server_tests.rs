@@ -145,6 +145,53 @@ fn the_api_a_remote_window_calls_still_answers() {
     assert_eq!(health.text().expect("failed to read health"), "ok");
 }
 
+/// The searches over HTTP: the server streams what it finds, a line at a time, and the
+/// remote backend hands each line to its listener the way the in-process one does - down to
+/// the reason a search failed, which arrives on the stream rather than as a status.
+#[test]
+fn the_searches_stream_their_matches_over_http() {
+    use crate::{
+        api::SearchScope,
+        backend::{Backend, remote::RemoteBackend},
+        search::LastReport,
+    };
+
+    let served = serve("search");
+    let session_id = served.open_session();
+    let remote = RemoteBackend::connect(&served.base_url).expect("failed to connect");
+
+    let mut files = LastReport::wanting();
+    remote
+        .find_files(&session_id, "txt", SearchScope::RepoFiles, &mut files)
+        .expect("the file search failed");
+    assert_eq!(files.done().matches, vec!["a.txt".to_string()]);
+
+    let mut lines = LastReport::wanting();
+    remote
+        .search_contents(&session_id, "TWO", SearchScope::RepoFiles, &mut lines)
+        .expect("the content search failed");
+    let found = lines.done();
+    assert_eq!(found.matches.len(), 1);
+    assert_eq!(found.matches[0].file_path, "a.txt");
+    assert_eq!(found.matches[0].line_number, 1);
+    assert_eq!(found.matches[0].line, "two");
+
+    let mut nowhere = LastReport::<String>::wanting();
+    let refused = remote
+        .find_files(
+            "no-such-session",
+            "txt",
+            SearchScope::RepoFiles,
+            &mut nowhere,
+        )
+        .expect_err("a search of an unknown session should fail");
+    assert!(
+        refused.to_string().contains("unknown session"),
+        "the reason should have come down the stream: {refused}"
+    );
+    assert!(nowhere.last.is_none());
+}
+
 /// The board over HTTP, which is the path a window pointed at another machine takes.
 #[test]
 fn a_task_can_be_created_worked_in_and_moved_over_http() {

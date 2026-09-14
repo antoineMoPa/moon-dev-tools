@@ -17,6 +17,24 @@ use crate::{backend::Backend, native::model::Model};
 /// An edit the UI applies to the model once a task finishes.
 type Apply = Box<dyn FnOnce(&mut Model) + Send>;
 
+/// The way a task edits the model while it is still running, for work that has something
+/// to show before it is done - a search streaming its matches in. Each edit lands in the
+/// same inbox a finished task's result does, and in the same order.
+#[derive(Clone)]
+pub(crate) struct ModelEdits {
+    inbox: Arc<Mutex<Vec<Apply>>>,
+    ctx: egui::Context,
+}
+
+impl ModelEdits {
+    pub(crate) fn push(&self, edit: impl FnOnce(&mut Model) + Send + 'static) {
+        if let Ok(mut inbox) = self.inbox.lock() {
+            inbox.push(Box::new(edit));
+        }
+        self.ctx.request_repaint();
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Tasks {
     backend: Arc<dyn Backend>,
@@ -58,6 +76,17 @@ impl Tasks {
         W: FnOnce(&dyn Backend) -> Result<T> + Send + 'static,
         A: FnOnce(&mut Model, Result<T>) + Send + 'static,
     {
+        self.spawn_editing(key, move |backend, _| work(backend), apply);
+    }
+
+    /// Run `work` on a worker thread with a way to edit the model as it goes, then hand its
+    /// result to `apply` on the UI thread once it is over.
+    pub(crate) fn spawn_editing<T, W, A>(&self, key: Option<String>, work: W, apply: A)
+    where
+        T: Send + 'static,
+        W: FnOnce(&dyn Backend, &ModelEdits) -> Result<T> + Send + 'static,
+        A: FnOnce(&mut Model, Result<T>) + Send + 'static,
+    {
         if let Some(key) = &key {
             let Ok(mut inflight) = self.inflight.lock() else {
                 return;
@@ -73,7 +102,11 @@ impl Tasks {
         let ctx = self.ctx.clone();
 
         thread::spawn(move || {
-            let result = work(backend.as_ref());
+            let edits = ModelEdits {
+                inbox: Arc::clone(&inbox),
+                ctx: ctx.clone(),
+            };
+            let result = work(backend.as_ref(), &edits);
             if let Some(key) = &key
                 && let Ok(mut inflight) = inflight.lock()
             {

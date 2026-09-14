@@ -235,7 +235,13 @@ fn the_palette_finds_a_file_by_name_and_opens_it() {
         .build_ui(move |ui| {
             app.draw(ui);
             *listed_in_ui.lock().expect("poisoned") = (
-                app.model.palette.files.searched.clone(),
+                app.model
+                    .palette
+                    .files
+                    .searched
+                    .as_ref()
+                    .filter(|_| app.model.palette.files.done)
+                    .map(|asked| asked.query.clone()),
                 app.model.palette.files.matches.clone(),
             );
             *open_in_ui.lock().expect("poisoned") = app
@@ -294,6 +300,88 @@ fn the_palette_finds_a_file_by_name_and_opens_it() {
     );
 }
 
+/// Ticking "include gitignored" under the finder's line widens it to the files the repo
+/// ignores - which is how a submodule the repo gitignores gets searched at all.
+#[test]
+fn ticking_the_box_lets_the_finder_read_the_gitignored_files() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("palette-files-ignored");
+    fixture.write(".gitignore", "build/\n");
+    fixture.write("build/extra.rs", "pub const GENERATED: u32 = 0;\n");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // What the finder is showing: the query it answered for, and the files it found.
+    let listed = Arc::new(Mutex::new((None::<String>, Vec::<String>::new())));
+    let listed_in_ui = Arc::clone(&listed);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            app.draw(ui);
+            *listed_in_ui.lock().expect("poisoned") = (
+                app.model
+                    .palette
+                    .files
+                    .searched
+                    .as_ref()
+                    .filter(|_| app.model.palette.files.done)
+                    .map(|asked| asked.query.clone()),
+                app.model.palette.files.matches.clone(),
+            );
+            ready_in_ui.store(
+                app.model
+                    .review_ref(&app.model.root_session_id)
+                    .is_some_and(|review| review.payload.is_some()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the review never loaded"
+    );
+    harness.run_steps(2);
+
+    press_key(&mut harness, egui::Key::P, egui::Modifiers::COMMAND);
+    for (key, letter) in [
+        (egui::Key::E, "e"),
+        (egui::Key::X, "x"),
+        (egui::Key::T, "t"),
+        (egui::Key::R, "r"),
+        (egui::Key::A, "a"),
+    ] {
+        type_letter(&mut harness, key, letter);
+    }
+    assert!(
+        settle(&mut harness, || {
+            listed.lock().expect("poisoned").1 == vec!["src/extra.rs".to_string()]
+        }),
+        "the finder should first list only the file of the repo - is ag installed?"
+    );
+
+    harness.get_by_label("include gitignored").click();
+    assert!(
+        settle(&mut harness, || {
+            listed.lock().expect("poisoned").1
+                == vec!["build/extra.rs".to_string(), "src/extra.rs".to_string()]
+        }),
+        "ticking the box should have searched again, with the ignored file on the list: {:?}",
+        listed.lock().expect("poisoned").1
+    );
+
+    harness.get_by_label("include gitignored").click();
+    assert!(
+        settle(&mut harness, || {
+            listed.lock().expect("poisoned").1 == vec!["src/extra.rs".to_string()]
+        }),
+        "unticking it should have put the finder back on the files of the repo"
+    );
+}
+
 /// The palette's content search finds the lines that hold what is typed, and running one
 /// opens the file it is in.
 #[test]
@@ -320,7 +408,13 @@ fn the_palette_searches_the_files_for_text_and_opens_a_match() {
         .build_ui(move |ui| {
             app.draw(ui);
             *found_in_ui.lock().expect("poisoned") = (
-                app.model.palette.contents.searched.clone(),
+                app.model
+                    .palette
+                    .contents
+                    .searched
+                    .as_ref()
+                    .filter(|_| app.model.palette.contents.done)
+                    .map(|asked| asked.query.clone()),
                 app.model
                     .palette
                     .contents
@@ -834,3 +928,4 @@ fn escape_puts_the_palette_away_over_a_shell() {
         "Escape should have put the palette away over a shell"
     );
 }
+

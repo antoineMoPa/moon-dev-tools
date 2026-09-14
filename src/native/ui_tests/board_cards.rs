@@ -401,7 +401,14 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
                     .collect();
             }
             if let Ok(mut searched) = searched_in_ui.lock() {
-                *searched = app.model.palette.files.searched.clone();
+                *searched = app
+                    .model
+                    .palette
+                    .files
+                    .searched
+                    .as_ref()
+                    .filter(|_| app.model.palette.files.done)
+                    .map(|asked| asked.query.clone());
             }
             if let Ok(mut linked) = linked_in_ui.lock() {
                 *linked = app

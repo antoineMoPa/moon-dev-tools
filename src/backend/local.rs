@@ -8,9 +8,9 @@ use anyhow::Result;
 use crate::{
     api::{
         AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommentRequest,
-        CommitHistoryPayload, ContentMatchesPayload, FileContentPayload, FileMatchesPayload,
-        LspCompletion, LspLocation, LspPosition, LspStatus, LspWork, OpenSessionRequest,
-        PatchPayload, SessionOpened, SessionPayload, SubmoduleHubPayload,
+        CommitHistoryPayload, ContentMatch, FileContentPayload, LspCompletion, LspLocation,
+        LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SearchScope,
+        SessionOpened, SessionPayload, SubmoduleHubPayload,
     },
     backend::Backend,
     moontasks::{
@@ -18,6 +18,7 @@ use crate::{
         StartResourceRequest, TaskView,
     },
     project::{ProjectCommand, ProjectConfig},
+    search::SearchListener,
     service,
     terminal::TerminalSession,
 };
@@ -132,12 +133,24 @@ impl Backend for LocalBackend {
         service::blame_session_file(&self.state, session_id, file_path, of)
     }
 
-    fn find_files(&self, session_id: &str, query: &str) -> Result<FileMatchesPayload> {
-        service::find_session_files(&self.state, session_id, query)
+    fn find_files(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<String>,
+    ) -> Result<()> {
+        service::find_session_files(&self.state, session_id, query, scope, listener)
     }
 
-    fn search_contents(&self, session_id: &str, query: &str) -> Result<ContentMatchesPayload> {
-        service::search_session_contents(&self.state, session_id, query)
+    fn search_contents(
+        &self,
+        session_id: &str,
+        query: &str,
+        scope: SearchScope,
+        listener: &mut dyn SearchListener<ContentMatch>,
+    ) -> Result<()> {
+        service::search_session_contents(&self.state, session_id, query, scope, listener)
     }
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()> {

@@ -488,6 +488,14 @@ pub(crate) struct PaletteState {
     pub(crate) files: crate::native::palette::Search<String>,
     /// The same for the content search: the lines of the repo that hold what was typed.
     pub(crate) contents: crate::native::palette::Search<crate::api::ContentMatch>,
+    /// Which files both searches read, as the "include gitignored" box under the query has
+    /// it. Kept from one opening to the next: a repo that gitignores its submodules wants
+    /// them read every time.
+    pub(crate) search_scope: crate::api::SearchScope,
+    /// The ticket of the search started last. A running search holds the ticket it was
+    /// started on and reads this from its thread: once it is no longer the latest - a key
+    /// typed since, the palette put away - nobody wants what it finds, and it stops.
+    pub(crate) latest_search: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub(crate) query: String,
     /// The task the file finder is picking a file for, while it is: the file chosen is put on
     /// that task's card and then opened, rather than only opened. `None` is the plain finder.
@@ -513,7 +521,9 @@ impl PaletteState {
     pub(crate) fn show(&mut self) {
         self.open = true;
         self.mode = crate::native::palette::PaletteMode::Commands;
-        // Whatever the last search found belongs to the query that is being cleared.
+        // Whatever the last search found belongs to the query that is being cleared - and
+        // one still running is looking for it too.
+        self.stop_searches();
         self.files = crate::native::palette::Search::default();
         self.contents = crate::native::palette::Search::default();
         self.files_link_to_task = None;
@@ -570,10 +580,25 @@ impl PaletteState {
     }
 
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
-    /// measured against.
+    /// measured against, and a search still out is nobody's to wait for.
     pub(crate) fn dismiss(&mut self) {
         self.open = false;
         self.rect = None;
+        self.stop_searches();
+    }
+
+    /// The ticket for a search about to start, which makes it the latest: whichever search
+    /// was running is no longer wanted.
+    pub(crate) fn next_search_ticket(&self) -> u64 {
+        self.latest_search
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    /// Leave no search wanted, without starting one.
+    fn stop_searches(&self) {
+        self.latest_search
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -584,6 +609,8 @@ impl Default for PaletteState {
             mode: crate::native::palette::PaletteMode::Commands,
             files: crate::native::palette::Search::default(),
             contents: crate::native::palette::Search::default(),
+            search_scope: crate::api::SearchScope::default(),
+            latest_search: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             query: String::new(),
             files_link_to_task: None,
             highlighted: 0,
