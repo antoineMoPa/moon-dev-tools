@@ -307,6 +307,7 @@ impl App {
                 MenuAction::OpenTasks => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Tasks)
                 }
+                MenuAction::OpenWorkLog => CommandAction::OpenWorkLog,
                 MenuAction::OpenSubmodules => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)
                 }

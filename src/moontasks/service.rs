@@ -435,6 +435,15 @@ pub(crate) fn open_notes(state: &AppState, session_id: &str, task_id: &str) -> R
     Ok(super::notes_repo_path(task_id))
 }
 
+/// Where the project's work log is, made if the project has none yet - see
+/// [`crate::native::work_log`]. Made here for the reason the notes are: the file pane reads
+/// and saves through the repo-file pipeline, which wants a file in the working tree.
+pub(crate) fn open_work_log(state: &AppState, session_id: &str) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    store::ensure_work_log_file(&repo_path)?;
+    Ok(super::work_log_repo_path())
+}
+
 /// Put a file of the repo on the task's card.
 ///
 /// The path is kept as the file pane addresses it - relative to the repo root - and has to be

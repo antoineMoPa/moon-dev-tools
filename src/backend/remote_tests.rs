@@ -418,6 +418,32 @@ fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
         .expect("expected the remote shell to close");
 }
 
+/// Opening the work log over HTTP makes the file, in the board's folder, holding the line an
+/// entry goes above - and says where it is the way the file pane addresses files.
+#[test]
+fn the_work_log_opens_over_http() {
+    let served = serve_a_repo("work-log");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let path = backend
+        .open_work_log(&opened.session_id)
+        .expect("expected the work log to open");
+    assert_eq!(path, ".moontasks/work-log.org");
+
+    let content = backend
+        .file_content(&opened.session_id, &path)
+        .expect("expected the file pane's read to reach the work log");
+    assert_eq!(content.content, "#now#\n");
+    assert!(served.root.join(".moontasks/.gitignore").is_file());
+}
+
 /// The card's notes and the file pane read the same file: opening the notes makes it real,
 /// the file pane's own write path edits it, and the board's next read shows what was written.
 #[test]

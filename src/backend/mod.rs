@@ -160,6 +160,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Make sure the task's notes file exists, and answer with the repo-relative path a file
     /// pane opens it by. Editing then goes through [`Backend::write_file`] like any file.
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String>;
+    /// Where the project's work log is, as a path from the repo root, made if the project
+    /// has none yet - see [`crate::native::work_log`].
+    fn open_work_log(&self, session_id: &str) -> Result<String>;
     /// Put a file of the repo on the task's card, by its path relative to the repo root.
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()>;
 

@@ -169,6 +169,13 @@ pub(crate) struct TaskNotesPayload {
     pub(crate) file_path: String,
 }
 
+/// Where the work log is, as the file pane addresses it - the answer to opening it, which
+/// makes the file when the project has none yet.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WorkLogPayload {
+    pub(crate) file_path: String,
+}
+
 /// Where dragged cards were let go of: which cards, the column, and how many of that
 /// column's other cards are above them. More than one card is a drag made with a selection.
 #[derive(Serialize, Deserialize)]
@@ -355,6 +362,16 @@ pub(crate) const NOTES_FILE_NAME: &str = "notes.md";
 /// The notes file as the file pane addresses it: relative to the repo root.
 pub(crate) fn notes_repo_path(task_id: &str) -> String {
     format!("{}/{task_id}/{NOTES_FILE_NAME}", store::TASKS_DIR_NAME)
+}
+
+/// The project's work log, in the board's folder beside the tasks - see
+/// [`crate::native::work_log`]. One per project: what is going on in this repo is written
+/// here, whichever task it is about.
+pub(crate) const WORK_LOG_FILE_NAME: &str = "work-log.org";
+
+/// The work log as the file pane addresses it: relative to the repo root.
+pub(crate) fn work_log_repo_path() -> String {
+    format!("{}/{WORK_LOG_FILE_NAME}", store::TASKS_DIR_NAME)
 }
 
 pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {

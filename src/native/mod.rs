@@ -44,6 +44,7 @@ pub(crate) mod theme;
 #[cfg(test)]
 pub(crate) mod ui_tests;
 pub(crate) mod widgets;
+pub(crate) mod work_log;
 pub(crate) mod workspace;
 pub(crate) mod workspace_edits;
 pub(crate) mod workspace_color;

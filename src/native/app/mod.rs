@@ -252,6 +252,7 @@ impl App {
                 connection,
                 commit_panes: HashMap::new(),
                 file_editors: HashMap::new(),
+                work_log_entries_waiting: HashMap::new(),
                 extension_panes: HashMap::new(),
                 markdown_cache: Default::default(),
                 find: None,

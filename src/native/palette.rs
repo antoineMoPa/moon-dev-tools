@@ -141,6 +141,8 @@ pub(crate) enum CommandAction {
     ToggleBlame,
     /// Carry out one of the code actions the palette is listing, by its place in the list.
     ApplyCodeAction(usize),
+    /// Open the project's work log at a new dated entry - see [`crate::native::work_log`].
+    OpenWorkLog,
 }
 
 /// How much of the window's height the palette's rows may take before they scroll. With the
@@ -220,6 +222,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Tasks),
         None,
     ));
+    commands.extend(work_log_commands());
     commands.push(single_pane_command(
         app.model
             .layout
@@ -554,6 +557,28 @@ fn repo_name_of(app: &App, session_id: &str) -> String {
         .and_then(|review| review.payload.as_ref())
         .map(|payload| payload.repo_name.clone())
         .unwrap_or_else(|| "repo".to_string())
+}
+
+/// The work log, under its name and under `wl`: the second is the same command, there for
+/// the hands that type `wl` into the palette without reading it - two letters and Enter.
+/// `wl` is a row of its own rather than a word in the first row's description because the
+/// list is what the palette types over, and a term matched in a description would still
+/// leave the row behind whatever came before it.
+fn work_log_commands() -> [Command; 2] {
+    [
+        Command {
+            title: "work log".to_string(),
+            description: "Open work log".to_string(),
+            action: CommandAction::OpenWorkLog,
+            shortcut: None,
+        },
+        Command {
+            title: "wl".to_string(),
+            description: "Open work log".to_string(),
+            action: CommandAction::OpenWorkLog,
+            shortcut: None,
+        },
+    ]
 }
 
 /// A pane the workspace keeps one of. It stays on the list once it is open - searching for
@@ -1200,6 +1225,23 @@ mod tests {
             action: CommandAction::OpenPane(OpenPaneRequest::Agents),
             shortcut: None,
         }
+    }
+
+    /// `wl` typed into the palette is the work log, first: Enter opens it.
+    #[test]
+    fn wl_is_the_work_log_and_the_first_row_for_it() {
+        let commands = vec![
+            command("review", "Bring the repo review forward"),
+            command("terminal", "Open a new shell"),
+        ]
+        .into_iter()
+        .chain(work_log_commands())
+        .collect();
+
+        let matches = filter(commands, "wl");
+
+        assert_eq!(matches[0].title, "wl");
+        assert!(matches!(matches[0].action, CommandAction::OpenWorkLog));
     }
 
     #[test]

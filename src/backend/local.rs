@@ -332,6 +332,10 @@ impl Backend for LocalBackend {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }
 
+    fn open_work_log(&self, session_id: &str) -> Result<String> {
+        moontasks::service::open_work_log(&self.state, session_id)
+    }
+
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {
         moontasks::service::link_file(&self.state, session_id, task_id, file_path)
     }

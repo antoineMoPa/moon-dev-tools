@@ -442,6 +442,7 @@ impl App {
             CommandAction::FormatFile => crate::native::formatting::start_in_front(self),
             CommandAction::CodeActions => crate::native::code_actions::start_in_front(self),
             CommandAction::ToggleBlame => crate::native::blame::toggle_in_front(self),
+            CommandAction::OpenWorkLog => self.open_work_log(),
             CommandAction::ApplyCodeAction(index) => {
                 crate::native::code_actions::apply(self, index)
             }

@@ -445,6 +445,19 @@ pub(crate) fn ensure_notes_file(repo_path: &Path, task_id: &str) -> Result<()> {
     write_notes(repo_path, task_id, "")
 }
 
+/// Make the project's work log if it is not there yet: a file holding only the line a new
+/// entry goes above - see [`crate::native::work_log`]. Made once and never rewritten: from
+/// then on it is the person's, and only ever written through the file pane.
+pub(crate) fn ensure_work_log_file(repo_path: &Path) -> Result<()> {
+    let root = ensure_tasks_root(repo_path)?;
+    let path = root.join(super::WORK_LOG_FILE_NAME);
+    if path.is_file() {
+        return Ok(());
+    }
+    fs::write(&path, format!("{}\n", crate::native::work_log::NOW_MARKER))
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
 /// The position a card takes to sit under everything already in a column.
 ///
 /// A board that cannot be read is a board with nothing in that column as far as this is

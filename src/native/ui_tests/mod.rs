@@ -34,6 +34,7 @@ mod sidebar_menu;
 mod status_bar;
 mod submodules;
 mod tab_rename;
+mod work_log;
 mod workspace_color;
 
 use std::{

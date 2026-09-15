@@ -29,7 +29,7 @@ use crate::{
     },
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload,
+        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload, WorkLogPayload,
         TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
         store::{BoardColumn, ColumnId},
     },
@@ -206,6 +206,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/files",
             post(link_task_file),
+        )
+        .route(
+            "/api/session/{session_id}/work-log/open",
+            post(open_work_log),
         )
         .route("/api/session/{session_id}/commit-state", get(commit_state))
         .route("/api/session/{session_id}/stage-all", post(stage_all))
@@ -1032,6 +1036,16 @@ async fn open_task_notes(
     mark_activity(&state);
     Ok(Json(TaskNotesPayload {
         file_path: moontasks::service::open_notes(&state, &session_id, &task_id)?,
+    }))
+}
+
+async fn open_work_log(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<WorkLogPayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(WorkLogPayload {
+        file_path: moontasks::service::open_work_log(&state, &session_id)?,
     }))
 }
 

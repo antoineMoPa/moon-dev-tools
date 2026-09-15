@@ -328,6 +328,30 @@ impl FileEditor {
         self.code.replace_ranges(ranges);
     }
 
+    /// Put a new entry of the work log into the text, and leave the caret where it is to be
+    /// written - see [`crate::native::work_log`]. Only for a tab with its text: there is
+    /// nothing to put it into before. A text with no marker line is left alone and said so.
+    pub(crate) fn add_work_log_entry(
+        &mut self,
+        entry: &crate::native::work_log::NewEntry,
+    ) -> Result<(), String> {
+        assert!(self.is_loaded(), "an entry is put into a text that has arrived");
+        let Some(insertion) = crate::native::work_log::insertion(self.code.text(), entry) else {
+            return Err(format!(
+                "no \"{}\" line in {}: a new entry goes in above it",
+                crate::native::work_log::NOW_MARKER,
+                self.file_path
+            ));
+        };
+        self.take_edits(vec![(insertion.byte..insertion.byte, insertion.header)]);
+        self.code.place_caret(insertion.caret);
+        self.reveal = Some(crate::native::panes::OpenAt {
+            line: insertion.line,
+            query: String::new(),
+        });
+        Ok(())
+    }
+
     /// Whether this pane's ⌘-click asks a language server, which is the only thing that
     /// answers one.
     pub(crate) fn asks_language_servers(&self) -> bool {
@@ -793,6 +817,8 @@ impl App {
     ) {
         let palette = self.palette_of();
         self.ensure_file_editor(pane_id, session_id, file_path, revision);
+        // The dated entry a work log tab was opened for, once its text is here to put it in.
+        self.add_waiting_work_log_entry(pane_id);
         // What the language server behind this file has been told about it, brought up with
         // what the pane is showing.
         let ctx = ui.ctx().clone();

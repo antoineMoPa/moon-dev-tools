@@ -160,6 +160,12 @@ is a new place to work rather than a second view of this one; `moon tasks --pick
 thing from a shell. Everywhere else those live in the command palette, which also has them on
 macOS.
 
+### Work log
+
+`Tools › Work Log` - `work log` in the palette - opens the project's journal.
+
+This is mainly a feature ported from my emacs config for project notes.
+
 ### Working on another machine
 
 Run the server where the repo is:

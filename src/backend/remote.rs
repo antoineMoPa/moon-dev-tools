@@ -29,7 +29,7 @@ use crate::{
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, LinkFileRequest, NewColumnRequest, StartResourceRequest,
-        TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened,
+        TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened, WorkLogPayload,
     },
     project::{ProjectCommand, ProjectConfig},
     search::SearchListener,
@@ -644,6 +644,12 @@ impl Backend for RemoteBackend {
             &json!({}),
         )?;
         Ok(notes.file_path)
+    }
+
+    fn open_work_log(&self, session_id: &str) -> Result<String> {
+        let work_log: WorkLogPayload =
+            self.post_json(&format!("/api/session/{session_id}/work-log/open"), &json!({}))?;
+        Ok(work_log.file_path)
     }
 
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {

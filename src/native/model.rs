@@ -747,6 +747,10 @@ pub(crate) struct Model {
     pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,
     /// The files open in tabs of their own, keyed by the pane showing each one.
     pub(crate) file_editors: HashMap<PaneId, crate::native::file_pane::FileEditor>,
+    /// The dated entry `Tools › Work Log` asked for, by the tab it is to go into, while that
+    /// tab's text is still on its way - see [`crate::native::work_log`]. The tab is opened
+    /// by the answer to a call that makes the file, which has no editor to put it in yet.
+    pub(crate) work_log_entries_waiting: HashMap<PaneId, crate::native::work_log::NewEntry>,
     /// The extensions open in tabs, keyed by the pane each one draws.
     pub(crate) extension_panes: HashMap<PaneId, crate::native::extension_pane::ExtensionPane>,
     /// What the markdown renderer keeps between frames - loaded images above all - shared by
