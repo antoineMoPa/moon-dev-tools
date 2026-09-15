@@ -221,6 +221,12 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The shells with something running in them right now, as opposed to the ones sitting at
     /// a prompt. This is what quitting would interrupt, and so what the window warns about.
     fn terminals_running_a_command(&self, session_id: &str) -> Result<Vec<String>>;
+    /// The shells asking for a person - a bell, or the notification an agent sends when it
+    /// is waiting on a question - and what each said. See [`crate::attention`].
+    fn terminals_wanting_attention(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::api::TerminalAttentionView>>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
     /// What a shell is called, if it has been named: an agent's shell is named as it starts,
     /// a plain one only once someone renames it. A shell the server does not have is an error.

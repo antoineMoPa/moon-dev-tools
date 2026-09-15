@@ -315,6 +315,79 @@ fn a_quiet_agent_says_how_long_it_has_been_quiet() {
     );
 }
 
+/// An agent that asks for a person through the terminal - the notification a terminal would
+/// put on the desktop - is marked as asking until somebody types into it. The desktop hears
+/// nothing: the ask stays in moon.
+#[cfg(unix)]
+#[test]
+fn a_shell_asking_for_a_person_is_marked_until_someone_types() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = spawn_fake_claude(
+        &registry,
+        "#!/bin/sh\nprintf 'working\\033]9;Permission needs input\\007'\nsleep 30\n",
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && registry.attention(&terminal_id).is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let asking = registry
+        .attention(&terminal_id)
+        .expect("expected the run to be asking for a person");
+    assert_eq!(asking.message, "Permission needs input");
+    assert_eq!(asking.terminal_id, terminal_id);
+    assert_eq!(
+        registry.wanting_attention(),
+        vec![asking],
+        "the server lists every shell that is asking"
+    );
+
+    // The pointer resting on the shell - a mouse report to a program tracking it - and the
+    // terminal answering a query are not the person answering.
+    let session = registry.get(&terminal_id).expect("expected the shell");
+    session
+        .write_report(b"\x1b[<35;10;4M")
+        .expect("expected the pointer to be reported");
+    session
+        .write_reply(b"\x1b[?62c")
+        .expect("expected the reply to be written");
+    assert!(
+        registry.attention(&terminal_id).is_some(),
+        "the pointer and a reply are not an answer"
+    );
+
+    session
+        .write_input(b"y")
+        .expect("expected the answer to be typed");
+    assert_eq!(
+        registry.attention(&terminal_id),
+        None,
+        "typing into the shell is the answer"
+    );
+}
+
+/// Claude is started told to ask through the terminal, since its own guess - by
+/// `TERM_PROGRAM`, which a moon shell does not set - would be the bell alone.
+#[cfg(unix)]
+#[test]
+fn claude_is_started_asking_through_the_terminal() {
+    let registry = Arc::new(TerminalRegistry::new(Arc::new(Mutex::new(Instant::now()))));
+    let terminal_id = spawn_fake_claude(&registry, "#!/bin/sh\nprintf '%s\\n' \"$@\"\nsleep 30\n");
+    let session = registry.get(&terminal_id).expect("expected the shell");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut printed = String::new();
+    while Instant::now() < deadline && !printed.contains("preferredNotifChannel") {
+        std::thread::sleep(Duration::from_millis(20));
+        printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay()).to_string();
+    }
+    assert!(
+        printed.contains("--settings")
+            && printed.contains("\"preferredNotifChannel\":\"iterm2_with_bell\""),
+        "claude should have been given the notification setting, got: {printed}"
+    );
+}
+
 /// A login shell exits with whatever its last command returned, so a nonzero status there
 /// is everyday use - reaped, never kept.
 #[cfg(unix)]

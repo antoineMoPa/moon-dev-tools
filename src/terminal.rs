@@ -21,9 +21,19 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
-use crate::api::{AgentKind, AppError, AppState, TerminalNameRequest, TerminalView};
+use crate::{
+    api::{
+        AgentKind, AppError, AppState, TerminalAttentionView, TerminalNameRequest, TerminalView,
+    },
+    attention::{Asked, Attention},
+};
 
 const OUTPUT_CHUNK_SIZE: usize = 8 * 1024;
+/// The settings Claude is started with so it asks for a person through the terminal: OSC 9,
+/// iTerm2's notification, and a bell with it. Its `auto` channel goes by `TERM_PROGRAM`,
+/// which a moon shell does not set, and falls back to the bell alone.
+const CLAUDE_NOTIFY_THROUGH_THE_TERMINAL: &str = r#"{"preferredNotifChannel":"iterm2_with_bell"}"#;
+
 /// How long the shell has to have printed nothing before [`TerminalSpec::type_ahead`] is
 /// typed.
 ///
@@ -52,6 +62,10 @@ enum ClientMessage {
     },
     /// The terminal answering a query the program made of it, which is not somebody typing.
     Reply {
+        data: String,
+    },
+    /// The terminal reporting the pointer to the program, which is not somebody typing either.
+    Report {
         data: String,
     },
     Resize {
@@ -213,6 +227,11 @@ pub(crate) struct TerminalSession {
     /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
     /// text arriving after someone has started writing lands in the middle of their sentence.
     typed_into: std::sync::atomic::AtomicBool,
+    /// The ask for a person the shell last made and nobody has answered - see
+    /// [`crate::attention`]. Typing into the shell is the answer, and takes it off.
+    attention: Mutex<Option<Attention>>,
+    /// Reads the shell's output for those asks, across however many reads a sequence spans.
+    attention_scanner: Mutex<crate::attention::Scanner>,
     /// Whether the program is gone while the session is kept - a failed agent held open for
     /// its error to be read. Input is discarded then: nothing reads the pty any more, and a
     /// write once its buffer fills would block whoever is typing.
@@ -235,13 +254,53 @@ impl TerminalSession {
     // websocket.
     pub(crate) fn write_input(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
-        self.typed_into.store(true, Ordering::Relaxed);
+        self.typed_into();
         self.write_to_child(data)
+    }
+
+    /// Somebody typed into the shell: the type-ahead is off, and whatever the shell was
+    /// asking for, it has been seen to.
+    fn typed_into(&self) {
+        self.typed_into.store(true, Ordering::Relaxed);
+        *self.attention.lock().unwrap() = None;
+    }
+
+    /// The shell asked for a person. A bell after a notification is the same ask - Claude's
+    /// `iterm2_with_bell` sends both - so it does not take the message's place; a
+    /// notification says more than a bell and takes any bell's.
+    fn asked_for_attention(&self, asked: Asked) {
+        let mut attention = self.attention.lock().unwrap();
+        let standing_notification = attention
+            .as_ref()
+            .is_some_and(|standing| matches!(standing.asked, Asked::Notification(_)));
+        if asked == Asked::Bell && standing_notification {
+            return;
+        }
+        *attention = Some(Attention::now(asked));
+    }
+
+    /// What the shell is asking for, as the window shows it.
+    fn attention_view(&self, terminal_id: &str) -> Option<TerminalAttentionView> {
+        let attention = self.attention.lock().unwrap().clone()?;
+        Some(TerminalAttentionView {
+            terminal_id: terminal_id.to_string(),
+            name: self.name.lock().unwrap().clone(),
+            message: attention.asked.message().to_string(),
+            at_unix: attention.at_unix,
+        })
     }
 
     /// The terminal answering the program's own query. It goes to the same place a keystroke
     /// does, but it is not one: nobody typed it, so it does not call off the type-ahead.
     pub(crate) fn write_reply(&self, data: &[u8]) -> anyhow::Result<()> {
+        crate::api::mark_activity(&self.last_activity);
+        self.write_to_child(data)
+    }
+
+    /// The terminal reporting the pointer to a program tracking it. Not typing either: it
+    /// neither calls off the type-ahead nor answers what the shell is asking for - see
+    /// [`crate::attention`] - since a pointer resting on a question is not an answer to it.
+    pub(crate) fn write_report(&self, data: &[u8]) -> anyhow::Result<()> {
         crate::api::mark_activity(&self.last_activity);
         self.write_to_child(data)
     }
@@ -470,6 +529,28 @@ impl TerminalRegistry {
         last_output.map(|last| last.elapsed())
     }
 
+    /// What this shell is asking a person for, if anything - see [`crate::attention`].
+    pub(crate) fn attention(&self, terminal_id: &str) -> Option<TerminalAttentionView> {
+        self.get(terminal_id)?.attention_view(terminal_id)
+    }
+
+    /// Every shell the server has that is asking for a person, whoever owns it.
+    pub(crate) fn wanting_attention(&self) -> Vec<TerminalAttentionView> {
+        let mut asking: Vec<TerminalAttentionView> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(terminal_id, session)| session.attention_view(terminal_id))
+            .collect();
+        asking.sort_by(|a, b| {
+            a.at_unix
+                .cmp(&b.at_unix)
+                .then(a.terminal_id.cmp(&b.terminal_id))
+        });
+        asking
+    }
+
     /// The plain shells one task has open right now, oldest first.
     ///
     /// This is the whole record of them: a shell has nothing to come back to once it ends, so
@@ -541,6 +622,21 @@ impl TerminalRegistry {
             TerminalProgram::Agent(AgentKind::Codex) => CommandBuilder::new("codex"),
             TerminalProgram::Agent(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
         };
+        // Every agent moon starts is told to say through the terminal when it wants a
+        // person, the way it would tell iTerm2 or Ghostty - which is what the window reads
+        // off the pty and shows on the run's card, and never sends to the desktop. Claude
+        // takes it as a setting on its command line, OpenCode as an environment variable of
+        // its terminal library's - see [`crate::attention`].
+        match &spec.program {
+            TerminalProgram::Agent(AgentKind::Claude) => {
+                command.arg("--settings");
+                command.arg(CLAUDE_NOTIFY_THROUGH_THE_TERMINAL);
+            }
+            TerminalProgram::Agent(AgentKind::OpenCode) => {
+                command.env("OPENTUI_NOTIFICATION_PROTOCOL", "osc9");
+            }
+            _ => {}
+        }
         for argument in &spec.args {
             command.arg(argument);
         }
@@ -602,6 +698,8 @@ impl TerminalRegistry {
             scrollback: Mutex::new(Scrollback::default()),
             last_output: Mutex::new(None),
             typed_into: std::sync::atomic::AtomicBool::new(false),
+            attention: Mutex::new(None),
+            attention_scanner: Mutex::new(Default::default()),
             child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
             child_pid,
@@ -629,6 +727,9 @@ impl TerminalRegistry {
                         let chunk = &buffer[..count];
                         crate::api::mark_activity(&session.last_activity);
                         *session.last_output.lock().unwrap() = Some(Instant::now());
+                        for asked in session.attention_scanner.lock().unwrap().feed(chunk) {
+                            session.asked_for_attention(asked);
+                        }
                         session.scrollback.lock().unwrap().push(chunk);
                         // No attached tab is normal: the shell keeps running regardless.
                         let _ = output.send(chunk.to_vec());
@@ -869,6 +970,22 @@ pub(crate) async fn terminals_running_a_command(
     }))
 }
 
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TerminalAttentionList {
+    pub(crate) terminals: Vec<TerminalAttentionView>,
+}
+
+/// The shells asking for a person - see [`crate::attention`].
+pub(crate) async fn terminals_wanting_attention(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+    Ok(Json(TerminalAttentionList {
+        terminals: state.terminals.wanting_attention(),
+    }))
+}
+
 pub(crate) async fn close_terminal(
     AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
@@ -967,10 +1084,13 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
                 crate::api::mark_activity(&session.last_activity);
                 match serde_json::from_str::<ClientMessage>(&text)? {
                     ClientMessage::Input { data } => {
-                        session.typed_into.store(true, Ordering::Relaxed);
+                        session.typed_into();
                         session.write_to_child(data.as_bytes())?;
                     }
                     ClientMessage::Reply { data } => {
+                        session.write_to_child(data.as_bytes())?;
+                    }
+                    ClientMessage::Report { data } => {
                         session.write_to_child(data.as_bytes())?;
                     }
                     ClientMessage::Resize { cols, rows } => {

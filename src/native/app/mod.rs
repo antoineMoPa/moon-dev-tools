@@ -238,6 +238,8 @@ impl App {
                 review_request_amendments: 0,
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
+                shells_wanting_attention: Vec::new(),
+                attention_posted: HashMap::new(),
                 toasts: Vec::new(),
                 messages: Default::default(),
                 language_servers_working: HashMap::new(),

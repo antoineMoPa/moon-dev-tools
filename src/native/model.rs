@@ -709,6 +709,11 @@ pub(crate) struct Model {
     /// quitting would interrupt is these rather than every open shell, so this is what the
     /// quit warning is about - see `App::quit_would_kill_shells`.
     pub(crate) shells_running_a_command: Vec<String>,
+    /// The shells asking for a person, as of the last poll - see [`crate::attention`]. Each
+    /// ask is posted to the messages once, which `attention_posted` is the record of.
+    pub(crate) shells_wanting_attention: Vec<crate::api::TerminalAttentionView>,
+    /// When each shell's last posted ask was made, by terminal id.
+    pub(crate) attention_posted: HashMap<String, u64>,
     pub(crate) toasts: Vec<Toast>,
     /// Every message the window has posted, toast or error, whether or not it was read
     /// before it faded - see [`crate::native::messages`].
@@ -900,6 +905,25 @@ impl Model {
 
     pub(crate) fn info(&mut self, text: impl Into<String>) {
         self.toast(ToastKind::Info, text);
+    }
+
+    /// The shells asking for a person, freshly polled. An ask not posted yet goes to the
+    /// messages as a line from the shell - once: the next poll carries the same ask, and a
+    /// message repeated every second would be the desktop notification nobody wanted.
+    pub(crate) fn take_attention(&mut self, asking: Vec<crate::api::TerminalAttentionView>) {
+        for ask in &asking {
+            if self.attention_posted.get(&ask.terminal_id) == Some(&ask.at_unix) {
+                continue;
+            }
+            self.attention_posted
+                .insert(ask.terminal_id.clone(), ask.at_unix);
+            self.info(format!(
+                "{}: {}",
+                ask.name.as_deref().unwrap_or("a shell"),
+                ask.message
+            ));
+        }
+        self.shells_wanting_attention = asking;
     }
 
     pub(crate) fn error(&mut self, text: impl Into<String>) {

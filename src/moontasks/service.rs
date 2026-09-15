@@ -345,6 +345,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     file_path: Some(file_path),
                     running: false,
                     quiet_for_secs: None,
+                    attention: None,
                     terminal_id: None,
                     resumable: false,
                     started_at_unix: resource.started_at_unix,
@@ -375,6 +376,10 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     .filter(|_| resource.kind == TaskResourceKind::Agent)
                     .and_then(|terminal_id| state.terminals.quiet_for(terminal_id))
                     .map(|quiet| quiet.as_secs()),
+                attention: resource
+                    .terminal_id
+                    .as_ref()
+                    .and_then(|terminal_id| state.terminals.attention(terminal_id)),
                 terminal_id: resource.terminal_id.clone(),
                 resumable: agent_launch(resource.agent).is_some(),
                 started_at_unix: resource.started_at_unix,
@@ -395,6 +400,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 file_path: None,
                 running: true,
                 quiet_for_secs: None,
+                attention: state.terminals.attention(&shell.terminal_id),
                 terminal_id: Some(shell.terminal_id),
                 resumable: false,
                 started_at_unix: shell.started_at_unix,

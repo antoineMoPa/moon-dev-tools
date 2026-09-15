@@ -4,6 +4,7 @@
 //! same wgpu renderer the window uses. That makes it possible to assert on what the review
 //! actually looks like - a diff that fails to draw, or an empty pane, shows up here.
 
+mod attention;
 mod board;
 mod board_card_menu;
 mod board_cards;

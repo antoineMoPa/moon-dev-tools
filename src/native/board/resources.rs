@@ -227,11 +227,15 @@ const FILE_PATH_CHARS: usize = 34;
 /// Long enough that a pause between two tool calls does not flicker the dot.
 const AGENT_QUIET_AFTER_SECS: u64 = 10;
 
-/// What a run's dot says - see [`Activity`]. Only an agent run reads as quiet, and only
-/// once it has been so for [`AGENT_QUIET_AFTER_SECS`].
+/// What a run's dot says - see [`Activity`]. A shell asking for a person says so over
+/// anything else; only an agent run reads as quiet, and only once it has been so for
+/// [`AGENT_QUIET_AFTER_SECS`].
 fn activity_of(resource: &TaskResourceView) -> Activity {
     if !resource.running {
         return Activity::Ended;
+    }
+    if resource.attention.is_some() {
+        return Activity::Attention;
     }
     match resource.quiet_for_secs {
         Some(quiet) if quiet >= AGENT_QUIET_AFTER_SECS => Activity::Quiet,
@@ -274,8 +278,11 @@ fn draw_resource(
 
         match (&resource.terminal_id, resource.running) {
             (Some(terminal_id), true) => {
-                let hover = match (activity, resource.quiet_for_secs) {
-                    (Activity::Quiet, Some(quiet)) => format!(
+                let hover = match (activity, resource.quiet_for_secs, &resource.attention) {
+                    (Activity::Attention, _, Some(asking)) => {
+                        format!("Open this shell in a tab\n{}", asking.message)
+                    }
+                    (Activity::Quiet, Some(quiet), _) => format!(
                         "Open this shell in a tab\nnothing printed for {} - waiting on you?",
                         quiet_text(quiet)
                     ),
@@ -456,6 +463,7 @@ mod tests {
             terminal_id: running.then(|| "terminal-1".to_string()),
             running,
             quiet_for_secs,
+            attention: None,
             resumable: true,
             started_at_unix: 0,
         }
@@ -473,6 +481,17 @@ mod tests {
             Activity::Quiet
         );
         assert_eq!(activity_of(&run(false, Some(600))), Activity::Ended);
+        // Asking for a person outranks being quiet, which it usually also is.
+        let mut asking = run(true, Some(600));
+        asking.attention = Some(crate::api::TerminalAttentionView {
+            terminal_id: "terminal-1".to_string(),
+            name: None,
+            message: "Permission needs input".to_string(),
+            at_unix: 1,
+        });
+        assert_eq!(activity_of(&asking), Activity::Attention);
+        asking.running = false;
+        assert_eq!(activity_of(&asking), Activity::Ended);
     }
 
     #[test]

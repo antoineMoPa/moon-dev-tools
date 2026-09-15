@@ -52,6 +52,11 @@ pub(crate) struct TaskResourceView {
     /// printed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) quiet_for_secs: Option<u64>,
+    /// What the shell behind it is asking a person for, if anything: a bell, or the
+    /// notification an agent sends when it is waiting on a question or a permission - see
+    /// [`crate::attention`]. The card marks it, and typing into the shell takes it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attention: Option<crate::api::TerminalAttentionView>,
     /// Whether the run can be started again where it left off, which needs the agent to have
     /// been told its session id when it started.
     pub(crate) resumable: bool,

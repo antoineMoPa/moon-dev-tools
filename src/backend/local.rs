@@ -49,6 +49,14 @@ impl egui_tty::Tty for LocalShell {
         self.session.write_reply(data).map_err(egui_tty::Error::msg)
     }
 
+    /// The pointer over the shell, which is not somebody typing either: a person reading a
+    /// run's question with the mouse resting on it has not answered it.
+    fn report(&self, data: &[u8]) -> egui_tty::Result<()> {
+        self.session
+            .write_report(data)
+            .map_err(egui_tty::Error::msg)
+    }
+
     fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
         self.session
             .resize(cols, rows)
@@ -369,6 +377,13 @@ impl Backend for LocalBackend {
 
     fn terminals_running_a_command(&self, _session_id: &str) -> Result<Vec<String>> {
         Ok(self.state.terminals.terminals_running_a_command())
+    }
+
+    fn terminals_wanting_attention(
+        &self,
+        _session_id: &str,
+    ) -> Result<Vec<crate::api::TerminalAttentionView>> {
+        Ok(self.state.terminals.wanting_attention())
     }
 
     fn close_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<()> {

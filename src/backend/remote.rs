@@ -227,6 +227,13 @@ impl egui_tty::Tty for RemoteShell {
             .map_err(egui_tty::Error::msg)
     }
 
+    /// Likewise its own kind: the pointer over the shell is not a person answering it.
+    fn report(&self, data: &[u8]) -> egui_tty::Result<()> {
+        let text = String::from_utf8_lossy(data).to_string();
+        self.send(&json!({ "type": "report", "data": text }))
+            .map_err(egui_tty::Error::msg)
+    }
+
     fn resize(&self, cols: u16, rows: u16) -> egui_tty::Result<()> {
         self.send(&json!({ "type": "resize", "cols": cols, "rows": rows }))
             .map_err(egui_tty::Error::msg)
@@ -722,6 +729,15 @@ impl Backend for RemoteBackend {
 
         let list: List = self.get(&format!("/api/session/{session_id}/terminals/running"))?;
         Ok(list.terminal_ids)
+    }
+
+    fn terminals_wanting_attention(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::api::TerminalAttentionView>> {
+        let list: crate::terminal::TerminalAttentionList =
+            self.get(&format!("/api/session/{session_id}/terminals/attention"))?;
+        Ok(list.terminals)
     }
 
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()> {

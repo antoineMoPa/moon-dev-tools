@@ -8,6 +8,7 @@
 mod agent;
 mod agent_sessions;
 mod api;
+pub(crate) mod attention;
 mod backend;
 mod cli;
 mod comments;

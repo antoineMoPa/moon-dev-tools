@@ -352,6 +352,18 @@ impl App {
                 }
             },
         );
+        // On the same clock: which shells are asking for a person, for the messages and the
+        // cards - see [`crate::attention`].
+        let session_id = self.model.root_session_id.clone();
+        self.tasks.spawn_keyed(
+            Some("attention".to_string()),
+            move |backend| backend.terminals_wanting_attention(&session_id),
+            |model, result| {
+                if let Ok(asking) = result {
+                    model.take_attention(asking);
+                }
+            },
+        );
     }
 
     /// Read the project's commands, which is what the Project menu offers.

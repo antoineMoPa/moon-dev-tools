@@ -81,6 +81,21 @@ pub(crate) struct RepoSession {
     pub(crate) files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo,
 }
 
+/// A shell that asked for a person and has not had one since: it rang its bell, or sent the
+/// notification a terminal would put on the desktop - see [`crate::attention`]. Answered by
+/// typing into the shell, which takes it off.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct TerminalAttentionView {
+    pub(crate) terminal_id: String,
+    /// What the shell is called, if it has been named - `write the parser claude - 1`.
+    pub(crate) name: Option<String>,
+    /// What it said, as one line.
+    pub(crate) message: String,
+    /// When it asked, in seconds since the epoch: a window posts each ask once, and this is
+    /// how it tells one it has posted from a new one.
+    pub(crate) at_unix: u64,
+}
+
 impl RepoSession {
     /// What this session's review is of - see [`ReviewTarget`].
     pub(crate) fn review_target(&self) -> ReviewTarget {

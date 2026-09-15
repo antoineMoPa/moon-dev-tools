@@ -474,6 +474,9 @@ pub(super) use crate::native::widgets::{close_button, close_mark};
 pub(super) enum Activity {
     /// Going, and printing: green.
     Running,
+    /// Asking for a person - a question, a permission, a bell - and nobody has typed into
+    /// it since: red. See [`crate::attention`].
+    Attention,
     /// Going, but it has printed nothing for a while - an agent waiting on a question it
     /// asked, or on the person, or stuck: amber, the colour of a thing half done.
     Quiet,
@@ -513,6 +516,9 @@ pub(super) fn activity_dot(ui: &mut Ui, activity: Activity, palette: &Palette) {
         Activity::Quiet => ui
             .painter()
             .circle_filled(center, DIAMETER / 2.0, palette.partial),
+        Activity::Attention => ui
+            .painter()
+            .circle_filled(center, DIAMETER / 2.0, palette.warn),
         Activity::Ended => ui.painter().circle_stroke(
             center,
             DIAMETER / 2.0 - 0.5,
