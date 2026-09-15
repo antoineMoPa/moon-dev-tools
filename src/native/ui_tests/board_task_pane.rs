@@ -24,8 +24,8 @@ use super::{Fixture, app_for, click_at, press_key, seeded_fixture, settle, type_
 #[test]
 fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
     const TASK: &str = "write-the-parser-1111";
-    // Where the board ends and the task's pane begins, which tells the pane's `[start]` from
-    // the ones on the cards.
+    // Where the board ends and the task's pane begins, which tells the pane's `shell` button
+    // from the `[start]` menus on the cards.
     const BOARD_WIDTH: f32 = 640.0;
 
     let fixture = seeded_fixture("card-click");
@@ -117,17 +117,15 @@ fn clicking_a_card_opens_the_task_and_says_what_it_has_running() {
         "and the card is marked while that pane is in front"
     );
 
-    // A shell started from the pane, which takes the pane's place.
+    // A shell started from the pane's own buttons, which takes the pane's place. The
+    // task has nothing running, so the pane's only `shell` is that button.
     use egui_kittest::kittest::Queryable as _;
-    let start_button = harness
-        .get_all_by_label("[start]")
+    let shell_button = harness
+        .get_all_by_label("shell")
         .map(|node| node.rect().center())
         .find(|at| at.x > BOARD_WIDTH)
-        .expect("expected the task's pane to draw a [start] button");
-    click_at(&mut harness, start_button);
-    harness.run_steps(3);
-    let shell_row = harness.get_by_label("shell").rect().center();
-    click_at(&mut harness, shell_row);
+        .expect("expected the task's pane to draw a shell button");
+    click_at(&mut harness, shell_button);
     assert!(
         settle(&mut harness, || shell_open.load(Ordering::Relaxed)
             && !pane_open.load(Ordering::Relaxed)),
@@ -226,7 +224,7 @@ fn a_task_with_nothing_running_opens_its_start_window() {
     const OTHER: &str = "fix-the-login-page-2222";
 
     // Where the board ends and the start window's column begins, in the window this test
-    // builds: what tells the window's own `[start]` from the cards' ones.
+    // builds: what tells the window's own `shell` button from the cards' `[start]` menus.
     const BOARD_WIDTH: f32 = 640.0;
 
     let fixture = seeded_fixture("start-window");
@@ -344,18 +342,15 @@ fn a_task_with_nothing_running_opens_its_start_window() {
     harness.run_steps(3);
     harness.snapshot("moontasks-start-window");
 
-    // The window's own `[start]`, which is the card's button drawn again: the cards have one
-    // each too, so the one in the right-hand column is the one this presses.
+    // The window's own `shell` button, one of the card's offers laid out in a list: the one in
+    // the right-hand column is the one this presses, clear of anything the cards draw.
     use egui_kittest::kittest::Queryable as _;
-    let start_button = harness
-        .get_all_by_label("[start]")
+    let shell_button = harness
+        .get_all_by_label("shell")
         .map(|node| node.rect().center())
         .find(|at| at.x > BOARD_WIDTH)
-        .expect("expected the start window to draw a [start] button");
-    click_at(&mut harness, start_button);
-    harness.run_steps(3);
-    let shell_row = harness.get_by_label("shell").rect().center();
-    click_at(&mut harness, shell_row);
+        .expect("expected the start window to draw a shell button");
+    click_at(&mut harness, shell_button);
     assert!(
         settle(&mut harness, || shell_open.load(Ordering::Relaxed)
             && !start_window_open.load(Ordering::Relaxed)),
@@ -511,7 +506,16 @@ fn a_shell_started_from_a_card_joins_the_column_beside_the_board() {
         .center();
     click_at(&mut harness, start_button);
     harness.run_steps(3);
-    let shell_row = harness.get_by_label("shell").rect().center();
+    // The menu's `shell`, which opens under the button, rather than the pane's own `shell`
+    // button standing in its list across the window.
+    let shell_row = harness
+        .get_all_by_label("shell")
+        .map(|node| node.rect().center())
+        .min_by(|one, other| {
+            one.distance(start_button)
+                .total_cmp(&other.distance(start_button))
+        })
+        .expect("expected the menu to offer a shell");
     click_at(&mut harness, shell_row);
 
     assert!(

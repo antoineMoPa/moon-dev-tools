@@ -2,10 +2,11 @@
 //!
 //! Its title and its notes are edited here, in the pane rather than through a file opened
 //! beside it - a task you have just opened is one you are about to say something about - and
-//! under them are the runs and files it has and the `[start]` button that adds another. Those
-//! two are the card's own, drawn from [`crate::native::board::resources`] and
+//! under them are the runs and files it has and a button for each thing it can start.
+//! Those two are the card's own, drawn from [`crate::native::board::resources`] and
 //! [`crate::native::board::start`] rather than laid out again here: one task said twice would
-//! be two things to keep in step.
+//! be two things to keep in step. The card folds its offers into a `[start]` menu for want
+//! of room; the pane has a column to itself, so it lays them all out.
 //!
 //! Starting a shell or an agent from here closes the pane, because the shell it opens is what
 //! this pane was standing in for.
@@ -94,13 +95,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                     );
                                 }
                                 ui.add_space(LINE_GAP);
-                                board::start::draw_button(
-                                    app,
-                                    ui,
-                                    &task,
-                                    &mut board::gesture::Controls::elsewhere(),
-                                    &mut actions,
-                                );
+                                board::start::draw_list(app, ui, &task, &mut actions);
                             });
                         });
                     });
@@ -113,7 +108,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
 }
 
 /// The pane a new task is written on, before there is a task to write it on: the same two
-/// boxes, with `[create]` standing where the task's `[start]` will.
+/// boxes, with `[create]` standing where the task's start buttons will.
 ///
 /// `[create]` makes the task and turns this very pane into that task's own, in the tab it is
 /// already in. Nothing is created before it is pressed - not by leaving the boxes, not by
@@ -155,7 +150,7 @@ pub(crate) fn draw_new_task(
 /// The two boxes of a new-task pane and the `[create]` under them: `Some` once the button has
 /// been pressed, or Enter answered for a title, with something in the title box.
 ///
-/// The button stands where the task's `[start]` will, so the pane keeps its shape as it becomes
+/// The button stands where the task's start buttons will, so the pane keeps its shape as it becomes
 /// the task's own. Escape clears the title rather than putting one back, because there is no
 /// title yet to put back.
 fn draw_draft(

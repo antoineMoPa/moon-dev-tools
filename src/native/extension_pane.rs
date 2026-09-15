@@ -469,8 +469,7 @@ impl Drawing<'_> {
                 on_click,
                 disabled,
             } => {
-                let button = egui::Button::new(RichText::new(label).size(SMALL_SIZE));
-                if widgets::clickable(ui.add_enabled(!disabled, button)).clicked() {
+                if widgets::small_button(ui, label, !disabled).clicked() {
                     self.clicked = Some(on_click.clone());
                 }
             }
