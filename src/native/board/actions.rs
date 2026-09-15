@@ -413,7 +413,10 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             });
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
-        BoardAction::PickFile(task_id) => app.model.palette.show_files_for_task(task_id),
+        BoardAction::PickFile(task_id) => {
+            let root = app.model.root_session_id.clone();
+            app.model.palette.show_files_for_task(task_id, root);
+        }
         BoardAction::OpenFile { task_id, file_path } => {
             app.model.board.opened_file = Some(OpenedFile { file_path, task_id })
         }

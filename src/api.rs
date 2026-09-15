@@ -89,8 +89,10 @@ pub(crate) struct TerminalAttentionView {
     pub(crate) terminal_id: String,
     /// What the shell is called, if it has been named - `write the parser claude - 1`.
     pub(crate) name: Option<String>,
-    /// What it said, as one line.
-    pub(crate) message: String,
+    /// What it asked for: a bare bell, or a notification with what it said. The two are
+    /// told apart because a window posts a notification and only marks a bell - see
+    /// [`crate::native::model::Model::take_attention`].
+    pub(crate) asked: crate::attention::Asked,
     /// When it asked, in seconds since the epoch: a window posts each ask once, and this is
     /// how it tells one it has posted from a new one.
     pub(crate) at_unix: u64,

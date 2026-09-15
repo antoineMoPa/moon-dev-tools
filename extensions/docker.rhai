@@ -1,4 +1,4 @@
-//! The containers docker runs: start, stop and restart them, open a shell in one, follow its logs
+//! The containers docker runs: start, stop and restart them, open a shell in one, follow its logs - or everyone's at once
 
 // What `docker ps` says about each container, as a line of JSON of its own.
 fn listing_format() {
@@ -15,6 +15,7 @@ fn key_bindings() {
         "p": "up", "k": "up", "Up": "up",
         "s": "start", "S": "stop", "r": "restart",
         "l": "logs", "Enter": "logs",
+        "L": "all_logs",
         "e": "shell",
         "g": "refresh",
     }
@@ -48,6 +49,22 @@ fn state_inks() {
 // What each of the project buttons asks of `docker compose`.
 fn compose_verbs() {
     #{ project_start: "start", project_stop: "stop", project_restart: "restart" }
+}
+
+// How many lines of each container's past a log window opens on.
+fn logs_tail() { 500 }
+
+// The logs of every running container, followed together in one shell, each line prefixed
+// with the container it came from - a problem that shows in one container and starts in
+// another is only read across all of them. The loop runs in a `sh` of its own so that the
+// followers are one foreground job: ^C ends every one of them, rather than leaving a
+// background `docker logs` per container printing into the shell.
+//
+// A container's name is letters, digits, `_`, `.` and `-`, so it needs no quoting in the
+// `sed` prefix.
+fn all_logs_command() {
+    let each = `docker logs --follow --tail ${logs_tail()} "$c" 2>&1 | sed "s/^/[$c] /" &`;
+    shell_quote(`for c in $(docker ps --format "{{.Names}}"); do ${each} done; wait`)
 }
 
 // How often the list is read again.
@@ -124,6 +141,7 @@ fn act(does) {
         "up" => { this.selected = clamp(this.selected - 1, 0, last); }
         "refresh" => { this.tick(); }
         "start_colima" => { open_shell("colima start"); }
+        "all_logs" => { open_shell(`sh -c ${all_logs_command()}`); }
     }
     if this.containers.is_empty() {
         return;
@@ -132,7 +150,11 @@ fn act(does) {
     let container = this.containers[this.selected];
     let name = shell_quote(container.name);
     switch does {
-        "logs" => { open_shell(`docker logs --follow --tail 500 ${name}`); }
+        "logs" => { open_shell(`docker logs --follow --tail ${logs_tail()} ${name}`); }
+        "project_logs" => {
+            let project = shell_quote(container.project);
+            open_shell(`docker compose --project-name ${project} logs --follow --tail ${logs_tail()}`);
+        }
         "shell" => {
             open_shell(`docker exec -it ${name} sh -c 'command -v bash >/dev/null && exec bash || exec sh'`);
         }
@@ -238,6 +260,7 @@ fn view() {
         button("restart", #{ act: "restart" }, !running),
         button("logs", #{ act: "logs" }),
         button("shell", #{ act: "shell" }, !running),
+        button("all logs", #{ act: "all_logs" }),
     ];
     if selected.project != "" {
         actions += [
@@ -245,6 +268,7 @@ fn view() {
             button("start all", #{ act: "project_start" }),
             button("stop all", #{ act: "project_stop" }),
             button("restart all", #{ act: "project_restart" }),
+            button("logs all", #{ act: "project_logs" }),
         ];
     }
 
@@ -272,7 +296,7 @@ fn view() {
         row(top),
         this.filter_box(),
         row(actions),
-        muted("s start · S stop · r restart · l logs · e shell · g refresh · double-click for logs"),
+        muted("s start · S stop · r restart · l logs · L all logs · e shell · g refresh · double-click for logs"),
         separator(),
         table(["state", "name", "project", "image", "status", "ports"], rows),
     ])

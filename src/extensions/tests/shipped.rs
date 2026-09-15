@@ -236,6 +236,32 @@ fn docker_restarts_the_selected_container_and_follows_its_logs_in_a_shell() {
     }
 }
 
+/// `L` follows every running container at once, in one shell: the followers run under one
+/// `sh` so that ^C ends them together, and each line says which container printed it.
+#[test]
+fn docker_follows_every_containers_logs_together_in_one_shell() {
+    // Arrange
+    let scratch = Scratch::new("docker-all-logs");
+    scratch.program("docker", FAKE_DOCKER);
+    let running = start(
+        named("docker").expect("docker is shipped"),
+        &scratch.dir,
+        scratch.path(),
+    );
+    let mut heard = Heard::default();
+    heard.until(&running, |heard| heard.shows("web-1"));
+
+    // Act
+    running.send(Input::Key("L".to_string()));
+
+    // Assert
+    let all_logs = Effect::OpenShell(
+        "sh -c 'for c in $(docker ps --format \"{{.Names}}\"); do docker logs --follow --tail 500 \"$c\" 2>&1 | sed \"s/^/[$c] /\" & done; wait'"
+            .to_string(),
+    );
+    heard.until(&running, |heard| heard.effects.contains(&all_logs));
+}
+
 /// The pane opens with the keyboard in its filter box: a container is found among many by
 /// typing part of its name, before any key of the list is reached for.
 #[test]

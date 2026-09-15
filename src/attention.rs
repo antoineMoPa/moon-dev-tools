@@ -20,6 +20,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 /// The most of a message that is kept. A notification is a line, not a document.
 const MESSAGE_LIMIT: usize = 240;
 /// The most of a sequence that is read before it is given up on as not a notification: a
@@ -27,7 +29,8 @@ const MESSAGE_LIMIT: usize = 240;
 const SEQUENCE_LIMIT: usize = 4096;
 
 /// One request for attention, as the shell printed it.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[serde(tag = "kind", content = "message", rename_all = "lowercase")]
 pub(crate) enum Asked {
     /// A bare BEL: something wants a look, and said nothing about what.
     Bell,

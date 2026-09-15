@@ -285,7 +285,7 @@ impl TerminalSession {
         Some(TerminalAttentionView {
             terminal_id: terminal_id.to_string(),
             name: self.name.lock().unwrap().clone(),
-            message: attention.asked.message().to_string(),
+            asked: attention.asked,
             at_unix: attention.at_unix,
         })
     }

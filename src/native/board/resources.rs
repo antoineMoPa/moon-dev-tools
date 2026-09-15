@@ -280,7 +280,7 @@ fn draw_resource(
             (Some(terminal_id), true) => {
                 let hover = match (activity, resource.quiet_for_secs, &resource.attention) {
                     (Activity::Attention, _, Some(asking)) => {
-                        format!("Open this shell in a tab\n{}", asking.message)
+                        format!("Open this shell in a tab\n{}", asking.asked.message())
                     }
                     (Activity::Quiet, Some(quiet), _) => format!(
                         "Open this shell in a tab\nnothing printed for {} - waiting on you?",
@@ -486,7 +486,7 @@ mod tests {
         asking.attention = Some(crate::api::TerminalAttentionView {
             terminal_id: "terminal-1".to_string(),
             name: None,
-            message: "Permission needs input".to_string(),
+            asked: crate::attention::Asked::Notification("Permission needs input".to_string()),
             at_unix: 1,
         });
         assert_eq!(activity_of(&asking), Activity::Attention);

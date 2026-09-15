@@ -2,8 +2,9 @@
 
 A pane of the window can be a script. Two are built into `moon`, out of
 [extensions/](extensions/): `files` browses the project's folders, and `docker` lists docker's
-containers, to start, stop and restart them, open a shell in one, or follow its logs. Any `.rhai` file in `~/.moonreview/extensions/` is another, offered in
-the command palette (`⌘⇧P`) under its file name.
+containers, to start, stop and restart them, open a shell in one, or follow its logs - or the
+logs of every running container at once. Any `.rhai` file in `~/.moonreview/extensions/` is
+another, offered in the command palette (`⌘⇧P`) under its file name.
 
 A file there with the same name as a shipped one takes its place, which is how a shipped one is
 changed without building `moon` again:

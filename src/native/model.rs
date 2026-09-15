@@ -524,6 +524,11 @@ pub(crate) struct PaletteState {
     /// it. Kept from one opening to the next: a repo that gitignores its submodules wants
     /// them read every time.
     pub(crate) search_scope: crate::api::SearchScope,
+    /// The review whose repo both searches read, and whose session the file they open is
+    /// opened in: the one in front when the palette was opened - see `App::review_in_front`.
+    /// A search started from a file of a submodule is a search of that submodule, not of
+    /// the repo the window was launched on around it.
+    pub(crate) search_session_id: String,
     /// The ticket of the search started last. A running search holds the ticket it was
     /// started on and reads this from its thread: once it is no longer the latest - a key
     /// typed since, the palette put away - nobody wants what it finds, and it stops.
@@ -591,24 +596,28 @@ impl PaletteState {
         self.places = Some(found);
     }
 
-    /// The same, on the file finder: what is typed names a file of the repo rather than a
-    /// command.
-    pub(crate) fn show_files(&mut self) {
+    /// The same, on the file finder: what is typed names a file of the repo the given review
+    /// is of, rather than a command.
+    pub(crate) fn show_files(&mut self, search_session_id: String) {
         self.show();
         self.mode = crate::native::palette::PaletteMode::Files;
+        self.search_session_id = search_session_id;
     }
 
     /// The file finder again, picking a file for a task's card: the one chosen is linked to
-    /// the task before it is opened.
-    pub(crate) fn show_files_for_task(&mut self, task_id: String) {
-        self.show_files();
+    /// the task before it is opened. The board is the root repo's, so its files are found
+    /// there, whatever review is in front.
+    pub(crate) fn show_files_for_task(&mut self, task_id: String, root_session_id: String) {
+        self.show_files(root_session_id);
         self.files_link_to_task = Some(task_id);
     }
 
-    /// The same, on the content search: what is typed is looked for in the text of the files.
-    pub(crate) fn show_contents(&mut self) {
+    /// The same, on the content search: what is typed is looked for in the text of the files
+    /// of the repo the given review is of.
+    pub(crate) fn show_contents(&mut self, search_session_id: String) {
         self.show();
         self.mode = crate::native::palette::PaletteMode::Contents;
+        self.search_session_id = search_session_id;
     }
 
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
@@ -642,6 +651,7 @@ impl Default for PaletteState {
             files: crate::native::palette::Search::default(),
             contents: crate::native::palette::Search::default(),
             search_scope: crate::api::SearchScope::default(),
+            search_session_id: String::new(),
             latest_search: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             query: String::new(),
             files_link_to_task: None,
@@ -911,20 +921,27 @@ impl Model {
         self.toast(ToastKind::Info, text);
     }
 
-    /// The shells asking for a person, freshly polled. An ask not posted yet goes to the
-    /// messages as a line from the shell - once: the next poll carries the same ask, and a
+    /// The shells asking for a person, freshly polled. A notification not posted yet goes to
+    /// the messages as a line from the shell - once: the next poll carries the same ask, and a
     /// message repeated every second would be the desktop notification nobody wanted.
+    ///
+    /// A bare bell is not posted at all. Shells ring it for a finished command, a completion
+    /// that found nothing, a `^G` in a pager - and a toast for each of those is a window
+    /// forever saying "rang its bell" about nothing. The bell still marks the shell's card
+    /// red, which is where a look can be taken when there is time for one.
     pub(crate) fn take_attention(&mut self, asking: Vec<crate::api::TerminalAttentionView>) {
         for ask in &asking {
+            let crate::attention::Asked::Notification(message) = &ask.asked else {
+                continue;
+            };
             if self.attention_posted.get(&ask.terminal_id) == Some(&ask.at_unix) {
                 continue;
             }
             self.attention_posted
                 .insert(ask.terminal_id.clone(), ask.at_unix);
             self.info(format!(
-                "{}: {}",
-                ask.name.as_deref().unwrap_or("a shell"),
-                ask.message
+                "{}: {message}",
+                ask.name.as_deref().unwrap_or("a shell")
             ));
         }
         self.shells_wanting_attention = asking;

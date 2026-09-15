@@ -719,7 +719,7 @@ fn file_rows(app: &App) -> Vec<Command> {
                     file_path: file_path.clone(),
                 },
                 None => CommandAction::OpenPane(OpenPaneRequest::File {
-                    session_id: app.model.root_session_id.clone(),
+                    session_id: app.model.palette.search_session_id.clone(),
                     file_path: file_path.clone(),
                     at: None,
                 }),
@@ -751,7 +751,7 @@ fn content_rows(app: &App) -> Vec<Command> {
             title: found.line.clone(),
             description: format!("{}:{}", found.file_path, found.line_number),
             action: CommandAction::OpenPane(OpenPaneRequest::File {
-                session_id: app.model.root_session_id.clone(),
+                session_id: app.model.palette.search_session_id.clone(),
                 file_path: found.file_path.clone(),
                 at: Some(crate::native::panes::OpenAt {
                     line: found.line_number,
@@ -785,8 +785,8 @@ fn hint_of(app: &App) -> String {
         PaletteMode::Files if app.model.palette.files_link_to_task.is_some() => {
             "Link a file to the task by name…".to_string()
         }
-        PaletteMode::Files => "Open a file by name…".to_string(),
-        PaletteMode::Contents => "Find text in the files…".to_string(),
+        PaletteMode::Files => format!("Open a file{} by name…", searched_repo_note(app)),
+        PaletteMode::Contents => format!("Find text in the files{}…", searched_repo_note(app)),
         PaletteMode::Rename => format!("A new name for {}…", renamed_name(app)),
         PaletteMode::Places => match &app.model.palette.places {
             Some(found) => format!(
@@ -799,6 +799,17 @@ fn hint_of(app: &App) -> String {
         },
         PaletteMode::CodeActions => "What to do at the caret…".to_string(),
     }
+}
+
+/// Which repo the searches read, when it is not the one the window was launched on: a
+/// search opened from a file of a submodule reads that submodule, and the hint says so,
+/// since nothing else on screen would. Empty for the root repo, which needs no saying.
+fn searched_repo_note(app: &App) -> String {
+    let searched = &app.model.palette.search_session_id;
+    if *searched == app.model.root_session_id {
+        return String::new();
+    }
+    format!(" of {}", repo_name_of(app, searched))
 }
 
 /// What the palette says when it has no rows to show.
@@ -899,7 +910,7 @@ fn refresh_search<T: Send + 'static>(
         return;
     }
     let ticket = app.model.palette.next_search_ticket();
-    let no_repo = app.model.root_session_id.is_empty();
+    let no_repo = app.model.palette.search_session_id.is_empty();
     let search = search_of(&mut app.model);
     *search = Search {
         searched: Some(asked.clone()),
@@ -912,7 +923,7 @@ fn refresh_search<T: Send + 'static>(
         return;
     }
 
-    let session_id = app.model.root_session_id.clone();
+    let session_id = app.model.palette.search_session_id.clone();
     let latest = Arc::clone(&app.model.palette.latest_search);
     app.tasks.spawn_editing(
         None,
@@ -1081,7 +1092,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     // kept in view when the keyboard moves it; a pointer over a row is
                     // already looking at it.
                     let keep_highlight_in_view = move_down || move_up || retyped;
-                    let rows_height = (matches.len() as f32 * ROW_HEIGHT)
+                    let rows_height = rows_height_of(matches.len(), ui.spacing().item_spacing.y)
                         .min(screen.height() * ROWS_HEIGHT_OF_SCREEN);
                     egui::ScrollArea::vertical()
                         .max_height(rows_height)
@@ -1119,6 +1130,13 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         app.model.palette.dismiss();
         app.pending_action = Some(command.action);
     }
+}
+
+/// How tall `rows` rows are when laid out one under the other: the rows themselves, and the
+/// layout's gap between each pair. Counting the rows alone left the area a gap short per row,
+/// which put a scrollbar on a list of three rows that all fit.
+fn rows_height_of(rows: usize, gap: f32) -> f32 {
+    rows as f32 * ROW_HEIGHT + rows.saturating_sub(1) as f32 * gap
 }
 
 /// The box under the two searches' line that widens them to the files the repo's
@@ -1242,6 +1260,15 @@ mod tests {
 
         assert_eq!(matches[0].title, "wl");
         assert!(matches!(matches[0].action, CommandAction::OpenWorkLog));
+    }
+
+    /// Three rows want three rows' height and the two gaps between them, and one row wants
+    /// no gap at all.
+    #[test]
+    fn the_rows_height_counts_the_gaps_between_the_rows() {
+        assert_eq!(rows_height_of(3, 4.0), 3.0 * ROW_HEIGHT + 8.0);
+        assert_eq!(rows_height_of(1, 4.0), ROW_HEIGHT);
+        assert_eq!(rows_height_of(0, 4.0), 0.0);
     }
 
     #[test]

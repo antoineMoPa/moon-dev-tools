@@ -334,7 +334,10 @@ fn a_shell_asking_for_a_person_is_marked_until_someone_types() {
     let asking = registry
         .attention(&terminal_id)
         .expect("expected the run to be asking for a person");
-    assert_eq!(asking.message, "Permission needs input");
+    assert_eq!(
+        asking.asked,
+        Asked::Notification("Permission needs input".to_string())
+    );
     assert_eq!(asking.terminal_id, terminal_id);
     assert_eq!(
         registry.wanting_attention(),

@@ -93,9 +93,10 @@ to show without one, asks which repo to open with the folder picker of the OS.
 ## Usage
 
 ```bash
-moon tasks    # the sprint board
-moon review   # review local changes
-moon shell    # a shell in the folder
+moon tasks              # the sprint board
+moon review             # review local changes
+moon shell              # a shell in the folder
+moon edit src/main.rs   # open a file for edition
 ```
 
 Run any of them inside a git repository. `moon tasks` and `moon shell` run just as well in a
