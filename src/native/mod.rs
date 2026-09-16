@@ -43,6 +43,7 @@ pub(crate) mod tasks;
 pub(crate) mod theme;
 #[cfg(test)]
 pub(crate) mod ui_tests;
+pub(crate) mod webview_pane;
 pub(crate) mod widgets;
 pub(crate) mod work_log;
 pub(crate) mod workspace;

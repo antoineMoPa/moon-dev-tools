@@ -38,6 +38,8 @@ pub(crate) enum PaneKind {
     Messages,
     /// A pane a script draws - see [`crate::extensions`].
     Extension,
+    /// A web page, drawn by the system's webview - see [`crate::native::webview_pane`].
+    Webview,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -109,6 +111,11 @@ pub(crate) enum Pane {
     Extension {
         name: String,
     },
+    /// A web page in the system's webview - see [`crate::native::webview_pane`]. Nothing opens
+    /// one yet: it is the pane an agent's visualizations will be shown in, and shows a test page
+    /// until then. The webview is not kept with the layout: a pane put back by the next run
+    /// loads its page again.
+    Webview,
 }
 
 impl Pane {
@@ -125,6 +132,7 @@ impl Pane {
             Self::Project => PaneKind::Project,
             Self::Messages => PaneKind::Messages,
             Self::Extension { .. } => PaneKind::Extension,
+            Self::Webview => PaneKind::Webview,
         }
     }
 
@@ -161,6 +169,7 @@ impl Pane {
             Self::Project => "project".to_string(),
             Self::Messages => "messages".to_string(),
             Self::Extension { name } => name.clone(),
+            Self::Webview => "webview".to_string(),
         }
     }
 
@@ -446,6 +455,7 @@ impl PaneView<Pane> for App {
             Pane::Project => crate::native::project_pane::draw(self, ui),
             Pane::Messages => crate::native::messages::draw(self, ui),
             Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),
+            Pane::Webview => crate::native::webview_pane::draw(self, ui, pane_id),
         }
     }
 

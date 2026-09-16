@@ -68,6 +68,10 @@ rhai = { version = "1.25.1", features = ["serde"] }
 # platform API. Elsewhere the same actions live in the command palette.
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.19", default-features = false }
+# The system's own webview - WKWebView - put in a pane as a child of the window, for pages
+# a pane shows as a browser would draw them. The system's, so no web engine is bundled. See
+# `src/native/webview_pane.rs`.
+wry = { version = "0.57", default-features = false }
 
 [dev-dependencies]
 # Renders the real window contents offscreen, so the UI can be checked without a display.

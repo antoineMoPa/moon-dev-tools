@@ -184,6 +184,8 @@ pub(crate) struct App {
     pub(crate) window_is_in_front: bool,
     /// What `~/.moonreview/settings.json` said, and what it will be written back as.
     settings: crate::settings::Settings,
+    /// The native webviews laid over webview panes - see [`crate::native::webview_pane`].
+    pub(crate) webviews: crate::native::webview_pane::Webviews,
 }
 
 struct CachedDiff {
@@ -325,6 +327,7 @@ impl App {
             sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
             window_is_in_front: false,
             settings,
+            webviews: Default::default(),
         };
 
         if let Some(open) = launch.open {
@@ -450,8 +453,14 @@ impl App {
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.draw(ui);
+        // Here rather than in `draw`: a webview is a child of the window, whose handle only
+        // this is handed, and the ui tests draw without one.
+        #[cfg(target_os = "macos")]
+        self.place_webviews(frame, ui.ctx());
+        #[cfg(not(target_os = "macos"))]
+        let _ = frame;
     }
 
     /// eframe's default clear color is a dark gray whatever the theme, and the workspace
