@@ -4,7 +4,7 @@
 //! its pane appears, drawing the last view it sent, handing it the clicks and keys the pane
 //! gets, and doing what it asks of the window.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use egui::{Align, Color32, Key, Layout, Margin, RichText, Sense, TextStyle, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -40,6 +40,17 @@ const NAMED_KEYS: &[Key] = &[
     Key::PageDown,
 ];
 
+/// The keys an input with the keyboard hands on to the script rather than typing with: a line
+/// of text has no use for them, and a filter box is typed in to then move through and open what
+/// it lets through - without Escape first.
+const KEYS_PASSED_THROUGH_INPUTS: &[Key] = &[
+    Key::Enter,
+    Key::ArrowUp,
+    Key::ArrowDown,
+    Key::PageUp,
+    Key::PageDown,
+];
+
 /// The space between two columns of a table: enough that a size and a date beside it read as
 /// two things.
 const COLUMN_GAP: f32 = 14.0;
@@ -68,6 +79,11 @@ pub(crate) struct ExtensionPane {
     /// What is typed in each of the view's inputs, by the input's id. Kept here rather than
     /// read back from the view, so a keystroke is on screen at once, not a round trip later.
     inputs: HashMap<String, String>,
+    /// The inputs that handed a key on to the script, and so take the script's value again
+    /// even with the keyboard in them: that key may have changed it - Enter into a folder
+    /// empties the filter - and what was typed is already with the script. Until the next
+    /// keystroke typed in them.
+    inputs_following_script: HashSet<String>,
     /// Whether an input asking for the keyboard has been given it. Once per pane: an input
     /// given the keyboard every frame could never be left with Escape.
     focused_an_input: bool,
@@ -83,6 +99,7 @@ impl ExtensionPane {
             takes_keys: false,
             visible: true,
             inputs: HashMap::new(),
+            inputs_following_script: HashSet::new(),
             focused_an_input: false,
         }
     }
@@ -99,6 +116,7 @@ impl ExtensionPane {
             takes_keys: false,
             visible: true,
             inputs: HashMap::new(),
+            inputs_following_script: HashSet::new(),
             focused_an_input: false,
         }
     }
@@ -204,6 +222,7 @@ impl App {
             takes_keys: false,
             visible: true,
             inputs: HashMap::new(),
+            inputs_following_script: HashSet::new(),
             focused_an_input: false,
         })
     }
@@ -358,7 +377,9 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
         clicked: None,
         scroll_to,
         ids: 0,
+        keys: Vec::new(),
         inputs: &mut pane.inputs,
+        inputs_following_script: &mut pane.inputs_following_script,
         focused_an_input: &mut pane.focused_an_input,
     };
     egui::Frame::new()
@@ -382,8 +403,15 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
             }
         });
 
-    if let (Some(event), Some(running)) = (drawing.clicked, &pane.running) {
+    let Some(running) = &pane.running else {
+        return;
+    };
+    // The event before the keys: a key handed on from an input acts on what was typed in it.
+    if let Some(event) = drawing.clicked {
         running.send(Input::Event(event));
+    }
+    for key in drawing.keys {
+        running.send(Input::Key(key));
     }
 }
 
@@ -393,12 +421,16 @@ struct Drawing<'a> {
     /// What the click or keystroke this frame sends to `update`: what the button, row or menu
     /// entry carried, or an input's `on_change` with what is now typed.
     clicked: Option<Value>,
+    /// The keys an input with the keyboard handed on - see [`KEYS_PASSED_THROUGH_INPUTS`].
+    keys: Vec<String>,
     /// The row the first table is to bring into sight.
     scroll_to: Option<usize>,
     /// Counts the scrolled elements drawn so far, which is what tells their ids apart.
     ids: usize,
     /// The pane's inputs - see [`ExtensionPane::inputs`].
     inputs: &'a mut HashMap<String, String>,
+    /// See [`ExtensionPane::inputs_following_script`].
+    inputs_following_script: &'a mut HashSet<String>,
     /// See [`ExtensionPane::focused_an_input`].
     focused_an_input: &'a mut bool,
 }
@@ -502,11 +534,25 @@ impl Drawing<'_> {
                     .entry(id.clone())
                     .or_insert_with(|| value.clone());
                 let edit_id = ui.make_persistent_id(("extension-input", id));
+                let focused = ui.memory(|memory| memory.has_focus(edit_id));
                 // The script's value stands while the box has not got the keyboard, so a script
                 // that clears its filter clears the box. While it has, what is being typed
                 // stands: the script is a keystroke behind it.
-                if !ui.memory(|memory| memory.has_focus(edit_id)) && typed != value {
+                if (!focused || self.inputs_following_script.contains(id)) && typed != value {
                     *typed = value.clone();
+                }
+                if focused {
+                    let passed = ui.input_mut(|input| {
+                        KEYS_PASSED_THROUGH_INPUTS
+                            .iter()
+                            .filter(|key| input.consume_key(egui::Modifiers::NONE, **key))
+                            .map(|key| key.name().to_string())
+                            .collect::<Vec<_>>()
+                    });
+                    if !passed.is_empty() {
+                        self.inputs_following_script.insert(id.clone());
+                        self.keys.extend(passed);
+                    }
                 }
                 let response = ui.add(
                     egui::TextEdit::singleline(typed)
@@ -519,6 +565,7 @@ impl Drawing<'_> {
                     *self.focused_an_input = true;
                 }
                 if response.changed() {
+                    self.inputs_following_script.remove(id);
                     let Value::Object(mut event) = on_change.clone() else {
                         unreachable!("an input's on_change is checked to be a map")
                     };

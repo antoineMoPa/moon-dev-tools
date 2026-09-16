@@ -33,6 +33,26 @@ fn ages() {
     ]
 }
 
+// Whether an entry passes what is typed in the filter box: every word of it, in any case,
+// somewhere in its name. `..` is left out while anything is typed: it is not what is looked for,
+// and Backspace still goes up.
+fn passes(entry, query) {
+    let words = query.to_lower().split(" ").filter(|word| word != "");
+    if words.is_empty() {
+        return true;
+    }
+    if entry.name == ".." {
+        return false;
+    }
+    let name = entry.name.to_lower();
+    for word in words {
+        if !name.contains(word) {
+            return false;
+        }
+    }
+    true
+}
+
 // What git calls a change, and the ink it is marked in. Anything not here is marked `warn`.
 fn change_inks() {
     #{ "??": "added", "A": "added", "D": "removed" }
@@ -42,7 +62,11 @@ fn init(project_root) {
     let state = #{
         root: project_root,
         dir: project_root,
+        // Every entry of the folder, and the ones of them the filter box lets through - which
+        // are what the table shows, and what `selected` counts in.
+        listed: [],
         entries: [],
+        query: "",
         selected: 0,
         show_hidden: false,
         changes: #{},
@@ -75,6 +99,10 @@ fn update(event) {
     }
     if "act" in event {
         this.act(event.act);
+    }
+    if "filter" in event {
+        this.query = event.value;
+        this.refilter(this.selected_name());
     }
     if "copy" in event {
         copy(event.copy);
@@ -142,14 +170,18 @@ fn open_selected() {
     this.enter(entry.path, keep);
 }
 
-// Move to another folder. One that cannot be read is said so, and not moved to.
+// Move to another folder. One that cannot be read is said so, and not moved to. The filter was
+// for finding something in the folder left, so it is emptied in the one moved to.
 fn enter(dir, keep) {
     let from = this.dir;
+    let query = this.query;
     this.dir = dir;
+    this.query = "";
     try {
         this.load(keep);
     } catch (error) {
         this.dir = from;
+        this.query = query;
         notify(`could not open ${dir}: ${error}`);
     }
 }
@@ -179,9 +211,18 @@ fn load(keep) {
     }
     entries += folders;
     entries += files;
-    this.entries = entries;
+    this.listed = entries;
     this.changes = changes_in(this.root);
     this.changed_folders = folders_holding(this.changes, this.root);
+    this.refilter(keep);
+}
+
+// Work out what the table shows from the folder and the filter box. `keep` is the entry to leave
+// the cursor on; failing that, it stays where it was.
+fn refilter(keep) {
+    let query = this.query;
+    let entries = this.listed.filter(|entry| passes(entry, query));
+    this.entries = entries;
 
     let found = -1;
     for (entry, index) in entries {
@@ -290,11 +331,22 @@ fn view() {
         });
     }
 
+    let listing = if rows.is_empty() && this.query != "" {
+        muted("nothing here matches")
+    } else {
+        table(["", "size", "modified", "name"], rows)
+    };
     column([
         heading(shown(this.dir, this.root)),
-        muted("enter open · backspace up · n/p move · g refresh · . dotfiles · ! shell"),
+        // The pane opens with the keyboard in the box: a file is found by typing part of its
+        // name, and ↑/↓ and Enter reach the list from it. Escape leaves the box for the rest of
+        // the keys.
+        row([
+            input("filter", this.query, "filter", #{ filter: true }, #{ focus: true }),
+            muted("enter open · backspace up · n/p move · g refresh · . dotfiles · ! shell"),
+        ]),
         separator(),
-        table(["", "size", "modified", "name"], rows),
+        listing,
     ])
 }
 

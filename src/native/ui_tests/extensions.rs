@@ -103,13 +103,57 @@ fn the_files_extension_walks_the_project_with_the_keyboard_and_opens_a_file() {
     let (mut harness, opened, _fixture) = files_pane("extension-files");
     harness.snapshot("extension-files");
 
-    // Act: past `..` and the folder, onto the file, and open it.
+    // Act: from the filter box, which has the keyboard, past `..` and the folder, onto the
+    // file, and open it.
     press_key(&mut harness, Key::ArrowDown, Modifiers::NONE);
     press_key(&mut harness, Key::ArrowDown, Modifiers::NONE);
     press_key(&mut harness, Key::Enter, Modifiers::NONE);
 
     // Assert
     until_notes_open(&mut harness, &opened);
+}
+
+/// A folder is found by typing part of its name and opened with Enter, all from the filter
+/// box - and the box is emptied in the folder it went into, while it keeps the keyboard.
+#[test]
+fn the_files_extension_opens_what_its_filter_found_with_enter() {
+    use egui_kittest::kittest::NodeT;
+
+    // Arrange
+    let (mut harness, opened, _fixture) = files_pane("extension-files-filter-enter");
+
+    // Act: `doc` typed, which leaves the folder alone in the list, and Enter.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("doc".to_string()));
+    let until = Instant::now() + PATIENCE;
+    while harness.query_by_label("notes.txt").is_some() {
+        assert!(Instant::now() < until, "the filter never narrowed the list");
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    press_key(&mut harness, Key::Enter, Modifiers::NONE);
+
+    // Assert
+    let until = Instant::now() + PATIENCE;
+    while harness.query_by_label("guide.md").is_none() {
+        assert!(Instant::now() < until, "Enter never went into the folder");
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.run_steps(2);
+    let filter = harness.get_by_role(egui::accesskit::Role::TextInput);
+    assert_eq!(
+        filter.accesskit_node().value().as_deref(),
+        Some(""),
+        "the folder gone into is shown whole"
+    );
+    assert!(
+        harness.ctx.memory(|memory| memory.focused()).is_some(),
+        "the filter box keeps the keyboard"
+    );
+    assert!(!opened.load(Ordering::Relaxed));
 }
 
 #[test]
@@ -152,6 +196,12 @@ fn a_double_click_on_a_file_in_the_files_extension_opens_it() {
 #[test]
 fn escape_puts_the_palette_away_over_an_extension() {
     let (mut harness, _opened, _fixture) = files_pane("extension-palette-escape");
+    // The files pane's own filter box is one of them; the palette's is the other.
+    let text_inputs = |harness: &Harness<'_>| {
+        harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .count()
+    };
 
     press_key(
         &mut harness,
@@ -159,19 +209,17 @@ fn escape_puts_the_palette_away_over_an_extension() {
         Modifiers::COMMAND.plus(Modifiers::SHIFT),
     );
     harness.run_steps(2);
-    assert!(
-        harness
-            .query_by_role(egui::accesskit::Role::TextInput)
-            .is_some(),
+    assert_eq!(
+        text_inputs(&harness),
+        2,
         "cmd+shift+P should have opened the palette"
     );
 
     press_key(&mut harness, Key::Escape, Modifiers::NONE);
     harness.run_steps(2);
-    assert!(
-        harness
-            .query_by_role(egui::accesskit::Role::TextInput)
-            .is_none(),
+    assert_eq!(
+        text_inputs(&harness),
+        1,
         "Escape should have put the palette away"
     );
 }

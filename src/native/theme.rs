@@ -68,6 +68,10 @@ pub(crate) struct Palette {
     /// so the same tag is the same color on every card and after every restart, without a
     /// color being chosen or stored anywhere.
     pub(crate) tag_bgs: [Color32; TAG_HUES],
+    /// The background of the tags that mean a card is broken - `bug` - which are drawn in the
+    /// red a removed line is, rather than in whatever hue their letters land on. See
+    /// [`crate::native::board::tags::background_of`].
+    pub(crate) bug_tag_bg: Color32,
     pub(crate) added: Color32,
     pub(crate) added_word_bg: Color32,
     pub(crate) removed: Color32,
@@ -195,6 +199,7 @@ fn light() -> Palette {
             rgba(0x7b3f8c, 36),
             rgba(0x247045, 36),
         ],
+        bug_tag_bg: rgba(0xbe2a1f, 52),
         added: rgb(0x247045),
         added_word_bg: rgba(0x00aa00, 51),
         removed: rgb(0xa12d22),
@@ -258,6 +263,7 @@ fn dark() -> Palette {
             rgba(0xd49cf0, 56),
             rgba(0x72d89c, 52),
         ],
+        bug_tag_bg: rgba(0xff5a50, 72),
         added: rgb(0x72d89c),
         added_word_bg: rgba(0x00d26e, 61),
         removed: rgb(0xff8b82),

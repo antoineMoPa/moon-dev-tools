@@ -220,9 +220,10 @@ fn refilter() {
 }
 
 // The pane opens with the keyboard in the box: a container is found by typing part of its
-// name. Escape hands the keyboard to the list, where the letters move and act instead.
+// name, and ↑/↓ and Enter reach the list from it. Escape hands the rest of the keyboard to the
+// list, where the letters move and act instead.
 fn filter_box() {
-    input("filter", this.query, "filter: name, image, project, status", #{ filter: true }, #{ focus: true })
+    input("filter", this.query, "filter", #{ filter: true }, #{ focus: true })
 }
 
 fn selected_id() {

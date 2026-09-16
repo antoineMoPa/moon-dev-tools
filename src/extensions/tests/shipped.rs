@@ -104,6 +104,63 @@ fn files_opens_a_file_in_the_window() {
     heard.until(&running, |heard| heard.effects.contains(&opened));
 }
 
+/// The pane opens with the keyboard in its filter box: a file is found in a big folder by
+/// typing part of its name, before any key of the list is reached for.
+#[test]
+fn files_opens_with_the_keyboard_in_its_filter_box() {
+    // Arrange
+    let scratch = browsed("files-focus");
+    let running = start(
+        named("files").expect("files is shipped"),
+        &scratch.dir,
+        system_path(),
+    );
+    let mut heard = Heard::default();
+
+    // Act
+    heard.until(&running, |heard| heard.shows("b.txt"));
+
+    // Assert
+    assert_eq!(
+        heard.input_asking_for_the_keyboard().as_deref(),
+        Some("filter"),
+        "{:?}",
+        heard.texts()
+    );
+}
+
+#[test]
+fn files_filters_the_folder_by_what_is_typed_and_empties_the_filter_in_the_next_folder() {
+    // Arrange
+    let scratch = browsed("files-filter");
+    let running = start(
+        named("files").expect("files is shipped"),
+        &scratch.dir,
+        system_path(),
+    );
+    let mut heard = Heard::default();
+    heard.until(&running, |heard| heard.shows("b.txt"));
+
+    // Act: what the filter box sends as `FOLD` is typed into it.
+    running.send(Input::Event(json!({ "filter": true, "value": "FOLD" })));
+
+    // Assert: only the folder is left, `..` with the rest, and the cursor is on it.
+    heard.until(&running, |heard| !heard.shows("b.txt"));
+    assert!(!heard.shows("../"), "{:?}", heard.texts());
+    assert!(
+        heard.selected_row().iter().any(|text| text == "a-folder/"),
+        "{:?}",
+        heard.selected_row()
+    );
+
+    // Act: into the folder the filter found.
+    running.send(Input::Key("Enter".to_string()));
+
+    // Assert: the folder's own entries, unfiltered.
+    heard.until(&running, |heard| heard.shows("inner.txt"));
+    assert!(heard.shows("../"), "{:?}", heard.texts());
+}
+
 #[test]
 fn files_copies_an_entrys_path_from_its_menu() {
     // Arrange

@@ -75,7 +75,9 @@ nothing, by its name: `Enter`, `Escape`, `Backspace`, `Delete`, `Tab`, `Up`, `Do
 `Right`, `Home`, `End`, `PageUp`, `PageDown`, with `Shift+` in front when shift is held
 (`Shift+Tab`). Anything typed with ⌘, ctrl or alt held stays the window's. A script with no
 `on_key` gets no keys at all: the window keeps them. Nor does it get any while one of its
-inputs has the keyboard - what is typed goes into the box, and Escape leaves it.
+inputs has the keyboard - what is typed goes into the box, and Escape leaves it - except `Enter`,
+`Up`, `Down`, `PageUp` and `PageDown`, which a line of text has no use for: those still reach
+`on_key`, so a filter box is typed in and its list moved through and opened without leaving it.
 
 The code at the top of a script, outside every function, runs before each call of one of its
 functions, in a scope of its own - so keep it to constants and `import`s. Its constants are

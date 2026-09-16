@@ -36,13 +36,22 @@ const ENTRY_WIDTH: f32 = 96.0;
 const PILL_PADDING: egui::Vec2 = vec2(5.0, 2.0);
 const PILL_SPACING: f32 = 4.0;
 
-/// Which of the palette's tag backgrounds this tag is drawn on.
+/// The tags that are always drawn on a background of their own, whatever their letters would
+/// land on. A card marked `bug` should read as broken from across the board.
+const TAG_BACKGROUNDS: &[(&str, fn(&Palette) -> egui::Color32)] =
+    &[("bug", |palette| palette.bug_tag_bg)];
+
+/// Which background this tag is drawn on.
 ///
-/// Settled by the tag's own letters, added up into one byte and folded onto the hues, so the
-/// same tag is the same color on every card, on every board, and after every restart - with
-/// no color chosen or written down anywhere. Two tags a letter apart usually come out apart
-/// too, which is what the eye wants from `bug` and `bugs`.
+/// A tag of [`TAG_BACKGROUNDS`] is drawn on its own. Any other is settled by the tag's own
+/// letters, added up into one byte and folded onto the palette's hues, so the same tag is the
+/// same color on every card, on every board, and after every restart - with no color chosen or
+/// written down anywhere. Two tags a letter apart usually come out apart too, which is what the
+/// eye wants from `needs-test` and `needs-tests`.
 pub(crate) fn background_of(tag: &str, palette: &Palette) -> egui::Color32 {
+    if let Some((_, background)) = TAG_BACKGROUNDS.iter().find(|(named, _)| *named == tag) {
+        return background(palette);
+    }
     let checksum = tag.bytes().fold(0u8, |sum, byte| sum.wrapping_add(byte));
     palette.tag_bgs[usize::from(checksum) % TAG_HUES]
 }
@@ -284,7 +293,7 @@ pub(crate) fn draw_field(
     if !offered.is_empty() {
         ui.add_space(5.0);
         ui.label(
-            RichText::new("on the board")
+            RichText::new("Add tags:")
                 .size(SMALL_SIZE)
                 .color(palette.muted),
         );
@@ -411,8 +420,18 @@ mod tests {
         let palette = Palette::of(ThemeMode::Dark);
 
         assert_ne!(
-            background_of("bug", &palette),
-            background_of("bugs", &palette)
+            background_of("needs-test", &palette),
+            background_of("needs-tests", &palette)
         );
+    }
+
+    /// `bug` is red in both themes, not whichever hue its letters would have picked.
+    #[test]
+    fn a_bug_is_always_drawn_in_red() {
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let palette = Palette::of(mode);
+
+            assert_eq!(background_of("bug", &palette), palette.bug_tag_bg);
+        }
     }
 }

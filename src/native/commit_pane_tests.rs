@@ -710,6 +710,7 @@ fn nothing_is_drawn_where_there_is_no_message_to_show() {
             None,
             None,
             false,
+            true,
         );
     });
     harness.run();
@@ -728,6 +729,7 @@ fn a_message_that_would_not_come_says_why() {
             None,
             Some("opencode failed (status 1): Error: UnknownError"),
             false,
+            true,
         );
     });
     harness.run();
@@ -741,5 +743,96 @@ fn a_message_that_would_not_come_says_why() {
     assert!(
         harness.query_by_label("use").is_none(),
         "there is no message to use"
+    );
+}
+
+/// While git is going the message box is off: the message has been handed to git already, and
+/// what is typed then - a passphrase meant for pinentry, while the hooks run - is not a change
+/// to it. It comes back on once the commit is over.
+#[test]
+fn the_message_box_is_off_while_the_commit_runs() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::NodeT;
+
+    let fixture = seeded_fixture("commit-box-off");
+    run_git_no_output(&fixture.root, &["add", "-A"]).expect("failed to stage the fixture");
+    // A hook that holds the commit until the test lets it go, so there is a running commit to
+    // look at for as long as the test needs one.
+    let release = fixture.root.join(".git").join("release-the-commit");
+    let hook = fixture.root.join(".git").join("hooks").join("pre-commit");
+    std::fs::create_dir_all(hook.parent().expect("expected the hooks folder"))
+        .expect("failed to make the hooks folder");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+            release.display()
+        ),
+    )
+    .expect("failed to write the hook");
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("failed to make the hook runnable");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut message_written = false;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 940.0))
+        .build_ui(move |ui| {
+            let session_id = app.model.root_session_id.clone();
+            if !message_written && let Some(pane) = app.model.commit_panes.get_mut(&session_id) {
+                pane.message = "Hold the commit".to_string();
+                message_written = true;
+            }
+            app.draw(ui);
+        });
+
+    let step_until = |harness: &mut Harness<'_>, done: &dyn Fn(&Harness<'_>) -> bool| {
+        let deadline = Instant::now() + GIT_DEADLINE;
+        while Instant::now() < deadline && !done(harness) {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let message_box_is_off = |harness: &Harness<'_>| {
+        harness
+            .query_all_by_role(Role::MultilineTextInput)
+            .find(|node| node.accesskit_node().value().as_deref() == Some("Hold the commit"))
+            .expect("the message box should be drawn")
+            .accesskit_node()
+            .is_disabled()
+    };
+    let commit_is_on = |harness: &Harness<'_>| {
+        harness
+            .query_by_label("commit")
+            .is_some_and(|button| !button.accesskit_node().is_disabled())
+    };
+
+    step_until(&mut harness, &|harness| {
+        harness.query_by_label("[commit]").is_some()
+    });
+    harness.get_by_label("[commit]").click();
+    step_until(&mut harness, &commit_is_on);
+    assert!(commit_is_on(&harness), "the pane never offered the commit");
+    assert!(
+        !message_box_is_off(&harness),
+        "nothing is running yet, so the message can still be written"
+    );
+
+    harness.get_by_label("commit").click();
+    step_until(&mut harness, &|harness| {
+        harness.query_by_label("committing…").is_some()
+    });
+    assert!(
+        message_box_is_off(&harness),
+        "the message box should be off while the commit runs"
+    );
+
+    std::fs::write(&release, "").expect("failed to let the commit go");
+    step_until(&mut harness, &|harness| {
+        harness.query_by_label("committed").is_some()
+    });
+    assert!(
+        harness.query_by_label("committed").is_some(),
+        "the commit should have gone through once the hook let it go"
     );
 }

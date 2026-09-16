@@ -731,18 +731,25 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
             }
 
             // The message and the buttons sit at the top of the pane, where the eye lands and
-            // where they stay put as the staged listing under them grows and shrinks.
-            let output = egui::TextEdit::multiline(&mut message)
-                .hint_text("what this commit does")
-                .desired_width(f32::INFINITY)
-                .desired_rows(MESSAGE_ROWS)
-                .show(ui);
+            // where they stay put as the staged listing under them grows and shrinks. Off while
+            // git is going: the message has been handed to it already, and what is typed then -
+            // a passphrase meant for pinentry, while hooks run - is not a change to it.
+            let output = ui
+                .add_enabled_ui(!running, |ui| {
+                    egui::TextEdit::multiline(&mut message)
+                        .hint_text("what this commit does")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(MESSAGE_ROWS)
+                        .show(ui)
+                })
+                .inner;
             if takes_keyboard && !running {
                 output.response.request_focus();
             }
 
             // Under the box, where a message written by the agent reads as an offer of what to
-            // put in it rather than as something already in it.
+            // put in it rather than as something already in it. `[use]` is off with the box,
+            // since it writes into it.
             ui.add_space(4.0);
             if draw_suggested_message(
                 ui,
@@ -750,6 +757,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 suggestion.as_ref(),
                 suggestion_error.as_deref(),
                 writing_message,
+                !running,
             ) && let Some(suggestion) = &suggestion
             {
                 message = suggestion.as_message();
@@ -858,14 +866,15 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
 
 /// The message the agent wrote, under the box it would go in: a line while it is being
 /// written, the message itself with `[use]` beside it once it is, and why it did not come when
-/// it did not. Answers whether `[use]` was pressed, which is read after the pane is drawn -
-/// the row is inside a closure that has the pane borrowed.
+/// it did not. `[use]` is off unless `usable`. Answers whether `[use]` was pressed, which is
+/// read after the pane is drawn - the row is inside a closure that has the pane borrowed.
 pub(super) fn draw_suggested_message(
     ui: &mut Ui,
     palette: &Palette,
     suggestion: Option<&CommitSuggestion>,
     error: Option<&str>,
     writing: bool,
+    usable: bool,
 ) -> bool {
     if writing {
         ui.horizontal(|ui| {
@@ -882,7 +891,7 @@ pub(super) fn draw_suggested_message(
     if let Some(suggestion) = suggestion {
         let mut used = false;
         ui.horizontal(|ui| {
-            used = widgets::clickable(ui.button("use"))
+            used = widgets::clickable(ui.add_enabled(usable, egui::Button::new("use")))
                 .on_hover_text("put this message in the box")
                 .clicked();
             ui.add(
