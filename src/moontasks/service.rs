@@ -418,6 +418,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
             .display()
             .to_string(),
         repo_path: repo_path.display().to_string(),
+        tags: metadata.tags.clone(),
         notes: store::read_notes(repo_path, task_id),
         resources,
     }
@@ -824,6 +825,20 @@ pub(crate) fn rename_task(
     store::write_task(&repo_path, task_id, &metadata)
 }
 
+/// What a card is marked with, set whole. Spelled the way the store keeps tags, so a tag typed
+/// twice in two spellings lands as one.
+pub(crate) fn set_tags(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    tags: &[String],
+) -> Result<()> {
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+    metadata.tags = store::tags_of(tags.iter().map(String::as_str));
+    store::write_task(&repo_path, task_id, &metadata)
+}
+
 /// End one of a task's shells, leaving the run recorded so it can be resumed.
 pub(crate) fn stop_resource(
     state: &AppState,
@@ -1164,6 +1179,7 @@ mod tests {
             status: ColumnId::new("in_progress"),
             created_at_unix: 0,
             position: 0,
+            tags: Vec::new(),
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,
@@ -1197,6 +1213,7 @@ mod tests {
             status: ColumnId::new("done"),
             created_at_unix: 0,
             position: 0,
+            tags: Vec::new(),
             resources: vec![TaskResource {
                 id: "resource".to_string(),
                 kind: TaskResourceKind::Agent,

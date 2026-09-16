@@ -13,7 +13,7 @@ use crate::{
         app::App,
         board::{
             Axis, BoardAction, CLOSE_MARK_SIZE, actions::TaskPaneBox, close_button, filter::Filter,
-            gesture, resources, selection, slide_into_place, stamp_place, start,
+            gesture, resources, selection, slide_into_place, stamp_place, start, tags,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -515,11 +515,15 @@ fn draw_card_body(
             if !task.resources.is_empty() {
                 ui.add_space(3.0);
             }
+            // At the foot of the card, over the row that opens their box: what a card is
+            // marked with is read after what it is about.
+            tags::draw_on_card(app, ui, task, palette, &mut card, actions);
 
             draw_card_actions(app, ui, task, &mut card, drag_id, showing, actions);
         })
         .response
         .rect;
+    tags::shut_on_press_elsewhere(app, ui, task, rect);
 
     // The press this card claims: one that landed on it and on none of its own buttons. What
     // it turns out to have been - a click, or the card being carried somewhere - is worked out
@@ -760,10 +764,11 @@ fn draw_notes_box(
 }
 
 /// Everything a card starts, on the one menu - the button and what is under it are
-/// [`start::draw_button`], the same ones the start window shows.
+/// [`start::draw_button`], the same ones the start window shows - and beside it the `[tags]`
+/// that opens the box the card is marked in.
 ///
-/// It comes up with the notes offer above it and goes the same way, so a card at rest is its
-/// title and its description and nothing else. It sits at the bottom right, out of the way of
+/// They come up with the notes offer above them and go the same way, so a card at rest is its
+/// title and its description and nothing else. They sit at the bottom right, out of the way of
 /// the description the card is read by, and under the mark that deletes the card - the two
 /// ends of the card are what it is acted on from.
 fn draw_card_actions(
@@ -783,9 +788,11 @@ fn draw_card_actions(
     ui.allocate_ui_with_layout(row, UiLayout::right_to_left(Align::Center), |ui| {
         // Multiplied rather than set, so the ghost of a card being dragged stays a ghost.
         ui.multiply_opacity(showing);
-        let menu_up = start::draw_button(app, ui, task, card, actions);
-        // Told to the card, which keeps its offers out for as long as this is up.
-        ui.data_mut(|data| data.insert_temp(menu_up_id(drag_id), menu_up));
+        let start_up = start::draw_button(app, ui, task, card, actions);
+        let tags_up = tags::draw_button(app, ui, task, card);
+        // Told to the card, which keeps its offers out for as long as the menu or the tag box
+        // is up.
+        ui.data_mut(|data| data.insert_temp(menu_up_id(drag_id), start_up || tags_up));
     });
 }
 
@@ -809,6 +816,7 @@ mod tests {
                 created_at_unix: 1700000000,
                 dir_path: String::new(),
                 repo_path: String::new(),
+                tags: Vec::new(),
                 notes: String::new(),
                 resources: Vec::new(),
             })

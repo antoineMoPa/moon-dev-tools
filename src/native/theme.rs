@@ -63,6 +63,11 @@ pub(crate) struct Palette {
     pub(crate) status_resolved_bg: Color32,
     pub(crate) status_failed_bg: Color32,
     pub(crate) status_neutral_bg: Color32,
+    /// The backgrounds a card's tag pills are drawn on, one per hue. Which one a tag gets is
+    /// settled by the tag's own letters - see [`crate::native::board::tags::background_of`] -
+    /// so the same tag is the same color on every card and after every restart, without a
+    /// color being chosen or stored anywhere.
+    pub(crate) tag_bgs: [Color32; TAG_HUES],
     pub(crate) added: Color32,
     pub(crate) added_word_bg: Color32,
     pub(crate) removed: Color32,
@@ -99,6 +104,10 @@ pub(crate) struct SyntaxInks {
     pub(crate) punctuation: Color32,
     pub(crate) plain: Color32,
 }
+
+/// How many hues a tag can be drawn in. Enough that a board's handful of tags mostly come out
+/// apart, few enough that each hue is still a color rather than a shade of the last.
+pub(crate) const TAG_HUES: usize = 6;
 
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb(
@@ -178,6 +187,14 @@ fn light() -> Palette {
         status_resolved_bg: rgba(0x275d52, 26),
         status_failed_bg: rgba(0x8f3526, 31),
         status_neutral_bg: rgba(0x275d52, 20),
+        tag_bgs: [
+            rgba(0xb7522d, 36),
+            rgba(0x275d52, 36),
+            rgba(0x3b5aa6, 36),
+            rgba(0x8a6a12, 44),
+            rgba(0x7b3f8c, 36),
+            rgba(0x247045, 36),
+        ],
         added: rgb(0x247045),
         added_word_bg: rgba(0x00aa00, 51),
         removed: rgb(0xa12d22),
@@ -233,6 +250,14 @@ fn dark() -> Palette {
         status_resolved_bg: rgba(0x7ed0c2, 36),
         status_failed_bg: rgba(0xff8d83, 41),
         status_neutral_bg: rgba(0x7ed0c2, 28),
+        tag_bgs: [
+            rgba(0xee8d68, 56),
+            rgba(0x7ed0c2, 48),
+            rgba(0x8fb0ff, 56),
+            rgba(0xe6c65a, 52),
+            rgba(0xd49cf0, 56),
+            rgba(0x72d89c, 52),
+        ],
         added: rgb(0x72d89c),
         added_word_bg: rgba(0x00d26e, 61),
         removed: rgb(0xff8b82),

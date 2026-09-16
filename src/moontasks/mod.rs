@@ -25,6 +25,10 @@ pub(crate) struct TaskView {
     pub(crate) dir_path: String,
     /// The repo the task's agents work in, which is the repo the board belongs to.
     pub(crate) repo_path: String,
+    /// What the card is marked with, in the spelling the store keeps - see
+    /// [`store::tag_of`].
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
     /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
     /// card draws its first lines as the task's description, and typing there writes it back.
     pub(crate) notes: String,
@@ -153,6 +157,13 @@ pub(crate) struct CreateTaskRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskTitleRequest {
     pub(crate) title: String,
+}
+
+/// What a card is marked with, set whole rather than one tag at a time: the tag menu knows the
+/// list it wants when it closes, and sending that is one write instead of a diff.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskTagsRequest {
+    pub(crate) tags: Vec<String>,
 }
 
 /// A file of the repo being put on a task's card, by the path the file pane opens it with:

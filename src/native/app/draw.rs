@@ -175,8 +175,12 @@ impl App {
             });
     }
 
-    /// The toasts, stacked up from the bottom right corner, `clear_of` points above the
+    /// The toasts, stacked up from the bottom left corner, `clear_of` points above the
     /// bottom edge so they stand on whatever strip is drawn along it rather than over it.
+    ///
+    /// The left rather than the right: the right-hand side is where a pane's own controls
+    /// and the tab strip's `+` sit, and a toast standing over them was in the way of the
+    /// hand that had just asked for something.
     pub(super) fn draw_toasts(&mut self, ctx: &egui::Context, clear_of: f32) {
         if self.model.toasts.is_empty() {
             return;
@@ -185,7 +189,7 @@ impl App {
         let screen = ctx.viewport_rect();
 
         egui::Area::new("moonreview-toasts".into())
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-14.0, -14.0 - clear_of))
+            .anchor(Align2::LEFT_BOTTOM, vec2(14.0, -14.0 - clear_of))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_max_width((screen.width() * 0.4).min(420.0));

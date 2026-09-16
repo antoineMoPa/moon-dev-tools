@@ -96,6 +96,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                 }
                                 ui.add_space(LINE_GAP);
                                 board::start::draw_list(app, ui, &task, &mut actions);
+                                ui.add_space(LINE_GAP);
+                                draw_tags(app, ui, &task, &palette, &mut actions);
                             });
                         });
                     });
@@ -105,6 +107,31 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                 board::actions::apply(app, action);
             }
         });
+}
+
+/// What the task is marked with, in the box it is edited in: the same box the card's
+/// `[tags]` opens, drawn from [`board::tags`] so the pane and the card cannot disagree.
+///
+/// It stands open here rather than behind a button. The pane has the room, and a task you
+/// have just opened is one you are about to say something about - which is as true of what
+/// it is marked with as it is of its notes.
+fn draw_tags(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    ui.label(RichText::new("Tags").size(SMALL_SIZE).color(palette.muted));
+    ui.add_space(3.0);
+    board::tags::draw_field(
+        app,
+        ui,
+        task,
+        palette,
+        &mut board::gesture::Controls::elsewhere(),
+        actions,
+    );
 }
 
 /// The pane a new task is written on, before there is a task to write it on: the same two

@@ -638,6 +638,13 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/tags"),
+            &json!({ "tags": tags }),
+        )
+    }
+
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
         let notes: TaskNotesPayload = self.post_json(
             &format!("/api/session/{session_id}/tasks/{task_id}/notes/open"),

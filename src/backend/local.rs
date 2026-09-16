@@ -328,6 +328,10 @@ impl Backend for LocalBackend {
         moontasks::service::rename_task(&self.state, session_id, task_id, title)
     }
 
+    fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()> {
+        moontasks::service::set_tags(&self.state, session_id, task_id, tags)
+    }
+
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }

@@ -29,8 +29,9 @@ use crate::{
     },
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload, WorkLogPayload,
-        TaskPlacementRequest, TaskTitleRequest, TaskView, TerminalOpened,
+        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload,
+        TaskPlacementRequest, TaskTagsRequest, TaskTitleRequest, TaskView, TerminalOpened,
+        WorkLogPayload,
         store::{BoardColumn, ColumnId},
     },
     search::SearchListener,
@@ -198,6 +199,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/title",
             post(rename_task),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/tags",
+            post(set_task_tags),
         )
         .route(
             "/api/session/{session_id}/tasks/{task_id}/notes/open",
@@ -1026,6 +1031,16 @@ async fn rename_task(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     moontasks::service::rename_task(&state, &session_id, &task_id, &request.title)?;
+    Ok("ok")
+}
+
+async fn set_task_tags(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskTagsRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_tags(&state, &session_id, &task_id, &request.tags)?;
     Ok("ok")
 }
 

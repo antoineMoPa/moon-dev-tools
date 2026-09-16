@@ -7,7 +7,7 @@ on it in the repo.
 
 | | |
 | --- | --- |
-| the box over the columns | filter the board: every column shows the cards whose title or notes hold what you typed, and hides the rest |
+| the box over the columns | filter the board: every column shows the cards whose title, tags or notes hold what you typed, and hides the rest |
 | `⌘F` on the board | put the keyboard in that box; Escape empties it |
 | drag a card | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | `cmd+click` a card | mark it, or take the mark off - anywhere on the card, buttons and all |
@@ -21,6 +21,7 @@ on it in the repo.
 | `+` under a column's last card | the same, for the bottom of it |
 | `+` at the right-hand end | add a column |
 | `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
+| `[tags]` beside it | the box the card's tags are edited in: a pill apiece with the mark that takes it off, a place to type the next one, and the rest of the board's tags under it to be pressed on. Backspace with nothing typed takes the last pill off. A tag is a pill at the foot of the card, in a color its own letters settle on, so `bug` is the same color on every card |
 | `right click` a card | the card's own menu: the task folder's path onto the clipboard, and a shell standing in that folder - which is where its notes and brief are, and where `[start]`'s shell is not, since that one comes up in the repo where the work is done |
 | a running resource | click its name to bring its terminal back on screen |
 | a card drawn in the accent color | a marked card: one you clicked, or the task whose tab was last in front, which is the same thing said twice |
@@ -28,7 +29,7 @@ on it in the repo.
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the task's own pane with the keyboard in its notes box, ready to write |
 | `[add notes]` | the same, on a task that has none yet |
 
-`[add notes]` and `[start]` are a card's offers: they fade up when the pointer comes onto the
+`[add notes]`, `[tags]` and `[start]` are a card's offers: they fade up when the pointer comes onto the
 card and fade away again when it leaves, over a sixth of a second, and hold their rows while
 they are out of sight — so a card at rest is its title and its description, and no card changes
 height as the pointer crosses the column. A card whose `[start]` menu is up keeps them out,
@@ -153,7 +154,7 @@ The board is a folder in the repo, which is the whole of its state:
   .gitignore          # ignores the whole board, written when the board is created
   board.json          # the columns, once you have changed them
   fix-the-login-page-6f9c1e2a-…/
-    metadata.json     # title, column, place in the column, the agent runs and the linked files
+    metadata.json     # title, column, place in the column, tags, the agent runs and the linked files
     brief.md          # what the agents working here have been told
     notes.md          # the task's description and shared notes, shown on the card
     request_review.md        # how to write the file below, for an agent about to

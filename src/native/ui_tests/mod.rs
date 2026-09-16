@@ -12,6 +12,7 @@ mod board_columns;
 mod board_drag;
 mod board_pending_card;
 mod board_selection;
+mod board_tags;
 mod board_task_pane;
 mod diff_comments;
 mod diff_definition;
@@ -34,6 +35,7 @@ mod sidebar_menu;
 mod status_bar;
 mod submodules;
 mod tab_rename;
+mod toasts;
 mod work_log;
 mod workspace_color;
 

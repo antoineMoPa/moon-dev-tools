@@ -296,6 +296,12 @@ pub(crate) struct BoardState {
     pub(crate) task_box_focus: Option<(String, crate::native::board::actions::TaskPaneBox)>,
     /// The task whose title is being edited, if one is.
     pub(crate) renaming: Option<TaskRename>,
+    /// What is being typed into a task's tag box, one for each task whose box has been open.
+    /// Kept per task the way the panes' editors are, so a card's box and that task's pane
+    /// are writing the same word rather than two.
+    pub(crate) tagging: HashMap<String, TagComposer>,
+    /// The card whose tag box is open inside it, if one is - opened by its `[tags]`.
+    pub(crate) tagging_card: Option<String>,
     /// The cards the board has marked. One is a task to read - its page opens with it -
     /// and several are a group to drag. See [`crate::native::board::selection`].
     pub(crate) marked: HashSet<String>,
@@ -440,6 +446,33 @@ pub(crate) struct TabRename {
     pub(crate) name: String,
     /// Set when the box has just opened, so it takes the keyboard once.
     pub(crate) focus: bool,
+}
+
+/// The tag being typed into one task's tag box.
+#[derive(Default)]
+pub(crate) struct TagComposer {
+    pub(crate) text: String,
+    /// Set when the box is to take the keyboard next frame: the frame the card's box opened
+    /// on, and the frame after a tag was entered, so the next one is typed without reaching
+    /// for it.
+    pub(crate) focus: bool,
+    /// The tags last written to the task, until the board reads back exactly those.
+    ///
+    /// The write goes out on a worker thread, and the next tag is typed well inside the time
+    /// it takes to come back. Built on the task's tags as the board still has them, that next
+    /// tag would be written over the one before; built on these, it goes after it. Several
+    /// writes can be out at once, and only the last of them is what the box stands for.
+    pub(crate) sent: Option<Vec<String>>,
+}
+
+impl TagComposer {
+    /// The tags the box stands for: the ones last sent, until the board has them.
+    pub(crate) fn tags_over(&mut self, board_tags: &[String]) -> Vec<String> {
+        if self.sent.as_deref() == Some(board_tags) {
+            self.sent = None;
+        }
+        self.sent.clone().unwrap_or_else(|| board_tags.to_vec())
+    }
 }
 
 /// A card's title, open for editing after a double click.

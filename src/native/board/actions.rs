@@ -48,6 +48,8 @@ pub(crate) enum BoardAction {
     Delete(String),
     Rename(String, String),
     CancelRename,
+    /// What the card is marked with, set whole: the tag box knows the list it wants.
+    SetTags(String, Vec<String>),
     /// Turn the palette into the file finder, picking a file to put on this task's card.
     PickFile(String),
     /// Open a file linked to a card, in a pane down the right.
@@ -413,6 +415,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             });
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
+        BoardAction::SetTags(task_id, tags) => {
+            act(app, "could not set the tags", move |backend| {
+                backend.set_task_tags(&session_id, &task_id, &tags)
+            });
+        }
         BoardAction::PickFile(task_id) => {
             let root = app.model.root_session_id.clone();
             app.model.palette.show_files_for_task(task_id, root);

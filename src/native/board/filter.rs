@@ -40,13 +40,14 @@ impl Filter {
 
     /// Whether this task is one of the ones the query asks for.
     ///
-    /// A card shows a title and the first lines of its `notes.md`, so those are what is looked
-    /// through: what a card says is what it can be found by. Everything matches an empty
-    /// query - a board nobody has typed into shows all of its cards.
+    /// A card shows a title, its tags and the first lines of its `notes.md`, so those are what
+    /// is looked through: what a card says is what it can be found by. Everything matches an
+    /// empty query - a board nobody has typed into shows all of its cards.
     pub(crate) fn matches(&self, task: &TaskView) -> bool {
         !self.is_on()
             || task.title.to_lowercase().contains(&self.0)
             || task.notes.to_lowercase().contains(&self.0)
+            || task.tags.iter().any(|tag| tag.contains(&self.0))
     }
 }
 
@@ -123,6 +124,7 @@ mod tests {
             created_at_unix: 1700000000,
             dir_path: String::new(),
             repo_path: String::new(),
+            tags: Vec::new(),
             notes: notes.to_string(),
             resources: Vec::new(),
         }
@@ -151,6 +153,20 @@ mod tests {
 
         assert!(Filter::of("nested comments").matches(&task));
         assert!(!Filter::of("nested parser").matches(&task));
+    }
+
+    /// A tag is on the card to be found by, so `bug` finds every card marked with it - and a
+    /// tag is kept in lowercase, so the query's case is no more a matter than the title's.
+    #[test]
+    fn a_query_finds_a_card_by_its_tags() {
+        let task = TaskView {
+            tags: vec!["needs-tests".to_string()],
+            ..task("Write the parser", "")
+        };
+
+        assert!(Filter::of("needs").matches(&task));
+        assert!(Filter::of("NEEDS-TESTS").matches(&task));
+        assert!(!Filter::of("bug").matches(&task));
     }
 
     #[test]

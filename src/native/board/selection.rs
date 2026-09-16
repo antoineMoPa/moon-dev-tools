@@ -189,6 +189,7 @@ mod tests {
                     created_at_unix: 1700000000,
                     dir_path: String::new(),
                     repo_path: String::new(),
+                    tags: Vec::new(),
                     notes: String::new(),
                     resources: Vec::new(),
                 })

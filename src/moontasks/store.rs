@@ -233,8 +233,48 @@ pub(crate) struct TaskMetadata {
     /// which is the order that board was already drawn in.
     #[serde(default)]
     pub(crate) position: u32,
+    /// What the card is marked with, each in the spelling [`tag_of`] settles on. A tag is the
+    /// person's word for a card - `bug`, `needs-tests`, a client's name - drawn as a pill under
+    /// the title and looked through by the board's filter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tags: Vec<String>,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
+}
+
+/// One tag in the single spelling the board keeps it in, or nothing at all for text that has
+/// no tag in it.
+///
+/// Lowercase, with runs of anything but letters, digits, `-` and `_` turned into one dash, so
+/// `Needs Tests`, `needs-tests` and ` needs   tests ` are the same tag: a tag is typed by hand
+/// on one card and again on the next, and two spellings of one word would be two pills.
+pub(crate) fn tag_of(text: &str) -> Option<String> {
+    let mut tag = String::new();
+    let mut pending_dash = false;
+    for character in text.chars() {
+        if character.is_alphanumeric() || character == '-' || character == '_' {
+            if pending_dash && !tag.is_empty() {
+                tag.push('-');
+            }
+            pending_dash = false;
+            tag.extend(character.to_lowercase());
+        } else {
+            pending_dash = true;
+        }
+    }
+    (!tag.is_empty()).then_some(tag)
+}
+
+/// A list of tags as the board keeps it: each one spelled by [`tag_of`], in the order given,
+/// with nothing said twice.
+pub(crate) fn tags_of<'a>(text: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for tag in text.into_iter().filter_map(tag_of) {
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
 }
 
 pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
@@ -408,6 +448,7 @@ pub(crate) fn create_task(
         created_at_unix: now_unix(),
         position,
         status: status.clone(),
+        tags: Vec::new(),
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
@@ -583,6 +624,49 @@ mod tests {
         assert_eq!(slug_of("  Ünïcode & symbols!! "), "ünïcode-symbols");
         assert_eq!(slug_of("***"), "task");
         assert!(slug_of(&"word ".repeat(40)).len() <= 44);
+    }
+
+    #[test]
+    fn a_tag_is_kept_in_one_spelling() {
+        assert_eq!(tag_of("Needs Tests"), Some("needs-tests".to_string()));
+        assert_eq!(tag_of("  needs   tests "), Some("needs-tests".to_string()));
+        assert_eq!(tag_of("needs-tests"), Some("needs-tests".to_string()));
+        assert_eq!(tag_of("v2_api"), Some("v2_api".to_string()));
+        assert_eq!(tag_of("Ünïcode!"), Some("ünïcode".to_string()));
+        assert_eq!(tag_of("***"), None);
+        assert_eq!(tag_of(""), None);
+    }
+
+    #[test]
+    fn a_list_of_tags_says_nothing_twice_and_keeps_its_order() {
+        assert_eq!(
+            tags_of(["Bug", "needs tests", "bug", "", "Needs-Tests", "ui"]),
+            ["bug", "needs-tests", "ui"]
+        );
+    }
+
+    #[test]
+    fn a_task_written_before_tags_reads_back_without_any() {
+        let repo = temp_repo("no-tags");
+        let dir = tasks_root(&repo).join("old-task-1111");
+        fs::create_dir_all(&dir).expect("failed to create the task folder");
+        fs::write(
+            dir.join(METADATA_FILE_NAME),
+            "{\n  \"title\": \"Old task\",\n  \"status\": \"todo\",\n  \
+             \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+        )
+        .expect("failed to write the task");
+
+        let metadata = read_task(&repo, "old-task-1111").expect("expected the task to read");
+        assert!(metadata.tags.is_empty());
+
+        // And a task with none keeps its file free of the field: a board nobody has tagged
+        // reads exactly as it did.
+        write_task(&repo, "old-task-1111", &metadata).expect("expected the task written");
+        let text = fs::read_to_string(dir.join(METADATA_FILE_NAME)).expect("expected the file");
+        assert!(!text.contains("tags"), "{text}");
+
+        fs::remove_dir_all(&repo).ok();
     }
 
     #[test]

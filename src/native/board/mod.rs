@@ -14,6 +14,7 @@ pub(crate) mod gesture;
 pub(crate) mod resources;
 pub(crate) mod selection;
 pub(crate) mod start;
+pub(crate) mod tags;
 
 pub(super) use actions::BoardAction;
 use actions::apply;
