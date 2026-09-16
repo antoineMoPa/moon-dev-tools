@@ -183,9 +183,13 @@ pub(crate) enum TaskResourceKind {
     Shell,
     Agent,
     File,
+    /// A visualization a run of the task announced, kept in the task's folder - see
+    /// [`crate::visualizations::on_tasks`].
+    Visualization,
 }
 
-/// Something on the task's card: a shell, a run of an agent, or a file linked to the task.
+/// Something on the task's card: a shell, a run of an agent, a file linked to the task, or a
+/// visualization one of its runs showed.
 ///
 /// Whether a shell or a run is going right now is not written down - the shells the server
 /// has are what answers that, and they are gone once the server is. A file has nothing
@@ -194,11 +198,12 @@ pub(crate) enum TaskResourceKind {
 pub(crate) struct TaskResource {
     pub(crate) id: String,
     pub(crate) kind: TaskResourceKind,
-    /// Which agent this is a run of. `None` for a shell or a file.
+    /// Which agent this is a run of, or which agent showed a visualization. `None` for a shell
+    /// or a file.
     #[serde(default)]
     pub(crate) agent: AgentKind,
     /// The file this links to, relative to the repo root - the way every file pane path is
-    /// addressed. `Some` for a file and nothing else.
+    /// addressed. `Some` for a file, and for a visualization: its copy in the task's folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_path: Option<String>,
     /// The shell it was last attached to. Kept after the shell ends so the board can tell

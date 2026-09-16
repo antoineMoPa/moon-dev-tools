@@ -42,8 +42,8 @@ pub(crate) struct TaskResourceView {
     pub(crate) kind: TaskResourceKind,
     pub(crate) agent: AgentKind,
     pub(crate) label: String,
-    /// The file a linked file opens, relative to the repo root. `Some` for a file and nothing
-    /// else.
+    /// The file a linked file opens, relative to the repo root. `Some` for a file, and for a
+    /// visualization: its copy in the task's folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_path: Option<String>,
     /// The shell it is attached to, while it is still running.

@@ -31,6 +31,7 @@ mod settings;
 mod shell_locale;
 mod shell_path;
 mod terminal;
+mod visualizations;
 
 use anyhow::Result;
 

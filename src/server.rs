@@ -307,6 +307,14 @@ pub(crate) fn router(state: AppState) -> Router {
             get(crate::terminal::terminals_wanting_attention),
         )
         .route(
+            "/api/session/{session_id}/terminals/visualizations",
+            get(crate::visualizations::routes::announced),
+        )
+        .route(
+            "/api/session/{session_id}/visualizations/page",
+            get(crate::visualizations::routes::page),
+        )
+        .route(
             "/api/session/{session_id}/terminals/{terminal_id}",
             get(crate::terminal::terminal_view).delete(crate::terminal::close_terminal),
         )

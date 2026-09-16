@@ -1,0 +1,15 @@
+OpenAI Codex
+Copyright 2025 OpenAI
+
+This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
+Copyright (c) 2016-2022 Florian Dehau
+Copyright (c) 2023-2025 The Ratatui Developers
+
+---
+
+visualize.css and visualize.html in this folder are copied unchanged from OpenAI Codex
+(https://github.com/openai/codex, codex-rs/tui/assets/inline_visualization/, commit
+4701aa4), under the Apache License 2.0 in LICENSE. moon builds its visualization page the
+way codex-rs/tui/src/inline_visualization/viewer.rs does, and reads assistant messages for
+visualizations by the rules of codex-rs/tui/src/inline_visualization.rs - see
+src/visualizations/ in moon.

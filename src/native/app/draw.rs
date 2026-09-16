@@ -344,10 +344,14 @@ impl App {
         self.poll_submodules(focused);
         self.poll_review_requests();
         self.poll_running_shells();
+        self.poll_visualizations();
         self.poll_language_server_work();
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
+        if let Some(fragment_path) = self.model.board.opened_visualization.take() {
+            crate::native::visualizations::open_kept_visualization(&mut self.model, &fragment_path);
+        }
         self.follow_shell_asks(ctx);
         self.follow_extensions(ctx);
         if std::mem::take(&mut self.model.project_pending) {

@@ -564,6 +564,32 @@ pub(super) fn file_mark(ui: &mut Ui, palette: &Palette) {
     ));
 }
 
+/// A kept visualization's mark, in the place a file's page goes: three bars of a chart, so the
+/// row reads as something to look at rather than a file to edit.
+pub(super) fn chart_mark(ui: &mut Ui, palette: &Palette) {
+    const WIDTH: f32 = 7.0;
+    const HEIGHT: f32 = 8.0;
+    /// How tall each bar stands, as a share of the mark's height, left to right.
+    const BARS: [f32; 3] = [0.5, 1.0, 0.75];
+
+    let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, HEIGHT), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let bar_width = rect.width() / BARS.len() as f32;
+    for (index, share) in BARS.iter().enumerate() {
+        let left = rect.min.x + bar_width * index as f32;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(left + 0.5, rect.max.y - rect.height() * share),
+                egui::pos2(left + bar_width - 0.5, rect.max.y),
+            ),
+            0.0,
+            palette.muted,
+        );
+    }
+}
+
 /// A `+` on a filled disc, the same button the tab strips carry for a new tab.
 ///
 /// It is drawn rather than taken from `egui_frames`, which only offers it as part of a tab

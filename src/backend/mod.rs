@@ -232,6 +232,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
         &self,
         session_id: &str,
     ) -> Result<Vec<crate::api::TerminalAttentionView>>;
+    /// Every visualization an agent in the server's terminals has announced - see
+    /// [`crate::visualizations`].
+    fn terminal_visualizations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::visualizations::VisualizationView>>;
+    /// The page one of those visualizations is shown on, by its fragment's path.
+    fn visualization_page(&self, session_id: &str, fragment_path: &str) -> Result<String>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
     /// What a shell is called, if it has been named: an agent's shell is named as it starts,
     /// a plain one only once someone renames it. A shell the server does not have is an error.

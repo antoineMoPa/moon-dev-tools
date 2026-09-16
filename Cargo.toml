@@ -47,6 +47,10 @@ libc = "0.2"
 # what turns a review session into a workspace it can answer about.
 moon_lsp = { version = "0.1", path = "crates/moon_lsp" }
 portable-pty = "0.9.0"
+# Codex's own rules for what in an agent's answer is a visualization: a directive line only
+# counts outside a code block, which takes a markdown parser to tell - see
+# `src/visualizations/directives.rs`.
+pulldown-cmark = { version = "0.13", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # The folder picker the window opens on startup when it has no repo to review yet. On Linux it
 # asks the desktop portal, so there is no GTK to link against.
@@ -55,9 +59,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
 textdistance = "1.1.1"
+# The day a Codex thread was started on, off its UUIDv7 id, and when a line of its rollout was
+# written - which is how its visualizations are found. See `src/visualizations/`.
+time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+# The developer instructions a person keeps in `~/.codex/config.toml`, which moon has to add to
+# rather than replace when it starts Codex - see `src/visualizations/codex_launch.rs`.
+toml = "1"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 webbrowser = "1"
+# A Codex thread id is a UUIDv7, whose timestamp names the folder its visualizations go in.
+uuid = "1"
 # The language extensions are written in - see `src/extensions`. A pane that is a script is a
 # pane that can be written, and rewritten while the window runs, without building this again.
 # `serde` so a script's view is read into the window's own types, and an event it attached to

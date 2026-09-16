@@ -266,6 +266,7 @@ impl App {
                 adopt_shells_pending: false,
                 open_shell_pending: false,
                 restored_layout: None,
+                visualizations: Default::default(),
                 // The agent the person last picked, put back once the review says this
                 // machine still has it.
                 restored_agent: Some(settings.selected_agent),

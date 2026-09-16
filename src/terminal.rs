@@ -242,6 +242,9 @@ pub(crate) struct TerminalSession {
     /// asked of [`TerminalSession::child`], whose lock is held for as long as a wait on the
     /// program takes - see [`failure_notice`].
     child_pid: Option<u32>,
+    /// What a Codex in this terminal has shown - see [`crate::visualizations`]. `None` for any
+    /// other program.
+    visualizations: Option<Mutex<crate::visualizations::rollout::CodexRollouts>>,
 }
 
 impl TerminalSession {
@@ -551,6 +554,50 @@ impl TerminalRegistry {
         asking
     }
 
+    /// Every visualization the Codex runs in these terminals have announced - see
+    /// [`crate::visualizations::rollout`]. Reads their rollouts, so it is file work.
+    pub(crate) fn visualizations(&self) -> Vec<crate::visualizations::VisualizationView> {
+        let codex_runs: Vec<(String, Arc<TerminalSession>)> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.visualizations.is_some())
+            .map(|(terminal_id, session)| (terminal_id.clone(), Arc::clone(session)))
+            .collect();
+        let mut views = Vec::new();
+        for (terminal_id, session) in codex_runs {
+            let (Some(rollouts), Some(pid)) = (&session.visualizations, session.child_pid) else {
+                continue;
+            };
+            let mut rollouts = rollouts.lock().unwrap();
+            // A Codex that has ended holds nothing open, and has said all it will.
+            let announced = if session.child_ended.load(Ordering::Relaxed) {
+                rollouts.announced()
+            } else {
+                rollouts.poll(pid)
+            };
+            for (fragment_path, announced) in announced {
+                // A fragment removed since it was announced has nothing left to show.
+                let Ok(modified) =
+                    std::fs::metadata(fragment_path).and_then(|meta| meta.modified())
+                else {
+                    continue;
+                };
+                views.push(crate::visualizations::VisualizationView {
+                    terminal_id: terminal_id.clone(),
+                    fragment_path: fragment_path.display().to_string(),
+                    announced: *announced,
+                    modified_unix_ms: modified
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("a file is written after the epoch")
+                        .as_millis() as u64,
+                });
+            }
+        }
+        views
+    }
+
     /// The plain shells one task has open right now, oldest first.
     ///
     /// This is the whole record of them: a shell has nothing to come back to once it ends, so
@@ -637,7 +684,18 @@ impl TerminalRegistry {
             }
             _ => {}
         }
-        for argument in &spec.args {
+        // Codex is told how to show a visualization, which moon then shows beside it - see
+        // [`crate::visualizations`].
+        let arguments = match &spec.program {
+            TerminalProgram::Agent(AgentKind::Codex) => {
+                crate::visualizations::codex_launch::codex_arguments(
+                    &crate::visualizations::codex_home(),
+                    &spec.args,
+                )?
+            }
+            _ => spec.args.clone(),
+        };
+        for argument in &arguments {
             command.arg(argument);
         }
         command.cwd(&spec.cwd);
@@ -684,11 +742,12 @@ impl TerminalRegistry {
 
         let order = self.next_id.fetch_add(1, Ordering::Relaxed);
         let terminal_id = format!("terminal-{}-{order}", self.run);
+        let started_at_unix = crate::moontasks::store::now_unix();
         let session = Arc::new(TerminalSession {
             owner: spec.owner,
             name: Mutex::new(spec.name),
             program: spec.program.clone(),
-            started_at_unix: crate::moontasks::store::now_unix(),
+            started_at_unix,
             order,
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
@@ -703,6 +762,12 @@ impl TerminalRegistry {
             child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
             child_pid,
+            visualizations: (spec.program == TerminalProgram::Agent(AgentKind::Codex)).then(|| {
+                Mutex::new(crate::visualizations::rollout::CodexRollouts::new(
+                    &crate::visualizations::codex_home(),
+                    started_at_unix,
+                ))
+            }),
         });
         self.sessions
             .lock()

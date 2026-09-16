@@ -394,6 +394,17 @@ impl Backend for LocalBackend {
         Ok(self.state.terminals.wanting_attention())
     }
 
+    fn terminal_visualizations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::visualizations::VisualizationView>> {
+        crate::visualizations::on_tasks::announced(&self.state, session_id)
+    }
+
+    fn visualization_page(&self, session_id: &str, fragment_path: &str) -> Result<String> {
+        crate::visualizations::routes::page_of(&self.state, session_id, fragment_path)
+    }
+
     fn close_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<()> {
         self.state.terminals.remove(terminal_id);
         Ok(())

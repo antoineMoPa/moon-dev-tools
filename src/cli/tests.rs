@@ -240,6 +240,26 @@ fn install_launchers_takes_no_arguments() {
     assert!(error.to_string().contains("takes nothing else"));
 }
 
+/// `licenses` prints what is compiled in, and takes nothing.
+#[test]
+fn parse_licenses_command() {
+    assert_eq!(
+        parse_command(None, vec!["licenses".to_string()]).expect("expected it to parse"),
+        MoonCommand::Licenses
+    );
+    let error = parse_command(None, vec!["licenses".to_string(), "extra".to_string()])
+        .expect_err("expected an argument after licenses to be rejected");
+    assert!(error.to_string().contains("takes nothing else"));
+}
+
+/// What `moon licenses` prints names the work moon copied, not only the crates it links.
+#[test]
+fn third_party_licenses_carry_the_codex_notice() {
+    // Codex's NOTICE, which is the one file that names Ratatui.
+    assert!(THIRD_PARTY_LICENSES.contains("code derived from [Ratatui]"));
+    assert!(THIRD_PARTY_LICENSES.contains("Apache License"));
+}
+
 /// The server is a command of its own now, and `--logs` is the only thing it takes.
 #[test]
 fn parse_serve_with_and_without_logs() {

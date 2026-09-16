@@ -219,6 +219,8 @@ pub(super) enum MoonCommand {
     },
     /// Which windows are open, and what they are open on.
     ListWindows,
+    /// moon's license, and the licenses and notices of everything it is built from.
+    Licenses,
     /// A card on the board of the repo this shell is in, without opening a window on it. The
     /// task folder it made is printed, which is what the caller wanted it for.
     NewTask {
@@ -256,6 +258,7 @@ pub(crate) fn run() -> Result<()> {
         MoonCommand::InstallLaunchers => install_launchers(),
         MoonCommand::Open { path, line } => open::open_file(&path, line),
         MoonCommand::ListWindows => open::list_windows(),
+        MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
         MoonCommand::Window { frame, args } => open_window(frame, args),
     }
@@ -298,6 +301,10 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
             false => bail!("`{PROGRAM} list` says which windows are open, so it takes nothing"),
         },
         "serve" => parse_serve(rest),
+        "licenses" => match rest.is_empty() {
+            true => Ok(MoonCommand::Licenses),
+            false => bail!("`{PROGRAM} licenses` takes nothing else"),
+        },
         "install-launchers" => match rest.is_empty() {
             true => Ok(MoonCommand::InstallLaunchers),
             false => bail!("`{PROGRAM} install-launchers` takes nothing else"),
@@ -505,6 +512,26 @@ fn launch_review(target: ReviewTarget, source: ReviewSource, frame: Frame) -> Re
     crate::native::run(launch)
 }
 
+/// moon's own license.
+const MOON_LICENSE: &str = include_str!("../../LICENSE");
+
+/// The licenses and notices of the crates and files moon is built from, written by
+/// `scripts/third-party-licenses.py`. Compiled in because an install keeps nothing but the
+/// executable, so it is the one place they can travel with it.
+const THIRD_PARTY_LICENSES: &str = include_str!("../../THIRD_PARTY_LICENSES.txt");
+
+/// Most of a megabyte, so it is read through a pager or `head` as often as not - and one that
+/// stops reading is someone who has read enough, not an error.
+fn print_licenses() -> Result<()> {
+    use std::io::Write;
+
+    let mut stdout = std::io::stdout().lock();
+    match write!(stdout, "{MOON_LICENSE}\n\n{THIRD_PARTY_LICENSES}").and_then(|()| stdout.flush()) {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        written => Ok(written?),
+    }
+}
+
 fn print_version() {
     println!("{PROGRAM} {}", env!("CARGO_PKG_VERSION"));
 }
@@ -534,6 +561,7 @@ Usage:
   {PROGRAM} list                      which windows are open, and what they are on
   {PROGRAM} serve [--logs]            the review server, for a window on another machine
   {PROGRAM} install-launchers         entries the OS offers for the three windows
+  {PROGRAM} licenses                  moon's license, and those of what it is built from
   {PROGRAM} --version
   {PROGRAM} --help
 

@@ -333,15 +333,17 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
         .resources
         .iter()
         .map(|resource| match resource.kind {
-            TaskResourceKind::File => {
+            TaskResourceKind::File | TaskResourceKind::Visualization => {
                 let Some(file_path) = resource.file_path.clone() else {
-                    panic!("linked file {} has no file path", resource.id);
+                    panic!("{:?} {} has no file path", resource.kind, resource.id);
                 };
                 TaskResourceView {
                     id: resource.id.clone(),
-                    kind: TaskResourceKind::File,
-                    agent: AgentKind::None,
-                    label: file_path.clone(),
+                    kind: resource.kind,
+                    agent: resource.agent,
+                    // A file by its path; a visualization by the name it was given as it was
+                    // kept, which is what its pane's tab reads.
+                    label: resource.name.clone().unwrap_or_else(|| file_path.clone()),
                     file_path: Some(file_path),
                     running: false,
                     quiet_for_secs: None,
@@ -557,6 +559,9 @@ pub(crate) fn start_resource(
             request.agent
         }
         TaskResourceKind::File => bail!("a file is linked to a task, not started"),
+        TaskResourceKind::Visualization => {
+            bail!("a visualization is kept on a task by the run that showed it, not started")
+        }
     };
     let launch = agent_launch(agent);
     // Only an agent whose start args name a session id has a run that can be resumed exactly.

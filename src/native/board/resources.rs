@@ -16,8 +16,8 @@ use crate::{
     native::{
         app::App,
         board::{
-            Activity, BoardAction, activity_dot, close_button, file_mark, gesture::Controls,
-            running_dot,
+            Activity, BoardAction, activity_dot, chart_mark, close_button, file_mark,
+            gesture::Controls, running_dot,
         },
         submodules::changes_label,
         theme::{Palette, SMALL_SIZE},
@@ -263,9 +263,16 @@ fn draw_resource(
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    if resource.kind == TaskResourceKind::File {
-        draw_file_resource(ui, task, resource, card, palette, actions);
-        return;
+    match resource.kind {
+        TaskResourceKind::File => {
+            draw_file_resource(ui, task, resource, card, palette, actions);
+            return;
+        }
+        TaskResourceKind::Visualization => {
+            draw_visualization_resource(ui, task, resource, card, palette, actions);
+            return;
+        }
+        TaskResourceKind::Shell | TaskResourceKind::Agent => {}
     }
     // A running shell is the way back to its tab; a run that has ended opens nothing, and
     // its row says so by staying unlit.
@@ -392,6 +399,7 @@ fn draw_row(ui: &mut Ui, palette: &Palette, opens: bool, hover: &str) -> Respons
 fn hover_of(kind: TaskResourceKind) -> &'static str {
     match kind {
         TaskResourceKind::File => "Open this file in a pane",
+        TaskResourceKind::Visualization => "Open this visualization in a pane",
         TaskResourceKind::Shell | TaskResourceKind::Agent => "Open this shell in a tab",
     }
 }
@@ -439,6 +447,51 @@ fn draw_file_resource(
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
             let unlink = close_button(ui, palette).on_hover_text("Take this file off the task");
+            if card.pressed(&unlink) {
+                actions.push(BoardAction::DeleteResource(
+                    task.id.clone(),
+                    resource.id.clone(),
+                ));
+            }
+        });
+    });
+}
+
+/// A visualization a run of the task showed: its name, which opens it again, and the mark that
+/// takes it off the card.
+///
+/// Like a linked file, taking it off loses nothing and so goes without asking: its copy stays in
+/// the task's folder. An agent still running that rewrites it puts it back.
+fn draw_visualization_resource(
+    ui: &mut Ui,
+    task: &TaskView,
+    resource: &TaskResourceView,
+    card: &mut Controls,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let Some(file_path) = resource.file_path.as_deref() else {
+        panic!("visualization {} has no file path", resource.id);
+    };
+    let row = draw_row(ui, palette, true, hover_of(resource.kind));
+    let row_pressed = card.pressed(&row);
+    draw_in_row(ui, row.rect, |ui| {
+        chart_mark(ui, palette);
+
+        let name = widgets::quiet_button(ui, &resource.label)
+            .on_hover_text(format!("Open {file_path} in a pane"));
+        if card.pressed(&name) || row_pressed {
+            actions.push(BoardAction::OpenVisualization {
+                fragment_path: std::path::Path::new(&task.repo_path)
+                    .join(file_path)
+                    .display()
+                    .to_string(),
+            });
+        }
+
+        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+            let unlink =
+                close_button(ui, palette).on_hover_text("Take this visualization off the task");
             if card.pressed(&unlink) {
                 actions.push(BoardAction::DeleteResource(
                     task.id.clone(),

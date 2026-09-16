@@ -57,6 +57,10 @@ pub(crate) enum BoardAction {
         task_id: String,
         file_path: String,
     },
+    /// Open a visualization kept on a card, by its copy's path on the server's machine.
+    OpenVisualization {
+        fragment_path: String,
+    },
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -426,6 +430,9 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         }
         BoardAction::OpenFile { task_id, file_path } => {
             app.model.board.opened_file = Some(OpenedFile { file_path, task_id })
+        }
+        BoardAction::OpenVisualization { fragment_path } => {
+            app.model.board.opened_visualization = Some(fragment_path)
         }
         BoardAction::AddColumn { label, at } => {
             // The box closes on the way out: the column it was standing in for is on its way.

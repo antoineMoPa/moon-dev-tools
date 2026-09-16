@@ -753,6 +753,24 @@ impl Backend for RemoteBackend {
         Ok(list.terminals)
     }
 
+    fn terminal_visualizations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::visualizations::VisualizationView>> {
+        let list: crate::visualizations::routes::VisualizationList = self.get(&format!(
+            "/api/session/{session_id}/terminals/visualizations"
+        ))?;
+        Ok(list.visualizations)
+    }
+
+    fn visualization_page(&self, session_id: &str, fragment_path: &str) -> Result<String> {
+        let encoded = urlencode(fragment_path);
+        let page: crate::visualizations::routes::VisualizationPage = self.get(&format!(
+            "/api/session/{session_id}/visualizations/page?fragment_path={encoded}"
+        ))?;
+        Ok(page.html)
+    }
+
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()> {
         self.delete(&format!(
             "/api/session/{session_id}/terminals/{terminal_id}"

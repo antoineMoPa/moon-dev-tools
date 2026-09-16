@@ -285,6 +285,10 @@ pub(crate) struct BoardState {
     /// A file a board action just readied - the task's notes, made sure to exist, or a file
     /// just linked to a card - waiting for the window the same way an opened shell does.
     pub(crate) opened_file: Option<OpenedFile>,
+    /// A visualization kept on a task whose row was just clicked, by its copy's path, waiting
+    /// for the next frame the way an opened file does: opened while the card or the task's pane
+    /// is drawn, the click would hand the keyboard straight back to the frame it landed in.
+    pub(crate) opened_visualization: Option<String>,
     /// The title and notes as they are being typed on a task's own pane, one for each pane
     /// open, so the board reading itself again does not overwrite a half-typed word.
     pub(crate) task_editors: HashMap<String, TaskEditor>,
@@ -783,6 +787,9 @@ pub(crate) struct Model {
     pub(crate) open_shell_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.
     pub(crate) restored_layout: Option<Layout<Pane>>,
+    /// The visualizations agents have announced, and the pages their panes show - see
+    /// [`crate::native::visualizations`].
+    pub(crate) visualizations: crate::native::visualizations::Visualizations,
     /// The agent the last run ended on, applied to the session once the review opens.
     pub(crate) restored_agent: Option<AgentKind>,
     /// What each review's commit pane is holding: the message being written, and the last
