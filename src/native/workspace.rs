@@ -247,6 +247,7 @@ impl App {
                 let session_id = self.shell_session_for(active_frame);
                 self.spawn_terminal(session_id, command, TerminalPlacement::WithOtherShells);
             }
+            OpenPaneRequest::TerminalInRepo { repo_path } => self.open_shell_in_repo(repo_path),
             OpenPaneRequest::AttachTerminal {
                 terminal_id,
                 command,
@@ -552,6 +553,30 @@ impl App {
             TerminalPlacement::WithOtherShells,
             false,
             move |backend| backend.run_in_shell(&started, &command),
+        );
+    }
+
+    /// A shell started in a repo other than the window's, beside the other shells. Opening a
+    /// session on a repo that already has one answers with that session, so the shell lands in
+    /// the same session a review of the repo is in.
+    ///
+    /// The shell is attached through the window's own session: which session names a shell
+    /// only matters for where it starts, and that is settled by the time it is attached.
+    pub(crate) fn open_shell_in_repo(&mut self, repo_path: String) {
+        let session_id = self.model.root_session_id.clone();
+        self.spawn_shell(
+            session_id,
+            None,
+            TerminalPlacement::WithOtherShells,
+            false,
+            move |backend| {
+                let opened = backend.open_session(OpenSessionRequest {
+                    repo_path,
+                    diff_target: None,
+                    active_commit: None,
+                })?;
+                backend.create_terminal(&opened.session_id, None)
+            },
         );
     }
 

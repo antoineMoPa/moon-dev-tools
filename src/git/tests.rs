@@ -5,7 +5,7 @@ use super::hunks::{
 };
 use super::{
     branch_commits_since_default, canonicalize_repo, commit_history_page, list_submodule_repos,
-    run_git, run_git_no_output,
+    run_git, run_git_no_output, unpushed_commit_count,
 };
 use crate::api::{AgentKind, DiffTarget, RepoSession};
 use std::collections::{HashMap, HashSet};
@@ -800,5 +800,69 @@ fn list_submodule_repos_counts_the_changes_in_every_submodule() {
     assert_eq!(
         counts,
         vec![("clean".to_string(), 0), ("dirty".to_string(), 2)]
+    );
+}
+
+/// A submodule cloned as it is has nothing to push; a commit made inside it is one its remote
+/// has not got, until it is pushed.
+#[test]
+fn list_submodule_repos_counts_the_commits_a_submodule_has_not_pushed() {
+    // Arrange
+    let temp = TestDir::new();
+    let parent = temp.path.join("parent");
+    init_test_repo(&parent);
+    fs::write(parent.join("README.md"), "parent\n").expect("failed to write the readme");
+    run_git_no_output(&parent, &["add", "README.md"]).expect("failed to add the readme");
+    run_git_no_output(&parent, &["commit", "-m", "Add the readme"]).expect("failed to commit");
+
+    let child = temp.path.join("child");
+    init_test_repo(&child);
+    fs::write(child.join("lib.rs"), "// lib\n").expect("failed to write the child file");
+    run_git_no_output(&child, &["add", "lib.rs"]).expect("failed to add the child file");
+    run_git_no_output(&child, &["commit", "-m", "Add lib"]).expect("failed to commit");
+    run_git_no_output(
+        &parent,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            child.to_str().expect("a utf-8 path"),
+            "child",
+        ],
+    )
+    .expect("failed to add the submodule");
+    let submodule = parent.join("child");
+    let pushed = list_submodule_repos(&parent).expect("failed to list the submodules");
+
+    for message in ["One", "Two"] {
+        run_git_no_output(
+            &submodule,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        )
+        .expect("failed to commit in the submodule");
+    }
+
+    // Act
+    let unpushed = list_submodule_repos(&parent).expect("failed to list the submodules");
+
+    // Assert
+    assert_eq!(pushed[0].unpushed_commit_count, 0);
+    assert_eq!(unpushed[0].unpushed_commit_count, 2);
+    assert_eq!(
+        unpushed_commit_count(&parent).expect("failed to count the parent's commits"),
+        0,
+        "a repo with no remote has nothing waiting on a push"
     );
 }

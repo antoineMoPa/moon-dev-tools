@@ -164,6 +164,9 @@ pub(crate) struct RepoStatusView {
     /// The repo's directory name.
     pub(crate) name: String,
     pub(crate) changed_files: usize,
+    /// The commits of the repo no remote branch has yet - see
+    /// [`crate::git::unpushed_commit_count`].
+    pub(crate) unpushed_commits: usize,
 }
 
 /// What the submodule hub shows: the reviewed repo first, then every submodule of it.

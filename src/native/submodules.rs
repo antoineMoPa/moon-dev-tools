@@ -28,6 +28,11 @@ const HOVER_FADE: f32 = 0.1;
 /// what is typed into it.
 const FILTER_BOX_WIDTH: f32 = 200.0;
 
+/// The gap between a row's right edge and the shell button beside it.
+const SHELL_BUTTON_GAP: f32 = 6.0;
+/// The shell button's box.
+const SHELL_BUTTON_SIZE: f32 = 18.0;
+
 /// The query the hub is being narrowed by, ready to match paths against: trimmed and folded
 /// to lowercase once here rather than once per submodule.
 struct Filter(String);
@@ -58,8 +63,13 @@ struct Row {
     /// The same with its folder in front, which is what the row's hover offers to review.
     path_under_repo: String,
     opens: OpenPaneRequest,
+    /// Where the row's shell button opens a shell.
+    repo_path: String,
     changes: String,
     changed: bool,
+    /// What the row says under its name when its repo has commits its remote has not got,
+    /// and nothing when it has none.
+    unpushed: Option<String>,
 }
 
 /// The submodules of one folder of the repo, under that folder's name. A submodule at the top
@@ -79,11 +89,19 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
     // list of short names in a wide window reads as a list, not as a table of empty space.
     let body = egui::TextStyle::Body.resolve(ui.style());
     let small = egui::FontId::proportional(SMALL_SIZE);
-    let widest_name = widest(ui, rows().map(|row| &row.name), &body, &palette);
+    // The unpushed note is written under the name, so the name's column is as wide as
+    // whichever of the two is wider.
+    let widest_name = widest(ui, rows().map(|row| &row.name), &body, &palette).max(widest(
+        ui,
+        rows().filter_map(|row| row.unpushed.as_ref()),
+        &small,
+        &palette,
+    ));
     let changes_column =
         widest(ui, rows().map(|row| &row.changes), &small, &palette) + CHANGES_COLUMN_GAP;
-    let row_width =
-        (changes_column + widest_name + ROW_PADDING * 2.0).min(ui.available_width() - 2.0);
+    // The shell button sits outside the row, to its right, so a narrow pane leaves room for it.
+    let row_width = (changes_column + widest_name + ROW_PADDING * 2.0)
+        .min(ui.available_width() - 2.0 - SHELL_BUTTON_GAP - SHELL_BUTTON_SIZE);
 
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(9, 7))
@@ -242,8 +260,10 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
                     session_id: app.model.root_session_id.clone(),
                     title: "review".to_string(),
                 },
+                repo_path: root.repo_path.clone(),
                 changes: changes_label(root.changed_files),
                 changed: root.changed_files > 0,
+                unpushed: unpushed_label(root.unpushed_commits),
             }],
         });
     }
@@ -260,8 +280,10 @@ fn groups_of(app: &App, filter: &Filter) -> Vec<Group> {
                 repo_path: submodule.repo_path.clone(),
                 title: submodule.name.clone(),
             },
+            repo_path: submodule.repo_path.clone(),
             changes: changes_label(submodule.changed_files),
             changed: submodule.changed_files > 0,
+            unpushed: unpushed_label(submodule.unpushed_commits),
         };
         match groups.last_mut() {
             Some(group) if group.folder == folder => group.rows.push(row),
@@ -282,7 +304,16 @@ pub(crate) fn changes_label(changed_files: usize) -> String {
     }
 }
 
-/// A row is one target: anywhere on it opens the review of that repo.
+fn unpushed_label(unpushed_commits: usize) -> Option<String> {
+    match unpushed_commits {
+        0 => None,
+        1 => Some("1 commit not pushed".to_string()),
+        count => Some(format!("{} commits not pushed", widgets::grouped(count))),
+    }
+}
+
+/// A row is one target: anywhere on it opens the review of that repo. The shell button to its
+/// right opens a shell in that repo instead.
 fn draw_row(
     app: &mut App,
     ui: &mut Ui,
@@ -294,6 +325,9 @@ fn draw_row(
     // The id the row is interacted with below, made here so what is drawn and what is
     // clicked are the same target rather than two ids that happen to look alike.
     let id = ui.id().with(&row.path_under_repo);
+    let shell_id = id.with("shell");
+    // Where the name was drawn, which the shell button beside the row is levelled with.
+    let mut name_rect = egui::Rect::NOTHING;
     let response = ui.allocate_ui(vec2(row_width, 0.0), |ui| {
         let hovered = ui
             .ctx()
@@ -305,9 +339,16 @@ fn draw_row(
             .ctx()
             .animate_bool_with_time(id.with("hover"), hovered, HOVER_FADE);
 
+        // A repo with commits its remote has not got keeps its border at rest: that is the
+        // one thing on the hub that wants doing before anything built on the repo is shared.
+        let border = if row.unpushed.is_some() {
+            palette.unpushed
+        } else {
+            palette.accent.gamma_multiply(shown)
+        };
         egui::Frame::new()
             .fill(palette.control_active_bg.gamma_multiply(shown))
-            .stroke(Stroke::new(1.0, palette.accent.gamma_multiply(shown)))
+            .stroke(Stroke::new(1.0, border))
             .corner_radius(CornerRadius::same(5))
             .inner_margin(egui::Margin::symmetric(ROW_PADDING as i8, 6))
             .show(ui, |ui| {
@@ -330,8 +371,20 @@ fn draw_row(
                             ));
                         },
                     );
-                    ui.label(RichText::new(&row.name).strong());
+                    name_rect = ui.label(RichText::new(&row.name).strong()).rect;
                 });
+                if let Some(unpushed) = &row.unpushed {
+                    ui.horizontal(|ui| {
+                        // The name's line has a gap between its count and its name that a
+                        // space does not: without it the note starts short of the name.
+                        ui.add_space(changes_column + ui.spacing().item_spacing.x);
+                        ui.label(
+                            RichText::new(unpushed)
+                                .size(SMALL_SIZE)
+                                .color(palette.unpushed),
+                        );
+                    });
+                }
             })
             .response
     });
@@ -344,6 +397,78 @@ fn draw_row(
     if clicked {
         app.pending_action = Some(CommandAction::OpenPane(row.opens.clone()));
     }
+
+    // Level with the name rather than centred on the row, so it stays put on a row that has
+    // a note under its name.
+    let shell_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            // From the row's left edge and the width every row is given, rather than the row's
+            // own right edge: a row holding a short name can come out narrower than the rest,
+            // and the buttons would step in with it.
+            response.response.rect.left() + row_width + SHELL_BUTTON_GAP + SHELL_BUTTON_SIZE / 2.0,
+            name_rect.center().y,
+        ),
+        vec2(SHELL_BUTTON_SIZE, SHELL_BUTTON_SIZE),
+    );
+    let shell_hint = format!("Open a shell in {}", row.path_under_repo);
+    if draw_shell_button(ui, shell_id, shell_rect, &shell_hint, palette)
+        .on_hover_text(&shell_hint)
+        .clicked()
+    {
+        app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TerminalInRepo {
+            repo_path: row.repo_path.clone(),
+        }));
+    }
+}
+
+/// A prompt, `>_`, as a button: quiet until the pointer is on it.
+///
+/// Drawn rather than typeset: a font puts `>` above its baseline and `_` below it, which
+/// leaves the pair off the middle of whatever line it is set beside.
+fn draw_shell_button(
+    ui: &mut Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    hint: &str,
+    palette: &Palette,
+) -> egui::Response {
+    let response = widgets::clickable(ui.interact(rect, id, Sense::click()));
+    // Painted rather than a widget with text, so what it is has to be said for it: the hint
+    // is its name to a screen reader, and to a test looking for it.
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint));
+    if ui.is_rect_visible(rect) {
+        let ink = if response.hovered() {
+            palette.ink
+        } else {
+            palette.muted
+        };
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(3), palette.control_bg);
+        }
+        let stroke = Stroke::new(1.2, ink);
+        let center = rect.center();
+        let half = SHELL_BUTTON_SIZE * 0.2;
+        // The chevron on the left half, the underscore on the right, both over the same
+        // height so the mark as a whole is centred on the box.
+        let chevron_x = center.x - half * 1.1;
+        ui.painter().line(
+            vec![
+                egui::pos2(chevron_x - half * 0.5, center.y - half),
+                egui::pos2(chevron_x + half * 0.5, center.y),
+                egui::pos2(chevron_x - half * 0.5, center.y + half),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                egui::pos2(center.x + half * 0.2, center.y + half),
+                egui::pos2(center.x + half * 1.6, center.y + half),
+            ],
+            stroke,
+        );
+    }
+    response
 }
 
 fn path_under_repo<'a>(submodule_path: &'a str, root_repo_path: Option<&str>) -> &'a str {

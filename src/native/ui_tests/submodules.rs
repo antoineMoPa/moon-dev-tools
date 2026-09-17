@@ -256,3 +256,108 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
         "the changed submodule never opened a review: {tabs:?}"
     );
 }
+
+#[test]
+fn the_submodule_hub_marks_an_unpushed_submodule_and_opens_a_shell_in_it() {
+    // Arrange: one submodule as it was cloned, and one with a commit its remote has not got.
+    let fixture = seeded_fixture("submodule-hub-unpushed");
+    add_submodule(&fixture, "crates/pushed", &[]);
+    add_submodule(&fixture, "crates/ahead", &[]);
+    run_git_no_output(
+        &fixture.root.join("crates/ahead"),
+        &[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Not pushed",
+        ],
+    )
+    .expect("failed to commit in the submodule");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let listed = Arc::new(AtomicBool::new(false));
+    let listed_in_ui = Arc::clone(&listed);
+    let shells = Arc::new(Mutex::new(0usize));
+    let shells_in_ui = Arc::clone(&shells);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(OpenPaneRequest::Submodules);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            listed_in_ui.store(app.model.submodules.len() == 2, Ordering::Relaxed);
+            *shells_in_ui.lock().expect("the shell count is readable") = app
+                .model
+                .layout
+                .panes()
+                .filter(|(_, pane)| matches!(pane, crate::native::panes::Pane::Terminal { .. }))
+                .count();
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if listed.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        listed.load(Ordering::Relaxed),
+        "the hub never heard about the two submodules"
+    );
+    harness.run_steps(3);
+    harness.ctx.all_styles_mut(|style| {
+        style.visuals.text_cursor.blink = false;
+    });
+    harness.run_steps(2);
+    harness.snapshot("submodule-hub-unpushed");
+
+    // Assert: only the submodule ahead of its remote says so.
+    let notes: Vec<String> = harness
+        .query_all_by_label_contains("not pushed")
+        .filter_map(|node| node.value())
+        .collect();
+    assert_eq!(notes, vec!["1 commit not pushed".to_string()]);
+    let note = harness.get_by_label("1 commit not pushed").rect();
+    let ahead = harness.get_by_label("ahead").rect();
+    assert!(
+        note.top() >= ahead.bottom()
+            && note.top() - ahead.bottom() < 16.0
+            && (note.left() - ahead.left()).abs() < 1.0,
+        "the note should sit under the name of the submodule it is about: {note:?} vs {ahead:?}"
+    );
+
+    // Act: the shell button of the submodule's row opens a shell, not its review.
+    harness.get_by_label("Open a shell in crates/ahead").click();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if *shells.lock().expect("the shell count is readable") > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Assert
+    assert_eq!(
+        *shells.lock().expect("the shell count is readable"),
+        1,
+        "the shell button should have opened one shell"
+    );
+}

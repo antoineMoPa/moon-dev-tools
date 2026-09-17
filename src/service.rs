@@ -323,20 +323,34 @@ pub(crate) fn session_submodules(
     // status` nor `git submodule status` has an answer to give in one.
     if !crate::git::is_git_repo(&repo_path) {
         return Ok(SubmoduleHubPayload {
-            root: repo_status_view(&repo_path, 0),
+            root: repo_status_view(&repo_path, 0, 0),
             submodules: Vec::new(),
         });
     }
 
-    let root = repo_status_view(&repo_path, crate::git::changed_file_count(&repo_path)?);
+    let root = repo_status_view(
+        &repo_path,
+        crate::git::changed_file_count(&repo_path)?,
+        crate::git::unpushed_commit_count(&repo_path)?,
+    );
     let submodules = list_submodule_repos(&repo_path)?
         .into_iter()
-        .map(|submodule| repo_status_view(&submodule.repo_path, submodule.changed_file_count))
+        .map(|submodule| {
+            repo_status_view(
+                &submodule.repo_path,
+                submodule.changed_file_count,
+                submodule.unpushed_commit_count,
+            )
+        })
         .collect();
     Ok(SubmoduleHubPayload { root, submodules })
 }
 
-fn repo_status_view(repo_path: &std::path::Path, changed_files: usize) -> RepoStatusView {
+fn repo_status_view(
+    repo_path: &std::path::Path,
+    changed_files: usize,
+    unpushed_commits: usize,
+) -> RepoStatusView {
     RepoStatusView {
         name: repo_path
             .file_name()
@@ -344,6 +358,7 @@ fn repo_status_view(repo_path: &std::path::Path, changed_files: usize) -> RepoSt
             .unwrap_or_else(|| repo_path.display().to_string()),
         repo_path: repo_path.display().to_string(),
         changed_files,
+        unpushed_commits,
     }
 }
 

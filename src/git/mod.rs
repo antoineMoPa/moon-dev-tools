@@ -90,10 +90,12 @@ pub(crate) fn find_repo_root(path: impl AsRef<Path>) -> Result<Option<PathBuf>> 
     }
 }
 
-/// One submodule of a repo, and how much is changed inside it.
+/// One submodule of a repo, how much is changed inside it, and how much of what it has
+/// committed its remote has yet to receive.
 pub(crate) struct SubmoduleRepo {
     pub(crate) repo_path: PathBuf,
     pub(crate) changed_file_count: usize,
+    pub(crate) unpushed_commit_count: usize,
 }
 
 /// Every submodule of the repo, nested ones included, each with the number of files changed
@@ -110,6 +112,7 @@ pub(crate) fn list_submodule_repos(repo_path: &Path) -> Result<Vec<SubmoduleRepo
         submodules.push(SubmoduleRepo {
             repo_path: canonicalize_repo(&submodule_path)?,
             changed_file_count: changed_file_count(&submodule_path)?,
+            unpushed_commit_count: unpushed_commit_count(&submodule_path)?,
         });
     }
 
@@ -130,6 +133,29 @@ pub(crate) fn changed_file_count(repo_path: &Path) -> Result<usize> {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .count())
+}
+
+/// How many commits reachable from `HEAD` are on none of the remote branches this repo has
+/// fetched: the commits a push has yet to carry. A submodule sitting on one of them is pinned
+/// by its parent to a commit nobody else can check out.
+///
+/// A repo with no remote has nowhere to push to, so nothing of it is waiting on a push. A
+/// repo with no commit yet has no `HEAD` to count from, and nothing to push either.
+pub(crate) fn unpushed_commit_count(repo_path: &Path) -> Result<usize> {
+    if run_git(repo_path, &["remote"])?.trim().is_empty() {
+        return Ok(0);
+    }
+    if run_git_no_output(repo_path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
+        return Ok(0);
+    }
+    let count = run_git(
+        repo_path,
+        &["rev-list", "--count", "HEAD", "--not", "--remotes"],
+    )?;
+    count
+        .trim()
+        .parse()
+        .with_context(|| format!("git rev-list --count answered {count:?}"))
 }
 
 /// Read a file that is not in the repo at all: a dependency's source or the standard library,

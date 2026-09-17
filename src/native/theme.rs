@@ -80,6 +80,9 @@ pub(crate) struct Palette {
     pub(crate) unstaged: Color32,
     pub(crate) partial: Color32,
     pub(crate) snoozed: Color32,
+    /// The border and note of a repo whose commits have not reached its remote yet, on the
+    /// submodule hub.
+    pub(crate) unpushed: Color32,
     /// The inks code is read in, wherever it is shown: the editor's page, and the lines of a
     /// diff. Not a surface, so a workspace color leaves it exactly where it is - see
     /// [`Palette::of_workspace`].
@@ -208,6 +211,7 @@ fn light() -> Palette {
         unstaged: rgb(0x9d2f24),
         partial: rgb(0x9a6c12),
         snoozed: rgb(0x2b5fad),
+        unpushed: rgb(0xb08a0e),
         syntax: SyntaxInks {
             keyword: rgb(0xa03a1f),
             kind: rgb(0x1f5f54),
@@ -272,6 +276,7 @@ fn dark() -> Palette {
         unstaged: rgb(0xff897b),
         partial: rgb(0xe7bd58),
         snoozed: rgb(0x88aef1),
+        unpushed: rgb(0xf2cc4a),
         syntax: SyntaxInks {
             keyword: rgb(0xf2937a),
             kind: rgb(0x7ed0c2),

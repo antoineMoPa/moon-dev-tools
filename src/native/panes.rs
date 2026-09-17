@@ -220,6 +220,12 @@ pub(crate) enum OpenPaneRequest {
     Terminal {
         command: Option<AgentKind>,
     },
+    /// A shell in a repo that may have no session yet - a submodule's, from its row on the
+    /// hub. The session is opened on the way, the way [`OpenPaneRequest::ReviewRepo`] opens
+    /// one, and the shell starts in that repo.
+    TerminalInRepo {
+        repo_path: String,
+    },
     /// A shell the server already has, opened in a tab of its own. This is how a task's agent
     /// is brought back on screen after its tab was closed.
     AttachTerminal {
