@@ -15,6 +15,7 @@ pub(crate) mod resources;
 pub(crate) mod selection;
 pub(crate) mod start;
 pub(crate) mod tags;
+pub(crate) mod work_on_marked;
 
 pub(super) use actions::BoardAction;
 use actions::apply;
@@ -237,7 +238,7 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
 
     // Over the columns rather than inside one: the query is asked of the whole board, and
     // every column answers it.
-    filter::draw(app, ui, palette);
+    filter::draw(app, ui, palette, actions);
 
     // A press beside the columns is a press on the board too. Claimed after the columns have
     // drawn, at the foot of this function, so a card or a column has first refusal.

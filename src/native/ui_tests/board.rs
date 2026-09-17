@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui_kittest::{Harness, SnapshotOptions};
+use egui_kittest::{Harness, SnapshotOptions, kittest::Queryable as _};
 
 use crate::native::{panes::Pane, theme::ThemeMode};
 
@@ -428,6 +428,129 @@ fn a_query_leaves_the_board_showing_the_cards_that_match_it() {
         showing(&harness, "write-the-parser-1111"),
         "and the cards it was hiding are back"
     );
+}
+
+/// Several cards marked put a button at the end of the filter row, and the button makes one
+/// task whose notes point at the marked tasks' folders - and opens its page.
+#[test]
+fn several_marked_cards_are_handed_to_one_new_task() {
+    let fixture = seeded_fixture("board-work-on-marked");
+    for (task_id, title) in [
+        ("write-the-parser-1111", "Write the parser"),
+        ("fix-the-login-page-2222", "Fix the login page"),
+        ("drop-the-old-api-3333", "Drop the old API"),
+    ] {
+        fixture.write(
+            &format!(".moontasks/{task_id}/metadata.json"),
+            &format!(
+                "{{\n  \"title\": \"{title}\",\n  \"status\": \"todo\",\n  \
+                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+            ),
+        );
+    }
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let mark = Arc::new(AtomicBool::new(false));
+    let mark_in_ui = Arc::clone(&mark);
+    // The new task, once the board has read it back: its notes, and whether its page is open.
+    let made = Arc::new(Mutex::new(None::<(String, bool)>));
+    let made_in_ui = Arc::clone(&made);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            if mark_in_ui.swap(false, Ordering::Relaxed) {
+                app.model.board.marked = ["write-the-parser-1111", "drop-the-old-api-3333"]
+                    .map(String::from)
+                    .into();
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded && app.model.board.tasks.len() == 3,
+                Ordering::Relaxed,
+            );
+            let new_task = app
+                .model
+                .board
+                .tasks
+                .iter()
+                .find(|task| task.title.starts_with("Work on"));
+            if let (Some(task), Ok(mut made)) = (new_task, made_in_ui.lock()) {
+                let page_open = matches!(
+                    app.model.layout.find_pane(|pane| matches!(
+                        pane,
+                        crate::native::panes::Pane::Start { task_id, .. } if *task_id == task.id
+                    )),
+                    Some(_)
+                );
+                *made = Some((format!("{}\n{}", task.title, task.notes), page_open));
+            }
+        });
+
+    let step_until = |harness: &mut Harness<'_>, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline && !done() {
+            harness.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    step_until(&mut harness, &|| ready.load(Ordering::Relaxed));
+    assert!(ready.load(Ordering::Relaxed), "the board never read the three tasks");
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("Work on these tasks").is_none(),
+        "no button while nothing is marked"
+    );
+
+    mark.store(true, Ordering::Relaxed);
+    harness.run_steps(3);
+    harness.snapshot("moontasks-work-on-marked");
+    harness.get_by_label("Work on these tasks").click();
+
+    step_until(&mut harness, &|| {
+        made.lock()
+            .expect("expected the new task")
+            .as_ref()
+            .is_some_and(|(notes, page_open)| notes.contains("- ") && *page_open)
+    });
+    let (said, page_open) = made
+        .lock()
+        .expect("expected the new task")
+        .clone()
+        .expect("the board never read back a task made from the marked cards");
+    // Read in the order the board holds the cards, and under the repo's path as the server
+    // resolves it, so the lines are looked for rather than spelled out whole.
+    assert!(said.starts_with("Work on "), "{said}");
+    for (title, task_id) in [
+        ("Write the parser", "write-the-parser-1111"),
+        ("Drop the old API", "drop-the-old-api-3333"),
+    ] {
+        assert!(
+            said.lines()
+                .any(|line| line.starts_with(&format!("- {title}: /"))
+                    && line.ends_with(&format!("/.moontasks/{task_id}"))),
+            "the notes should point at {task_id}'s folder: {said}"
+        );
+    }
+    assert!(
+        !said.contains("Fix the login page"),
+        "a card that was not marked is left out"
+    );
+    assert!(page_open, "the new task's page opens with it");
 }
 
 /// A card's title is whatever someone typed on the way past, and some of them are a sentence.

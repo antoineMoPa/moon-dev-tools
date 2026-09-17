@@ -9,8 +9,9 @@
 //! through matches inside one document, which is not what is wanted here - the board's answer
 //! is the cards themselves, drawn where they belong.
 
-use egui::{Key, Modifiers, RichText, Ui};
+use egui::{Align, Key, Layout, Modifiers, RichText, Ui};
 
+use super::BoardAction;
 use crate::{
     moontasks::TaskView,
     native::{
@@ -51,8 +52,9 @@ impl Filter {
     }
 }
 
-/// The bar over the columns: the query, and how much of the board it is leaving out.
-pub(super) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
+/// The bar over the columns: the query, how much of the board it is leaving out, and - at the
+/// right-hand end, while several cards are marked - the button that hands them to one new task.
+pub(super) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<BoardAction>) {
     let mut cleared = false;
 
     ui.horizontal(|ui| {
@@ -78,20 +80,29 @@ pub(super) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
         }
 
         let filter = Filter::of(&app.model.board.filter);
-        if !filter.is_on() {
-            return;
+        if filter.is_on() {
+            ui.label(
+                RichText::new(tally(&app.model.board.tasks, &filter))
+                    .size(SMALL_SIZE - 1.0)
+                    .color(palette.muted),
+            );
+            if widgets::close_button(ui, palette)
+                .on_hover_text("Show every task again")
+                .clicked()
+            {
+                cleared = true;
+            }
         }
 
-        ui.label(
-            RichText::new(tally(&app.model.board.tasks, &filter))
-                .size(SMALL_SIZE - 1.0)
-                .color(palette.muted),
-        );
-        if widgets::close_button(ui, palette)
-            .on_hover_text("Show every task again")
-            .clicked()
-        {
-            cleared = true;
+        if app.model.board.marked.len() > 1 {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if widgets::small_button(ui, "Work on these tasks", true)
+                    .on_hover_text("Make one task whose notes point at the marked tasks' folders")
+                    .clicked()
+                {
+                    actions.push(BoardAction::WorkOnMarked);
+                }
+            });
         }
     });
 

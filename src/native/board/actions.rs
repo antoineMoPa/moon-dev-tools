@@ -19,6 +19,8 @@ pub(crate) enum BoardAction {
     OpenNewTask(ColumnId, ColumnEnd),
     /// Make the task a new-task pane has been named, and turn that pane into its own.
     Create(CreateFromDraft),
+    /// Make one task to work on every marked card at once, and open its page.
+    WorkOnMarked,
     /// Say no to the task being written: the cross on the empty card standing for it.
     CancelNewTask,
     /// Cards let go of in a column, at the place among its cards they were dropped - one for
@@ -263,6 +265,40 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                     // merely clicked away from leaves the keyboard where the click put it.
                     if keyboard_goes_to_notes {
                         model.board.task_box_focus = Some((task.id, TaskPaneBox::Notes));
+                    }
+                },
+            );
+        }
+        BoardAction::WorkOnMarked => {
+            let board = &app.model.board;
+            let marked = board
+                .tasks
+                .iter()
+                .filter(|task| board.marked.contains(&task.id));
+            let work = super::work_on_marked::from_marked(marked)
+                .expect("the button is only offered while several cards are marked");
+            // The filter goes for the reason it does on any new task: the card is on its way.
+            app.model.board.filter.clear();
+            let request = CreateTaskRequest {
+                title: work.title,
+                status: work.column,
+                joins: ColumnEnd::Top,
+            };
+            let notes = work.notes;
+            app.tasks.spawn(
+                move |backend| {
+                    let task = backend.create_task(&session_id, &request)?;
+                    let file_path = backend.open_task_notes(&session_id, &task.id)?;
+                    backend.write_file(&session_id, &file_path, &notes)?;
+                    Ok(task)
+                },
+                move |model, result| {
+                    model.board.refresh_requested = true;
+                    match result {
+                        Ok(task) => {
+                            model.board.opened_task_page = Some((task.id, task.title));
+                        }
+                        Err(error) => model.error(format!("could not create the task: {error}")),
                     }
                 },
             );

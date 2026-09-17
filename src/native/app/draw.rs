@@ -349,6 +349,11 @@ impl App {
         self.poll_board();
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
+        if let Some((task_id, title)) = self.model.board.opened_task_page.take() {
+            // Its card is marked, the way it is for any page opened from the board.
+            crate::native::board::selection::mark_only(&mut self.model.board, task_id.clone());
+            self.open_pane(crate::native::panes::OpenPaneRequest::TaskStart { task_id, title });
+        }
         if let Some(fragment_path) = self.model.board.opened_visualization.take() {
             crate::native::visualizations::open_kept_visualization(&mut self.model, &fragment_path);
         }

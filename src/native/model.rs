@@ -289,6 +289,9 @@ pub(crate) struct BoardState {
     /// for the next frame the way an opened file does: opened while the card or the task's pane
     /// is drawn, the click would hand the keyboard straight back to the frame it landed in.
     pub(crate) opened_visualization: Option<String>,
+    /// A task a board action just made, by its id and title, whose page is to open on the next
+    /// frame the way a started shell's tab does.
+    pub(crate) opened_task_page: Option<(String, String)>,
     /// The title and notes as they are being typed on a task's own pane, one for each pane
     /// open, so the board reading itself again does not overwrite a half-typed word.
     pub(crate) task_editors: HashMap<String, TaskEditor>,
