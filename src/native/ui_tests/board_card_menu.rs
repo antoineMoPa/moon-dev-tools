@@ -1,4 +1,5 @@
-//! The menu a right click on a card opens: the task's folder, said and stood in.
+//! The menu a right click on a card opens: the task's folder, said and stood in, and the card
+//! sent to DONE.
 
 use std::sync::{
     Arc, Mutex,
@@ -160,5 +161,111 @@ fn a_right_click_on_a_card_copies_its_path_and_opens_a_shell_in_its_folder() {
             .contains(TASK)),
         "the shell should be standing in the task's folder; it said:\n{}",
         seen.lock().expect("poisoned").shell_says
+    );
+}
+
+/// A card is finished from its menu without being dragged across the board: it goes to the
+/// top of DONE, where a drop from another column would have put it, and the move is written
+/// to the task's folder. A card already in DONE has nothing to be moved to.
+#[test]
+fn a_right_click_moves_a_card_to_done() {
+    const TASK: &str = "write-the-parser-2222";
+    const FINISHED: &str = "ship-the-lexer-3333";
+
+    let fixture = seeded_fixture("card-menu-done");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        &format!(".moontasks/{FINISHED}/metadata.json"),
+        "{\n  \"title\": \"Ship the lexer\",\n  \"status\": \"done\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    // The DONE column as the board has it, top to bottom.
+    let done_column = Arc::new(Mutex::new(Vec::<String>::new()));
+    let done_column_in_ui = Arc::clone(&done_column);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *done_column_in_ui.lock().expect("poisoned") = app
+                .model
+                .board
+                .tasks
+                .iter()
+                .filter(|task| task.status.as_str() == "done")
+                .map(|task| task.id.clone())
+                .collect();
+            loaded_in_ui.store(app.model.board.loaded, Ordering::Relaxed);
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the board never read the tasks out of .moontasks"
+    );
+
+    let card_of = |harness: &Harness<'_>, task: &str| {
+        harness
+            .ctx
+            .read_response(crate::native::board::cards::card_drag_id(task))
+            .expect("expected the card to have been drawn")
+            .rect
+            .center()
+    };
+
+    let finished = card_of(&harness, FINISHED);
+    right_click_at(&mut harness, finished);
+    assert!(
+        harness.query_by_label("copy task path").is_some(),
+        "the finished card's menu should be up"
+    );
+    assert!(
+        harness.query_by_label("move to DONE").is_none(),
+        "a card already in DONE has nowhere to be moved to"
+    );
+    // Put away by pressing somewhere with nothing on it.
+    click_at(&mut harness, egui::pos2(1190.0, 790.0));
+
+    let card = card_of(&harness, TASK);
+    right_click_at(&mut harness, card);
+    let move_to_done = harness.get_by_label("move to DONE").rect().center();
+    click_at(&mut harness, move_to_done);
+
+    assert!(
+        settle(&mut harness, || *done_column.lock().expect("poisoned")
+            == [TASK.to_string(), FINISHED.to_string()]),
+        "the card should be at the top of DONE, over the one finished before it; DONE holds {:?}",
+        done_column.lock().expect("poisoned")
+    );
+    assert!(
+        harness.query_by_label("move to DONE").is_none(),
+        "and the menu should have closed behind the answer"
+    );
+    let written = std::fs::read_to_string(
+        fixture
+            .root
+            .join(".moontasks")
+            .join(TASK)
+            .join("metadata.json"),
+    )
+    .expect("the task's metadata is there");
+    assert!(
+        written.contains("\"status\": \"done\""),
+        "the move should be written to the task's folder, which reads:\n{written}"
     );
 }

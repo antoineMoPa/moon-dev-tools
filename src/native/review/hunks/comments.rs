@@ -17,6 +17,89 @@ use crate::{
 };
 
 use super::GUTTER_WIDTH;
+use super::actions::{current_selection, open_draft};
+
+/// How big the bubble that opens a composer is. Wider than a diff row is tall, because a row
+/// is 15 points high and a mark that size is one nobody can hit.
+const BUBBLE_SIZE: egui::Vec2 = egui::vec2(19.0, 13.0);
+/// How far the bubble floats from the end of the run it belongs to.
+const BUBBLE_GAP: f32 = 5.0;
+
+/// Where the bubble goes on a row: just past the end of the selected run, and never off the
+/// right edge of the row - a whole-line selection reaches that edge, so its bubble sits there.
+pub(super) fn bubble_rect(row: egui::Rect, span: egui::Rect) -> egui::Rect {
+    let rightmost = row.max.x - BUBBLE_GAP - BUBBLE_SIZE.x;
+    let left = (span.max.x + BUBBLE_GAP).min(rightmost).max(row.min.x);
+    egui::Rect::from_min_size(
+        egui::pos2(left, row.center().y - BUBBLE_SIZE.y / 2.0),
+        BUBBLE_SIZE,
+    )
+}
+
+/// The speech bubble floating at the right of the selected run, which is the one way a
+/// composer opens: selecting lines is for reading and copying them as much as for commenting
+/// on them, and a box that opened itself on every click was in the way of both.
+///
+/// Answers whether the pointer is on it, so the row underneath does not take the same click
+/// as a selection of its own.
+pub(super) fn draw_comment_bubble(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    hunk: &HunkView,
+    at: egui::Rect,
+    palette: &Palette,
+) -> bool {
+    // Senses a drag as well as a click, though nothing here is dragged: egui hands a press to
+    // the topmost widget that senses clicks and, separately, to the topmost that senses drags.
+    // Sensing clicks alone left the drag to the row underneath, which took the press as the
+    // start of a sweep, selected all over again, and put the bubble away before the button
+    // came up on it.
+    let response = widgets::clickable(
+        ui.interact(
+            at,
+            super::comment_bubble_id(session_id, &hunk.id),
+            egui::Sense::click_and_drag(),
+        )
+        .on_hover_text("comment on the selected lines"),
+    );
+
+    // In the accent the selection's own edge bar is drawn in: it belongs to the run, and it
+    // is the only way to write about the run, so it has to be found rather than discovered.
+    let ink = if response.hovered() {
+        palette.ink
+    } else {
+        palette.accent
+    };
+    let painter = ui.painter();
+    let body = egui::Rect::from_min_max(at.min, egui::pos2(at.max.x, at.max.y - 3.0));
+    painter.rect_filled(body, CornerRadius::same(3), ink);
+    // The tail, which is what makes the rounded box read as something someone said.
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(body.min.x + 4.0, body.max.y),
+            egui::pos2(body.min.x + 4.0, at.max.y),
+            egui::pos2(body.min.x + 9.0, body.max.y),
+        ],
+        ink,
+        Stroke::NONE,
+    ));
+    // Three dots, the way a bubble with something in it is drawn.
+    for step in 0..3 {
+        painter.circle_filled(
+            egui::pos2(body.min.x + 5.0 + step as f32 * 4.5, body.center().y),
+            1.0,
+            palette.panel,
+        );
+    }
+
+    if response.clicked()
+        && let Some(selection) = current_selection(app, session_id, &hunk.id)
+    {
+        open_draft(app, session_id, hunk, selection);
+    }
+    response.contains_pointer() || response.clicked()
+}
 
 pub(super) fn draw_inline_comment(
     app: &mut App,

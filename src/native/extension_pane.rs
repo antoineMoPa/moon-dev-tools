@@ -361,10 +361,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
     let Some(pane) = app.model.extension_panes.get_mut(&pane_id) else {
         // Not started yet: opened this very frame, or waiting on the review for the project's
         // path - see `App::start_extension`.
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label(RichText::new("waiting for the project…").color(palette.muted));
-        });
+        widgets::centered_wait(ui, &palette, "waiting for the project…");
         return;
     };
 
@@ -394,10 +391,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
             match &pane.view {
                 Some(view) => drawing.element(ui, view, false),
                 None if pane.error.is_none() => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new("starting…").color(palette.muted));
-                    });
+                    widgets::centered_wait(ui, &palette, "starting…");
                 }
                 None => {}
             }

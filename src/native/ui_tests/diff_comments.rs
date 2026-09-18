@@ -12,18 +12,22 @@ use egui_kittest::Harness;
 
 use crate::{api::OpenSessionRequest, backend::local::LocalBackend, native::theme::ThemeMode};
 
-use super::{Fixture, app_for, click_at, hunk_with_the_most_lines, seeded_fixture, settle};
+use super::{
+    Fixture, app_for, click_at, click_the_comment_bubble, hunk_with_the_most_lines, seeded_fixture,
+    settle,
+};
 
-/// Clicking a diff line selects it and opens the comment composer in one gesture, the way
-/// selecting text does.
+/// Clicking a diff line selects it and nothing more; the bubble that floats at the right of
+/// the selection is what opens the composer on it.
 #[test]
-fn clicking_a_diff_line_opens_the_comment_composer() {
+fn the_bubble_beside_a_selected_line_opens_the_comment_composer() {
     let fixture = seeded_fixture("comment");
     let app = app_for(&fixture.root, ThemeMode::Dark);
 
     /// What the test needs to see from inside the UI closure.
     #[derive(Default)]
     struct Seen {
+        session_id: String,
         hunk_id: Option<String>,
         patch: String,
         selected_lines: usize,
@@ -46,6 +50,7 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
+                seen.session_id = app.model.root_session_id.clone();
                 seen.hunk_id = hunk_with_the_most_lines(review).map(|hunk| hunk.id.clone());
                 if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.patch = hunk.patch_preview.clone();
@@ -74,9 +79,10 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
     assert!(ready.load(Ordering::Relaxed), "the review never loaded");
     harness.run_steps(2);
 
-    let (hunk_id, patch) = {
+    let (session_id, hunk_id, patch) = {
         let state = seen.lock().expect("expected the hunk");
         (
+            state.session_id.clone(),
             state
                 .hunk_id
                 .clone()
@@ -114,13 +120,28 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
             state.selected_lines, 1,
             "clicking a diff line selects exactly that line"
         );
+        assert_eq!(
+            state.draft_selection, None,
+            "a click that only selects must leave no composer behind"
+        );
+    }
+
+    // The bubble is drawn at the end of the selection, so it is only there now.
+    click_the_comment_bubble(&mut harness, &session_id, &hunk_id);
+
+    {
+        let state = seen.lock().expect("expected state");
+        assert_eq!(
+            state.selected_lines, 1,
+            "pressing the bubble leaves the selection where it was"
+        );
         let selection = state
             .draft_selection
             .clone()
-            .expect("clicking a line must open the composer");
+            .expect("the bubble must open the composer");
         assert_eq!(
             selection, expected,
-            "the comment must be anchored to the exact line that was clicked"
+            "the comment must be anchored to the exact line that was selected"
         );
         assert!(
             state.draft_is_focused,
@@ -137,7 +158,7 @@ fn clicking_a_diff_line_opens_the_comment_composer() {
 }
 
 /// A comment being typed survives everything short of deliberately cancelling it: sweeping
-/// a new run of lines parks the typed composer where it is and opens a fresh one, and an
+/// a new run of lines parks the typed composer where it is and lets a fresh one open, and an
 /// Escape - which may have been aimed at a palette or a terminal in the next split - never
 /// throws typed text away.
 #[test]
@@ -147,6 +168,7 @@ fn reselecting_lines_keeps_the_note_being_typed() {
 
     #[derive(Default)]
     struct Seen {
+        session_id: String,
         hunk_id: Option<String>,
         patch: String,
         notes: Vec<String>,
@@ -168,6 +190,7 @@ fn reselecting_lines_keeps_the_note_being_typed() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
+                seen.session_id = app.model.root_session_id.clone();
                 if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
@@ -196,9 +219,10 @@ fn reselecting_lines_keeps_the_note_being_typed() {
     assert!(ready.load(Ordering::Relaxed), "the review never loaded");
     harness.run_steps(2);
 
-    let (hunk_id, patch) = {
+    let (session_id, hunk_id, patch) = {
         let state = seen.lock().expect("expected the hunk");
         (
+            state.session_id.clone(),
             state.hunk_id.clone().expect("expected a hunk"),
             state.patch.clone(),
         )
@@ -220,9 +244,10 @@ fn reselecting_lines_keeps_the_note_being_typed() {
             .rect
     };
 
-    // Open the composer on the first changed line and type into it.
+    // Select the first changed line, open the composer from its bubble, and type into it.
     let first = rect_of(&harness, changed[0]).center();
     click_at(&mut harness, first);
+    click_the_comment_bubble(&mut harness, &session_id, &hunk_id);
     harness
         .input_mut()
         .events
@@ -235,8 +260,8 @@ fn reselecting_lines_keeps_the_note_being_typed() {
         "typing should land in the composer"
     );
 
-    // Sweep a different run of lines: the typed composer stays parked with its text, and a
-    // fresh one opens on the new run.
+    // Sweep a different run of lines: the typed composer stays parked with its text, and the
+    // bubble at the end of the new run opens a fresh one.
     let start = rect_of(&harness, changed[1]).center();
     let end = rect_of(&harness, changed[2]).center();
     harness.input_mut().events.extend([
@@ -264,6 +289,12 @@ fn reselecting_lines_keeps_the_note_being_typed() {
     });
     harness.step();
     harness.run_steps(2);
+    assert_eq!(
+        seen.lock().expect("poisoned").selected_lines,
+        2,
+        "the new run is what is selected"
+    );
+    click_the_comment_bubble(&mut harness, &session_id, &hunk_id);
 
     {
         let state = seen.lock().expect("poisoned");
@@ -272,7 +303,10 @@ fn reselecting_lines_keeps_the_note_being_typed() {
             ["needs work", ""],
             "the typed composer stays parked, and a fresh one opens on the new run"
         );
-        assert_eq!(state.selected_lines, 2, "the new run is what is selected");
+        assert_eq!(
+            state.selected_lines, 2,
+            "the new run is still what is selected"
+        );
     }
 
     // Escape closes the fresh, empty composer - the one holding the keyboard - and leaves

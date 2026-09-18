@@ -785,7 +785,10 @@ fn hint_of(app: &App) -> String {
         PaletteMode::Files if app.model.palette.files_link_to_task.is_some() => {
             "Link a file to the task by name…".to_string()
         }
-        PaletteMode::Files => format!("Open a file{} by name…", searched_repo_note(app)),
+        PaletteMode::Files => format!(
+            "Open a file{} by name, or by a path with * or ?…",
+            searched_repo_note(app)
+        ),
         PaletteMode::Contents => format!("Find text in the files{}…", searched_repo_note(app)),
         PaletteMode::Rename => format!("A new name for {}…", renamed_name(app)),
         PaletteMode::Places => match &app.model.palette.places {

@@ -75,10 +75,12 @@ impl Nearest {
     /// ones changed.
     fn offer(&mut self, path: String) -> bool {
         let rank = rank_of(&path);
-        let at = self
-            .paths
-            .binary_search_by(|kept| rank_of(kept).cmp(&rank))
-            .unwrap_or_else(|at| at);
+        // A rank carries the whole path, so an exact hit is the same path over again - a
+        // path is listed once however many times the searcher prints it.
+        let at = match self.paths.binary_search_by(|kept| rank_of(kept).cmp(&rank)) {
+            Ok(_) => return false,
+            Err(at) => at,
+        };
         if at >= self.limit {
             self.left_out = true;
             return false;
@@ -105,16 +107,71 @@ fn rank_of(path: &str) -> (usize, &str) {
     (path.matches('/').count(), path)
 }
 
-/// The regex `ag` is given for a typed query.
-///
-/// Everything typed is matched literally. Spaces are the one exception: they stand for "and
-/// then, further along the path", which is what makes `nat pal` find `src/native/palette.rs`.
+/// What a typed query asks for, which is read off the query itself.
+enum Query<'a> {
+    /// `/…/` - what stands between the slashes is a regex, handed to the searcher as it was
+    /// typed, for the search no other form reaches.
+    Regex(&'a str),
+    /// A query with a `*` or a `?` in it: a wildcard pattern that starts where a directory
+    /// or a file name starts and runs to the end of the path. `git*.rs` is every Rust file
+    /// under a `git` directory or named `git…`, and `*.rs` is every Rust file.
+    Wildcard(&'a str),
+    /// Anything else: the terms matched literally, in order, anywhere along the path.
+    Terms(&'a str),
+}
+
+fn query_of(query: &str) -> Query<'_> {
+    let typed = query.trim();
+    if let Some(regex) = typed
+        .strip_prefix('/')
+        .and_then(|rest| rest.strip_suffix('/'))
+        && !regex.is_empty()
+    {
+        return Query::Regex(regex);
+    }
+    if typed.contains(['*', '?']) {
+        return Query::Wildcard(typed);
+    }
+    Query::Terms(query)
+}
+
+/// Where a name starts in a path as `ag` weighs it against a `-g` pattern: after a `/`, or at
+/// the very front - which is `./`, though what it prints is not: the search is run in the
+/// repo with no path of its own, so every path it weighs is `./` and then the path as the
+/// rows show it.
+const NAME_START: &str = "(^\\./|/)";
+
+/// The regex `ag` is given for a typed query - see [`Query`] for the three it can be.
 fn pattern_for(query: &str) -> String {
-    query
-        .split_whitespace()
-        .map(search::escape_regex)
-        .collect::<Vec<_>>()
-        .join(".*")
+    match query_of(query) {
+        Query::Regex(regex) => regex.to_string(),
+        // Anchored at the end, so `*.rs` does not also match a path that merely has `.rs`
+        // somewhere in the middle of it; and at the start of a name, so `git*.rs` does not
+        // also match `digit.rs`.
+        Query::Wildcard(wildcard) => {
+            format!("{NAME_START}{}$", wildcard_regex(wildcard))
+        }
+        Query::Terms(terms) => terms
+            .split_whitespace()
+            .map(search::escape_regex)
+            .collect::<Vec<_>>()
+            .join(".*"),
+    }
+}
+
+/// A wildcard pattern as a regex: `*` stands for any run of characters, `/` included, and
+/// `?` for one of them. Everything else is matched as it was typed, the `.` of an extension
+/// included.
+fn wildcard_regex(wildcard: &str) -> String {
+    let mut pattern = String::with_capacity(wildcard.len() * 2);
+    for character in wildcard.chars() {
+        match character {
+            '*' => pattern.push_str(".*"),
+            '?' => pattern.push('.'),
+            _ => search::escape_char_into(character, &mut pattern),
+        }
+    }
+    pattern
 }
 
 #[cfg(test)]
@@ -138,6 +195,23 @@ mod tests {
         assert_eq!(pattern_for("   "), "");
     }
 
+    /// A `*` or a `?` turns the query into a pattern from the start of a name to the end of
+    /// the path, with everything else still matched as it was typed.
+    #[test]
+    fn a_wildcard_query_runs_from_a_name_to_the_end_of_the_path() {
+        assert_eq!(pattern_for("*.rs"), "(^\\./|/).*\\.rs$");
+        assert_eq!(pattern_for("src/*/mod.rs"), "(^\\./|/)src/.*/mod\\.rs$");
+        assert_eq!(pattern_for("mod.?s"), "(^\\./|/)mod\\..s$");
+    }
+
+    #[test]
+    fn a_query_between_slashes_is_a_regex_as_typed() {
+        assert_eq!(pattern_for("/^src/.*[.]rs$/"), "^src/.*[.]rs$");
+        // Nothing between them is not a regex, and neither is one slash.
+        assert_eq!(pattern_for("//"), "//");
+        assert_eq!(pattern_for("/"), "/");
+    }
+
     #[test]
     fn the_nearest_the_root_are_kept_in_order_and_the_rest_left_out() {
         let mut nearest = Nearest::holding(2);
@@ -152,6 +226,21 @@ mod tests {
         // Deeper than everything kept: nothing changes.
         assert!(!nearest.offer("src/other.rs".to_string()));
         assert_eq!(nearest.paths, vec!["a.rs", "b.rs"]);
+    }
+
+    /// A path printed twice is listed once: the rows are what the repo holds, and the same
+    /// file twice over is a row nobody can tell from the one above it.
+    #[test]
+    fn a_path_offered_twice_is_kept_once() {
+        let mut nearest = Nearest::holding(4);
+
+        assert!(nearest.offer("src/a.rs".to_string()));
+        assert!(!nearest.offer("src/a.rs".to_string()));
+        assert_eq!(nearest.paths, vec!["src/a.rs"]);
+        assert!(
+            !nearest.left_out,
+            "the same path again is not a path left out"
+        );
     }
 
     /// The finder lists the files of the repo, and the ones its `.gitignore` leaves out only
@@ -176,6 +265,26 @@ mod tests {
             with_ignored.done().matches,
             vec!["build/left.rs".to_string(), "src/kept.rs".to_string()]
         );
+    }
+
+    /// The wildcard reaches the searcher, not only the pattern builder: `src/*.rs` is the
+    /// Rust files of `src`, and `kept*` is the file named that, however deep it is.
+    #[test]
+    fn a_wildcard_query_finds_the_paths_of_that_shape() {
+        let repo = search::repo_with_an_ignored_file("wildcards");
+
+        let mut under_src = LastReport::wanting();
+        stream_matching_paths(&repo, "src/*.rs", SearchScope::RepoFiles, &mut under_src).unwrap();
+        assert_eq!(under_src.done().matches, vec!["src/kept.rs".to_string()]);
+
+        let mut by_name = LastReport::wanting();
+        stream_matching_paths(&repo, "kept*", SearchScope::RepoFiles, &mut by_name).unwrap();
+        assert_eq!(by_name.done().matches, vec!["src/kept.rs".to_string()]);
+
+        // From the start of a name, not from anywhere inside one.
+        let mut inside_a_name = LastReport::wanting();
+        stream_matching_paths(&repo, "ept*", SearchScope::RepoFiles, &mut inside_a_name).unwrap();
+        assert!(inside_a_name.done().matches.is_empty());
     }
 
     /// A search nobody wants is stopped, and reports nothing - not even that it is done.

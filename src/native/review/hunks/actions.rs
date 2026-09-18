@@ -378,9 +378,11 @@ pub(super) fn open_draft(app: &mut App, session_id: &str, hunk: &HunkView, selec
     });
 }
 
-/// Make a selection current and open a composer on it. Composers already open stay as they
-/// are - see `open_draft`.
-pub(super) fn select_and_open(
+/// Make a selection current. Nothing is written on it yet: the composer opens from the
+/// bubble the selection floats beside - see
+/// [`super::comments::draw_comment_bubble`] - so that clicking lines to read or copy them
+/// leaves no box behind.
+pub(super) fn select_lines(
     app: &mut App,
     session_id: &str,
     hunk: &HunkView,
@@ -389,11 +391,6 @@ pub(super) fn select_and_open(
     let review = app.model.review(session_id);
     review.selection = Some(selection);
     review.active_hunk_id = Some(hunk.id.clone());
-
-    let Some(anchor) = current_selection(app, session_id, &hunk.id) else {
-        return;
-    };
-    open_draft(app, session_id, hunk, anchor);
 }
 
 /// One row of a diff as the pointer finds it: where it was drawn, what is on it, the response
@@ -412,8 +409,8 @@ pub(super) struct RowUnderThePointer<'a> {
 /// Reading code is what a review is for, and following a name out of it is most of reading
 /// code, so the gesture is the one the file pane already has: ⌘ held, the name under the
 /// pointer underlined and the cursor a pointing hand, and the click landing on the definition.
-/// Nothing about the plain click changes - it still selects the line and opens the composer,
-/// which is the other half of what this pane is for.
+/// Nothing about the plain click changes - it still selects the line, which is the other half
+/// of what this pane is for.
 ///
 /// The language server answers, which makes the line the click was on a real question. An
 /// added or a context row is a line of the file as it stands, and the row's own new-file line
@@ -464,7 +461,7 @@ pub(super) fn jump_to_definition(
 
     // A removed row: nothing to underline, and the click on it is answered rather than passed
     // on to the selection. Silently doing nothing would read as the jump being broken, and
-    // opening a comment composer instead is not what ⌘ was held down for.
+    // selecting the line instead is not what ⌘ was held down for.
     let Some(line_number) = line.new_line_number else {
         if !response.clicked() {
             return false;

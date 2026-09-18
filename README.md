@@ -144,7 +144,7 @@ Inside the window:
 | `⌘⏎` | save the comment being written |
 | `s` / `u` | stage / unstage the hunk under the caret |
 | `⌘⇧P` / `M-x` | command palette - open a review, a shell, the task board, the submodules of the repo, or the agent monitor |
-| `⌘P` | find a file of the repo by name, from any directory under it, and open it |
+| `⌘P` | find a file of the repo by name, from any directory under it, and open it - a query with a `*` or a `?` in it is a wildcard from the start of any name in the path to its end (`git*.rs`), and one written `/…/` is a regex |
 | `⌘⇧F` | search the files of the repo for text, and open a file at the line that holds it |
 | `⌘⇧R` | bring the review of this repo forward, opening it if it was closed |
 | `⌘N` | another window of this same program, on its launch screen |

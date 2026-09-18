@@ -5,6 +5,10 @@
 //! the contract a text selection has. The selection itself is
 //! character-precise - a drag sweeps characters, a double-click takes a word - but a comment
 //! is still anchored to the whole lines the selection covers.
+//!
+//! Selecting and commenting are two gestures, not one: a selection is made to be read, copied
+//! or staged as often as it is made to be written about, so a composer opens only from the
+//! bubble that floats at the end of the run.
 
 mod actions;
 mod comments;
@@ -26,7 +30,7 @@ use crate::{
     },
 };
 
-use actions::{copy_selected_lines, current_selection, draw_hunk_toolbar, open_draft};
+use actions::{copy_selected_lines, draw_hunk_toolbar};
 use lines::draw_hunk_body;
 
 pub(super) const GUTTER_WIDTH: f32 = 74.0;
@@ -37,6 +41,13 @@ pub(super) const LINE_HEIGHT: f32 = 15.0;
 /// tests find a line and click it.
 pub(crate) fn diff_line_id(hunk_id: &str, index: usize) -> egui::Id {
     egui::Id::new(("moonreview-diff-line", hunk_id, index))
+}
+
+/// The id of the bubble that opens a composer on the selected run. One selection at a time,
+/// so one per hunk - and derived from the hunk rather than from the `Ui`, for the same reason
+/// [`diff_line_id`] is: it is how the tests find the bubble and press it.
+pub(crate) fn comment_bubble_id(session_id: &str, hunk_id: &str) -> egui::Id {
+    egui::Id::new(("moonreview-comment-bubble", session_id, hunk_id))
 }
 
 /// Where a line's body text starts, matching what `draw_line_text` paints: the gutter, then
@@ -164,30 +175,23 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
             }
         });
 
-    finish_line_sweep(app, ui, session_id, &payload.hunks);
+    finish_line_sweep(app, ui, session_id);
 }
 
-/// When the button comes up after a sweep, the run is settled and the composer opens on it.
-fn finish_line_sweep(app: &mut App, ui: &Ui, session_id: &str, hunks: &[HunkView]) {
-    let Some(hunk_id) = app
+/// When the button comes up after a sweep, the run is settled: the sweep is over and the
+/// bubble that writes a comment on the run appears at the end of it.
+fn finish_line_sweep(app: &mut App, ui: &Ui, session_id: &str) {
+    if app
         .model
         .review_ref(session_id)
-        .and_then(|review| review.selecting_in.clone())
-    else {
+        .is_none_or(|review| review.selecting_in.is_none())
+    {
         return;
-    };
+    }
     if !ui.input(|input| input.pointer.any_released()) {
         return;
     }
     app.model.review(session_id).selecting_in = None;
-
-    let Some(hunk) = hunks.iter().find(|hunk| hunk.id == hunk_id) else {
-        return;
-    };
-    let Some(selection) = current_selection(app, session_id, &hunk_id) else {
-        return;
-    };
-    open_draft(app, session_id, hunk, selection);
 }
 
 fn draw_empty(ui: &mut Ui, palette: &Palette) {

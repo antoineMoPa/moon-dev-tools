@@ -19,10 +19,9 @@ use crate::{
 };
 
 use super::actions::{
-    RowUnderThePointer, current_selection, draw_truncation_notice, jump_to_definition,
-    select_and_open,
+    RowUnderThePointer, current_selection, draw_truncation_notice, jump_to_definition, select_lines,
 };
-use super::comments::{draw_composer, draw_inline_comment};
+use super::comments::{bubble_rect, draw_comment_bubble, draw_composer, draw_inline_comment};
 use super::{GUTTER_WIDTH, LINE_HEIGHT, body_text_x, column_at, diff_line_id, word_bounds_at};
 
 /// Draws the hunk's lines, and the comments and composers under them. `scroll_to_line` is
@@ -172,12 +171,16 @@ fn draw_diff_line(
         },
     );
 
-    let selected_columns = app
+    let selection = app
         .model
         .review_ref(session_id)
         .and_then(|review| review.selection)
-        .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id))
-        .and_then(|selection| selection.columns_on(index));
+        .filter(|selection| selection.hunk_id_hash == hash_of(&hunk.id));
+    let selected_columns = selection.and_then(|selection| selection.columns_on(index));
+    // The bubble belongs to the run rather than to a row of it, so it is drawn once, at the
+    // end of the run - where the pointer let go, and where the eye already is.
+    let ends_the_selection =
+        selection.is_some_and(|selection| *selection.line_range().end() == index);
 
     // Added and removed lines keep their own tint, and a selected one is tinted again on top
     // of it - so a selected removal still reads as a removal.
@@ -185,6 +188,7 @@ fn draw_diff_line(
         ui.painter()
             .rect_filled(rect, CornerRadius::ZERO, background);
     }
+    let mut selected_span = None;
     if let Some((from, to)) = selected_columns {
         let span = if (from, to) == (0, LINE_END) {
             rect
@@ -208,6 +212,7 @@ fn draw_diff_line(
                 vec2(width_of(from, to), rect.height()),
             )
         };
+        selected_span = Some(span);
         ui.painter()
             .rect_filled(span, CornerRadius::ZERO, palette.line_target_bg);
         // A solid bar down the left edge: the tint alone is easy to miss against a diff that
@@ -231,10 +236,25 @@ fn draw_diff_line(
         return;
     }
 
+    // The bubble that opens a composer, over the row it floats on: it takes the click on it
+    // rather than leaving the row to select all over again. Not while a sweep is in progress
+    // - the run is not settled until the button comes up, and a bubble following the pointer
+    // would be something to snag on mid-drag.
+    let sweeping = app
+        .model
+        .review_ref(session_id)
+        .is_some_and(|review| review.selecting_in.is_some());
+    if ends_the_selection
+        && !sweeping
+        && let Some(span) = selected_span
+        && draw_comment_bubble(app, ui, session_id, hunk, bubble_rect(rect, span), palette)
+    {
+        return;
+    }
+
     // ⌘ over the row means the name under the pointer, not the line: it underlines, and the
-    // click on it jumps to where the name is defined instead of selecting and opening a
-    // composer. Asked before anything else looks at the click, so the two gestures never both
-    // happen.
+    // click on it jumps to where the name is defined instead of selecting the line. Asked
+    // before anything else looks at the click, so the two gestures never both happen.
     if jump_to_definition(
         app,
         ui,
@@ -322,7 +342,7 @@ fn draw_diff_line(
     // A double-click takes the word under the pointer, split the same way the word diff
     // splits a line; a triple-click takes the whole line back.
     if response.triple_clicked() {
-        select_and_open(
+        select_lines(
             app,
             session_id,
             hunk,
@@ -346,7 +366,7 @@ fn draw_diff_line(
                 },
             })
             .unwrap_or_else(|| LineSelection::whole_line(hunk_hash, index));
-        select_and_open(app, session_id, hunk, selection);
+        select_lines(app, session_id, hunk, selection);
         return;
     }
 
@@ -354,8 +374,8 @@ fn draw_diff_line(
         return;
     }
 
-    // Selecting lines and writing a comment are one gesture: a click selects and opens the
-    // composer at once.
+    // A click selects, and only that: the bubble beside the run is what opens a composer
+    // on it.
     let extend = ui.input(|input| input.modifiers.shift);
     let whole_line = LineSelection::whole_line(hunk_hash, index);
     let existing = app
@@ -393,7 +413,7 @@ fn draw_diff_line(
                 },
             )
         };
-        select_and_open(
+        select_lines(
             app,
             session_id,
             hunk,
@@ -420,7 +440,7 @@ fn draw_diff_line(
         return;
     }
 
-    select_and_open(app, session_id, hunk, whole_line);
+    select_lines(app, session_id, hunk, whole_line);
 }
 
 fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {

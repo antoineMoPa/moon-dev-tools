@@ -62,6 +62,41 @@ pub(crate) fn small_spinner(ui: &mut Ui, color: Color32) -> Response {
     response
 }
 
+/// What stands between the spinner and the line under it.
+const WAIT_GAP: f32 = 6.0;
+
+/// A pane with nothing to draw yet: a spinner over a line saying what is being waited for,
+/// in the middle of the space the pane was given both ways.
+///
+/// Answers with the space the spinner and the line took together, which is what says where
+/// the pair ended up.
+pub(crate) fn centered_wait(ui: &mut Ui, palette: &Palette, waiting_for: &str) -> egui::Rect {
+    // How tall the pair stands follows from the fonts and the spacing the theme sets, so it
+    // is laid out once without being drawn rather than guessed at: a guess that is wrong by
+    // a few points is a block that sits slightly below the middle for good.
+    let mut measuring = ui.new_child(egui::UiBuilder::new().invisible().max_rect(ui.max_rect()));
+    let tall = wait_block(&mut measuring, palette, waiting_for).height();
+
+    ui.vertical_centered(|ui| {
+        ui.add_space(((ui.available_height() - tall) / 2.0).max(0.0));
+        wait_block(ui, palette, waiting_for)
+    })
+    .inner
+}
+
+/// The spinner and the line under it, across the middle of whatever they are given.
+fn wait_block(ui: &mut Ui, palette: &Palette, waiting_for: &str) -> egui::Rect {
+    ui.vertical_centered(|ui| {
+        let spinner = ui.spinner().rect;
+        ui.add_space(WAIT_GAP);
+        let line = ui
+            .label(RichText::new(waiting_for).color(palette.muted))
+            .rect;
+        spinner.union(line)
+    })
+    .inner
+}
+
 /// The cursor anything clickable shows. Everything the pointer can act on goes through here,
 /// so the whole window answers a hover the same way.
 pub(crate) fn clickable(response: Response) -> Response {

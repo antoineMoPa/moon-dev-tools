@@ -36,6 +36,7 @@ mod status_bar;
 mod submodules;
 mod tab_rename;
 mod toasts;
+mod waiting;
 mod work_log;
 mod workspace_color;
 
@@ -310,6 +311,36 @@ fn click_at(harness: &mut Harness<'_>, at: egui::Pos2) {
         },
     ]);
     harness.step();
+    harness.run_steps(2);
+}
+
+/// Press the bubble that floats at the end of the selected run of diff lines, which is what
+/// opens a composer on that run.
+fn click_the_comment_bubble(harness: &mut Harness<'_>, session_id: &str, hunk_id: &str) {
+    let at = harness
+        .ctx
+        .read_response(crate::native::review::hunks::comment_bubble_id(
+            session_id, hunk_id,
+        ))
+        .expect("the selected run should carry a comment bubble")
+        .rect
+        .center();
+    // As a hand makes it: the pointer arrives, then the button goes down on one frame and
+    // comes up on a later one.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(at));
+    harness.step();
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+    }
     harness.run_steps(2);
 }
 

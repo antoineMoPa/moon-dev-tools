@@ -17,7 +17,10 @@ use egui_kittest::Harness;
 
 use crate::native::theme::ThemeMode;
 
-use super::{Fixture, app_for, click_at, hunk_with_the_most_lines, seeded_fixture, settle};
+use super::{
+    Fixture, app_for, click_at, click_the_comment_bubble, hunk_with_the_most_lines, seeded_fixture,
+    settle,
+};
 
 /// cmd+c over the diff copies what is selected - and copies the code, without the `+` that
 /// says it was added. A clicked line is selected whole, so that is what arrives.
@@ -116,8 +119,8 @@ fn copy_takes_the_selected_diff_lines_without_their_diff_markers() {
     );
 }
 
-/// Dragging down a hunk selects the whole run of lines the pointer swept over, and the
-/// composer opens on that run once the button comes up.
+/// Dragging down a hunk selects the whole run of lines the pointer swept over, and the bubble
+/// at the end of the run opens the composer on it once the button comes up.
 #[test]
 fn dragging_across_diff_lines_selects_the_run() {
     let fixture = seeded_fixture("multi-select");
@@ -125,6 +128,7 @@ fn dragging_across_diff_lines_selects_the_run() {
 
     #[derive(Default)]
     struct Seen {
+        session_id: String,
         hunk_id: Option<String>,
         patch: String,
         selected: Option<(usize, usize)>,
@@ -146,6 +150,7 @@ fn dragging_across_diff_lines_selects_the_run() {
                 return;
             };
             if let Ok(mut seen) = seen_in_ui.lock() {
+                seen.session_id = app.model.root_session_id.clone();
                 if let Some(hunk) = hunk_with_the_most_lines(review) {
                     seen.hunk_id = Some(hunk.id.clone());
                     seen.patch = hunk.patch_preview.clone();
@@ -172,9 +177,10 @@ fn dragging_across_diff_lines_selects_the_run() {
     assert!(ready.load(Ordering::Relaxed), "the review never loaded");
     harness.run_steps(2);
 
-    let (hunk_id, patch) = {
+    let (session_id, hunk_id, patch) = {
         let state = seen.lock().expect("expected the hunk");
         (
+            state.session_id.clone(),
             state.hunk_id.clone().expect("expected a hunk"),
             state.patch.clone(),
         )
@@ -229,16 +235,30 @@ fn dragging_across_diff_lines_selects_the_run() {
     harness.step();
     harness.run_steps(2);
 
+    {
+        let state = seen.lock().expect("expected state");
+        assert_eq!(
+            state.selected,
+            Some((from, to)),
+            "the sweep should select every line from the first to the last"
+        );
+        assert_eq!(
+            state.draft_selection, None,
+            "a sweep that only selects must leave no composer behind"
+        );
+    }
+    click_the_comment_bubble(&mut harness, &session_id, &hunk_id);
+
     let state = seen.lock().expect("expected state");
     assert_eq!(
         state.selected,
         Some((from, to)),
-        "the sweep should select every line from the first to the last"
+        "pressing the bubble leaves the swept run where it was"
     );
     let selection = state
         .draft_selection
         .clone()
-        .expect("the composer should open on the swept run");
+        .expect("the bubble should open the composer on the swept run");
     assert_eq!(
         selection.lines().count(),
         to - from + 1,
@@ -466,13 +486,16 @@ pub(super) struct SeenInDiff {
     /// what it says is the whole of what happened.
     pub(super) said: Vec<String>,
     pub(super) drafts: usize,
+    /// How many lines the review has selected, which is the whole of what a plain click does.
+    pub(super) selected_lines: usize,
     pub(super) file_panes: usize,
 }
 
-/// The plain click is untouched by the jump: it still selects the whole line and opens the
-/// composer on it, which is the gesture the whole pane is built around.
+/// The plain click is untouched by the jump: it still selects the whole line, which is the
+/// gesture the whole pane is built around - and it selects it and nothing else, leaving no
+/// composer behind for someone who clicked a line to read it.
 #[test]
-fn a_plain_click_on_a_diff_line_still_opens_the_comment_composer() {
+fn a_plain_click_on_a_diff_line_still_selects_it_and_only_that() {
     let fixture = calling_fixture("diff-plain-click");
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
 
@@ -501,6 +524,10 @@ fn a_plain_click_on_a_diff_line_still_opens_the_comment_composer() {
                     seen.patch = hunk.patch_preview.clone();
                 }
                 seen.drafts = review.drafts.len();
+                seen.selected_lines = review
+                    .selection
+                    .map(|selection| selection.line_range().count())
+                    .unwrap_or(0);
                 seen.file_panes = file_panes;
             }
             ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
@@ -528,8 +555,12 @@ fn a_plain_click_on_a_diff_line_still_opens_the_comment_composer() {
 
     let state = seen.lock().expect("poisoned");
     assert_eq!(
-        state.drafts, 1,
-        "a plain click should have opened the composer on the line"
+        state.selected_lines, 1,
+        "a plain click should have selected the line it landed on"
+    );
+    assert_eq!(
+        state.drafts, 0,
+        "a plain click selects; the bubble beside the run is what opens a composer"
     );
     assert_eq!(
         state.file_panes, 0,

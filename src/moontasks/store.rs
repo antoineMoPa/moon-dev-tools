@@ -128,6 +128,11 @@ pub(crate) const RELEASES_SHELLS_IN: &str = "done";
 /// back asking for exactly what it was asking for before.
 pub(crate) const CLOSES_REVIEWS_IN: &str = "done";
 
+/// The column a card's right-click menu offers to move it to, by the same reckoning: the
+/// column a finished card goes to on a board that started from the defaults. A board without
+/// it has no such entry on the menu - there is no guessing which of its columns means done.
+pub(crate) const MENU_FINISHES_IN: &str = "done";
+
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
 /// not here has nowhere to be drawn.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

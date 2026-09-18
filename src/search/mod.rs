@@ -164,18 +164,25 @@ fn stream(
     }
 }
 
+/// The characters a regex reads as something other than themselves.
+const SPECIAL: &[char] = &[
+    '\\', '.', '+', '*', '?', '(', ')', '|', '[', ']', '{', '}', '^', '$',
+];
+
+/// One character, written so that the searcher looks for that very character.
+fn escape_char_into(character: char, pattern: &mut String) {
+    if SPECIAL.contains(&character) {
+        pattern.push('\\');
+    }
+    pattern.push(character);
+}
+
 /// What was typed, as a regex that matches it literally: a query with a `.` or a `+` in it
 /// finds the text that has that character in it rather than whatever the regex would mean.
 fn escape_regex(term: &str) -> String {
-    const SPECIAL: &[char] = &[
-        '\\', '.', '+', '*', '?', '(', ')', '|', '[', ']', '{', '}', '^', '$',
-    ];
     let mut escaped = String::with_capacity(term.len());
     for character in term.chars() {
-        if SPECIAL.contains(&character) {
-            escaped.push('\\');
-        }
-        escaped.push(character);
+        escape_char_into(character, &mut escaped);
     }
     escaped
 }

@@ -825,7 +825,7 @@ fn draw_column(
             // which is how a run let go of between two others is picked back out.
             app.model.board.landing = None;
             if cards::sort_of(&app.model.board.columns, &status).is_some() {
-                drop_into_sorted_column(app, &status, &carrying.task_ids, actions);
+                arrive_in_column(app, &status, &carrying.task_ids, actions);
                 return;
             }
             // `at` counts the cards the filter is showing; the place they are going to is a
@@ -864,14 +864,17 @@ fn draw_column(
     .rect
 }
 
-/// Cards let go of over a column that keeps an order of its own, where the place they were let
-/// go of at says nothing - see [`crate::moontasks::column_sort`].
+/// Cards sent to a column with no place in it said: let go of over a column that keeps an
+/// order of its own, where the place they were let go of at says nothing - see
+/// [`crate::moontasks::column_sort`] - or moved there from a card's menu, where there was no
+/// drop at all.
 ///
-/// Cards shuffled about within it stay where its order has them, so nothing is sent: a place
+/// Cards shuffled about within the column stay where they are, so nothing is sent: a place
 /// counted against the sorted cards on screen would scramble the order the column remembers
 /// for when it is no longer sorted. Cards arriving from another column are moved into it, at
-/// the end of that remembered order its arrivals go to - the bottom when it names none.
-fn drop_into_sorted_column(
+/// the end its arrivals go to - the bottom when it names none - and drawn there at once, the
+/// same way a drop is.
+pub(super) fn arrive_in_column(
     app: &mut App,
     status: &ColumnId,
     task_ids: &[String],
