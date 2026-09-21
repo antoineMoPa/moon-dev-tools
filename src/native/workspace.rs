@@ -892,7 +892,16 @@ impl App {
     /// `crate::terminal`.
     ///
     /// One a frame: closing a pane rebuilds the tree, and the next frame picks up the next.
+    ///
+    /// Every shell is read here first, whether or not its tab is the one in front. A terminal
+    /// only learns its program has ended from reading it, and drawing is what otherwise reads
+    /// it - so a shell that ended behind another tab would go on counting as open: its tab
+    /// kept, the restart its end was to set off never started, and the next build typed at a
+    /// pty with nothing on the other end.
     pub(crate) fn close_tabs_of_exited_shells(&mut self, ctx: &egui::Context) {
+        for terminal in self.terminals.values_mut() {
+            terminal.poll();
+        }
         let Some(terminal_id) = self
             .terminals
             .iter()

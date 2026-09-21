@@ -576,14 +576,15 @@ fn draw_card_title(
         }
 
         ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-            // The folder and everything an agent left in it goes, so the cross asks first -
-            // the same two-press shape discarding a hunk has.
+            // The folder is kept under `.moontasks/.deleted`, but the task's shells and agents
+            // are stopped for good, so the cross asks first - the same two-press shape
+            // discarding a hunk has.
             if pending_delete {
                 match widgets::confirm(
                     ui,
                     palette,
                     "[really delete]",
-                    "this deletes the task folder and everything in it, and cannot be undone",
+                    "this stops the task's shells and agents, and moves its folder to .moontasks/.deleted",
                 ) {
                     widgets::Confirmed::Yes => {
                         app.model.board.pending_delete = None;

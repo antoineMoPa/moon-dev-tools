@@ -316,6 +316,175 @@ fn a_second_build_is_typed_into_the_first_builds_shell() {
     );
 }
 
+/// A build shell that ended behind another tab is not one to type the next build into. The
+/// window only ever heard a shell had ended from drawing it, so one that ended out of sight
+/// went on reading as open and waiting: the next build was typed at a dead pty, and failed
+/// with the pty's own `Input/output error`.
+#[test]
+fn a_build_shell_that_ended_behind_another_tab_is_not_typed_into() {
+    // Arrange: a repo with a build, as the reuse test has it.
+    let fixture = seeded_fixture("project-build-shell-ended-hidden");
+    crate::project::write_project(
+        &fixture.root,
+        &crate::project::ProjectConfig::typed(
+            REUSED_BUILD_COMMAND,
+            "",
+            egui_moon_editor::Indent::default(),
+        ),
+    )
+    .expect("expected the project file to be written");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let run_build = Arc::new(AtomicBool::new(false));
+    let run_build_in_ui = Arc::clone(&run_build);
+    // Raised to open a second shell as a tab over the build's, which takes it out of sight.
+    let cover_build_shell = Arc::new(AtomicBool::new(false));
+    let cover_build_shell_in_ui = Arc::clone(&cover_build_shell);
+    // Raised to end the build's shell, the way `exit` typed at its prompt does.
+    let end_build_shell = Arc::new(AtomicBool::new(false));
+    let end_build_shell_in_ui = Arc::clone(&end_build_shell);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    let busy = Arc::new(AtomicBool::new(true));
+    let busy_in_ui = Arc::clone(&busy);
+    // The shells with a tab, by the id the server gave each.
+    let shell_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+    let shell_ids_in_ui = Arc::clone(&shell_ids);
+    let build_shell = Arc::new(Mutex::new(None::<String>));
+    let build_shell_in_ui = Arc::clone(&build_shell);
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let errors_in_ui = Arc::clone(&errors);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if run_build_in_ui.swap(false, Ordering::Relaxed) {
+                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+            }
+            if cover_build_shell_in_ui.swap(false, Ordering::Relaxed) {
+                let (build_pane, _) = app
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Terminal)
+                    .expect("expected the build's shell to have a tab");
+                let frame = app
+                    .model
+                    .layout
+                    .frame_of(build_pane)
+                    .expect("expected that tab to be in a frame");
+                app.spawn_terminal(
+                    app.model.root_session_id.clone(),
+                    None,
+                    crate::native::workspace::TerminalPlacement::Tab(frame),
+                );
+            }
+            if end_build_shell_in_ui.swap(false, Ordering::Relaxed) {
+                let build_shell = app
+                    .model
+                    .project_shell
+                    .clone()
+                    .expect("expected the window to remember the build's shell");
+                app.terminals[&build_shell]
+                    .send(b"exit\r")
+                    .expect("expected the build's shell to take the line");
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.model.project.build.is_some(),
+                Ordering::Relaxed,
+            );
+            busy_in_ui.store(
+                !app.model.shells_running_a_command.is_empty(),
+                Ordering::Relaxed,
+            );
+            *shell_ids_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    crate::native::panes::Pane::Terminal { terminal_id, .. } => {
+                        Some(terminal_id.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            *build_shell_in_ui.lock().expect("poisoned") = app.model.project_shell.clone();
+            *errors_in_ui.lock().expect("poisoned") = app
+                .model
+                .messages
+                .iter()
+                .filter(|message| message.kind == crate::native::model::ToastKind::Error)
+                .map(|message| message.text.clone())
+                .collect();
+        });
+
+    let settle_until = |harness: &mut Harness<'_>, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            harness.step();
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    };
+    let open_shells = || shell_ids.lock().expect("poisoned").clone();
+
+    assert!(
+        settle_until(&mut harness, &|| ready.load(Ordering::Relaxed)),
+        "the window never opened on the project"
+    );
+    run_build.store(true, Ordering::Relaxed);
+    assert!(
+        settle_until(&mut harness, &|| open_shells().len() == 1
+            && build_shell.lock().expect("poisoned").is_some()
+            && !busy.load(Ordering::Relaxed)),
+        "the build should have run in a shell of its own and finished there"
+    );
+    let first_build_shell = build_shell
+        .lock()
+        .expect("poisoned")
+        .clone()
+        .expect("expected the build's shell");
+
+    // Act: another shell's tab goes over the build's, and the build's shell ends out of sight.
+    cover_build_shell.store(true, Ordering::Relaxed);
+    assert!(
+        settle_until(&mut harness, &|| open_shells().len() == 2),
+        "the second shell should have opened as a tab"
+    );
+    end_build_shell.store(true, Ordering::Relaxed);
+
+    // Assert: the window hears of it without the tab being looked at, and closes it.
+    assert!(
+        settle_until(&mut harness, &|| !open_shells().contains(&first_build_shell)),
+        "a shell that ended behind another tab should have had its tab closed, and the open \
+         shells were {:?}",
+        open_shells(),
+    );
+
+    // Act: the next build.
+    run_build.store(true, Ordering::Relaxed);
+
+    // Assert: it opened a shell of its own rather than typing at the one that is gone.
+    assert!(
+        settle_until(&mut harness, &|| build_shell
+            .lock()
+            .expect("poisoned")
+            .as_ref()
+            .is_some_and(|shell| *shell != first_build_shell)),
+        "the next build should have opened a shell of its own"
+    );
+    assert_eq!(
+        *errors.lock().expect("poisoned"),
+        Vec::<String>::new(),
+        "and nothing should have gone wrong on the way"
+    );
+}
+
 /// A build in a window with no room for another column takes a tab in the frame it was asked
 /// from, rather than splitting off a column too narrow to read a build in.
 #[test]

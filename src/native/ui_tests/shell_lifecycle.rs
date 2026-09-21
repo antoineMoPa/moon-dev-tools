@@ -62,7 +62,9 @@ fn a_shell_that_exits_closes_its_tab() {
     };
     let mut app = App::new(egui::Context::default(), launch);
     app.set_theme(ThemeMode::Dark);
-    app.terminals.insert(terminal_id.clone(), pane);
+    // Handed to the window with its tab, below: a shell the window holds with no tab on it is
+    // dropped as soon as it has ended, tab or no tab to close.
+    let mut pane = Some(pane);
 
     let panes_left = Arc::new(Mutex::new(0usize));
     let panes_in_ui = Arc::clone(&panes_left);
@@ -79,6 +81,10 @@ fn a_shell_that_exits_closes_its_tab() {
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
                 let frame = app.model.layout.active_frame();
+                app.terminals.insert(
+                    for_pane.clone(),
+                    pane.take().expect("expected the shell to be placed once"),
+                );
                 app.model.layout.add_pane(
                     frame,
                     Pane::Terminal {
