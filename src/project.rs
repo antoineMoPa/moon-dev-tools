@@ -23,6 +23,12 @@ const PROJECT_FILE_NAME: &str = ".moonreview.json";
 /// window can restart itself, so the server refuses to type this into a terminal.
 pub(crate) const RESTART_RUN_COMMAND: &str = "@restart";
 
+/// What the shell the Project menu's commands run in is called, on its tab and everywhere
+/// else a shell's name is read. The window keeps one of these and types every build and run
+/// into it - see `App::run_project_command` - so the name is the same whichever of the
+/// commands opened it, and there is no number after it to tell one from the next.
+pub(crate) const PROJECT_SHELL_NAME: &str = "Build terminal";
+
 /// What the Project menu runs. The first two are the commands a project configures; the third
 /// is the two chained, built out of them rather than stored. Running one is asking the server
 /// for this, not for a line of shell to run: the command text lives in the repo's file and
@@ -204,9 +210,10 @@ pub(crate) fn run(state: &AppState, session_id: &str, which: ProjectCommand) -> 
     let Some(line) = commands.line(which) else {
         bail!("this project has no {} command", which.label());
     };
-    state
-        .terminals
-        .spawn(crate::terminal::TerminalSpec::running(repo_path, &line))
+    state.terminals.spawn(crate::terminal::TerminalSpec {
+        name: Some(PROJECT_SHELL_NAME.to_string()),
+        ..crate::terminal::TerminalSpec::running(repo_path, &line)
+    })
 }
 
 fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {

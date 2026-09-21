@@ -3,8 +3,8 @@
 
 use std::{
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -174,5 +174,225 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
     assert!(
         running.load(Ordering::Relaxed),
         "the build command should have opened a shell of its own"
+    );
+}
+
+/// What the reuse test's project builds with: a line short enough that the shell's echo of it
+/// is on one row of the pane, so counting the rows it is on counts the times it was run.
+const REUSED_BUILD_COMMAND: &str = "printf mooned";
+
+/// A second build goes into the shell the first one ran in. A build asked for over and over
+/// is how a window fills with shells otherwise: one per press, each holding a prompt nobody
+/// typed at again.
+#[test]
+fn a_second_build_is_typed_into_the_first_builds_shell() {
+    // Arrange: a repo whose build command says, in the shell it runs in, that it ran.
+    let fixture = seeded_fixture("project-build-shell");
+    crate::project::write_project(
+        &fixture.root,
+        &crate::project::ProjectConfig::typed(
+            REUSED_BUILD_COMMAND,
+            "",
+            egui_moon_editor::Indent::default(),
+        ),
+    )
+    .expect("expected the project file to be written");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    // Raised by the test to ask for a build, the way the palette and the menu bar ask.
+    let run_build = Arc::new(AtomicBool::new(false));
+    let run_build_in_ui = Arc::clone(&run_build);
+    // Set once the window has read the project file and has a build to run.
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // How many shell tabs are open, and how many times the build's line is on the screen of
+    // the first of them - once per run, in the shell's echo of what it was sent.
+    let shells = Arc::new(AtomicUsize::new(0));
+    let shells_in_ui = Arc::clone(&shells);
+    let runs = Arc::new(AtomicUsize::new(0));
+    let runs_in_ui = Arc::clone(&runs);
+    // Set while the server says a shell has something running in it: a busy shell is not one
+    // to type the next build into, so the second press waits for the first to be done.
+    let busy = Arc::new(AtomicBool::new(true));
+    let busy_in_ui = Arc::clone(&busy);
+    // What that shell's tab reads, which is the name the server gave it.
+    let tab_title = Arc::new(Mutex::new(String::new()));
+    let tab_title_in_ui = Arc::clone(&tab_title);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if run_build_in_ui.swap(false, Ordering::Relaxed) {
+                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.model.project.build.is_some(),
+                Ordering::Relaxed,
+            );
+            shells_in_ui.store(
+                app.model
+                    .layout
+                    .panes()
+                    .filter(|(_, pane)| pane.kind() == PaneKind::Terminal)
+                    .count(),
+                Ordering::Relaxed,
+            );
+            busy_in_ui.store(
+                !app.model.shells_running_a_command.is_empty(),
+                Ordering::Relaxed,
+            );
+            let screen = app
+                .terminals
+                .values_mut()
+                .next()
+                .and_then(|terminal| terminal.visible_text().ok())
+                .unwrap_or_default();
+            runs_in_ui.store(
+                screen.matches(REUSED_BUILD_COMMAND).count(),
+                Ordering::Relaxed,
+            );
+            if let Some((_, pane)) = app
+                .model
+                .layout
+                .find_pane(|pane| pane.kind() == PaneKind::Terminal)
+            {
+                let title = app.shell_tab_title(pane);
+                *tab_title_in_ui.lock().expect("poisoned") = title;
+            }
+        });
+
+    let settle_until = |harness: &mut Harness<'_>, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            harness.step();
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    };
+
+    assert!(
+        settle_until(&mut harness, &|| ready.load(Ordering::Relaxed)),
+        "the window never opened on the project"
+    );
+
+    // Act: the first build, which opens the shell it runs in.
+    run_build.store(true, Ordering::Relaxed);
+    assert!(
+        settle_until(&mut harness, &|| runs.load(Ordering::Relaxed) == 1
+            && !busy.load(Ordering::Relaxed)),
+        "the build should have run in a shell of its own and finished there"
+    );
+    assert_eq!(shells.load(Ordering::Relaxed), 1, "one shell so far");
+    assert!(
+        settle_until(&mut harness, &|| tab_title
+            .lock()
+            .expect("poisoned")
+            .as_str()
+            == crate::project::PROJECT_SHELL_NAME),
+        "the shell the project's commands run in should be named {:?}, and its tab read {:?}",
+        crate::project::PROJECT_SHELL_NAME,
+        tab_title.lock().expect("poisoned"),
+    );
+
+    // Act: the same build again, with that shell open and waiting at its prompt.
+    run_build.store(true, Ordering::Relaxed);
+    assert!(
+        settle_until(&mut harness, &|| runs.load(Ordering::Relaxed) == 2),
+        "the second build should have been typed into the shell the first one ran in"
+    );
+
+    // Assert: it went into the shell that was already open rather than beside it.
+    harness.run_steps(3);
+    assert_eq!(
+        shells.load(Ordering::Relaxed),
+        1,
+        "the second build should have opened no second shell"
+    );
+}
+
+/// A build in a window with no room for another column takes a tab in the frame it was asked
+/// from, rather than splitting off a column too narrow to read a build in.
+#[test]
+fn a_build_with_no_room_for_a_column_takes_a_tab() {
+    let fixture = seeded_fixture("project-build-tab");
+    crate::project::write_project(
+        &fixture.root,
+        &crate::project::ProjectConfig::typed(
+            REUSED_BUILD_COMMAND,
+            "",
+            egui_moon_editor::Indent::default(),
+        ),
+    )
+    .expect("expected the project file to be written");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let run_build = Arc::new(AtomicBool::new(false));
+    let run_build_in_ui = Arc::clone(&run_build);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // The shape the build landed in: how many frames the workspace is in, and whether one of
+    // them holds a shell.
+    let frames = Arc::new(AtomicUsize::new(0));
+    let frames_in_ui = Arc::clone(&frames);
+    let has_shell = Arc::new(AtomicBool::new(false));
+    let has_shell_in_ui = Arc::clone(&has_shell);
+
+    // Narrow enough that a column down the right would leave both halves too cramped to work
+    // in - see `fits_another_column`.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(880.0, 700.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if run_build_in_ui.swap(false, Ordering::Relaxed) {
+                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                matches!(app.model.stage, crate::native::model::Stage::Ready)
+                    && app.model.project.build.is_some(),
+                Ordering::Relaxed,
+            );
+            frames_in_ui.store(app.model.layout.frame_count(), Ordering::Relaxed);
+            has_shell_in_ui.store(
+                app.model
+                    .layout
+                    .panes()
+                    .any(|(_, pane)| pane.kind() == PaneKind::Terminal),
+                Ordering::Relaxed,
+            );
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !ready.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "the window never opened on the project"
+    );
+    let frames_before = frames.load(Ordering::Relaxed);
+
+    run_build.store(true, Ordering::Relaxed);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !has_shell.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        has_shell.load(Ordering::Relaxed),
+        "the build should have opened a shell"
+    );
+    harness.run_steps(3);
+    assert_eq!(
+        frames.load(Ordering::Relaxed),
+        frames_before,
+        "the build's shell should have joined the tabs of a frame that was already there"
     );
 }

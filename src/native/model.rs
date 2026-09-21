@@ -851,6 +851,15 @@ pub(crate) struct Model {
     /// is the rebuilt program being ready to start. Cleared when the tab is closed by hand,
     /// which is the restart being called off.
     pub(crate) restart_on_shell_exit: Option<String>,
+    /// The shell the Project menu's commands are typed into. A build asked for a second time
+    /// goes back to the shell the first one ran in - the output of both is then in one tab,
+    /// read the way a shell one typed the command into oneself is read - rather than opening
+    /// another tab beside it every time.
+    ///
+    /// Only while that shell is open and waiting at its prompt: a shell that has been closed,
+    /// or that still has something running in it, is not one to type a build into, and the
+    /// next command opens a shell of its own.
+    pub(crate) project_shell: Option<String>,
 }
 
 /// What the configuration pane holds, mid-edit: the two commands as text, and the

@@ -235,6 +235,7 @@ impl App {
                 project_editor: None,
                 project_unsaved: false,
                 restart_on_shell_exit: None,
+                project_shell: None,
                 submodule_filter: String::new(),
                 review_requests: Vec::new(),
                 review_request_amendments: 0,

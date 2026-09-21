@@ -43,6 +43,18 @@ pub(crate) enum TerminalPlacement {
     Tab(FrameId),
 }
 
+/// What a shell being started is to the window, beyond a tab to type in. Both marks are
+/// written once the shell is there, which is why they travel with the request rather than
+/// being set by whoever asked for it.
+#[derive(Default, Clone, Copy)]
+struct ShellMarks {
+    /// The shell the Project menu's commands go into from here on - see
+    /// [`Model::project_shell`].
+    takes_project_commands: bool,
+    /// The shell whose end restarts the window - see [`Model::restart_on_shell_exit`].
+    restarts_window: bool,
+}
+
 /// The arrangement a run starts from: the shape the last one left behind, with this run's
 /// review in the frame whose tab strip is the app header.
 ///
@@ -513,14 +525,22 @@ impl App {
         placement: TerminalPlacement,
     ) {
         let started = session_id.clone();
-        self.spawn_shell(session_id, command, placement, false, move |backend| {
-            backend.create_terminal(&started, command)
-        });
+        self.spawn_shell(
+            session_id,
+            command,
+            placement,
+            ShellMarks::default(),
+            move |backend| backend.create_terminal(&started, command),
+        );
     }
 
     /// The same, with one of the project's commands typed into the shell and sent. The pane
     /// is an ordinary shell pane: the command is over in a moment, and what is left is a
     /// shell in the repo with its output above the prompt.
+    ///
+    /// That shell is where the project's commands go from then on - see
+    /// [`Self::shell_for_project_commands`] - so a second build is typed into the tab the
+    /// first one ran in rather than opening another beside it.
     ///
     /// `restarts_when_exited` marks the shell as the one whose end restarts the window: the
     /// build-and-run of a project whose run command is the restart word, whose typed line
@@ -532,14 +552,76 @@ impl App {
         placement: TerminalPlacement,
         restarts_when_exited: bool,
     ) {
+        if let Some(terminal_id) = self.shell_for_project_commands() {
+            self.type_project_command(&terminal_id, which, restarts_when_exited);
+            return;
+        }
         let started = session_id.clone();
         self.spawn_shell(
             session_id,
             None,
             placement,
-            restarts_when_exited,
+            ShellMarks {
+                takes_project_commands: true,
+                restarts_window: restarts_when_exited,
+            },
             move |backend| backend.run_project_command(&started, which),
         );
+    }
+
+    /// The shell a project's command goes back into: the one the last command ran in, still
+    /// open and waiting at its prompt.
+    ///
+    /// A shell with something running in it is not one to type a build into - the line would
+    /// sit in its input until whatever is running there is done - so that one is left alone
+    /// and the command opens a shell of its own. Which shells those are is the server's
+    /// answer, polled - see `App::poll_running_shells`.
+    fn shell_for_project_commands(&self) -> Option<String> {
+        let terminal_id = self.model.project_shell.clone()?;
+        let waiting = self
+            .terminals
+            .get(&terminal_id)
+            .is_some_and(|terminal| !terminal.has_exited())
+            && !self.model.shells_running_a_command.contains(&terminal_id);
+        waiting.then_some(terminal_id)
+    }
+
+    /// Type one of the project's commands into a shell that is already open, as a person at
+    /// that prompt would, and bring its tab forward to watch it run.
+    ///
+    /// The line is the window's own copy of the project's commands - the one the Project menu
+    /// offers - rather than the file read again: the command that runs is the command that was
+    /// picked.
+    fn type_project_command(
+        &mut self,
+        terminal_id: &str,
+        which: ProjectCommand,
+        restarts_when_exited: bool,
+    ) {
+        let Some(line) = self.model.project.line(which) else {
+            self.model
+                .error(format!("this project has no {} command", which.label()));
+            return;
+        };
+        let Some(terminal) = self.terminals.get(terminal_id) else {
+            self.model
+                .error("the shell the project's commands run in is gone".to_string());
+            return;
+        };
+        if let Err(error) = terminal.send(format!("{line}\r").as_bytes()) {
+            self.model
+                .error(format!("could not run {line} in its shell: {error}"));
+            return;
+        }
+        if restarts_when_exited {
+            self.model.restart_on_shell_exit = Some(terminal_id.to_string());
+        }
+
+        if let Some((pane_id, _)) = self.model.layout.find_pane(
+            |pane| matches!(pane, Pane::Terminal { terminal_id: of_pane, .. } if of_pane == terminal_id),
+        ) {
+            self.model.layout.focus_pane(pane_id);
+        }
     }
 
     /// A shell on the window's repo with a command line typed into it and sent: what an
@@ -551,7 +633,7 @@ impl App {
             session_id,
             None,
             TerminalPlacement::WithOtherShells,
-            false,
+            ShellMarks::default(),
             move |backend| backend.run_in_shell(&started, &command),
         );
     }
@@ -568,7 +650,7 @@ impl App {
             session_id,
             None,
             TerminalPlacement::WithOtherShells,
-            false,
+            ShellMarks::default(),
             move |backend| {
                 let opened = backend.open_session(OpenSessionRequest {
                     repo_path,
@@ -586,7 +668,7 @@ impl App {
         session_id: String,
         command: Option<AgentKind>,
         placement: TerminalPlacement,
-        restarts_when_exited: bool,
+        marks: ShellMarks,
         start: impl FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<String> + Send + 'static,
     ) {
         if session_id.is_empty() {
@@ -604,8 +686,11 @@ impl App {
             },
             move |model, result| match result {
                 Ok((terminal_id, attachment)) => {
-                    if restarts_when_exited {
+                    if marks.restarts_window {
                         model.restart_on_shell_exit = Some(terminal_id.clone());
+                    }
+                    if marks.takes_project_commands {
+                        model.project_shell = Some(terminal_id.clone());
                     }
                     let pane = Pane::Terminal {
                         terminal_id: terminal_id.clone(),
@@ -977,6 +1062,24 @@ impl App {
                 TerminalPlacement::RightColumn
             }
             _ => TerminalPlacement::Tab(frame),
+        }
+    }
+
+    /// Where a shell joining the ones already open goes: their frame, as another tab in it.
+    /// Failing that - nothing is open in a shell yet - wherever the workspace has room, which
+    /// is a column of its own only while the workspace is one frame wide and wide enough to
+    /// give a column up; a window already split into columns takes another tab in the frame
+    /// the keyboard is in rather than a column narrower than the last - see
+    /// [`Self::room_for_a_column`].
+    pub(crate) fn beside_the_other_shells(&self) -> TerminalPlacement {
+        let active = self.model.layout.active_frame();
+        match self
+            .model
+            .layout
+            .frame_holding(active, |pane| pane.kind() == PaneKind::Terminal)
+        {
+            Some(frame) => TerminalPlacement::Tab(frame),
+            None => self.room_for_a_column(active),
         }
     }
 

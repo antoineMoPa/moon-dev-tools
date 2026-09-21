@@ -16,7 +16,6 @@ use crate::{
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
         programs::Opens,
-        workspace::TerminalPlacement,
     },
     project::{ProjectCommand, ProjectConfig},
 };
@@ -467,10 +466,11 @@ impl App {
             return;
         }
         let session_id = self.model.root_session_id.clone();
+        let placement = self.beside_the_other_shells();
         self.run_project_command(
             session_id,
             which,
-            TerminalPlacement::WithOtherShells,
+            placement,
             which == ProjectCommand::BuildAndRun && restarts,
         );
     }
