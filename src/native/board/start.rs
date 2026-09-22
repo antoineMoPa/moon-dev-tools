@@ -29,8 +29,10 @@ struct StartOffer {
 
 /// What this task can start, in the order it is offered: a review of the repo, a shell in the
 /// task and a file of the repo linked to the card; then an agent, one per kind the review
-/// knows; then a session one of those agents already has. The last two are not offered when
-/// there are no agents, since a session is an agent's.
+/// knows; then an explanation of the repo's changes, written by the agent the review's
+/// selector is set to; then a session one of those agents already has. The last three are not
+/// offered when there are no agents, since a session is an agent's and an explanation is
+/// written by one.
 ///
 /// Answered in groups, which the menu separates with a rule and the list with a gap.
 fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
@@ -84,6 +86,15 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
             })
             .collect(),
     );
+    groups.push(vec![StartOffer {
+        label: "explain".to_string(),
+        hover: Some(
+            "Have the agent picked in the review write a short PDF about everything \
+             uncommitted in the repo and its submodules, and open it - in a shell of \
+             this task, which is where to watch it",
+        ),
+        action: BoardAction::Explain(task.id.clone()),
+    }]);
     // The way back when a run's recorded session id stopped pointing anywhere: pick one
     // straight off the agents' own records instead.
     groups.push(vec![StartOffer {

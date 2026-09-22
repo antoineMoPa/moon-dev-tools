@@ -174,7 +174,7 @@ fn run_script(command: &str) -> String {
 
 /// A string a shell reads back as itself: single quotes hold every character literally, and
 /// the one they cannot hold is closed, escaped, and reopened.
-fn single_quoted(text: &str) -> String {
+pub(crate) fn single_quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 

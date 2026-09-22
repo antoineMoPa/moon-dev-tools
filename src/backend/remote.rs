@@ -30,6 +30,7 @@ use crate::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, LinkFileRequest, NewColumnRequest, StartResourceRequest,
         TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened, WorkLogPayload,
+        explainer::ExplainRequest,
     },
     project::{ProjectCommand, ProjectConfig},
     search::SearchListener,
@@ -575,6 +576,19 @@ impl Backend for RemoteBackend {
     ) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
             &format!("/api/session/{session_id}/tasks/{task_id}/resources"),
+            &request,
+        )?;
+        Ok(opened.terminal_id)
+    }
+
+    fn explain_task_changes(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: ExplainRequest,
+    ) -> Result<String> {
+        let opened: TerminalOpened = self.post_json(
+            &format!("/api/session/{session_id}/tasks/{task_id}/explanation"),
             &request,
         )?;
         Ok(opened.terminal_id)

@@ -64,6 +64,9 @@ pub(crate) enum BoardAction {
         fragment_path: String,
     },
     Start(String, StartResourceRequest),
+    /// Start the agent the review's selector is set to on a PDF explaining the repo's changes,
+    /// headless, in a shell of the task - see [`crate::moontasks::explainer`].
+    Explain(String),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
     OpenAttachPicker {
@@ -339,6 +342,31 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                             })
                         }
                         Err(error) => model.error(format!("could not start it: {error}")),
+                    }
+                },
+            );
+        }
+        BoardAction::Explain(task_id) => {
+            // Whoever the person last picked to hand work to is who writes this too, rather
+            // than the menu asking again.
+            let request = crate::moontasks::explainer::ExplainRequest {
+                agent: app.selected_agent(),
+            };
+            // The shell the agent prints into is what there is to watch, so it opens with it.
+            let for_pane = task_id.clone();
+            app.tasks.spawn(
+                move |backend| backend.explain_task_changes(&session_id, &task_id, request),
+                move |model, result| {
+                    model.board.refresh_requested = true;
+                    match result {
+                        Ok(terminal_id) => {
+                            model.board.opened_shell = Some(OpenedShell {
+                                terminal_id,
+                                command: None,
+                                task_id: for_pane,
+                            })
+                        }
+                        Err(error) => model.error(format!("could not explain it: {error}")),
                     }
                 },
             );

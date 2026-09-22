@@ -23,7 +23,7 @@ use crate::{
     committing::{CommitAction, CommitState},
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
-        TaskView,
+        TaskView, explainer::ExplainRequest,
     },
     project::{ProjectCommand, ProjectConfig},
     search::SearchListener,
@@ -130,6 +130,14 @@ pub(crate) trait Backend: Send + Sync + 'static {
         session_id: &str,
         task_id: &str,
         request: StartResourceRequest,
+    ) -> Result<String>;
+    /// Start an agent explaining the repo's changes for this task, headless, in a shell of the
+    /// task - see [`crate::moontasks::explainer`]. Answers with that shell.
+    fn explain_task_changes(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        request: ExplainRequest,
     ) -> Result<String>;
     fn resume_task_resource(
         &self,

@@ -1012,7 +1012,7 @@ pub(super) fn stamp_place(ui: &Ui, axis: Axis, id: egui::Id, origin: f32) {
 }
 
 /// The agents this machine has, with "None" first for a task started without one.
-pub(super) fn available_agents(app: &App) -> Vec<AgentKind> {
+pub(crate) fn available_agents(app: &App) -> Vec<AgentKind> {
     let mut agents = vec![AgentKind::None];
     let session_id = app.model.root_session_id.clone();
     if let Some(payload) = app

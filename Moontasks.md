@@ -20,7 +20,7 @@ on it in the repo.
 | `+` on a column's heading | write a new task, for the top of that column; `[create]` on that pane makes the card |
 | `+` under a column's last card | the same, for the bottom of it |
 | `+` at the right-hand end | add a column |
-| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
+| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, `explain` for a PDF about what is changed, or `file…` to put a file of the repo on the card |
 | `[tags]` beside it | the box the card's tags are edited in: a pill apiece with the mark that takes it off, a place to type the next one, and the rest of the board's tags under it to be pressed on. Backspace with nothing typed takes the last pill off. A tag is a pill at the foot of the card, in a color its own letters settle on, so `bug` is the same color on every card |
 | `right click` a card | the card's own menu: the task folder's path onto the clipboard, and a shell standing in that folder - which is where its notes and brief are, and where `[start]`'s shell is not, since that one comes up in the repo where the work is done |
 | a running resource | click its name to bring its terminal back on screen |
@@ -92,6 +92,32 @@ time - a card is a way back to a file, and one pointing at nothing is worse than
 mark at the end of the row takes the file off the card without asking, because nothing is lost
 by it: the file stays exactly where it is, and linking it again is one menu away.
 
+## A change, explained
+
+`explain` on the `[start]` menu is for the moment before a review: it has an agent write a short
+PDF about the task and what is changed for it, and open it. The agent is the one the review's
+selector is set to - the one you last picked to hand work to - so the menu does not ask again;
+with none picked it says so and starts nothing.
+
+The agent runs the way a review comment is handed to one: headless, with nobody to ask and a
+prompt that is the whole of the job - a few sentences, naming the repo and the task's folder,
+where the agent stands, and asking for a Typst file about the task and the diff, compiled and
+opened with `open`, in bullet points for a busy engineer, with code samples of the important
+changes. The repo is named because an agent told only where it stands runs `git diff` in the
+task folder. Nothing but the agent runs any
+of it, and the agent names the files. It runs on a fast model rather than the agent's default
+- Sonnet for Claude, GPT-5.6 Terra for Codex and OpenCode - because a page of bullets does not
+need the slow one. `typst` has to be installed, and a window on another machine gets the PDF
+on the server's screen, since that is where the agent runs.
+
+It runs in a shell of the task, the way a commit does, so it is a run on the card like any
+other: `write the parser explain - 1`, with the running dot, and clicking it brings up the
+shell the agent is printing into - which is where to watch it, and where what went wrong is
+read. The shell outlives the agent, with its output still on screen. `stop` ends it. `resume`
+opens the agent on the run it made, which is the way to tell it what the explanation got
+wrong. The prompt is `change_explanation.prompt.md` in the task's folder, to read or to run
+again by hand.
+
 ## The columns
 
 A board starts with TODO, IN PROGRESS and DONE, and they are yours from there: rename them,
@@ -159,6 +185,7 @@ The board is a folder in the repo, which is the whole of its state:
     notes.md          # the task's description and shared notes, shown on the card
     request_review.md        # how to write the file below, for an agent about to
     request_for_review.txt   # the repos this work touched, in deploy order, once there are any
+    change_explanation.prompt.md  # what the last `explain` asked its agent for; its PDF is beside it
     …                 # anything you or an agent puts here
 ```
 

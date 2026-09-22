@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// The repo a session's board belongs to.
-fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
+pub(super) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
     crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))
 }
 
@@ -933,7 +933,7 @@ impl Fillings {
 }
 
 /// What every process started for a task is told about itself.
-fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, String)> {
+pub(super) fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, String)> {
     vec![
         (super::TASK_ID_ENV_VAR.to_string(), task_id.to_string()),
         (

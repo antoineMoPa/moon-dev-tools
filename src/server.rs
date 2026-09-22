@@ -177,6 +177,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(start_task_resource),
         )
         .route(
+            "/api/session/{session_id}/tasks/{task_id}/explanation",
+            post(explain_task_changes),
+        )
+        .route(
             "/api/session/{session_id}/agent-sessions",
             get(list_agent_sessions),
         )
@@ -974,6 +978,22 @@ async fn start_task_resource(
     mark_activity(&state);
     Ok(Json(TerminalOpened {
         terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
+    }))
+}
+
+async fn explain_task_changes(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::explainer::ExplainRequest>,
+) -> Result<Json<TerminalOpened>, AppError> {
+    mark_activity(&state);
+    Ok(Json(TerminalOpened {
+        terminal_id: moontasks::explainer::start_explanation(
+            &state,
+            &session_id,
+            &task_id,
+            request,
+        )?,
     }))
 }
 

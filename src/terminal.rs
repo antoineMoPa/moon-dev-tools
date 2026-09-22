@@ -906,10 +906,10 @@ pub(crate) fn title_in_name(title: &str) -> Option<String> {
 /// The prefix every shell of one task and one program shares - `write the parser claude - `,
 /// or `shell - ` for a shell of no task. The number that follows it is counted within it, so
 /// each task numbers its own runs.
-fn name_prefix(task_title: Option<&str>, program: &TerminalProgram) -> String {
+fn name_prefix(task_title: Option<&str>, label: &str) -> String {
     match task_title.and_then(title_in_name) {
-        Some(title) => format!("{title} {} - ", program.label()),
-        None => format!("{} - ", program.label()),
+        Some(title) => format!("{title} {label} - "),
+        None => format!("{label} - "),
     }
 }
 
@@ -922,7 +922,17 @@ pub(crate) fn numbered_name(
     program: &TerminalProgram,
     in_use: impl IntoIterator<Item = String>,
 ) -> String {
-    let prefix = name_prefix(task_title, program);
+    numbered_name_called(task_title, &program.label(), in_use)
+}
+
+/// The same, for a shell named after what it does rather than what runs in it - `write the
+/// parser explain - 1` for a login shell an explanation of the change runs in.
+pub(crate) fn numbered_name_called(
+    task_title: Option<&str>,
+    label: &str,
+    in_use: impl IntoIterator<Item = String>,
+) -> String {
+    let prefix = name_prefix(task_title, label);
     let highest = in_use
         .into_iter()
         .filter_map(|name| name.strip_prefix(&prefix)?.parse::<u64>().ok())
@@ -944,6 +954,18 @@ pub(crate) fn name_for_new_shell(
     let mut in_use = state.terminals.live_names();
     in_use.extend(crate::moontasks::store::recorded_run_names(repo_path)?);
     Ok(numbered_name(task_title, program, in_use))
+}
+
+/// The same, for a shell named after what it does - see [`numbered_name_called`].
+pub(crate) fn name_for_new_shell_called(
+    state: &AppState,
+    repo_path: &std::path::Path,
+    task_title: Option<&str>,
+    label: &str,
+) -> anyhow::Result<String> {
+    let mut in_use = state.terminals.live_names();
+    in_use.extend(crate::moontasks::store::recorded_run_names(repo_path)?);
+    Ok(numbered_name_called(task_title, label, in_use))
 }
 
 /// Start a shell of the workspace's own in the reviewed repo, and answer with which.

@@ -10,6 +10,7 @@ mod board_card_menu;
 mod board_cards;
 mod board_columns;
 mod board_drag;
+mod board_explain;
 mod board_pending_card;
 mod board_selection;
 mod board_tags;

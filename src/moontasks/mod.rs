@@ -4,6 +4,7 @@
 //! do to it.
 
 pub(crate) mod column_sort;
+pub(crate) mod explainer;
 pub(crate) mod review_request;
 pub(crate) mod service;
 pub(crate) mod store;
