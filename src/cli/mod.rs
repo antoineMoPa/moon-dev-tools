@@ -216,6 +216,9 @@ pub(super) enum MoonCommand {
     Open {
         path: String,
         line: Option<usize>,
+        /// `--wait`: return only once the file's tab has been closed, which is what git
+        /// needs of the editor it hands a commit message to.
+        wait: bool,
     },
     /// What `open` and `edit` take, printed and nothing opened.
     OpenHelp,
@@ -258,7 +261,7 @@ pub(crate) fn run() -> Result<()> {
             runtime.block_on(server::run_server())
         }
         MoonCommand::InstallLaunchers => install_launchers(),
-        MoonCommand::Open { path, line } => open::open_file(&path, line),
+        MoonCommand::Open { path, line, wait } => open::open_file(&path, line, wait),
         MoonCommand::OpenHelp => {
             println!("{}", open::help_text());
             Ok(())

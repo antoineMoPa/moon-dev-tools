@@ -226,6 +226,11 @@ pub(crate) enum OpenPaneRequest {
     TerminalInRepo {
         repo_path: String,
     },
+    /// A shell at the root of a review's repo, beside the review: what clicking the repo's
+    /// name over it asks for.
+    TerminalBesideReview {
+        session_id: String,
+    },
     /// A shell the server already has, opened in a tab of its own. This is how a task's agent
     /// is brought back on screen after its tab was closed.
     AttachTerminal {

@@ -56,8 +56,16 @@ pub(crate) struct Instance {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "ask", rename_all = "snake_case")]
 pub(crate) enum Ask {
-    /// Open this file in a tab, at this line when one was named.
-    OpenFile { path: String, line: Option<usize> },
+    /// Open this file in a tab, at this line when one was named. `wait` is `moon edit --wait`:
+    /// the shell will keep asking [`Ask::StillOpen`] about the file until its tab is closed.
+    OpenFile {
+        path: String,
+        line: Option<usize>,
+        #[serde(default)]
+        wait: bool,
+    },
+    /// Whether the tab a `moon edit --wait` opened on this file is still open.
+    StillOpen { path: String },
 }
 
 /// What the window answers.
@@ -69,6 +77,10 @@ pub(crate) enum Answer {
     /// The window will not open it, and says why - it has no project open yet, or the repo
     /// it is open on is on another machine, so the file the shell named is not one it reads.
     Refused { reason: String },
+    /// The file a `moon edit --wait` is waiting on is still open, or about to be.
+    StillOpen,
+    /// Its tab has been closed, and the shell can stop waiting.
+    Closed,
 }
 
 impl Instance {
@@ -256,7 +268,7 @@ pub(crate) fn shell_window() -> Option<u32> {
 /// Hand a file to a window: the first one that takes it, in the order [`windows_for`] puts
 /// them in. A window that refuses says why, and the last of those reasons is what is
 /// reported when no window took the file - it is the nearest thing to an explanation there is.
-pub(crate) fn open_file(file: &Path, line: Option<usize>) -> Result<Instance> {
+pub(crate) fn open_file(file: &Path, line: Option<usize>, wait: bool) -> Result<Instance> {
     let candidates = windows_for(file, shell_window(), running());
     if candidates.is_empty() {
         bail!(
@@ -268,12 +280,14 @@ pub(crate) fn open_file(file: &Path, line: Option<usize>) -> Result<Instance> {
     let ask = Ask::OpenFile {
         path: file.display().to_string(),
         line,
+        wait,
     };
     let mut refusal = None;
     for instance in candidates {
         match instance.ask(&ask) {
             Ok(Answer::Opened) => return Ok(instance),
             Ok(Answer::Refused { reason }) => refusal = Some(reason),
+            Ok(other) => bail!("the window answered an open with {other:?}"),
             // A window that cannot be reached is one that went away between the record being
             // read and the socket being opened. The next window is the answer, not an error.
             Err(_) => remove_records(instance.pid),
@@ -286,5 +300,25 @@ pub(crate) fn open_file(file: &Path, line: Option<usize>) -> Result<Instance> {
             "no window answered about {} - the ones that were open have closed",
             file.display()
         ),
+    }
+}
+
+/// How often `moon edit --wait` asks whether the file's tab is still open. Someone closing a
+/// tab and looking back at the shell does not notice a quarter of a second.
+const STILL_OPEN_POLL: Duration = Duration::from_millis(250);
+
+/// Wait until the window that took a file for `moon edit --wait` has closed its tab - which
+/// is what git waits on before it reads the commit message back. A window that goes away
+/// took the tab with it, so that is the end of the wait too.
+pub(crate) fn wait_until_closed(instance: &Instance, file: &Path) -> Result<()> {
+    let ask = Ask::StillOpen {
+        path: file.display().to_string(),
+    };
+    loop {
+        match instance.ask(&ask) {
+            Ok(Answer::StillOpen) => std::thread::sleep(STILL_OPEN_POLL),
+            Ok(Answer::Closed) | Err(_) => return Ok(()),
+            Ok(other) => bail!("the window answered a wait with {other:?}"),
+        }
     }
 }

@@ -360,7 +360,7 @@ fn double_clicking_a_word_selects_and_copies_it() {
     // A few pixels into the line's first word - the row is as wide as the pane, and a
     // double-click past the end of the text falls back to the whole line.
     let at = egui::pos2(
-        crate::native::review::hunks::body_text_x(rect) + 10.0,
+        crate::native::review::hunks::body_text_x(rect, 0.0) + 10.0,
         rect.center().y,
     );
     // Two clicks one step apart: the harness steps a quarter second at a time, and egui
@@ -458,7 +458,7 @@ pub(super) fn row_at(
         .rect;
     // A few pixels into the row's first word, which is the name being called.
     egui::pos2(
-        crate::native::review::hunks::body_text_x(rect) + 10.0,
+        crate::native::review::hunks::body_text_x(rect, 0.0) + 10.0,
         rect.center().y,
     )
 }

@@ -194,6 +194,9 @@ pub(crate) struct ReviewState {
     /// git is still being told. The row wears it at once rather than waiting out the round
     /// trip, and it is dropped as soon as a fetched diff says the same thing.
     pub(crate) asked_file_staging: HashMap<String, bool>,
+    /// How far each hunk's code is scrolled sideways, in points, by hunk id. A hunk nobody
+    /// has scrolled is not in here and sits at its left edge.
+    pub(crate) code_scroll_x: HashMap<String, f32>,
 }
 
 impl ReviewState {
@@ -219,6 +222,7 @@ impl ReviewState {
             loading_history: false,
             pending_discard: None,
             asked_file_staging: HashMap::new(),
+            code_scroll_x: HashMap::new(),
         }
     }
 

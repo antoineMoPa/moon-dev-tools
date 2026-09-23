@@ -36,6 +36,7 @@ fn a_file_a_shell_asked_for_opens_in_a_tab() {
     let asked = Arc::new(Mutex::new(Some(OpenFileAsked {
         path: file,
         line: Some(2),
+        wait: false,
     })));
     let asked_in_ui = Arc::clone(&asked);
     let open = Arc::new(Mutex::new(None::<String>));
@@ -93,6 +94,7 @@ fn a_file_that_is_not_there_yet_is_created_by_saving_its_tab() {
     let asked = Arc::new(Mutex::new(Some(OpenFileAsked {
         path: file.clone(),
         line: None,
+        wait: false,
     })));
     let asked_in_ui = Arc::clone(&asked);
     let open = Arc::new(Mutex::new(None::<(PaneId, String, String)>));
@@ -190,6 +192,7 @@ fn a_file_of_another_project_opens_in_a_session_of_its_own() {
     let asked = Arc::new(Mutex::new(Some(OpenFileAsked {
         path: file,
         line: None,
+        wait: false,
     })));
     let asked_in_ui = Arc::clone(&asked);
     let open = Arc::new(Mutex::new(None::<(String, String)>));
@@ -229,5 +232,87 @@ fn a_file_of_another_project_opens_in_a_session_of_its_own() {
     assert!(
         !errors.load(Ordering::Relaxed),
         "opening it said something went wrong"
+    );
+}
+
+/// `moon edit --wait`, as git runs it on a commit message: the window holds on to the tab it
+/// opened for as long as the tab is open, and lets go of it once it is closed - which is when
+/// the shell waiting on it is told it can stop.
+#[test]
+fn a_waited_on_tab_is_let_go_of_once_it_is_closed() {
+    let fixture = Fixture::new("moon-edit-wait");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+    // Where git writes the message it hands its editor, inside the repo's own `.git`.
+    fixture.write(
+        ".git/COMMIT_EDITMSG",
+        "\n# Please enter the commit message\n",
+    );
+    let file = fixture
+        .root
+        .join(".git/COMMIT_EDITMSG")
+        .canonicalize()
+        .expect("expected the file to resolve");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let asked = Arc::new(Mutex::new(Some(OpenFileAsked {
+        path: file,
+        line: None,
+        wait: true,
+    })));
+    let asked_in_ui = Arc::clone(&asked);
+    let close = Arc::new(AtomicBool::new(false));
+    let close_in_ui = Arc::clone(&close);
+    // The tab, and how many tabs the window is waiting on.
+    let seen = Arc::new(Mutex::new((None::<PaneId>, 0usize)));
+    let read = Arc::new(Mutex::new(None::<String>));
+    let read_in_ui = Arc::clone(&read);
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .build_ui(move |ui| {
+            if let Some(asked) = asked_in_ui.lock().expect("poisoned").take() {
+                app.asked_files.push_back(asked);
+            }
+            let tab = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                .map(|(pane_id, _)| pane_id);
+            if let Some(tab) = tab
+                && close_in_ui.swap(false, Ordering::Relaxed)
+            {
+                app.close_pane(tab);
+            }
+            app.draw(ui);
+            *seen_in_ui.lock().expect("poisoned") = (tab, app.waited_tabs.len());
+            if let Some(editor) = tab.and_then(|tab| app.model.file_editors.get(&tab)) {
+                *read_in_ui.lock().expect("poisoned") = editor.content_for_test();
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || seen.lock().expect("poisoned").0.is_some()),
+        "the file never reached a tab"
+    );
+    harness.run_steps(3);
+    assert_eq!(
+        seen.lock().expect("poisoned").1,
+        1,
+        "the window should be holding on to the open tab"
+    );
+    assert!(
+        settle(&mut harness, || read.lock().expect("poisoned").as_deref()
+            == Some("\n# Please enter the commit message\n")),
+        "the tab should read the message git wrote, got {:?}",
+        read.lock().expect("poisoned")
+    );
+
+    close.store(true, Ordering::Relaxed);
+    assert!(
+        settle(&mut harness, || *seen.lock().expect("poisoned")
+            == (None, 0)),
+        "closing the tab should have let go of it"
     );
 }

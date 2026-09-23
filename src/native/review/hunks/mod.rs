@@ -13,6 +13,7 @@
 mod actions;
 mod comments;
 mod lines;
+mod sideways;
 
 use std::sync::Arc;
 
@@ -51,21 +52,32 @@ pub(crate) fn comment_bubble_id(session_id: &str, hunk_id: &str) -> egui::Id {
 }
 
 /// Where a line's body text starts, matching what `draw_line_text` paints: the gutter, then
-/// the one-character `+`/`-`/space marker column. Only commentable lines are selectable, and
-/// they all carry the marker.
-pub(crate) fn body_text_x(rect: Rect) -> f32 {
-    rect.min.x + GUTTER_WIDTH + 6.0 + 9.0
+/// the one-character `+`/`-`/space marker column, less however far the hunk's code is
+/// scrolled sideways (`scroll_x`). Only commentable lines are selectable, and they all carry
+/// the marker.
+pub(crate) fn body_text_x(rect: Rect, scroll_x: f32) -> f32 {
+    code_rect(rect).min.x - scroll_x
+}
+
+/// The part of a row its code shows in: right of the gutter and the marker column. A body
+/// scrolled sideways slides under the marker and out of this, so everything drawn from the
+/// body's columns is clipped to it - the gutter and the marker stay put.
+pub(super) fn code_rect(rect: Rect) -> Rect {
+    Rect::from_min_max(
+        egui::pos2(rect.min.x + GUTTER_WIDTH + 6.0 + 9.0, rect.min.y),
+        rect.max,
+    )
 }
 
 /// The character column of the body under a pointer x, by laying the body out the same way
 /// it is painted. Past the end of the text this is the body's length.
-pub(super) fn column_at(ui: &Ui, rect: Rect, line: &DiffLine, x: f32) -> usize {
+pub(super) fn column_at(ui: &Ui, rect: Rect, scroll_x: f32, line: &DiffLine, x: f32) -> usize {
     let font = egui::FontId::monospace(CODE_SIZE);
     let galley = ui
         .painter()
         .layout_no_wrap(line.body().to_string(), font, egui::Color32::WHITE);
     galley
-        .cursor_from_pos(vec2(x - body_text_x(rect), 0.0))
+        .cursor_from_pos(vec2(x - body_text_x(rect, scroll_x), 0.0))
         .index
         .into()
 }
@@ -407,6 +419,10 @@ fn draw_hunk_card(
             );
         })
         .response;
+
+    if hunk.image_diff.is_none() {
+        sideways::scroll_card(app, ui, session_id, &hunk.id, &response, palette);
+    }
 
     // A stripe down the left of the card, so the hunk the keyboard acts on is obvious even
     // when the pointer has moved on.

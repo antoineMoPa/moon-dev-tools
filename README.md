@@ -103,6 +103,13 @@ Run any of them inside a git repository. `moon tasks` and `moon shell` run just 
 folder that is no repository: the review is the part that needs one. The other tools remain
 one command-palette action away (`⌘⇧P`).
 
+`moon edit --wait` returns only once the file's tab is closed, so git can write its commit
+messages in a moon window:
+
+```bash
+git config --global core.editor "moon edit --wait"
+```
+
 ### Moontasks
 
 Write a card for a piece of work, pick an agent from `[start]`, and Moontasks starts it in the

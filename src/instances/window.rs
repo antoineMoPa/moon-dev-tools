@@ -6,6 +6,7 @@
 //! has open - see [`crate::native::app::App::listen_for_shell_asks`].
 
 use std::{
+    collections::HashSet,
     io::{BufRead, BufReader, Write},
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
@@ -23,6 +24,9 @@ pub(crate) struct OpenFileAsked {
     pub(crate) path: PathBuf,
     /// The line to put on screen, for `moon open <file>:<line>`.
     pub(crate) line: Option<usize>,
+    /// A `moon edit --wait` is waiting on this file's tab to close - see
+    /// [`ShellAsks::release`].
+    pub(crate) wait: bool,
 }
 
 /// What a window keeps so shells can reach it: the project it is written down as being on,
@@ -32,6 +36,11 @@ pub(crate) struct ShellAsks {
     /// file into yet, and written by the window whenever it opens another project.
     project: Arc<Mutex<Option<String>>>,
     arrived: Arc<Mutex<Vec<OpenFileAsked>>>,
+    /// The files a `moon edit --wait` is waiting on, from the moment the ask is taken until
+    /// the window [releases](ShellAsks::release) them. Written into by the listening thread
+    /// as the ask arrives, so a shell asking straight after is told the file is still open
+    /// even though no frame has opened its tab yet.
+    waited_on: Arc<Mutex<HashSet<PathBuf>>>,
     /// What this window is called on the command line, which is what `moon list` prints
     /// beside the project.
     program: String,
@@ -62,11 +71,13 @@ impl ShellAsks {
         let asks = Self {
             project: Arc::new(Mutex::new(None)),
             arrived: Arc::new(Mutex::new(Vec::new())),
+            waited_on: Arc::new(Mutex::new(HashSet::new())),
             program,
             focused_at_unix: Arc::new(Mutex::new(0)),
         };
         let project = asks.project.clone();
         let arrived = asks.arrived.clone();
+        let waited_on = asks.waited_on.clone();
         thread::Builder::new()
             .name("moon-shell-asks".to_string())
             .spawn(move || {
@@ -74,7 +85,9 @@ impl ShellAsks {
                     // One ask per connection, and each is answered before the next is read:
                     // a shell waits for its answer, so nothing is gained by doing several at
                     // once, and the window is only ever asked as fast as somebody types.
-                    if let Err(error) = answer(stream, reads_this_machine, &project, &arrived) {
+                    if let Err(error) =
+                        answer(stream, reads_this_machine, &project, &arrived, &waited_on)
+                    {
                         eprintln!("[moonreview] could not answer a `moon` ask: {error}");
                         continue;
                     }
@@ -124,6 +137,15 @@ impl ShellAsks {
         })
     }
 
+    /// The tab a `moon edit --wait` was waiting on has closed, or will never open: the shell
+    /// asking about it stops waiting.
+    pub(crate) fn release(&self, path: &std::path::Path) {
+        self.waited_on
+            .lock()
+            .expect("the waited-on lock")
+            .remove(path);
+    }
+
     /// The files asked for since the last time this was called.
     pub(crate) fn drain(&self) -> Vec<OpenFileAsked> {
         std::mem::take(&mut *self.arrived.lock().expect("the arrived lock"))
@@ -151,34 +173,71 @@ fn answer(
     reads_this_machine: bool,
     project: &Arc<Mutex<Option<String>>>,
     arrived: &Arc<Mutex<Vec<OpenFileAsked>>>,
+    waited_on: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<()> {
     let mut asked = String::new();
     BufReader::new(&stream)
         .read_line(&mut asked)
         .context("failed to read the ask")?;
-    let Ask::OpenFile { path, line } = serde_json::from_str(asked.trim())
+    let asked: Ask = serde_json::from_str(asked.trim())
         .with_context(|| format!("failed to read {asked:?} as an ask"))?;
 
-    let answer = match project.lock().expect("the project lock").clone() {
-        Some(project) if !reads_this_machine => Answer::Refused {
-            reason: format!("this window is open on {project} on another machine"),
-        },
-        Some(_) => {
-            arrived
+    let answer = match asked {
+        Ask::OpenFile { path, line, wait } => answer_open_file(
+            PathBuf::from(path),
+            line,
+            wait,
+            reads_this_machine,
+            project,
+            arrived,
+            waited_on,
+        ),
+        Ask::StillOpen { path } => {
+            if waited_on
                 .lock()
-                .expect("the arrived lock")
-                .push(OpenFileAsked {
-                    path: PathBuf::from(path),
-                    line,
-                });
-            Answer::Opened
+                .expect("the waited-on lock")
+                .contains(&PathBuf::from(path))
+            {
+                Answer::StillOpen
+            } else {
+                Answer::Closed
+            }
         }
-        None => Answer::Refused {
-            reason: "this window has no project open yet".to_string(),
-        },
     };
 
     let mut writing = &stream;
     writeln!(writing, "{}", serde_json::to_string(&answer)?)?;
     writing.flush().context("failed to answer the shell")
+}
+
+fn answer_open_file(
+    path: PathBuf,
+    line: Option<usize>,
+    wait: bool,
+    reads_this_machine: bool,
+    project: &Arc<Mutex<Option<String>>>,
+    arrived: &Arc<Mutex<Vec<OpenFileAsked>>>,
+    waited_on: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Answer {
+    match project.lock().expect("the project lock").clone() {
+        Some(project) if !reads_this_machine => Answer::Refused {
+            reason: format!("this window is open on {project} on another machine"),
+        },
+        Some(_) => {
+            if wait {
+                waited_on
+                    .lock()
+                    .expect("the waited-on lock")
+                    .insert(path.clone());
+            }
+            arrived
+                .lock()
+                .expect("the arrived lock")
+                .push(OpenFileAsked { path, line, wait });
+            Answer::Opened
+        }
+        None => Answer::Refused {
+            reason: "this window has no project open yet".to_string(),
+        },
+    }
 }

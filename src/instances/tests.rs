@@ -176,6 +176,7 @@ fn a_file_of_the_project_is_taken_and_waits_for_the_next_frame() {
         .ask(&Ask::OpenFile {
             path: file.display().to_string(),
             line: Some(12),
+            wait: false,
         })
         .expect("expected an answer");
 
@@ -184,6 +185,75 @@ fn a_file_of_the_project_is_taken_and_waits_for_the_next_frame() {
     assert_eq!(arrived.len(), 1);
     assert_eq!(arrived[0].path, file);
     assert_eq!(arrived[0].line, Some(12));
+}
+
+/// `moon edit --wait`: the file is still open from the moment the window takes it - before
+/// any frame has opened its tab - until the window lets it go, and then the shell is told it
+/// has closed.
+#[test]
+fn a_waited_on_file_is_open_until_the_window_releases_it() {
+    let project = temporary_project("waited");
+    let file = project.join("COMMIT_EDITMSG");
+    std::fs::write(&file, "").expect("expected a file");
+
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    let window = this_process(&project.display().to_string());
+    let still_open = Ask::StillOpen {
+        path: file.display().to_string(),
+    };
+
+    let answer = window
+        .ask(&Ask::OpenFile {
+            path: file.display().to_string(),
+            line: None,
+            wait: true,
+        })
+        .expect("expected an answer");
+    assert_eq!(answer, Answer::Opened);
+    assert!(asks.drain()[0].wait);
+    assert_eq!(
+        window.ask(&still_open).expect("expected an answer"),
+        Answer::StillOpen
+    );
+
+    asks.release(&file);
+
+    assert_eq!(
+        window.ask(&still_open).expect("expected an answer"),
+        Answer::Closed
+    );
+}
+
+/// A file opened without `--wait` is nothing the window holds on to.
+#[test]
+fn a_file_nobody_waits_on_reads_as_closed() {
+    let project = temporary_project("not-waited");
+    let file = project.join("notes.md");
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    let window = this_process(&project.display().to_string());
+
+    window
+        .ask(&Ask::OpenFile {
+            path: file.display().to_string(),
+            line: None,
+            wait: false,
+        })
+        .expect("expected an answer");
+
+    assert_eq!(
+        window
+            .ask(&Ask::StillOpen {
+                path: file.display().to_string(),
+            })
+            .expect("expected an answer"),
+        Answer::Closed
+    );
 }
 
 /// A window takes a file of another project too: it opens a session on that project and puts
@@ -200,6 +270,7 @@ fn a_file_of_another_project_is_taken_as_well() {
         .ask(&Ask::OpenFile {
             path: "/somewhere/else/main.rs".to_string(),
             line: None,
+            wait: false,
         })
         .expect("expected an answer");
 
@@ -223,6 +294,7 @@ fn a_window_on_another_machines_repo_is_refused_with_the_reason() {
         .ask(&Ask::OpenFile {
             path: project.join("notes.md").display().to_string(),
             line: None,
+            wait: false,
         })
         .expect("expected an answer");
 

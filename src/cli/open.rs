@@ -17,18 +17,19 @@ use anyhow::{Context, Result, bail};
 use super::{MoonCommand, PROGRAM};
 use crate::instances;
 
-/// `moon open <path>[:<line>]`, and `moon edit` which is the same thing.
+/// `moon open [--wait] <path>[:<line>]`, and `moon edit` which is the same thing.
 pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().peekable();
+    let wait = args.next_if(|arg| arg == "--wait").is_some();
     let named = args
         .next()
         .with_context(|| format!("`{PROGRAM} open` needs a file to open\n\n{}", help_text()))?;
-    // A word starting with a dash is an option being tried, not a file: the command has none,
-    // and a tab opened on a file called `--foo` is nobody's idea of an answer. A file really
-    // named that way is reached as `./--foo`.
+    // A word starting with a dash is an option being tried, not a file: `--wait` is the only
+    // one, and a tab opened on a file called `--foo` is nobody's idea of an answer. A file
+    // really named that way is reached as `./--foo`.
     if named.starts_with('-') {
         bail!(
-            "`{PROGRAM} open` takes a file and no options, not {named}\n\n{}",
+            "`{PROGRAM} open` takes `--wait` and a file, not {named}\n\n{}",
             help_text()
         );
     }
@@ -37,13 +38,13 @@ pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
     }
 
     let (path, line) = split_line_number(&named);
-    Ok(MoonCommand::Open { path, line })
+    Ok(MoonCommand::Open { path, line, wait })
 }
 
 /// `moon open --help`: how a file is named, and where it lands.
 pub(super) fn help_text() -> String {
     format!(
-        "{PROGRAM} open <path>[:<line>]
+        "{PROGRAM} open [--wait] <path>[:<line>]
 
 Opens a file in a window that is already open: the one on the file's project, or the one
 last in front when no window is open on it. `{PROGRAM} edit` is the same command.
@@ -52,6 +53,12 @@ Usage:
   {PROGRAM} open <path>
   {PROGRAM} open <path>:<line>
   {PROGRAM} edit <path>
+  {PROGRAM} edit --wait <path>
+
+Options:
+  --wait   return only once the file's tab is closed, so a program waiting on its editor
+           - git, for a commit message - reads the file back when you are done with it:
+             git config --global core.editor \"{PROGRAM} edit --wait\"
 
 Examples:
   {PROGRAM} open src/main.rs
@@ -89,10 +96,10 @@ fn split_line_number(named: &str) -> (String, Option<usize>) {
 /// window opens an empty tab on it, and the file is only created when that tab is saved - see
 /// [`crate::native::panes::OpenPaneRequest::NewFile`]. Its folder has to exist: a folder that
 /// does not is more likely a typo than a place to start writing.
-pub(super) fn open_file(path: &str, line: Option<usize>) -> Result<()> {
+pub(super) fn open_file(path: &str, line: Option<usize>, wait: bool) -> Result<()> {
     let (file, new) = file_to_open(path)?;
 
-    let instance = instances::open_file(&file, line)?;
+    let instance = instances::open_file(&file, line, wait)?;
     let at = match line {
         Some(line) => format!(":{line}"),
         None => String::new(),
@@ -108,6 +115,9 @@ pub(super) fn open_file(path: &str, line: Option<usize>) -> Result<()> {
         instance.program,
         instance.project_path
     );
+    if wait {
+        instances::wait_until_closed(&instance, &file)?;
+    }
     Ok(())
 }
 
@@ -178,7 +188,8 @@ mod tests {
             parse(&["open", "src/main.rs:42"]).expect("expected it to parse"),
             MoonCommand::Open {
                 path: "src/main.rs".to_string(),
-                line: Some(42)
+                line: Some(42),
+                wait: false,
             }
         );
     }
@@ -192,13 +203,27 @@ mod tests {
         );
     }
 
+    /// What git runs when `core.editor` is `moon edit --wait`: the file comes last.
+    #[test]
+    fn waiting_is_asked_for_ahead_of_the_file() {
+        assert_eq!(
+            parse(&["edit", "--wait", ".git/COMMIT_EDITMSG"]).expect("expected it to parse"),
+            MoonCommand::Open {
+                path: ".git/COMMIT_EDITMSG".to_string(),
+                line: None,
+                wait: true,
+            }
+        );
+    }
+
     #[test]
     fn a_file_with_a_colon_in_its_name_is_a_file() {
         assert_eq!(
             parse(&["open", "notes:tuesday.md"]).expect("expected it to parse"),
             MoonCommand::Open {
                 path: "notes:tuesday.md".to_string(),
-                line: None
+                line: None,
+                wait: false,
             }
         );
     }
@@ -228,7 +253,7 @@ mod tests {
     fn an_option_is_refused_rather_than_opened_as_a_file() {
         let error = parse(&["open", "--line=3"]).expect_err("expected a refusal");
 
-        assert!(format!("{error}").contains("no options"), "got {error}");
+        assert!(format!("{error}").contains("takes `--wait`"), "got {error}");
     }
 
     #[test]

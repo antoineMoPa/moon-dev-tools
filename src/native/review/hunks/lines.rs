@@ -22,7 +22,10 @@ use super::actions::{
     RowUnderThePointer, current_selection, draw_truncation_notice, jump_to_definition, select_lines,
 };
 use super::comments::{bubble_rect, draw_comment_bubble, draw_composer, draw_inline_comment};
-use super::{GUTTER_WIDTH, LINE_HEIGHT, body_text_x, column_at, diff_line_id, word_bounds_at};
+use super::{
+    GUTTER_WIDTH, LINE_HEIGHT, body_text_x, code_rect, column_at, diff_line_id, sideways,
+    word_bounds_at,
+};
 
 /// Draws the hunk's lines, and the comments and composers under them. `scroll_to_line` is
 /// the line the pane was asked to bring into view, if one - see
@@ -54,6 +57,7 @@ pub(super) fn draw_hunk_body(
         .clone()
         .unwrap_or_else(|| hunk.patch_preview.clone());
     let lines = app.diff_lines(&hunk.id, &patch, &hunk.file_path);
+    let scroll_x = sideways::scroll_x(app, session_id, &hunk.id);
 
     let anchored = parse_anchored_comments(&hunk.comment);
     let mut comment_at: Vec<(usize, usize)> = Vec::new();
@@ -112,7 +116,17 @@ pub(super) fn draw_hunk_body(
         }
         let scroll_here = scroll_to_line == Some(index);
         line_scrolled |= scroll_here;
-        draw_diff_line(app, ui, session_id, hunk, index, line, scroll_here, palette);
+        draw_diff_line(
+            app,
+            ui,
+            session_id,
+            hunk,
+            index,
+            line,
+            scroll_here,
+            scroll_x,
+            palette,
+        );
 
         for (_, comment_index) in comment_at.iter().filter(|(at, _)| *at == index) {
             if let Some(entry) = anchored.get(*comment_index) {
@@ -131,9 +145,18 @@ pub(super) fn draw_hunk_body(
     if hunk.patch_line_count > preview_limit && full_patch.is_none() {
         draw_truncation_notice(app, ui, session_id, hunk, preview_limit, palette);
     }
+    // Room along the card's bottom for the bar that scrolls it sideways, where there is one.
+    if sideways::overflow(app, ui, &hunk.id, ui.available_width()) > 0.0 {
+        ui.add_space(sideways::BAR_HEIGHT);
+    }
     line_scrolled
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_diff_line(
     app: &mut App,
     ui: &mut Ui,
@@ -142,6 +165,7 @@ fn draw_diff_line(
     index: usize,
     line: &DiffLine,
     scroll_here: bool,
+    scroll_x: f32,
     palette: &Palette,
 ) {
     let width = ui.available_width();
@@ -206,11 +230,12 @@ fn draw_diff_line(
                     .size()
                     .x
             };
-            let left = body_text_x(rect) + width_of(0, from);
+            let left = body_text_x(rect, scroll_x) + width_of(0, from);
             egui::Rect::from_min_size(
                 egui::pos2(left, rect.min.y),
                 vec2(width_of(from, to), rect.height()),
             )
+            .intersect(code_rect(rect))
         };
         selected_span = Some(span);
         ui.painter()
@@ -230,7 +255,7 @@ fn draw_diff_line(
 
     draw_gutter(ui, rect, line, palette);
     let marks = find_marks(app, session_id, &hunk.id, index, line);
-    draw_line_text(ui, rect, line, palette, &marks);
+    draw_line_text(ui, rect, scroll_x, line, palette, &marks);
 
     if !selectable {
         return;
@@ -262,6 +287,7 @@ fn draw_diff_line(
         &hunk.file_path,
         RowUnderThePointer {
             rect,
+            scroll_x,
             line,
             response: &response,
             ink: palette.diff_line_ink(line.kind.prefix()),
@@ -300,7 +326,7 @@ fn draw_diff_line(
             .unwrap_or(rect.min.x);
         let at = SelectionPoint {
             line: index,
-            column: column_at(ui, rect, line, start_x),
+            column: column_at(ui, rect, scroll_x, line, start_x),
         };
         let review = app.model.review(session_id);
         review.selection = Some(LineSelection {
@@ -326,7 +352,7 @@ fn draw_diff_line(
         if let Some(at) = pointer_at {
             let head = SelectionPoint {
                 line: index,
-                column: column_at(ui, rect, line, at.x),
+                column: column_at(ui, rect, scroll_x, line, at.x),
             };
             let review = app.model.review(session_id);
             if let Some(existing) = review.selection
@@ -353,7 +379,7 @@ fn draw_diff_line(
     if response.double_clicked() {
         let selection = response
             .interact_pointer_pos()
-            .and_then(|at| word_bounds_at(line.body(), column_at(ui, rect, line, at.x)))
+            .and_then(|at| word_bounds_at(line.body(), column_at(ui, rect, scroll_x, line, at.x)))
             .map(|(from, to)| LineSelection {
                 hunk_id_hash: hunk_hash,
                 anchor: SelectionPoint {
@@ -477,13 +503,14 @@ fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
 pub(super) fn draw_line_text(
     ui: &Ui,
     rect: egui::Rect,
+    scroll_x: f32,
     line: &DiffLine,
     palette: &Palette,
     marks: &FindMarks,
 ) {
-    // A diff line is as long as the code is, and the pane does not scroll sideways, so a long
-    // one has to stop at the edge of its row. Without this it carries on over the hunk card's
-    // border and out across whatever the pane is showing beside it.
+    // A diff line is as long as the code is, and the hunk scrolls sideways rather than wrap
+    // it, so a long one has to stop at the edge of its row. Without this it carries on over
+    // the hunk card's border and out across whatever the pane is showing beside it.
     let painter = ui.painter().with_clip_rect(rect);
     let font = egui::FontId::monospace(CODE_SIZE);
     let ink = match line.kind {
@@ -504,10 +531,16 @@ pub(super) fn draw_line_text(
         painter.text(text_origin, Align2::LEFT_CENTER, prefix, font.clone(), ink);
     }
 
-    let body_origin = egui::pos2(
-        text_origin.x + if prefix.is_empty() { 0.0 } else { 9.0 },
-        text_origin.y,
-    );
+    // A code line's body scrolls under the marker, so it is clipped to the right of it. The
+    // `@@` header and git's bookkeeping carry no marker and are not code; they stay put.
+    let (body_origin, painter) = if prefix.is_empty() {
+        (text_origin, painter)
+    } else {
+        (
+            egui::pos2(body_text_x(rect, scroll_x), text_origin.y),
+            painter.with_clip_rect(code_rect(rect)),
+        )
+    };
     if !marks.is_empty() {
         draw_find_marks(&painter, rect, line, body_origin, &font, marks, palette);
     }

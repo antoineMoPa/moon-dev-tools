@@ -263,6 +263,9 @@ impl App {
                 self.spawn_terminal(session_id, command, TerminalPlacement::WithOtherShells);
             }
             OpenPaneRequest::TerminalInRepo { repo_path } => self.open_shell_in_repo(repo_path),
+            OpenPaneRequest::TerminalBesideReview { session_id } => {
+                self.open_shell_beside_review(session_id)
+            }
             OpenPaneRequest::AttachTerminal {
                 terminal_id,
                 command,
@@ -1032,6 +1035,24 @@ impl App {
     pub(crate) fn open_shell_beside(&mut self, frame: FrameId) {
         let placement = self.room_for_a_column(frame);
         let session_id = self.shell_session_for(frame);
+        self.spawn_terminal(session_id, None, placement);
+    }
+
+    /// A shell at the root of the repo a review is on, beside that review: what clicking the
+    /// repo's name over the review opens. It joins the tabs of the frame at the right, the way
+    /// a task's tabs join the column beside the board, and takes a column of its own only when
+    /// that frame is the review's own - a tab there would hide the review it was opened from.
+    ///
+    /// Asked for through [`OpenPaneRequest::TerminalBesideReview`], never from inside a pane:
+    /// while the panes are being drawn the layout is lent out, and what is left in its place
+    /// has no frame at the right to find.
+    fn open_shell_beside_review(&mut self, session_id: String) {
+        let placement = match self.column_beside(
+            |pane| matches!(pane, Pane::Review { session_id: of_pane, .. } if *of_pane == session_id),
+        ) {
+            Some(frame) => TerminalPlacement::Tab(frame),
+            None => TerminalPlacement::RightColumn,
+        };
         self.spawn_terminal(session_id, None, placement);
     }
 

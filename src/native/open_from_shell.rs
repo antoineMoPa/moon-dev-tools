@@ -17,7 +17,10 @@ use std::{
 use crate::{
     api::OpenSessionRequest,
     instances::window::{OpenFileAsked, ShellAsks},
-    native::{app::App, panes::OpenAt},
+    native::{
+        app::App,
+        panes::{OpenAt, Pane},
+    },
 };
 
 /// The sessions this window opened so it could take files of other projects, by the project
@@ -32,6 +35,18 @@ pub(crate) enum ProjectSession {
     /// The project could not be opened, and the window has said so. The files waiting on it
     /// are dropped rather than asked for again on every frame.
     Unopenable,
+}
+
+/// A tab a `moon edit --wait` asked for, which the shell that asked is waiting on to close.
+pub(crate) struct WaitedTab {
+    /// The file as the shell named it, which is how it asks after it.
+    path: PathBuf,
+    session_id: String,
+    /// The file inside the project of `session_id`, which is how its tab names it.
+    file_path: String,
+    /// Whether the tab has been open yet. It opens a frame or two after it is asked for, and
+    /// until then its absence is the tab not being there yet rather than it having closed.
+    seen_open: bool,
 }
 
 impl App {
@@ -74,6 +89,7 @@ impl App {
             }
             self.asked_files.extend(arrived);
         }
+        self.release_closed_tabs();
 
         // One a frame: a tab is opened through the same deferred slot every other pane change
         // goes through, and what is left waits for the next frame rather than being dropped.
@@ -111,7 +127,8 @@ impl App {
         let project = match crate::git::project_root(folder) {
             Ok(project) => project,
             Err(error) => {
-                self.asked_files.pop_front();
+                let asked = self.asked_files.pop_front().expect("a file is waiting");
+                self.release(&asked);
                 self.model
                     .error(format!("could not open {}: {error}", path.display()));
                 return;
@@ -131,7 +148,8 @@ impl App {
             }
             // The window has already said why, so the file goes quietly.
             Some(ProjectSession::Unopenable) => {
-                self.asked_files.pop_front();
+                let asked = self.asked_files.pop_front().expect("a file is waiting");
+                self.release(&asked);
             }
             None => self.open_project_for_asked_files(project),
         }
@@ -189,9 +207,18 @@ impl App {
                 asked.path.display(),
                 project.display()
             ));
+            self.release(&asked);
             return;
         };
         let file_path = file_path.display().to_string();
+        if asked.wait {
+            self.waited_tabs.push(WaitedTab {
+                path: asked.path.clone(),
+                session_id: session_id.to_string(),
+                file_path: file_path.clone(),
+                seen_open: false,
+            });
+        }
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         // A path nothing is at yet is a file about to be written, the way `vim notes.md` is:
@@ -216,5 +243,44 @@ impl App {
             query: String::new(),
         });
         self.open_file_pane_at(session_id, &file_path, at);
+    }
+
+    /// Stop the shell waiting on a file this window will never open a tab on.
+    fn release(&self, asked: &OpenFileAsked) {
+        if asked.wait
+            && let Some(asks) = &self.shell_asks
+        {
+            asks.release(&asked.path);
+        }
+    }
+
+    /// Let go of the shells whose tab has been open and is not any more: the file is done
+    /// with, and whatever ran `moon edit --wait` on it - git, for a commit message - can go
+    /// on and read it.
+    fn release_closed_tabs(&mut self) {
+        if self.waited_tabs.is_empty() {
+            return;
+        }
+        let layout = &self.model.layout;
+        let shell_asks = &self.shell_asks;
+        self.waited_tabs.retain_mut(|waited| {
+            let open = layout
+                .find_pane(|pane| {
+                    matches!(pane, Pane::File { session_id, file_path, revision: None, .. }
+                        if *session_id == waited.session_id && *file_path == waited.file_path)
+                })
+                .is_some();
+            if open {
+                waited.seen_open = true;
+                return true;
+            }
+            if !waited.seen_open {
+                return true;
+            }
+            if let Some(asks) = shell_asks {
+                asks.release(&waited.path);
+            }
+            false
+        });
     }
 }

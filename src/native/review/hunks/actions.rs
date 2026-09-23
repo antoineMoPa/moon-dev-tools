@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{body_text_x, column_at, word_bounds_at};
+use super::{body_text_x, code_rect, column_at, word_bounds_at};
 
 pub(super) fn draw_hunk_toolbar(
     app: &mut App,
@@ -398,6 +398,8 @@ pub(super) fn select_lines(
 /// in the ink of an addition would read as the wrong kind of row.
 pub(super) struct RowUnderThePointer<'a> {
     pub(super) rect: egui::Rect,
+    /// How far the hunk's code is scrolled sideways - see [`super::body_text_x`].
+    pub(super) scroll_x: f32,
     pub(super) line: &'a DiffLine,
     pub(super) response: &'a egui::Response,
     pub(super) ink: egui::Color32,
@@ -434,6 +436,7 @@ pub(super) fn jump_to_definition(
 ) -> bool {
     let RowUnderThePointer {
         rect,
+        scroll_x,
         line,
         response,
         ink,
@@ -454,7 +457,7 @@ pub(super) fn jump_to_definition(
         return false;
     }
     let body = line.body();
-    let Some((from, to)) = name_at(body, column_at(ui, rect, line, at.x)) else {
+    let Some((from, to)) = name_at(body, column_at(ui, rect, scroll_x, line, at.x)) else {
         return false;
     };
     let name: String = body.chars().skip(from).take(to - from).collect();
@@ -472,7 +475,7 @@ pub(super) fn jump_to_definition(
         return true;
     };
 
-    underline(ui, rect, line, from, to, ink);
+    underline(ui, rect, scroll_x, line, from, to, ink);
     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
 
     if !response.clicked() {
@@ -516,6 +519,7 @@ fn name_at(body: &str, column: usize) -> Option<(usize, usize)> {
 fn underline(
     ui: &Ui,
     rect: egui::Rect,
+    scroll_x: f32,
     line: &DiffLine,
     from: usize,
     to: usize,
@@ -532,10 +536,11 @@ fn underline(
             .size()
             .x
     };
-    let left = body_text_x(rect) + width_of(0, from);
-    // Clipped to the row, like the text is: a name near the end of a long line must not draw
-    // its underline out over the card's border.
-    ui.painter().with_clip_rect(rect).hline(
+    let left = body_text_x(rect, scroll_x) + width_of(0, from);
+    // Clipped to where the code shows, like the text is: a name near the end of a long line
+    // must not draw its underline out over the card's border, nor a scrolled one over the
+    // gutter.
+    ui.painter().with_clip_rect(code_rect(rect)).hline(
         left..=left + width_of(from, to),
         rect.max.y - 2.0,
         egui::Stroke::new(1.0, ink),

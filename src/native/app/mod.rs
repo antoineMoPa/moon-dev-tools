@@ -179,6 +179,9 @@ pub(crate) struct App {
     /// Files shells have asked for, waiting their turn: opening a tab goes through the one
     /// deferred slot every other pane change does, so they are opened one to a frame.
     pub(crate) asked_files: VecDeque<crate::instances::window::OpenFileAsked>,
+    /// The tabs `moon edit --wait` asks opened, which the shell that asked is waiting on -
+    /// see [`crate::native::open_from_shell::WaitedTab`].
+    pub(crate) waited_tabs: Vec<crate::native::open_from_shell::WaitedTab>,
     /// The sessions this window opened so it could take files of projects it is not itself
     /// on - see [`crate::native::open_from_shell`].
     pub(crate) sessions_for_asked_files: crate::native::open_from_shell::SessionsForAskedFiles,
@@ -196,6 +199,9 @@ struct CachedDiff {
     /// payload every second, and almost always an identical one.
     patch_hash: u64,
     lines: Arc<Vec<DiffLine>>,
+    /// The character count of the longest body among the lines, which is how far the hunk
+    /// can be scrolled sideways. Counted once here rather than walked on every frame.
+    widest_body_columns: usize,
 }
 
 impl App {
@@ -330,6 +336,7 @@ impl App {
             shell_asks: None,
             project_asks_reach_this_window_on: None,
             asked_files: VecDeque::new(),
+            waited_tabs: Vec::new(),
             sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
             window_is_in_front: false,
             settings,
@@ -424,15 +431,31 @@ impl App {
 
         let mut lines = build_diff_lines(patch);
         attach_syntax(&mut lines, file_path);
+        let widest_body_columns = lines
+            .iter()
+            .filter(|line| !line.is_chrome())
+            .map(|line| line.body().chars().count())
+            .max()
+            .unwrap_or(0);
         let lines = Arc::new(lines);
         self.diffs.insert(
             hunk_id.to_string(),
             CachedDiff {
                 patch_hash,
                 lines: Arc::clone(&lines),
+                widest_body_columns,
             },
         );
         lines
+    }
+
+    /// The character count of the longest line [`diff_lines`](Self::diff_lines) last built
+    /// for a hunk. Asked for after the lines themselves, which is what put it there.
+    pub(crate) fn widest_diff_body(&self, hunk_id: &str) -> usize {
+        self.diffs
+            .get(hunk_id)
+            .expect("the hunk's lines are built before their width is asked for")
+            .widest_body_columns
     }
 
     /// Drop cached diffs for hunks the review no longer has, so switching commits in a big

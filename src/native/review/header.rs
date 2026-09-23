@@ -52,8 +52,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let full_file_path = payload.full_file_path.as_deref();
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new(repo_name).strong())
-            .on_hover_text(repo_path);
+        // The repo's name is where a shell on it opens from: at its root, beside the review.
+        let repo = widgets::clickable(
+            ui.add(egui::Label::new(RichText::new(repo_name).strong()).sense(egui::Sense::click())),
+        )
+        .on_hover_text(format!(
+            "{repo_path}\n\nclick for a shell at the repo's root"
+        ));
+        if repo.clicked() && app.pending_action.is_none() {
+            app.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
+                crate::native::panes::OpenPaneRequest::TerminalBesideReview {
+                    session_id: session_id.to_string(),
+                },
+            ));
+        }
         ui.label(RichText::new("·").color(palette.line));
         // Between the repo and what is being reviewed, because that is the order the answer is
         // wanted in: which repo, which branch of it, which changes. A detached HEAD is on no
