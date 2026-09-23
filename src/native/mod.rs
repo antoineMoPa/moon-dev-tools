@@ -40,6 +40,8 @@ pub(crate) mod start_pane;
 pub(crate) mod status_bar;
 pub(crate) mod submodules;
 pub(crate) mod tasks;
+#[cfg(target_os = "macos")]
+mod text_without_a_key;
 pub(crate) mod theme;
 #[cfg(test)]
 pub(crate) mod ui_tests;
@@ -170,6 +172,9 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
             app.install_menu();
             // The same: a real window is the one caller a `moon open` should reach.
             app.listen_for_shell_asks(&creation.egui_ctx);
+            // Dictation and the emoji picker type without a key press, which winit drops.
+            #[cfg(target_os = "macos")]
+            text_without_a_key::install(&creation.egui_ctx);
             app.restore_layout_from(creation.storage);
             Ok(Box::new(app))
         }),

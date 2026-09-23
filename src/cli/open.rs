@@ -22,13 +22,47 @@ pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
     let mut args = args.into_iter();
     let named = args
         .next()
-        .with_context(|| format!("`{PROGRAM} open` needs a file to open"))?;
+        .with_context(|| format!("`{PROGRAM} open` needs a file to open\n\n{}", help_text()))?;
+    // A word starting with a dash is an option being tried, not a file: the command has none,
+    // and a tab opened on a file called `--foo` is nobody's idea of an answer. A file really
+    // named that way is reached as `./--foo`.
+    if named.starts_with('-') {
+        bail!(
+            "`{PROGRAM} open` takes a file and no options, not {named}\n\n{}",
+            help_text()
+        );
+    }
     if let Some(extra) = args.next() {
         bail!("`{PROGRAM} open` opens one file, so it has nothing to do with {extra}");
     }
 
     let (path, line) = split_line_number(&named);
     Ok(MoonCommand::Open { path, line })
+}
+
+/// `moon open --help`: how a file is named, and where it lands.
+pub(super) fn help_text() -> String {
+    format!(
+        "{PROGRAM} open <path>[:<line>]
+
+Opens a file in a window that is already open: the one on the file's project, or the one
+last in front when no window is open on it. `{PROGRAM} edit` is the same command.
+
+Usage:
+  {PROGRAM} open <path>
+  {PROGRAM} open <path>:<line>
+  {PROGRAM} edit <path>
+
+Examples:
+  {PROGRAM} open src/main.rs
+  {PROGRAM} open src/main.rs:42
+  {PROGRAM} edit .moontasks/notes.md
+
+The path is read against the directory this shell is in, the way the shell completed it.
+A path nothing is at yet opens an empty tab, and the file is created when that tab is saved;
+its folder has to exist already.
+`{PROGRAM} list` says which windows are open, and what they are on."
+    )
 }
 
 /// `src/lib.rs:42` names a line of a file, the way every tool that prints a place in a file
@@ -174,6 +208,27 @@ mod tests {
         let error = parse(&["open"]).expect_err("expected a refusal");
 
         assert!(format!("{error}").contains("needs a file"), "got {error}");
+    }
+
+    /// `moon edit --help` used to open a tab on a file called `--help`.
+    #[test]
+    fn asking_for_help_is_answered_rather_than_opened() {
+        assert_eq!(
+            parse(&["edit", "--help"]).expect("expected it to parse"),
+            MoonCommand::OpenHelp
+        );
+        assert_eq!(
+            parse(&["open", "-h"]).expect("expected it to parse"),
+            MoonCommand::OpenHelp
+        );
+        assert!(help_text().contains("open <path>:<line>"));
+    }
+
+    #[test]
+    fn an_option_is_refused_rather_than_opened_as_a_file() {
+        let error = parse(&["open", "--line=3"]).expect_err("expected a refusal");
+
+        assert!(format!("{error}").contains("no options"), "got {error}");
     }
 
     #[test]

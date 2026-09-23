@@ -430,3 +430,25 @@ fn the_board_makes_a_card_from_the_command_line() {
         }
     );
 }
+
+/// `--help` after a command is a question about it, whatever else was typed around it.
+#[test]
+fn every_command_answers_help_without_doing_anything() {
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+
+    assert_eq!(parse(&["list", "--help"]), MoonCommand::Help);
+    assert_eq!(parse(&["serve", "--logs", "-h"]), MoonCommand::Help);
+    assert_eq!(parse(&["licenses", "--help"]), MoonCommand::Help);
+    assert_eq!(parse(&["install-launchers", "--help"]), MoonCommand::Help);
+    // The board's window is where `new` is written up, so that is the help it gets.
+    assert_eq!(
+        parse(&["tasks", "new", "--help"]),
+        MoonCommand::Window {
+            frame: Frame::Tasks,
+            args: vec!["--help".to_string()]
+        }
+    );
+}

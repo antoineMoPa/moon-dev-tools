@@ -22,6 +22,9 @@ pub(crate) struct TaskView {
     pub(crate) title: String,
     pub(crate) status: ColumnId,
     pub(crate) created_at_unix: u64,
+    /// When the card arrived in its column - see [`store::TaskMetadata::entered_column_at_unix`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entered_column_at_unix: Option<u64>,
     /// The task folder itself, so the board can offer it to a shell or a file browser.
     pub(crate) dir_path: String,
     /// The repo the task's agents work in, which is the repo the board belongs to.

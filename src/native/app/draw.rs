@@ -403,6 +403,9 @@ impl App {
         {
             self.close_pane(pane_id);
         }
+        if let Some(kept) = self.pending_close_of_others.take() {
+            self.close_other_tabs(kept);
+        }
         self.close_tabs_of_exited_shells(ctx);
         // A task's page is open while its card is marked, so a card let go of by a click on
         // the board takes its page with it - here, where the tree is no longer being drawn.

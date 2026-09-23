@@ -686,6 +686,30 @@ impl App {
         }
     }
 
+    /// "close other tabs" on a tab's menu: every other tab of its frame closes, each on the
+    /// same terms as a close of its own - a file with unsaved edits stays open and says so,
+    /// and asking again takes it too.
+    pub(super) fn close_other_tabs(&mut self, kept: PaneId) {
+        let Some(frame) = self.model.layout.frame_of(kept) else {
+            return;
+        };
+        let others: Vec<PaneId> = self
+            .model
+            .layout
+            .frame(frame)
+            .expect("a pane's frame is in the layout")
+            .panes()
+            .iter()
+            .copied()
+            .filter(|pane| *pane != kept)
+            .collect();
+        for pane in others {
+            if !self.close_would_lose_edits(pane) {
+                self.close_pane(pane);
+            }
+        }
+    }
+
     /// A file with edits that are not on disk takes two presses to close, so a stray ⌘W or a
     /// mis-aimed click cannot throw work away.
     pub(super) fn close_would_lose_edits(&mut self, pane_id: PaneId) -> bool {

@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "egui_frames"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "egui",
  "serde",
@@ -2780,6 +2780,8 @@ dependencies = [
  "libc",
  "moon_lsp",
  "muda",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
  "portable-pty",
  "pulldown-cmark",
  "reqwest",

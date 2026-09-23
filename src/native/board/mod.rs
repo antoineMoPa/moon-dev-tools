@@ -9,6 +9,7 @@ pub(crate) mod attach;
 pub(crate) mod card_menu;
 pub(crate) mod cards;
 pub(crate) mod columns;
+pub(crate) mod day_lines;
 pub(crate) mod filter;
 pub(crate) mod gesture;
 pub(crate) mod resources;
@@ -629,6 +630,9 @@ fn draw_column(
     let status = column.id.clone();
     let carrying = app.model.board.carrying.clone();
     let tasks = column_cards(app, &status);
+    // The dated lines a column of finished work draws between its days - see `day_lines`.
+    let mut lines_between_days =
+        day_lines::drawn_in(column).then(day_lines::DayLines::starting_now);
 
     // A column stacks its cards, whatever layout the row of columns is in.
     ui.allocate_ui_with_layout(
@@ -707,6 +711,14 @@ fn draw_column(
                             ui.add_space(CARD_SPACING);
                         }
                         for task in &tasks {
+                            if let Some(lines) = &mut lines_between_days
+                                && let Some(label) = lines.line_above(
+                                    task.entered_column_at_unix.map(day_lines::LocalDay::of),
+                                )
+                            {
+                                day_lines::draw(ui, palette, &label);
+                                ui.add_space(CARD_SPACING);
+                            }
                             let card = draw_card(app, ui, task, origin, palette, actions);
                             // A card being carried is the space being held for the drop rather
                             // than a place the drop could be aimed at, so it is counted out of

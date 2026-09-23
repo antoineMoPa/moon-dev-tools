@@ -120,6 +120,9 @@ impl App {
             match event {
                 // Deferred: a pane must not be taken out of the tree that is drawing it.
                 FramesEvent::PaneCloseRequested(pane) => self.pending_close = Some(pane),
+                FramesEvent::OtherTabsCloseRequested(kept) => {
+                    self.pending_close_of_others = Some(kept);
+                }
                 FramesEvent::NewTabRequested(frame) => self.open_shell_beside(frame),
                 FramesEvent::TabDoubleClicked(pane) => self.open_tab_rename(pane),
             }

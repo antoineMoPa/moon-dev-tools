@@ -375,3 +375,26 @@ fn a_board_with_no_columns_falls_back_on_the_defaults() {
 
     fs::remove_dir_all(repo).expect("failed to remove the test repo");
 }
+
+/// A card is stamped with the moment it joined its column, which for a card just made is the
+/// moment it was made.
+#[test]
+fn a_new_task_is_stamped_with_when_it_joined_its_column() {
+    let repo = temp_repo("stamped");
+    let before = now_unix();
+
+    let task_id = create_task(
+        &repo,
+        "Fix the races",
+        &ColumnId::new("todo"),
+        ColumnEnd::Top,
+    )
+    .expect("expected the task to be created");
+
+    let metadata = read_task(&repo, &task_id).expect("expected the task to read");
+    let stamped = metadata
+        .entered_column_at_unix
+        .expect("expected the arrival to be written down");
+    assert!(stamped >= before && stamped <= now_unix(), "{stamped}");
+    assert_eq!(stamped, metadata.created_at_unix);
+}

@@ -108,6 +108,9 @@ pub(crate) struct App {
     /// Deferred so a pane is never added or removed while the tree holding it is drawn.
     pub(crate) pending_action: Option<CommandAction>,
     pub(crate) pending_close: Option<PaneId>,
+    /// The tab whose menu said "close other tabs": every other tab of its frame is asked to
+    /// close, one at a time.
+    pub(crate) pending_close_of_others: Option<PaneId>,
     pending_tab_action: Option<TabAction>,
     /// The chord that raises each tab within cmd+1..cmd+9's reach - the active frame's tabs -
     /// worked out before the strips are drawn and worn at the right of their titles.
@@ -301,6 +304,7 @@ impl App {
                 .unwrap_or_else(Instant::now),
             pending_action: None,
             pending_close: None,
+            pending_close_of_others: None,
             pending_tab_action: None,
             tab_shortcuts: HashMap::new(),
             keyboard_pane: None,
@@ -473,6 +477,15 @@ impl eframe::App for App {
         theme::Palette::of_workspace(self.model.theme, self.model.workspace_color)
             .bg
             .to_normalized_gamma_f32()
+    }
+
+    /// What dictation and the emoji picker typed since the last frame, as if typed on the
+    /// keyboard - see [`super::text_without_a_key`].
+    #[cfg(target_os = "macos")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        raw_input
+            .events
+            .extend(super::text_without_a_key::take().into_iter().map(egui::Event::Text));
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

@@ -217,6 +217,8 @@ pub(super) enum MoonCommand {
         path: String,
         line: Option<usize>,
     },
+    /// What `open` and `edit` take, printed and nothing opened.
+    OpenHelp,
     /// Which windows are open, and what they are open on.
     ListWindows,
     /// moon's license, and the licenses and notices of everything it is built from.
@@ -257,6 +259,10 @@ pub(crate) fn run() -> Result<()> {
         }
         MoonCommand::InstallLaunchers => install_launchers(),
         MoonCommand::Open { path, line } => open::open_file(&path, line),
+        MoonCommand::OpenHelp => {
+            println!("{}", open::help_text());
+            Ok(())
+        }
         MoonCommand::ListWindows => open::list_windows(),
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
@@ -279,12 +285,24 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
         return Ok(MoonCommand::Help);
     };
     let rest: Vec<String> = args.collect();
+    // `--help` after any command is a question about that command, never a file to open or a
+    // word of a card's title: `moon edit --help` used to open a tab on a file called `--help`,
+    // which is what an agent finding its way around the CLI got for asking. A window's own
+    // parser reads it for itself; every other command answers here.
+    let asks_for_help = rest.iter().any(|arg| arg == "--help" || arg == "-h");
 
     if let Some(frame) = frame_named(&command) {
         // The one word after a window's name that is not something to open it on. The board
         // is a folder of files, so a card can be made without a window - which is what an
         // agent asked to write itself a task needs.
         if frame == Frame::Tasks && rest.first().is_some_and(|word| word == "new") {
+            // The window's help is where `new` is written up.
+            if asks_for_help {
+                return Ok(MoonCommand::Window {
+                    frame,
+                    args: vec!["--help".to_string()],
+                });
+            }
             return parse_new_task(&rest[1..]);
         }
         return Ok(MoonCommand::Window { frame, args: rest });
@@ -293,9 +311,13 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
     match command.as_str() {
         "--help" | "-h" | "help" => Ok(MoonCommand::Help),
         "--version" | "-v" => Ok(MoonCommand::Version),
+        "open" | "edit" if asks_for_help => Ok(MoonCommand::OpenHelp),
         // `edit` and `open` are one thing said two ways: the tab it lands in is one that
         // edits the file, and both are words a hand reaches for.
         "open" | "edit" => open::parse_open(rest),
+        "list" | "serve" | "licenses" | "install-launchers" if asks_for_help => {
+            Ok(MoonCommand::Help)
+        }
         "list" => match rest.is_empty() {
             true => Ok(MoonCommand::ListWindows),
             false => bail!("`{PROGRAM} list` says which windows are open, so it takes nothing"),
@@ -577,6 +599,8 @@ as well in a folder that is no repository: the review is the part that needs one
 
 `{PROGRAM} <window> --help` says what that window can be opened on; `--pick` opens it on its
 launch screen instead, and `--remote <host>` opens it against a `serve` on another machine.
+`{PROGRAM} open --help` says how a file is named. Every command answers `--help` with its help
+and does nothing else.
 
 Desktop launchers:
   `install-launchers` gives each window an entry the OS offers - an application bundle on

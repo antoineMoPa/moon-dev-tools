@@ -169,6 +169,12 @@ without that file has the three defaults.
 An agent that exits stops appearing as running the next time the board reads the folder. Its
 card stays where you put it until you move it to DONE.
 
+DONE reads newest first, and draws a dated line between its cards wherever the day changes —
+`today`, `yesterday`, then `September 19` — so it reads as a record of what was finished when.
+The day is the one the card was moved in on, written on the card as `entered_column_at_unix`;
+a card moved before the board kept that gets no line of its own. A DONE column you sort by
+title or by age keeps its cards but not the lines.
+
 Closing an agent's tab does not end it. A task's shells belong to the task and keep running
 with nothing attached until the card reaches DONE, so you can close a noisy agent and come
 back to it. `stop` ends one on purpose, and `resume` starts it again where it left off.

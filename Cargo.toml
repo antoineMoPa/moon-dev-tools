@@ -26,7 +26,7 @@ egui_extras = { version = "0.36", features = ["image"] }
 # The tab, split and terminal widgets, kept as crates of their own: submodules under crates/,
 # published separately, and used here like any other dependency. egui_tty compiles libghostty-vt
 # from Ghostty source, so a Zig 0.15.x toolchain has to be on PATH to build this.
-egui_frames = { version = "0.3", path = "crates/egui_frames", features = ["serde"] }
+egui_frames = { version = "0.4", path = "crates/egui_frames", features = ["serde"] }
 # The code editor a file tab holds: the buffer, the fringe of line numbers, and the marks a
 # search draws into the text.
 # `serde` for the one setting of it a repo writes down: how its files are indented, which the
@@ -80,6 +80,11 @@ rhai = { version = "1.25.1", features = ["serde"] }
 # platform API. Elsewhere the same actions live in the command palette.
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.19", default-features = false }
+# Dictation, the emoji picker and the rest of what types without a key press reach the
+# window's view as `insertText:`, which winit drops; the view's methods are wrapped to keep
+# that text - see `src/native/text_without_a_key.rs`.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAttributedString", "NSObjCRuntime", "NSRange", "NSString"] }
 # The system's own webview - WKWebView - put in a pane as a child of the window, for pages
 # a pane shows as a browser would draw them. The system's, so no web engine is bundled. See
 # `src/native/webview_pane.rs`.

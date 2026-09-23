@@ -48,6 +48,7 @@ mod tests {
             title: title.to_string(),
             status: ColumnId::new(status),
             created_at_unix: 1700000000,
+            entered_column_at_unix: None,
             dir_path: format!("/repo/.moontasks/{title}-1111"),
             repo_path: "/repo".to_string(),
             tags: Vec::new(),

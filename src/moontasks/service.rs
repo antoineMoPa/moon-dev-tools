@@ -90,8 +90,11 @@ pub(crate) fn place_tasks(
     for task_id in task_ids {
         let mut metadata = store::read_task(&repo_path, task_id)?;
         release_a_finished_task(state, &board, task_id, &mut metadata, &status);
-        arriving |= metadata.status != status;
-        metadata.status = status.clone();
+        if metadata.status != status {
+            arriving = true;
+            metadata.status = status.clone();
+            metadata.entered_column_at_unix = Some(store::now_unix());
+        }
         moving.push((task_id.clone(), metadata));
     }
     // The order they were in before the drag, which is the order they keep: the board hands
@@ -415,6 +418,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
         title: metadata.title.clone(),
         status: metadata.status.clone(),
         created_at_unix: metadata.created_at_unix,
+        entered_column_at_unix: metadata.entered_column_at_unix,
         dir_path: store::tasks_root(repo_path)
             .join(task_id)
             .display()
@@ -1183,6 +1187,7 @@ mod tests {
             title: "Fix the login page".to_string(),
             status: ColumnId::new("in_progress"),
             created_at_unix: 0,
+            entered_column_at_unix: None,
             position: 0,
             tags: Vec::new(),
             resources: vec![TaskResource {
@@ -1217,6 +1222,7 @@ mod tests {
             title: "Fix the login page".to_string(),
             status: ColumnId::new("done"),
             created_at_unix: 0,
+            entered_column_at_unix: None,
             position: 0,
             tags: Vec::new(),
             resources: vec![TaskResource {

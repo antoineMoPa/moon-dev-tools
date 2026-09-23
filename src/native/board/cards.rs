@@ -815,6 +815,7 @@ mod tests {
                 title: title.to_string(),
                 status: ColumnId::new("todo"),
                 created_at_unix: 1700000000,
+                entered_column_at_unix: None,
                 dir_path: String::new(),
                 repo_path: String::new(),
                 tags: Vec::new(),

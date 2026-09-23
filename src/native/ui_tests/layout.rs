@@ -14,7 +14,8 @@ use egui_kittest::Harness;
 use crate::native::{panes::Pane, panes::PaneKind, theme::ThemeMode};
 
 use super::{
-    Fixture, app_for, asked_to_close, frame_rects, press_key, seeded_fixture, settle, tab_rects,
+    Fixture, app_for, asked_to_close, click_like_a_hand, frame_rects, press_key, right_click_at,
+    seeded_fixture, settle, tab_rects,
 };
 
 /// A split handle keeps resizing while the pointer runs past it - the drag belongs to the
@@ -773,5 +774,95 @@ fn a_review_of_a_repo_that_is_already_open_is_brought_forward() {
         !tabs().iter().any(|title| title == "asked for again"),
         "no second tab should have been opened for it, tabs are {:?}",
         tabs()
+    );
+}
+
+/// "close other tabs" on a tab's menu keeps that tab and closes every other tab of its frame
+/// - and only its frame's: the window's other frames are not what was pointed at.
+#[test]
+fn a_tabs_menu_closes_the_others_in_its_frame() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("tab-menu-close-others");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+
+    let arranged = Arc::new(AtomicBool::new(false));
+    let arranged_in_ui = Arc::clone(&arranged);
+    // The tab to keep, and where it was drawn.
+    let kept = Arc::new(Mutex::new(None::<PaneId>));
+    let kept_in_ui = Arc::clone(&kept);
+    let kept_tab = Arc::new(Mutex::new(None::<egui::Rect>));
+    let kept_tab_in_ui = Arc::clone(&kept_tab);
+    // Every pane the window has, frame by frame, after each draw.
+    let panes = Arc::new(Mutex::new(Vec::<(egui_frames::FrameId, PaneId)>::new()));
+    let panes_in_ui = Arc::clone(&panes);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1300.0, 820.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            // Three tabs in the review's frame, and a fourth in a frame of its own beside it.
+            if !arranged_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let frame = app.model.layout.active_frame();
+                let agents = app.model.layout.add_pane(frame, Pane::Agents, None);
+                app.model.layout.add_pane(frame, Pane::Tasks, None);
+                app.model.layout.add_pane_against_edge(
+                    egui_frames::DropSide::Right,
+                    egui_frames::DEFAULT_EDGE_SHARE,
+                    Pane::Submodules,
+                );
+                *kept_in_ui.lock().expect("poisoned") = Some(agents);
+                arranged_in_ui.store(true, Ordering::Relaxed);
+            }
+
+            app.draw(ui);
+
+            *kept_tab_in_ui.lock().expect("poisoned") = kept_in_ui
+                .lock()
+                .expect("poisoned")
+                .and_then(|pane| app.frames.tab_rect(pane));
+            *panes_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(pane, _)| Some((app.model.layout.frame_of(pane)?, pane)))
+                .collect();
+        });
+
+    assert!(
+        settle(&mut harness, || panes.lock().expect("poisoned").len() == 4
+            && kept_tab.lock().expect("poisoned").is_some()),
+        "the four panes should have been drawn"
+    );
+    let at = kept_tab
+        .lock()
+        .expect("poisoned")
+        .expect("the kept tab was drawn")
+        .center();
+    let kept = kept.lock().expect("poisoned").expect("the kept pane");
+
+    right_click_at(&mut harness, at);
+    harness.run_steps(2);
+    let item = harness.get_by_label("close other tabs").rect().center();
+    click_like_a_hand(&mut harness, item, egui::Modifiers::NONE);
+
+    assert!(
+        settle(&mut harness, || panes.lock().expect("poisoned").len() == 2),
+        "the kept tab's two neighbours should have closed, got {:?}",
+        panes.lock().expect("poisoned")
+    );
+    let panes = panes.lock().expect("poisoned").clone();
+    assert!(
+        panes.iter().any(|(_, pane)| *pane == kept),
+        "the tab that was clicked is the one kept: {panes:?}"
+    );
+    let frames: std::collections::HashSet<egui_frames::FrameId> =
+        panes.iter().map(|(frame, _)| *frame).collect();
+    assert_eq!(
+        frames.len(),
+        2,
+        "the other frame's tab is untouched: {panes:?}"
     );
 }

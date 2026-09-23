@@ -9,6 +9,7 @@ mod board;
 mod board_card_menu;
 mod board_cards;
 mod board_columns;
+mod board_day_lines;
 mod board_drag;
 mod board_explain;
 mod board_pending_card;

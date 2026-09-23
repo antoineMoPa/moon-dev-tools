@@ -150,6 +150,8 @@ Inside the window:
 | `⌘N` | another window of this same program, on its launch screen |
 | `⌘J` | switch light and dark |
 | `?` | the shortcut list |
+| middle-click a tab | close it |
+| right-click a tab | a menu: close it, or close the other tabs of its frame - a file with unsaved edits stays and says so |
 
 Clicking a diff line selects it and opens a comment on it; shift-click extends the run. The
 comment is anchored to exactly those lines, and `stage lines` stages exactly those lines.

@@ -554,6 +554,86 @@ fn a_column_can_say_which_end_arrivals_go_to() {
     assert_eq!(column("todo"), ["third", "first"]);
 }
 
+/// A card carries when it arrived in its column: moving it to another column stamps it anew,
+/// and shuffling it about inside the column leaves the stamp alone. DONE's date lines read it.
+#[test]
+fn a_card_is_stamped_with_when_it_arrived_in_its_column() {
+    let served = serve("column-arrival-stamp");
+    let session_id = served.open_session();
+    let tasks_url = format!("{}/api/session/{session_id}/tasks", served.base_url);
+
+    let created: serde_json::Value = served
+        .client
+        .post(&tasks_url)
+        .json(&serde_json::json!({ "title": "first", "status": "todo", "joins": "top" }))
+        .send()
+        .expect("failed to create a task")
+        .error_for_status()
+        .expect("the server refused to create a task")
+        .json()
+        .expect("failed to decode the task");
+    let task_id = created["id"]
+        .as_str()
+        .expect("expected a task id")
+        .to_string();
+    assert_eq!(
+        created["entered_column_at_unix"], created["created_at_unix"],
+        "a card just made arrived in its column as it was made"
+    );
+
+    // Written as though it arrived long ago, so a fresh stamp can be told from the old one
+    // inside the same second.
+    let metadata_path = served
+        .root
+        .join(".moontasks")
+        .join(&task_id)
+        .join("metadata.json");
+    let mut metadata: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&metadata_path).expect("failed to read the task"),
+    )
+    .expect("expected the task's metadata");
+    metadata["entered_column_at_unix"] = serde_json::json!(1_700_000_000);
+    std::fs::write(&metadata_path, metadata.to_string()).expect("failed to write the task");
+
+    let place = |status: &str, position: usize| -> serde_json::Value {
+        served
+            .client
+            .post(format!("{tasks_url}/placement"))
+            .json(&serde_json::json!({ "task_ids": [&task_id], "status": status, "position": position }))
+            .send()
+            .expect("failed to move the task")
+            .error_for_status()
+            .expect("the server refused to move the task");
+        let board: serde_json::Value = served
+            .client
+            .get(&tasks_url)
+            .send()
+            .expect("failed to read the board")
+            .json()
+            .expect("failed to decode the board");
+        board[0]["entered_column_at_unix"].clone()
+    };
+
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("expected the time")
+        .as_secs();
+    let arrived = place("done", 0);
+    let arrived = arrived
+        .as_u64()
+        .expect("expected the arrival to be written down");
+    assert!(
+        arrived >= before,
+        "moving to DONE stamps the card anew, got {arrived}"
+    );
+
+    assert_eq!(
+        place("done", 0),
+        serde_json::json!(arrived),
+        "a move inside the column is not an arrival"
+    );
+}
+
 /// A sorted column lists its cards in its own order whatever order they were put in, and
 /// remembers the order they were put in for when it is sorted no longer.
 #[test]

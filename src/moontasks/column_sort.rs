@@ -160,6 +160,7 @@ mod tests {
             title: title.to_string(),
             status: ColumnId::new(status),
             created_at_unix,
+            entered_column_at_unix: None,
             dir_path: String::new(),
             repo_path: String::new(),
             tags: Vec::new(),

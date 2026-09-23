@@ -136,6 +136,11 @@ pub(crate) const CLOSES_REVIEWS_IN: &str = "done";
 /// it has no such entry on the menu - there is no guessing which of its columns means done.
 pub(crate) const MENU_FINISHES_IN: &str = "done";
 
+/// The column that draws a dated line between its cards wherever the day they arrived on
+/// changes, by the same reckoning: a column that is a record rather than a queue, where "when
+/// was this finished" is the question. See [`crate::native::board::day_lines`].
+pub(crate) const DATES_ARRIVALS_IN: &str = "done";
+
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
 /// not here has nowhere to be drawn.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -237,6 +242,14 @@ pub(crate) struct TaskMetadata {
     /// The column the card is in, by the id the board's file gives it.
     pub(crate) status: ColumnId,
     pub(crate) created_at_unix: u64,
+    /// When the card arrived in the column it is in: made there, or moved in from another.
+    /// Shuffling a card about inside its column leaves it alone. For a card in DONE this is
+    /// when the task was finished, which is what the column's date lines read.
+    ///
+    /// `None` on a card written before the board kept this, which nothing back-fills: the
+    /// file's own timestamp says when it was last touched, not when it was moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entered_column_at_unix: Option<u64>,
     /// Where the card sits in its column, lowest at the top. Renumbered from zero across the
     /// whole column whenever one is dragged into it, so the numbers stay small and readable
     /// in a file somebody may well edit by hand.
@@ -456,9 +469,11 @@ pub(crate) fn create_task(
         }
         ColumnEnd::Bottom => position_under_the_column(repo_path, status),
     };
+    let now = now_unix();
     let metadata = TaskMetadata {
         title: title.to_string(),
-        created_at_unix: now_unix(),
+        created_at_unix: now,
+        entered_column_at_unix: Some(now),
         position,
         status: status.clone(),
         tags: Vec::new(),
