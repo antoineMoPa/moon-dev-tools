@@ -5944,7 +5944,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ====================================================================================================
-egui_frames 0.3.0 (MIT)
+egui_frames 0.4.0 (MIT)
 egui_moon_code_ide 0.1.0 (MIT)
 egui_moon_editor 0.1.0 (MIT AND Apache-2.0)
 egui_tty 0.2.0 (MIT)
