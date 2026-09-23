@@ -12,8 +12,13 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, CLOSE_MARK_SIZE, actions::TaskPaneBox, close_button, filter::Filter,
-            gesture, resources, selection, slide_into_place, stamp_place, start, tags,
+            BoardAction, CLOSE_MARK_SIZE,
+            actions::TaskPaneBox,
+            close_button,
+            filter::Filter,
+            gesture,
+            motion::{Axis, slide_into_place, stamp_place},
+            resources, selection, start, tags,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},

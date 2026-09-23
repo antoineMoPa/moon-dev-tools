@@ -16,8 +16,9 @@ use crate::{
     native::{
         app::App,
         board::{
-            Activity, BoardAction, activity_dot, chart_mark, close_button, file_mark,
-            gesture::Controls, running_dot,
+            BoardAction, close_button,
+            gesture::Controls,
+            marks::{Activity, activity_dot, chart_mark, file_mark, running_dot},
         },
         submodules::changes_label,
         theme::{Palette, SMALL_SIZE},

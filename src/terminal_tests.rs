@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use super::naming::numbered_name;
 use super::*;
 
 /// A commit is signed, gpg asks for the passphrase on a terminal, and this is the one it

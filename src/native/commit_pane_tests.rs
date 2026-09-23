@@ -704,7 +704,7 @@ fn a_written_message_goes_in_the_box_when_use_is_pressed() {
 #[test]
 fn nothing_is_drawn_where_there_is_no_message_to_show() {
     let mut harness = Harness::new_ui(|ui| {
-        crate::native::commit_pane::draw_suggested_message(
+        crate::native::commit_pane::drawing::draw_suggested_message(
             ui,
             &Palette::of(ThemeMode::Dark),
             None,
@@ -723,7 +723,7 @@ fn nothing_is_drawn_where_there_is_no_message_to_show() {
 #[test]
 fn a_message_that_would_not_come_says_why() {
     let mut harness = Harness::new_ui(|ui| {
-        crate::native::commit_pane::draw_suggested_message(
+        crate::native::commit_pane::drawing::draw_suggested_message(
             ui,
             &Palette::of(ThemeMode::Dark),
             None,

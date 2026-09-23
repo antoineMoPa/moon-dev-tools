@@ -74,7 +74,7 @@ pub(super) fn draw(app: &mut App, ctx: &Context, actions: &mut Vec<BoardAction>)
     });
 
     if finish {
-        super::arrive_in_column(app, &finished, std::slice::from_ref(&task_id), actions);
+        super::column::arrive_in_column(app, &finished, std::slice::from_ref(&task_id), actions);
     }
     if !up {
         app.model.board.card_menu = None;

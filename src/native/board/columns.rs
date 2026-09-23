@@ -12,8 +12,11 @@ use crate::{
     native::{
         app::App,
         board::{
-            Axis, BoardAction, cards::DRAGGED_CARD_OPACITY, close_button, close_mark, plus_button,
-            slide_into_place, stamp_place,
+            BoardAction,
+            cards::DRAGGED_CARD_OPACITY,
+            close_button, close_mark,
+            marks::plus_button,
+            motion::{Axis, slide_into_place, stamp_place},
         },
         model::ColumnRename,
         theme::{Palette, SMALL_SIZE},
