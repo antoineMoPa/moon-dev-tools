@@ -6,15 +6,13 @@
 //! tab asks for it on a timer: locally a read of a map, on a `--remote` review one round trip
 //! a second for each tab on screen.
 
-use std::{
-    ops::Range,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, time::Duration};
 
 use egui::Color32;
 use egui_frames::PaneId;
 use egui_moon_code_ide::{LanguageSource, LspDiagnostic, LspSeverity};
 use egui_moon_editor::Underline;
+use web_time::Instant;
 
 use crate::native::{app::App, language_source::SessionLanguages, theme::Palette};
 

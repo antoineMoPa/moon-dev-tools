@@ -205,8 +205,8 @@ fn delete_comment(app: &mut App, session_id: &str, hunk: &HunkView, comment_inde
             backend.set_comment(
                 &for_call,
                 crate::api::CommentRequest {
-                    hunk_id,
-                    comment,
+                    hunk_id: hunk_id.clone(),
+                    comment: comment.clone(),
                     batch: false,
                 },
             )
@@ -447,8 +447,8 @@ pub(super) fn draw_composer(
             backend.set_comment(
                 &for_call,
                 crate::api::CommentRequest {
-                    hunk_id,
-                    comment,
+                    hunk_id: hunk_id.clone(),
+                    comment: comment.clone(),
                     batch,
                 },
             )

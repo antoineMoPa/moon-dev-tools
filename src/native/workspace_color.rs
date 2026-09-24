@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::native::theme::ThemeMode;
 
 /// A color a workspace can be marked with. Kept per project in
-/// `~/.moonreview/settings.json`: which color a window is belongs to whoever is looking at
-/// it, not to the repo.
+/// `~/.moonreview/settings.json` - a browser's storage, for the window as a page: which
+/// color a window is belongs to whoever is looking at it, not to the repo.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum WorkspaceColor {

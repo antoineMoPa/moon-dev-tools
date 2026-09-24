@@ -8,22 +8,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::VisualizationView;
+use super::{VisualizationList, VisualizationPage};
 use crate::api::{AppError, AppState};
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct VisualizationList {
-    pub(crate) visualizations: Vec<VisualizationView>,
-}
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct PageQuery {
     pub(crate) fragment_path: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct VisualizationPage {
-    pub(crate) html: String,
 }
 
 /// Every visualization the server's terminals have announced - see [`super::on_tasks`].

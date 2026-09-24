@@ -178,17 +178,24 @@ This is mainly a feature ported from my emacs config for project notes.
 
 ### Working on another machine
 
-Run the server where the repo is:
+Run the server on loopback where the repo is, and reach it through SSH:
+
+```bash
+# on the remote machine, in the repo
+moon serve
+
+# on your local machine, in a separate terminal
+ssh -N -L 127.0.0.1:42000:127.0.0.1:42000 dev-box
+```
+
+Make a pass key on the remote machine, and point a local window at the server with it:
 
 ```bash
 # on the remote machine
-MOONREVIEW_HOST=0.0.0.0 moon serve
-```
+moon generate-pass-key
 
-Then point a local window at it:
-
-```bash
-moon review --remote dev-box --repo /home/you/project
+# on your local machine
+MOON_PASS_KEY=<key> moon review --remote 127.0.0.1:42000 --repo /home/you/project
 ```
 
 `--remote` takes `host`, `host:port`, or a full URL, and defaults to port 42000. Leave
@@ -198,12 +205,80 @@ the remote machine, as does everything the review does to the repo.
 The task board works the same way round: `.moontasks` is the remote repo's folder and the
 agents run there, so closing the window leaves them working and reopening it finds them.
 
-The server binds `127.0.0.1` unless `MOONREVIEW_HOST` says otherwise, and it has no
-authentication, so prefer an SSH tunnel over exposing the port:
+
+The server binds `127.0.0.1` unless `MOONREVIEW_HOST` says otherwise, and speaks plain HTTP.
+
+
+Warning: Do not expose that port to the Internet or send a pass key over an unencrypted remote
+connection!
+
+#### From a browser
+
+The server also serves the window itself, built to wasm, at `/moon`, so a machine with
+nothing installed can use it. It opens on the task board of the repo the server is for - the
+one `moon serve` was started in, or the one the window serving it is open on:
+
+```
+http://127.0.0.1:42000/moon/
+http://127.0.0.1:42000/moon/?repo=/home/you/other-project&frame=review
+```
+
+`?frame=review` or `?frame=shell` opens the review or a shell instead of the board.
+`Tools › Open in Web` (`open in web` in the palette) opens a window's repo there.
+
+The page asks for a pass key (`moon generate-pass-key`). The link `moon serve` prints,
+`http://127.0.0.1:42000/moon/#ticket=<ticket>`, logs in without asking, and so does
+`Open in Web`. A link never carries a pass key: it carries a login ticket, good for one login
+within 10 minutes (60 seconds for `Open in Web`). The page takes the ticket off the address.
+
+Either way the browser is given a session of its own, not the key, and stays logged in for a
+week. After that it asks again.
+
+`Tools › Users` (`users` in the palette) lists who is in the server - every pass key and
+browser login, with the address it last came from - and kicks one out, or everyone at once by
+making a new secret: every pass key and login there was stops working, shells included, and
+`moon generate-pass-key` mints keys of the new secret from then on. A kick is remembered in
+`~/.moonreview/pass-key-secret.kicked`, so it outlives the server.
+
+It is the same window as `--remote`, shells included - the same terminal, Ghostty's VT engine
+built to wasm. The differences:
+- The browser keeps most ⌘ chords (⌘T, ⌘W, ⌘N), so Ctrl stands in for ⌘: Ctrl T, Ctrl Shift P.
+  In a shell, Ctrl T and Ctrl 1-9 are the window's, other plain Ctrl letters stay the shell's
+  (^C, ^R, ^W, ^P), and chords with Shift or Alt reach the window.
+- A search shows its matches when it is done rather than as they are found.
+
+Every build of `moon` builds the page and embeds it - build.rs compiles the window a second
+time for `wasm32-unknown-unknown`, and adds that target with rustup the first time. The
+terminal's engine comes along: Zig builds Ghostty for wasm as it does natively.
+
+#### SSH tunnel example
+
+Suppose your SSH login is `you@dev-box` and the remote project is `/home/you/project`.
+In one terminal, connect and start Moon on the remote machine:
 
 ```bash
-ssh -N -L 42000:127.0.0.1:42000 dev-box   # then: moon review --remote 127.0.0.1
+ssh you@dev-box
+cd /home/you/project
+MOONREVIEW_HOST=127.0.0.1 MOONREVIEW_PORT=42000 moon serve
 ```
+
+Keep that terminal open and copy the pass key Moon prints. In a second terminal on your
+local machine, start the tunnel:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:42001:127.0.0.1:42000 you@dev-box
+```
+
+In a third local terminal, open the remote task board using the copied key:
+
+```bash
+MOON_PASS_KEY='paste-the-pass-key-here' moon tasks \
+  --remote 127.0.0.1:42001 --repo /home/you/project
+```
+
+Use `moon review` instead of `moon tasks` to open the review. Keep the server and tunnel
+running while you work; press Ctrl+C in the tunnel's terminal when you want to disconnect.
 
 ## Stopping the server
 

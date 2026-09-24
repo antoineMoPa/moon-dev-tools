@@ -2,9 +2,10 @@
 //! have announced, opening a pane for each beside the terminal, and keeping the page each pane
 //! shows current - see [`crate::visualizations`] for where they come from.
 
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use egui_frames::{DropSide, FrameId};
+use web_time::Instant;
 
 use crate::{
     native::{
@@ -35,8 +36,11 @@ pub(crate) struct Visualizations {
 
 /// A visualization's page, as it was when fetched.
 pub(crate) struct Page {
+    // This and `arrival` are read by the webview, which only macOS has - see `webview_pane`.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) html: String,
     /// Which arrival this is - see [`Visualizations::arrived`].
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) arrival: u64,
     /// The write of the fragment it was fetched for.
     modified_unix_ms: u64,

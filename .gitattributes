@@ -1,0 +1,4 @@
+# bindgen output, kept in the repo - see crates/libghostty-vt-sys/VENDORED.md. Collapsed in diffs.
+crates/libghostty-vt-sys/src/bindings.rs linguist-generated=true -diff
+# Written by scripts/third-party-licenses.py, checked at release. Collapsed in diffs.
+THIRD_PARTY_LICENSES.txt linguist-generated=true -diff

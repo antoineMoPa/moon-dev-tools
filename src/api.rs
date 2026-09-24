@@ -1,85 +1,20 @@
-use std::{
-    collections::HashMap,
-    env,
-    hash::{Hash, Hasher},
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::AtomicBool},
-    time::Instant,
-};
+// The server's own state is kept apart from the wire types, which are all the window in a
+// browser compiles of this module.
+#[cfg(not(target_arch = "wasm32"))]
+mod server_state;
+#[cfg(not(target_arch = "wasm32"))]
+mod serving;
 
-use anyhow::{Context, Result, anyhow, bail};
-use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
-use crate::comments::CommentDispatchState;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use server_state::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use serving::*;
 
-pub(crate) const DEFAULT_HOST: &str = "127.0.0.1";
+/// The port a server listens on unless told otherwise, and the one an address without a port
+/// is taken to name.
 pub(crate) const DEFAULT_PORT: u16 = 42000;
-const HOST_ENV_VAR: &str = "MOONREVIEW_HOST";
-const PORT_ENV_VAR: &str = "MOONREVIEW_PORT";
-
-pub(crate) fn bind_host() -> String {
-    env::var(HOST_ENV_VAR).unwrap_or_else(|_| DEFAULT_HOST.to_string())
-}
-
-pub(crate) fn client_host() -> String {
-    match bind_host().as_str() {
-        "0.0.0.0" | "::" => DEFAULT_HOST.to_string(),
-        host => host.to_string(),
-    }
-}
-
-pub(crate) fn port() -> Result<u16> {
-    match env::var(PORT_ENV_VAR) {
-        Ok(raw) => raw
-            .parse::<u16>()
-            .with_context(|| format!("{PORT_ENV_VAR} must be a valid TCP port")),
-        Err(env::VarError::NotPresent) => Ok(DEFAULT_PORT),
-        Err(error) => Err(error).with_context(|| format!("failed to read {PORT_ENV_VAR}")),
-    }
-}
-
-fn port_or_default() -> u16 {
-    port().unwrap_or(DEFAULT_PORT)
-}
-
-pub(crate) fn server_url() -> String {
-    format!("http://{}:{}", client_host(), port_or_default())
-}
-
-pub(crate) fn export_server_url() -> String {
-    format!("http://localhost:{}", port_or_default())
-}
-
-#[derive(Clone)]
-pub(crate) struct AppState {
-    pub(crate) inner: Arc<Mutex<ServerState>>,
-    pub(crate) agent_availability: AgentAvailability,
-    pub(crate) last_activity: Arc<Mutex<Instant>>,
-    pub(crate) terminals: Arc<crate::terminal::TerminalRegistry>,
-    /// The language servers running for these reviews. Repo-side like the shells beside it,
-    /// because a server has to read the files it answers about - see [`crate::lsp`].
-    pub(crate) lsp: Arc<moon_lsp::LspRegistry>,
-}
-
-#[derive(Default)]
-pub(crate) struct ServerState {
-    pub(crate) sessions: HashMap<String, RepoSession>,
-}
-
-pub(crate) struct RepoSession {
-    pub(crate) repo_path: PathBuf,
-    pub(crate) diff_target: DiffTarget,
-    pub(crate) active_commit: Option<String>,
-    pub(crate) comments: HashMap<String, String>,
-    pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
-    pub(crate) selected_agent: AgentKind,
-    pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
-    /// The files outside the repo a language server has named as answers to this session's
-    /// go-to-definition questions, which are the only files outside it that may be read - see
-    /// [`crate::lsp::FilesNamedOutsideTheRepo`].
-    pub(crate) files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo,
-}
 
 /// A shell that asked for a person and has not had one since: it rang its bell, or sent the
 /// notification a terminal would put on the desktop - see [`crate::attention`]. Answered by
@@ -98,28 +33,10 @@ pub(crate) struct TerminalAttentionView {
     pub(crate) at_unix: u64,
 }
 
-impl RepoSession {
-    /// What this session's review is of - see [`ReviewTarget`].
-    pub(crate) fn review_target(&self) -> ReviewTarget {
-        ReviewTarget {
-            repo_path: self.repo_path.clone(),
-            diff_target: self.diff_target.clone(),
-            active_commit: self.active_commit.clone(),
-        }
-    }
-}
-
-/// What a session's review is of: the repo, and which of its changes - the part of a
-/// [`RepoSession`] that git is asked about. Taken off the session as a value of its own so
-/// git can be asked with the server's lock released: the diff of a repo with a lot changed
-/// takes a while, and everything else the server does - starting a shell, staging a hunk -
-/// waits on that one lock. Compared after the asking, so an answer about a target the
-/// session has since moved off is asked again rather than shown.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) struct ReviewTarget {
-    pub(crate) repo_path: PathBuf,
-    pub(crate) diff_target: DiffTarget,
-    pub(crate) active_commit: Option<String>,
+/// Every shell asking for a person, as the window asks for them.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TerminalAttentionList {
+    pub(crate) terminals: Vec<TerminalAttentionView>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -229,12 +146,6 @@ pub(crate) struct HunkMoveHint {
     pub(crate) score: f64,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct HunkCommentContext {
-    pub(crate) file_path: String,
-    pub(crate) header: String,
-}
-
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum FileChangeKind {
@@ -255,13 +166,6 @@ pub(crate) struct ReviewCommentView {
     pub(crate) resolved: bool,
     pub(crate) dispatch: CommentDispatchView,
     pub(crate) jumpable: bool,
-}
-
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
-pub(crate) struct AgentAvailability {
-    pub(crate) claude: bool,
-    pub(crate) codex: bool,
-    pub(crate) opencode: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -387,13 +291,6 @@ pub(crate) struct BlamedCommit {
     pub(crate) summary: String,
 }
 
-/// A blame asked about a file, and of which version of it.
-#[derive(Serialize, Deserialize)]
-pub(crate) struct BlameRequest {
-    pub(crate) file_path: String,
-    pub(crate) of: BlameOf,
-}
-
 /// Which version of a file a blame is of.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(crate) enum BlameOf {
@@ -405,18 +302,34 @@ pub(crate) enum BlameOf {
     Revision(String),
 }
 
-/// A file as one commit has it, asked for by path and revision.
-#[derive(Deserialize)]
-pub(crate) struct FileAtQuery {
-    pub(crate) file_path: String,
-    pub(crate) revision: String,
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct OpenSessionRequest {
     pub(crate) repo_path: String,
     pub(crate) diff_target: Option<DiffTarget>,
     pub(crate) active_commit: Option<String>,
+}
+
+/// A pass key the server made for a window already let in - see `POST /api/pass-key`. Only a
+/// native window asks: a browser's has no Tools menu to hand one on from.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PassKeyMinted {
+    pub(crate) pass_key: String,
+}
+
+/// What `POST /api/login-ticket` is asked: how long the ticket is to be good for.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LoginTicketRequest {
+    pub(crate) lifetime_seconds: u64,
+}
+
+/// A login ticket the server made for a window already let in, to open a browser with - see
+/// `POST /api/login-ticket`.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LoginTicketMinted {
+    pub(crate) ticket: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -560,32 +473,6 @@ pub(crate) struct LspTriggersPayload {
     pub(crate) triggers: Vec<char>,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct HunkRequest {
-    pub(crate) hunk_id: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct HunkBatchRequest {
-    pub(crate) hunk_ids: Vec<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct FileRequest {
-    pub(crate) file_path: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct WriteFileRequest {
-    pub(crate) file_path: String,
-    pub(crate) content: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct FileQuery {
-    pub(crate) file_path: String,
-}
-
 /// Which files a search reads: the files of the repo, or those and the ones its `.gitignore`
 /// leaves out - a submodule some repos ignore, a vendored directory.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -610,14 +497,6 @@ impl SearchScope {
     }
 }
 
-#[derive(Deserialize)]
-pub(crate) struct FileSearchQuery {
-    pub(crate) query: String,
-    /// Whether the files the repo's `.gitignore` leaves out are searched too - see
-    /// [`SearchScope`], which this is on the wire.
-    pub(crate) include_ignored: bool,
-}
-
 /// What a search has found so far. A search reports one of these every time what it has
 /// found changes, and once more, marked done, when it is over; each stands on its own - the
 /// matches are the whole of what is worth showing, not the ones since the report before.
@@ -630,6 +509,7 @@ pub(crate) struct SearchProgress<T> {
     pub(crate) done: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<T> SearchProgress<T> {
     /// A search that is over without having had anything to look for.
     pub(crate) fn nothing() -> Self {
@@ -661,11 +541,9 @@ pub(crate) struct ContentMatch {
     pub(crate) line: String,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct CommitHistoryQuery {
-    pub(crate) offset: Option<usize>,
-    pub(crate) limit: Option<usize>,
-}
+/// How many commits of the history one page of it holds: the first page comes with the
+/// session, and the window asks for each next one by this size too.
+pub(crate) const HISTORY_COMMIT_PAGE_SIZE: usize = 30;
 
 #[derive(Deserialize)]
 pub(crate) struct CommentRequest {
@@ -675,182 +553,8 @@ pub(crate) struct CommentRequest {
     pub(crate) batch: bool,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct CancelCommentDispatchRequest {
-    pub(crate) hunk_id: String,
-    pub(crate) comment_index: usize,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct AgentLogQuery {
-    pub(crate) dispatch_key: String,
-}
-
 #[derive(Serialize, Deserialize)]
 pub(crate) struct AgentLogPayload {
     pub(crate) dispatch_key: String,
     pub(crate) text: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct AgentSelectionRequest {
-    pub(crate) agent: AgentKind,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CommitSelectionRequest {
-    pub(crate) commit: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct SelectionRequest {
-    pub(crate) hunk_id: String,
-    pub(crate) selection: String,
-}
-
-pub(crate) type CancelToken = Arc<AtomicBool>;
-
-/// Live stdout/stderr of one agent run, shared by every comment that run addresses.
-pub(crate) type AgentLog = Arc<Mutex<String>>;
-
-/// Older output is dropped once a run exceeds this, so a chatty agent cannot grow the session forever.
-const AGENT_LOG_MAX_BYTES: usize = 200_000;
-
-pub(crate) fn append_to_agent_log(log: &AgentLog, chunk: &str) {
-    let Ok(mut text) = log.lock() else {
-        return;
-    };
-
-    text.push_str(chunk);
-    if text.len() <= AGENT_LOG_MAX_BYTES {
-        return;
-    }
-
-    let drop_until = text
-        .char_indices()
-        .map(|(index, _)| index)
-        .find(|index| text.len() - index <= AGENT_LOG_MAX_BYTES)
-        .unwrap_or(text.len());
-    text.replace_range(..drop_until, "");
-}
-
-pub(crate) fn read_agent_log(log: &AgentLog) -> Result<String> {
-    log.lock()
-        .map(|text| text.clone())
-        .map_err(|_| anyhow!("agent log lock poisoned"))
-}
-
-#[derive(Clone)]
-pub(crate) struct DiffHunk {
-    pub(crate) id: String,
-    pub(crate) file_path: String,
-    pub(crate) change_kind: FileChangeKind,
-    pub(crate) header: String,
-    pub(crate) patch: String,
-    pub(crate) staged: bool,
-    pub(crate) image_diff: Option<ImageDiffView>,
-}
-
-#[derive(Debug)]
-pub(crate) struct AppError(pub(crate) anyhow::Error);
-
-impl<E> From<E> for AppError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(value: E) -> Self {
-        Self(value.into())
-    }
-}
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
-        (axum::http::StatusCode::BAD_REQUEST, self.0.to_string()).into_response()
-    }
-}
-
-/// Push back the idle shutdown: the server only stops once nothing has touched it for a while.
-pub(crate) fn mark_activity(last_activity: &Mutex<Instant>) {
-    if let Ok(mut last_activity) = last_activity.lock() {
-        *last_activity = Instant::now();
-    }
-}
-
-pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, f: F) -> Result<T>
-where
-    F: FnOnce(&mut RepoSession) -> Result<T>,
-{
-    let mut guard = state
-        .inner
-        .lock()
-        .map_err(|_| anyhow!("state lock poisoned"))?;
-    let session = guard
-        .sessions
-        .get_mut(session_id)
-        .ok_or_else(|| anyhow!("unknown session"))?;
-    f(session)
-}
-
-pub(crate) fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<()> {
-    with_session(state, session_id, |session| {
-        if session.diff_target.base.is_some() || session.diff_target.comparison.is_some() {
-            bail!("this review is read-only");
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn lookup_hunk(
-    state: &AppState,
-    session_id: &str,
-    hunk_id: &str,
-) -> Result<(PathBuf, String, bool)> {
-    with_session(state, session_id, |session| {
-        let hunk = crate::git::collect_session_hunks(session)?
-            .into_iter()
-            .find(|hunk| hunk.id == hunk_id)
-            .ok_or_else(|| anyhow!("hunk no longer exists"))?;
-        Ok((session.repo_path.clone(), hunk.patch, hunk.staged))
-    })
-}
-
-pub(crate) fn lookup_hunks(
-    state: &AppState,
-    session_id: &str,
-    hunk_ids: &[String],
-) -> Result<(PathBuf, Vec<(String, bool)>)> {
-    with_session(state, session_id, |session| {
-        let hunks = crate::git::collect_session_hunks(session)?;
-        let mut patches = Vec::with_capacity(hunk_ids.len());
-
-        for hunk_id in hunk_ids {
-            let hunk = hunks
-                .iter()
-                .find(|hunk| hunk.id == *hunk_id)
-                .ok_or_else(|| anyhow!("hunk no longer exists"))?;
-            patches.push((hunk.patch.clone(), hunk.staged));
-        }
-
-        Ok((session.repo_path.clone(), patches))
-    })
-}
-
-pub(crate) fn stable_id<T: Hash>(value: &T) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
-}
-
-pub(crate) fn session_id_for_view(
-    path: &Path,
-    diff_target: &DiffTarget,
-    active_commit: Option<&str>,
-) -> String {
-    stable_id(&(
-        path.display().to_string(),
-        diff_target.base.clone(),
-        diff_target.pathspec.clone(),
-        diff_target.comparison.clone(),
-        active_commit.map(ToOwned::to_owned),
-    ))
 }

@@ -1,9 +1,13 @@
 //! The application menu.
 //!
 //! On macOS the menu bar belongs to the system, not to the window, so it is built with the
-//! platform API. Everywhere else there is no system-wide bar to put these in, and the same
-//! actions are reached from the command palette - which is also where macOS users can find
-//! them, so nothing lives only in the menu.
+//! platform API. In a browser the system's bar is the browser's, so the window draws the
+//! same menus along the top of its page itself - see [`bar`]. Everywhere else there is no
+//! system-wide bar to put these in, and the same actions are reached from the command
+//! palette - which is also where macOS users can find them, so nothing lives only in the menu.
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod bar;
 
 /// Something the menu asked for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -11,6 +15,7 @@ pub(crate) enum MenuAction {
     ToggleTheme,
     OpenCommandPalette,
     /// Ask the OS which file of the repo to open for editing.
+    #[cfg(not(target_arch = "wasm32"))]
     OpenFile,
     /// Open the palette on the file finder, where what is typed is a file name.
     FindFile,
@@ -29,18 +34,31 @@ pub(crate) enum MenuAction {
     /// Open the project's work log at a new dated entry - the palette's `work log` command,
     /// as a menu item.
     OpenWorkLog,
+    /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenInWeb,
+    /// A new pass key to this window's server, on the clipboard - the palette's
+    /// `generate pass key` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    GeneratePassKey,
+    /// Who is in this machine's server, to kick out - the `users` extension, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenUsers,
     /// Run one of the project's own commands in a shell.
     RunProject(crate::project::ProjectCommand),
     /// Open the pane those commands are set in.
     OpenProject,
     /// Open another window of one of the three programs, on its launch screen.
+    #[cfg(not(target_arch = "wasm32"))]
     NewWindow(crate::cli::Frame),
     /// Start this program again on the repo this window is on, and close this window.
+    #[cfg(not(target_arch = "wasm32"))]
     RestartWindow,
+    #[cfg(not(target_arch = "wasm32"))]
     InstallLaunchers,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(target_arch = "wasm32")))]
 mod platform {
     use muda::{
         Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -66,6 +84,9 @@ mod platform {
         open_review: MenuId,
         open_tasks: MenuId,
         open_work_log: MenuId,
+        open_in_web: MenuId,
+        generate_pass_key: MenuId,
+        open_users: MenuId,
         open_submodules: MenuId,
         /// One per command the Project menu runs, in the order the menu has them.
         project_commands: Vec<(MenuId, ProjectCommand)>,
@@ -273,9 +294,21 @@ mod platform {
             let open_tasks = MenuItem::new("Tasks", true, None);
             // Unbound too: `wl` typed into the palette is the chord.
             let open_work_log = MenuItem::new("Work Log", true, None);
+            let open_in_web = MenuItem::new("Open in Web", true, None);
+            let generate_pass_key = MenuItem::new("Generate Pass Key", true, None);
+            let open_users = MenuItem::new("Users", true, None);
             let tools_menu = Submenu::new("Tools", true);
             tools_menu
-                .append_items(&[&open_review, &open_tasks, &open_work_log, &open_submodules])
+                .append_items(&[
+                    &open_review,
+                    &open_tasks,
+                    &open_work_log,
+                    &open_submodules,
+                    &PredefinedMenuItem::separator(),
+                    &open_in_web,
+                    &generate_pass_key,
+                    &open_users,
+                ])
                 .ok()?;
 
             let window_menu = Submenu::new("Window", true);
@@ -318,6 +351,9 @@ mod platform {
                 open_review: open_review.id().clone(),
                 open_tasks: open_tasks.id().clone(),
                 open_work_log: open_work_log.id().clone(),
+                open_in_web: open_in_web.id().clone(),
+                generate_pass_key: generate_pass_key.id().clone(),
+                open_users: open_users.id().clone(),
                 open_submodules: open_submodules.id().clone(),
                 project_commands: project_commands
                     .iter()
@@ -357,6 +393,12 @@ mod platform {
                     MenuAction::OpenTasks
                 } else if event.id == self.open_work_log {
                     MenuAction::OpenWorkLog
+                } else if event.id == self.open_in_web {
+                    MenuAction::OpenInWeb
+                } else if event.id == self.generate_pass_key {
+                    MenuAction::GeneratePassKey
+                } else if event.id == self.open_users {
+                    MenuAction::OpenUsers
                 } else if event.id == self.open_submodules {
                     MenuAction::OpenSubmodules
                 } else if event.id == self.open_project {
@@ -383,7 +425,7 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_arch = "wasm32")))]
 mod platform {
     use super::MenuAction;
 
@@ -401,4 +443,5 @@ mod platform {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use platform::NativeMenu;

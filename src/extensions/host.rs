@@ -63,6 +63,9 @@ pub(crate) struct Host {
     pub(crate) project_root: PathBuf,
     /// The PATH programs are looked for on - see [`crate::shell_path::installed_tools_path`].
     pub(crate) path: String,
+    /// Where this machine's moon server answers - see [`crate::api::server_url`] - for a
+    /// script that is a client of it, as `users` is.
+    pub(crate) server_url: String,
 }
 
 /// What running a program came to.
@@ -301,6 +304,17 @@ pub(super) fn engine(
     });
     engine.register_fn("notify", move |said: &str| {
         let _ = outbox.send(Output::Effect(Effect::Notify(said.to_string())));
+    });
+
+    // A script that talks to this machine's own server: where it is, and a key it lets in.
+    // The key is minted from the secret on disk, as `moon generate-pass-key` mints one, so it
+    // is good for whatever secret is in force - the one just made by `kick-all` included.
+    let server_url = host.server_url.clone();
+    engine.register_fn("server_url", move || -> String { server_url.clone() });
+    engine.register_fn("pass_key", || -> Result<String, Box<EvalAltResult>> {
+        crate::pass_keys::PassKeys::for_this_machine()
+            .map(|keys| keys.generate())
+            .map_err(|error| runtime_error(format!("pass_key: {error:#}")))
     });
 
     engine.register_fn("every", move |milliseconds: i64| {

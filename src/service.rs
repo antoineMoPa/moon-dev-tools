@@ -22,6 +22,8 @@ pub(crate) use staging::{
     discard_hunk, discard_hunks, stage_all, stage_file, stage_hunk, stage_selection, unstage_file,
     unstage_hunk,
 };
+// Kept beside the wire types, since the window in a browser pages by it too.
+pub(crate) use crate::api::HISTORY_COMMIT_PAGE_SIZE;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -49,7 +51,6 @@ use crate::{
 };
 
 pub(crate) const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
-pub(crate) const HISTORY_COMMIT_PAGE_SIZE: usize = 30;
 
 fn diff_line_stats(patch: &str) -> (usize, usize) {
     let mut added = 0usize;
@@ -133,6 +134,7 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
         .inner
         .lock()
         .map_err(|_| anyhow!("state lock poisoned"))?;
+    guard.home_repo.get_or_insert_with(|| repo_path.clone());
     match guard.sessions.get_mut(&session_id) {
         Some(session) => {
             session.repo_path = repo_path;
@@ -225,11 +227,15 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
         let target =
             crate::api::with_session(state, session_id, |session| Ok(session.review_target()))?;
         let review = read_git_review(&target)?;
+        // Off git's answer alone, so outside the lock as well: on a diff of hundreds of hunks
+        // it is the next longest thing after git itself.
+        let move_hints = crate::moved_hunks::detect_hunk_moves(&review.hunks);
         let payload = crate::api::with_session(state, session_id, |session| {
             if session.review_target() != target {
                 return Ok(None);
             }
-            build_session_payload(session_id, session, review, &available_agents).map(Some)
+            build_session_payload(session_id, session, review, move_hints, &available_agents)
+                .map(Some)
         })?;
         if let Some(payload) = payload {
             return Ok(payload);
@@ -239,11 +245,13 @@ pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<Sessio
 
 /// What a review looks like to a window: git's answer about the session's target, put
 /// against what the session holds of its own - the comments, and what the agents made of
-/// them. Called with the session held, and does no git of its own.
+/// them. Called with the session held, and does no git of its own - nor any reading of the
+/// diff: which hunks moved where was worked out before the lock was taken.
 fn build_session_payload(
     session_id: &str,
     session: &RepoSession,
     review: GitReview,
+    move_hints: crate::moved_hunks::HunkMoveHints,
     available_agents: &[crate::api::AgentOption],
 ) -> Result<SessionPayload> {
     let GitReview {
@@ -261,7 +269,6 @@ fn build_session_payload(
         session.active_commit.as_deref(),
         !hunks.is_empty(),
     );
-    let move_hints = crate::moved_hunks::detect_hunk_moves(&hunks);
     let read_only = session.diff_target.base.is_some()
         || session.diff_target.comparison.is_some()
         || session.active_commit.is_some();

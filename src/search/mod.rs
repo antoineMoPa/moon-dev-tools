@@ -25,7 +25,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::api::{SearchProgress, SearchScope};
+#[cfg(test)]
+use crate::api::SearchProgress;
+use crate::api::SearchScope;
 
 /// The searcher. Required to be installed - it is what makes the searches ignore-aware.
 const SEARCHER: &str = "ag";
@@ -42,13 +44,8 @@ const NEVER_SEARCHED: &[&str] = &[".git", "node_modules"];
 /// How often a running search reports what came in, and asks whether it is still wanted.
 const TICK: Duration = Duration::from_millis(50);
 
-/// Who a search reports to while it runs. Told what it has found every time that changes,
-/// and asked on every tick whether anyone still wants it - a search whose query has been
-/// typed over is stopped where it is.
-pub(crate) trait SearchListener<T> {
-    fn wanted(&mut self) -> bool;
-    fn found(&mut self, progress: SearchProgress<T>);
-}
+// Kept with the backend, whose searches report to it on either side of a connection.
+pub(crate) use crate::backend::SearchListener;
 
 /// Whether a search goes on, as the layer reading its lines says after each batch.
 enum Flow {

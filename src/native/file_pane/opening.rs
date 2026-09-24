@@ -148,6 +148,7 @@ impl App {
 
     /// Start a tab on a path nothing is at yet - see [`FileEditor::new_file`]. A tab already
     /// open on the path keeps what it has: the new file is already being written there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn begin_new_file(&mut self, pane_id: PaneId, file_path: &str) {
         let asks_language_servers = self.asks_language_servers;
         self.model

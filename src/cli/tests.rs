@@ -1,6 +1,9 @@
 //! What each shape of command line parses to.
 
+use std::path::Path;
+
 use super::args::*;
+use super::command::*;
 use super::*;
 
 fn parse(args: &[&str]) -> CliCommand {
@@ -240,6 +243,58 @@ fn install_launchers_takes_no_arguments() {
     assert!(error.to_string().contains("takes nothing else"));
 }
 
+/// `generate-pass-key` prints a key and nothing else, so it takes nothing either.
+#[test]
+fn parse_generate_pass_key_command() {
+    assert_eq!(
+        parse_command(None, vec!["generate-pass-key".to_string()]).expect("expected it to parse"),
+        MoonCommand::GeneratePassKey
+    );
+    let error = parse_command(
+        None,
+        vec!["generate-pass-key".to_string(), "extra".to_string()],
+    )
+    .expect_err("expected an argument after generate-pass-key to be rejected");
+    assert!(error.to_string().contains("takes nothing else"));
+}
+
+/// `--pass-key` is what a remote window shows its server, in either spelling.
+#[test]
+fn parse_pass_key_with_remote() {
+    for args in [
+        &["--remote", "dev-box", "--pass-key", "id.mac"][..],
+        &["--remote", "dev-box", "--pass-key=id.mac"][..],
+    ] {
+        assert_eq!(
+            parse(args),
+            CliCommand::Review {
+                target: ReviewTarget::WorkingTree,
+                source: ReviewSource::Remote {
+                    target: "dev-box".to_string(),
+                    repo_path: None,
+                    pass_key: Some("id.mac".to_string()),
+                },
+            }
+        );
+    }
+}
+
+/// A window of this machine reaches its own server without HTTP, so a key given to it is a
+/// mistake rather than something to ignore.
+#[test]
+fn pass_key_without_remote_is_rejected() {
+    let error = parse_cli_args(
+        vec!["--pass-key".to_string(), "id.mac".to_string()],
+        Frame::Review,
+    )
+    .expect_err("expected --pass-key without --remote to be rejected");
+
+    assert!(
+        error.to_string().contains("goes with --remote"),
+        "got {error}"
+    );
+}
+
 /// `licenses` prints what is compiled in, and takes nothing.
 #[test]
 fn parse_licenses_command() {
@@ -317,6 +372,7 @@ fn parse_repo_with_remote_as_a_path_on_that_machine() {
             source: ReviewSource::Remote {
                 target: "dev-box".to_string(),
                 repo_path: Some("/home/you/project".to_string()),
+                pass_key: None,
             },
         }
     );
@@ -443,6 +499,7 @@ fn every_command_answers_help_without_doing_anything() {
     assert_eq!(parse(&["serve", "--logs", "-h"]), MoonCommand::Help);
     assert_eq!(parse(&["licenses", "--help"]), MoonCommand::Help);
     assert_eq!(parse(&["install-launchers", "--help"]), MoonCommand::Help);
+    assert_eq!(parse(&["generate-pass-key", "--help"]), MoonCommand::Help);
     // The board's window is where `new` is written up, so that is the help it gets.
     assert_eq!(
         parse(&["tasks", "new", "--help"]),

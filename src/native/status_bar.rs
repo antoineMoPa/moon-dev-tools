@@ -23,9 +23,10 @@
 //! It takes no keyboard: it is a strip that is read and clicked, and the editor or the shell
 //! that has the keyboard keeps it.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui::{Align, CornerRadius, RichText, Sense, Stroke, Ui, vec2};
+use web_time::Instant;
 
 use crate::{
     api::LspWork,

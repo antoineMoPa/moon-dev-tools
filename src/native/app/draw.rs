@@ -9,14 +9,17 @@ use crate::{
     native::{
         bindings::{self},
         find, fonts, logos,
-        menu::{MenuAction, NativeMenu},
         model::{Stage, ToastKind},
-        palette::{self, CommandAction},
+        palette,
         theme::{self, Palette, SMALL_SIZE},
         widgets,
         workspace::SHELL_REPAINT_INTERVAL,
     },
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::native::menu::NativeMenu;
+use crate::native::{menu::MenuAction, palette::CommandAction};
 
 use super::{App, POLL_INTERVAL, TabAction};
 
@@ -112,9 +115,13 @@ impl App {
         });
 
         // Both deferred: the dialog blocks, and opening a review takes `self`.
+        #[cfg(not(target_arch = "wasm32"))]
         if pick_folder && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone()) {
             open_path = Some(picked);
         }
+        // Offered only where the repo is on this machine, which a browser's never is.
+        #[cfg(target_arch = "wasm32")]
+        assert!(!pick_folder, "a browser has no folder picker to offer");
         if let Some(repo_path) = open_path {
             self.model.stage = Stage::Opening;
             self.open_review(OpenSessionRequest {
@@ -230,6 +237,63 @@ impl App {
         ctx.request_repaint_after(Duration::from_millis(120));
     }
 
+    /// Do what the menu asked for. Each pick is deferred into `pending_action` like a
+    /// palette command, or into the tab slot, so nothing is opened while the tree is drawn.
+    fn apply_menu_actions(&mut self, picked: Vec<MenuAction>) {
+        for action in picked {
+            self.pending_action = Some(match action {
+                MenuAction::ToggleTheme => CommandAction::ToggleTheme,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::RestartWindow => CommandAction::RestartWindow,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenFile => CommandAction::OpenFile,
+                MenuAction::FindFile => CommandAction::FindFile,
+                MenuAction::SearchContent => CommandAction::SearchContent,
+                MenuAction::RunProject(which) => CommandAction::RunProject(which),
+                MenuAction::OpenProject => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
+                }
+                MenuAction::OpenReview => {
+                    self.open_root_review();
+                    continue;
+                }
+                MenuAction::OpenTasks => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Tasks)
+                }
+                MenuAction::OpenWorkLog => CommandAction::OpenWorkLog,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenInWeb => CommandAction::OpenInWeb,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::GeneratePassKey => CommandAction::GeneratePassKey,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenUsers => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Extension {
+                        name: "users".to_string(),
+                    })
+                }
+                MenuAction::OpenSubmodules => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)
+                }
+                MenuAction::NewTab => {
+                    self.pending_tab_action = Some(TabAction::New);
+                    continue;
+                }
+                MenuAction::CloseTab => {
+                    self.pending_tab_action = Some(TabAction::Close);
+                    continue;
+                }
+                MenuAction::OpenCommandPalette => {
+                    self.model.palette.show();
+                    continue;
+                }
+            });
+        }
+    }
+
     /// One frame of the whole window. Split out of the `eframe::App` impl so the UI tests can
     /// render it without a window or an `eframe::Frame`.
     pub(crate) fn draw(&mut self, ui: &mut Ui) {
@@ -286,53 +350,22 @@ impl App {
             Stage::Ready => {}
         }
 
-        for action in self
-            .menu
-            .as_ref()
-            .map(NativeMenu::drain)
-            .unwrap_or_default()
+        // The system's bar on macOS; a browser's window draws its own below, once the frame
+        // is laid out - see `draw_menu_bar`.
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            self.pending_action = Some(match action {
-                MenuAction::ToggleTheme => CommandAction::ToggleTheme,
-                MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
-                MenuAction::NewWindow(frame) => CommandAction::NewWindow(frame),
-                MenuAction::RestartWindow => CommandAction::RestartWindow,
-                MenuAction::OpenFile => CommandAction::OpenFile,
-                MenuAction::FindFile => CommandAction::FindFile,
-                MenuAction::SearchContent => CommandAction::SearchContent,
-                MenuAction::RunProject(which) => CommandAction::RunProject(which),
-                MenuAction::OpenProject => {
-                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
-                }
-                MenuAction::OpenReview => {
-                    self.open_root_review();
-                    continue;
-                }
-                MenuAction::OpenTasks => {
-                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Tasks)
-                }
-                MenuAction::OpenWorkLog => CommandAction::OpenWorkLog,
-                MenuAction::OpenSubmodules => {
-                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Submodules)
-                }
-                MenuAction::NewTab => {
-                    self.pending_tab_action = Some(TabAction::New);
-                    continue;
-                }
-                MenuAction::CloseTab => {
-                    self.pending_tab_action = Some(TabAction::Close);
-                    continue;
-                }
-                MenuAction::OpenCommandPalette => {
-                    self.model.palette.show();
-                    continue;
-                }
-            });
+            let picked = self
+                .menu
+                .as_ref()
+                .map(NativeMenu::drain)
+                .unwrap_or_default();
+            self.apply_menu_actions(picked);
         }
 
         self.quit_would_kill_shells(ctx);
         self.apply_shortcuts(ctx);
         // After the window has taken the chords that are its own, so what is left is the pane's.
+        #[cfg(not(target_arch = "wasm32"))]
         self.forward_keys_to_extension(ctx);
         match self.pending_tab_action.take() {
             Some(TabAction::New) => self.open_shell_tab(),
@@ -342,6 +375,8 @@ impl App {
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
         self.poll_submodules(focused);
+        // Read off the board's folder, which a browser is never on - see the method.
+        #[cfg(not(target_arch = "wasm32"))]
         self.poll_review_requests();
         self.poll_running_shells();
         self.poll_visualizations();
@@ -357,7 +392,10 @@ impl App {
         if let Some(fragment_path) = self.model.board.opened_visualization.take() {
             crate::native::visualizations::open_kept_visualization(&mut self.model, &fragment_path);
         }
+        // A browser has no shell to type `moon open` in, and no socket for one to reach it by.
+        #[cfg(not(target_arch = "wasm32"))]
         self.follow_shell_asks(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
         self.follow_extensions(ctx);
         if std::mem::take(&mut self.model.project_pending) {
             self.load_project();
@@ -379,10 +417,22 @@ impl App {
         self.remember_selected_agent();
         self.prune_diff_cache();
 
+        // A browser's window has the browser's menus, so it draws the window's own along the
+        // top - before the workspace, like the strip, so the frames are laid out under it.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let picked =
+                crate::native::menu::bar::draw(ui, &self.palette_of(), &self.model.project);
+            self.apply_menu_actions(picked);
+        }
         // Before the workspace, so the strip is taken off the bottom of the window and the
         // frames are laid out in what is left rather than under it.
         self.draw_status_bar(ui);
+        self.start_reading_hunks();
         self.draw_workspace(ui);
+        if self.hunks_left_unread() {
+            ctx.request_repaint();
+        }
         palette::draw(self, ctx);
         find::draw(self, ctx);
         self.draw_armed_prefix(ctx);

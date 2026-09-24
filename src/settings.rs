@@ -4,16 +4,30 @@
 //! window, so neither is the right place for something like which agent to hand comments to.
 //! That is a preference, it outlives both, and it is kept somewhere a person can open and
 //! edit - one file, in the obvious place, in a format they can read.
+//!
+//! The window in a browser has no home directory to keep a file in, so there the same JSON
+//! is one entry of the page's `localStorage` - see [`BROWSER_STORAGE_KEY`]. It is still the
+//! viewer's rather than the repo's: the page opened in another browser starts unmarked, the
+//! way a `--remote` window on another machine does.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{api::AgentKind, native::workspace_color::WorkspaceColor};
 
+#[cfg(not(target_arch = "wasm32"))]
 const SETTINGS_DIR_NAME: &str = ".moonreview";
+#[cfg(not(target_arch = "wasm32"))]
 const SETTINGS_FILE_NAME: &str = "settings.json";
+/// The `localStorage` entry the browser keeps the settings in. Beside eframe's own entries
+/// and the workspace layout (`moonreview-workspace-layout`), which are the window's rather
+/// than the person's.
+#[cfg(target_arch = "wasm32")]
+const BROWSER_STORAGE_KEY: &str = "moonreview-settings";
 
 /// How many projects the launch screen offers. Enough to cover what someone is working on this
 /// week, short enough that the list stays a list rather than a history.
@@ -89,6 +103,7 @@ impl Settings {
 
 /// `~/.moonreview`: where everything that is the person's rather than a repo's is kept - this
 /// file, and the extensions they write (see [`crate::extensions`]).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn moonreview_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -96,6 +111,7 @@ pub(crate) fn moonreview_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(SETTINGS_DIR_NAME))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn home_settings_path() -> Option<PathBuf> {
     Some(moonreview_dir()?.join(SETTINGS_FILE_NAME))
 }
@@ -106,6 +122,7 @@ fn home_settings_path() -> Option<PathBuf> {
 /// window, and the real window saves the selector as it goes: that must never land in the
 /// home directory of whoever is running them, and one test's saved agent must not turn up in
 /// the next test's window.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn path() -> Option<PathBuf> {
     #[cfg(test)]
     {
@@ -135,34 +152,69 @@ pub(crate) fn path() -> Option<PathBuf> {
 
 /// Read the settings, falling back to the defaults.
 ///
-/// No file yet is the ordinary case on a first run. A file that cannot be parsed is a file
-/// someone has been editing: it is reported and then ignored, because starting with the
+/// Nothing stored yet is the ordinary case on a first run. A file that cannot be parsed is a
+/// file someone has been editing: it is reported and then ignored, because starting with the
 /// defaults is a far better outcome than refusing to start.
 pub(crate) fn load() -> Settings {
-    let Some(path) = path() else {
-        return Settings::default();
-    };
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Some((text, place)) = read_stored() else {
         return Settings::default();
     };
     match serde_json::from_str(&text) {
         Ok(settings) => settings,
         Err(error) => {
-            eprintln!("[moonreview] ignoring {}: {error}", path.display());
+            eprintln!("[moonreview] ignoring {place}: {error}");
             Settings::default()
         }
     }
 }
 
 pub(crate) fn store(settings: &Settings) -> Result<()> {
+    let text = serde_json::to_string_pretty(settings)?;
+    write_stored(format!("{text}\n"))
+}
+
+/// The stored JSON and, for the report when it does not parse, where it was read from.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_stored() -> Option<(String, String)> {
+    let path = path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some((text, path.display().to_string()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_stored(text: String) -> Result<()> {
     let path = path().context("no home directory to keep settings in")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
     }
-    let text = serde_json::to_string_pretty(settings)?;
-    std::fs::write(&path, format!("{text}\n"))
-        .with_context(|| format!("failed to write {}", path.display()))
+    std::fs::write(&path, text).with_context(|| format!("failed to write {}", path.display()))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_stored() -> Option<(String, String)> {
+    let text = browser_storage()
+        .ok()?
+        .get_item(BROWSER_STORAGE_KEY)
+        .ok()??;
+    Some((text, format!("localStorage[{BROWSER_STORAGE_KEY}]")))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_stored(text: String) -> Result<()> {
+    browser_storage()?
+        .set_item(BROWSER_STORAGE_KEY, &text)
+        .map_err(|error| anyhow::anyhow!("failed to write {BROWSER_STORAGE_KEY}: {error:?}"))
+}
+
+/// The page's `localStorage`, which a browser set to block site data does not give it.
+#[cfg(target_arch = "wasm32")]
+fn browser_storage() -> Result<web_sys::Storage> {
+    web_sys::window()
+        .context("moon runs in a window")?
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("the browser refused this page storage: {error:?}"))?
+        .context("the browser gives this page no storage")
 }
 
 #[cfg(test)]

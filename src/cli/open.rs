@@ -175,7 +175,7 @@ pub(super) fn list_windows() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::parse_command;
+    use super::super::command::parse_command;
     use super::*;
 
     fn parse(args: &[&str]) -> Result<MoonCommand> {

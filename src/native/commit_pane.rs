@@ -11,7 +11,9 @@ mod run;
 
 pub(crate) use drawing::draw;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use crate::{
     commit_suggestion::CommitSuggestion,

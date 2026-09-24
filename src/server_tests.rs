@@ -1,7 +1,9 @@
 //! The HTTP contract a remote window reviews through: the routes it calls over the network,
 //! which a change made only against the in-process backend would otherwise break unnoticed.
 
+mod auth;
 mod columns;
+mod users;
 
 use std::{
     fs,
@@ -13,12 +15,16 @@ use std::{
 
 use reqwest::blocking::Client;
 
-use crate::{api::OpenSessionRequest, git::run_git_no_output};
+use crate::{
+    api::OpenSessionRequest, git::run_git_no_output, pass_keys::of_this_test_run,
+    server::users::Users,
+};
 
-struct Served {
+pub(crate) struct Served {
     root: PathBuf,
-    base_url: String,
-    client: Client,
+    pub(crate) base_url: String,
+    /// A client let in the way a remote window is: its pass key on every request.
+    pub(crate) client: Client,
 }
 
 impl Drop for Served {
@@ -27,7 +33,14 @@ impl Drop for Served {
     }
 }
 
-fn serve(name: &str) -> Served {
+/// A server on this test run's secret - see [`of_this_test_run`] - with a fixture repo.
+pub(crate) fn serve(name: &str) -> Served {
+    serve_with(name, crate::server::users::of_this_test_run())
+}
+
+/// A server that lets `users` in, with a fixture repo: one changed file, committed once.
+fn serve_with(name: &str, users: Users) -> Served {
+    let key = users.keys().generate();
     let root =
         std::env::temp_dir().join(format!("moonreview-server-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -61,7 +74,7 @@ fn serve(name: &str) -> Served {
                 .expect("failed to read the test port")
                 .port();
             port_sender.send(port).expect("failed to report the port");
-            let _ = crate::server::serve_on(state, listener, None).await;
+            let _ = crate::server::serve_on(state, users, listener, None).await;
         });
     });
     let port = port_receiver
@@ -73,6 +86,12 @@ fn serve(name: &str) -> Served {
         base_url: format!("http://127.0.0.1:{port}"),
         client: Client::builder()
             .timeout(Duration::from_secs(20))
+            .default_headers(reqwest::header::HeaderMap::from_iter([(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {key}")
+                    .parse()
+                    .expect("a pass key is a header value"),
+            )]))
             .build()
             .expect("failed to build the test client"),
     }
@@ -160,7 +179,8 @@ fn the_searches_stream_their_matches_over_http() {
 
     let served = serve("search");
     let session_id = served.open_session();
-    let remote = RemoteBackend::connect(&served.base_url).expect("failed to connect");
+    let remote = RemoteBackend::connect(&served.base_url, of_this_test_run().generate())
+        .expect("failed to connect");
 
     let mut files = LastReport::wanting();
     remote

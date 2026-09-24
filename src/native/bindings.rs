@@ -23,7 +23,9 @@ pub(crate) enum Action {
     CloseTab,
     /// Bring the active frame's nth tab to the front, counted from zero.
     SelectTab(usize),
-    /// Another window of this same program, on the same repo.
+    /// Another window of this same program, on the same repo. A browser's window is a page,
+    /// and its own ⌘N is the browser's.
+    #[cfg(not(target_arch = "wasm32"))]
     NewWindow,
     SaveFile,
     ToggleTheme,
@@ -117,6 +119,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         chord: &[press(Modifiers::COMMAND, Key::T)],
         reach: Reach::Anywhere,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     Binding {
         action: Action::NewWindow,
         chord: &[press(Modifiers::COMMAND, Key::N)],
@@ -322,6 +325,11 @@ impl Keymap {
                     kept.push(event);
                     continue;
                 };
+                #[cfg(target_arch = "wasm32")]
+                if left_to_the_shell(press, in_a_shell) {
+                    kept.push(event);
+                    continue;
+                }
 
                 match self.step(press, typing, in_a_shell) {
                     Step::Fired(action) => {
@@ -468,6 +476,38 @@ fn describe_press(press: &Press) -> String {
 /// The chord that raises the nth tab, written for the tab's indicator: `⌘ 1`.
 pub(crate) fn tab_shortcut_label(index: usize) -> Option<String> {
     Some(describe(chord_of(Action::SelectTab(index))?))
+}
+
+/// The keys whose plain Ctrl press a shell gives up to the window in a browser, where Ctrl
+/// stands in for the ⌘ the browser keeps: Ctrl T for a new tab, Ctrl and a digit for a tab by
+/// its place. The window's other ⌘ letters stay the shell's as Ctrl presses, because line
+/// editing lives on them - Ctrl W deletes a word, Ctrl P and N walk the history, Ctrl F moves
+/// on a character, Ctrl J ends a line.
+#[cfg(target_arch = "wasm32")]
+const TAKEN_FROM_SHELLS_WITH_CTRL: &[Key] = &[
+    Key::T,
+    Key::Num1,
+    Key::Num2,
+    Key::Num3,
+    Key::Num4,
+    Key::Num5,
+    Key::Num6,
+    Key::Num7,
+    Key::Num8,
+    Key::Num9,
+];
+
+/// Whether a press in a shell is the program's before the map is asked, in a browser: a plain
+/// Ctrl letter - how a shell is sent ^C, ^R, ^W and the rest - other than the few in
+/// [`TAKEN_FROM_SHELLS_WITH_CTRL`]. A browser reports Ctrl as the command modifier, so without
+/// this the map would read Ctrl W in a shell as ⌘W and close the tab.
+///
+/// Natively ⌘ is a key of its own, and a Ctrl press is never mistaken for it.
+#[cfg(target_arch = "wasm32")]
+fn left_to_the_shell(press: Press, in_a_shell: bool) -> bool {
+    let program_control =
+        press.mods.ctrl && !press.mods.shift && !press.mods.alt && !press.mods.mac_cmd;
+    in_a_shell && program_control && !TAKEN_FROM_SHELLS_WITH_CTRL.contains(&press.key)
 }
 
 /// The chord that fires an action, for anything that shows the keyboard to the user. An

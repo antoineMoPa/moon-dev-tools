@@ -1,8 +1,7 @@
 //! A commit or a push running in its shell: started, watched for how it went, and drawn.
 
-use std::time::Instant;
-
 use egui::{RichText, Ui};
+use web_time::Instant;
 
 use crate::{
     committing::CommitAction,

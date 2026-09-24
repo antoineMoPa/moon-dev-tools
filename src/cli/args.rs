@@ -38,6 +38,9 @@ pub(super) enum ReviewSource {
     Remote {
         target: String,
         repo_path: Option<String>,
+        /// `--pass-key`, when it was given - see [`crate::pass_keys`]. Without it the key is
+        /// read from the environment when the window connects.
+        pass_key: Option<String>,
     },
 }
 
@@ -61,6 +64,7 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
     let mut logs = false;
     let mut pick = false;
     let mut remote: Option<String> = None;
+    let mut pass_key: Option<String> = None;
     let mut repo: Option<String> = None;
     let mut positional = Vec::new();
     let mut args = args.into_iter();
@@ -77,6 +81,11 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
                         anyhow!("--remote needs an address, e.g. --remote dev-box")
                     })?);
             }
+            "--pass-key" => {
+                pass_key = Some(args.next().ok_or_else(|| {
+                    anyhow!("--pass-key needs a key, which `{PROGRAM} generate-pass-key` prints")
+                })?);
+            }
             "--repo" => {
                 repo = Some(
                     args.next()
@@ -85,6 +94,9 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
             }
             _ if arg.starts_with("--remote=") => {
                 remote = Some(arg["--remote=".len()..].to_string());
+            }
+            _ if arg.starts_with("--pass-key=") => {
+                pass_key = Some(arg["--pass-key=".len()..].to_string());
             }
             _ if arg.starts_with("--repo=") => {
                 repo = Some(arg["--repo=".len()..].to_string());
@@ -101,6 +113,11 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
     }
     if pick {
         return Ok(CliCommand::PickProject);
+    }
+    // A window of this machine talks to the server it carries without going through HTTP, so
+    // it has nothing to show a key to.
+    if pass_key.is_some() && remote.is_none() {
+        bail!("--pass-key is what --remote is let in with, so it goes with --remote");
     }
     // Without --remote, --repo names the repo this window opens on, which is the whole of
     // what it was asked for: a restarted window passes it and nothing else.
@@ -123,6 +140,7 @@ pub(super) fn parse_cli_args(args: Vec<String>, frame: Frame) -> Result<CliComma
         Some(target) => ReviewSource::Remote {
             target,
             repo_path: repo,
+            pass_key,
         },
         None => ReviewSource::ThisMachine,
     };

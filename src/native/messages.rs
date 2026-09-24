@@ -13,12 +13,10 @@
 //! records every posting, because "this happened four times" is exactly the thing a log is
 //! read to find out.
 
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::VecDeque, time::Duration};
 
 use egui::{Align, RichText, Ui};
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::native::{
     app::App,

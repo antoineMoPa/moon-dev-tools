@@ -7,11 +7,12 @@
 //! the question was out has moved from under the answer, which is then dropped rather than put
 //! in at places that no longer mean what they meant.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui_frames::PaneId;
 use egui_moon_code_ide::{CanAnswer, LanguageSource, LspFormatting};
 use egui_moon_editor::Indent;
+use web_time::Instant;
 
 use crate::native::{app::App, language_source::SessionLanguages, panes::Pane};
 

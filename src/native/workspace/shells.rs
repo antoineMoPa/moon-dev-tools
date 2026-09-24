@@ -126,6 +126,7 @@ impl App {
 
     /// A shell on the window's repo with a command line typed into it and sent: what an
     /// extension's `open_shell` asks for. It goes where shells go, beside the others.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn run_in_shell(&mut self, command: String) {
         let session_id = self.model.root_session_id.clone();
         let started = session_id.clone();
@@ -153,7 +154,7 @@ impl App {
             ShellMarks::default(),
             move |backend| {
                 let opened = backend.open_session(OpenSessionRequest {
-                    repo_path,
+                    repo_path: repo_path.clone(),
                     diff_target: None,
                     active_commit: None,
                 })?;
@@ -169,7 +170,7 @@ impl App {
         command: Option<AgentKind>,
         placement: TerminalPlacement,
         marks: ShellMarks,
-        start: impl FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<String> + Send + 'static,
+        start: impl Fn(&dyn crate::backend::Backend) -> anyhow::Result<String> + Send + 'static,
     ) {
         if session_id.is_empty() {
             self.model.error("no review is open yet");

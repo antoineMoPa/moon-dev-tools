@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="same-origin">
+    <title>moon</title>
+    <!-- The page `/moon/` is in place of the window until the browser has logged in - see
+         src/server/web_page.rs, which fills in the placeholders. Plain and dark, like the
+         window it stands in for (web/index.html). -->
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #1b1b1b;
+        color: #d8d8d8;
+        font-family: -apple-system, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 26em;
+        margin: 0 auto;
+        padding: 18vh 1.5em 0;
+      }
+      h1 {
+        font-size: 1.2em;
+        font-weight: 600;
+        margin: 0 0 0.6em;
+      }
+      p {
+        line-height: 1.45;
+        margin: 0 0 1em;
+      }
+      code {
+        font-family: Menlo, monospace;
+        font-size: 0.92em;
+        white-space: nowrap;
+      }
+      form {
+        display: flex;
+        gap: 0.5em;
+      }
+      input, button {
+        font: inherit;
+        color: inherit;
+        background: #262626;
+        border: 1px solid #3a3a3a;
+        border-radius: 4px;
+        padding: 0.45em 0.7em;
+      }
+      input {
+        flex: 1;
+        min-width: 0;
+        font-family: Menlo, monospace;
+        font-size: 0.85em;
+      }
+      input:focus, button:focus {
+        outline: 1px solid #6a8fd8;
+        border-color: #6a8fd8;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background: #303030;
+      }
+      .refusal {
+        color: #e07a6f;
+        margin-top: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>moon</h1>
+      <p>This server needs a pass key. Run <code>moon generate-pass-key</code> on the machine
+        it runs on, or use Tools › Generate Pass Key in one of its windows.</p>
+      <form id="login" method="post" action="{{action}}">
+        <input name="pass_key" type="password" autocomplete="off" spellcheck="false"
+               placeholder="pass key" aria-label="pass key" required autofocus>
+        <button type="submit">Log in</button>
+      </form>
+      <form id="ticket_login" method="post" action="{{action}}" hidden>
+        <input name="ticket" type="hidden">
+      </form>
+      {{refusal}}
+    </main>
+    <script>
+      const form = document.getElementById("login");
+      const field = form.elements.pass_key;
+      // A key pasted from a terminal often brings a space or a line along with it.
+      form.addEventListener("submit", () => {
+        field.value = field.value.trim();
+      });
+      // A link with a login ticket in its fragment - `moon serve` prints one, and Tools ›
+      // Open in Web opens one - logs in without asking, once: the server spends the ticket and
+      // hands the browser a pass key of its own. The fragment is taken off the address before
+      // anything else, so the ticket stays out of the history; it never reached the server
+      // but through this form. A pass key never comes in a link - see src/pass_keys/tickets.rs.
+      const handed = location.hash.match(/^#ticket=(.+)$/);
+      if (handed) {
+        history.replaceState(null, "", location.pathname + location.search);
+        const ticketLogin = document.getElementById("ticket_login");
+        ticketLogin.elements.ticket.value = decodeURIComponent(handed[1]);
+        ticketLogin.submit();
+      }
+    </script>
+  </body>
+</html>

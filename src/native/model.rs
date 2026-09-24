@@ -90,6 +90,7 @@ pub(crate) struct Model {
     /// the file on a worker thread, and a read of the files that started before the change
     /// would put the row back for a tick: the read carries the count it started under, and
     /// is dropped if the count has moved on - see `App::poll_review_requests`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) review_request_amendments: u64,
     /// The shells the server says have something running in them, as of the last poll. What
     /// quitting would interrupt is these rather than every open shell, so this is what the
@@ -141,6 +142,7 @@ pub(crate) struct Model {
     /// by the answer to a call that makes the file, which has no editor to put it in yet.
     pub(crate) work_log_entries_waiting: HashMap<PaneId, crate::native::work_log::NewEntry>,
     /// The extensions open in tabs, keyed by the pane each one draws.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) extension_panes: HashMap<PaneId, crate::native::extension_pane::ExtensionPane>,
     /// What the markdown renderer keeps between frames - loaded images above all - shared by
     /// every file pane that is previewing.
@@ -237,7 +239,8 @@ impl ProjectEditor {
 impl Model {
     /// The repo the window was launched on, once its review has answered - which is the repo
     /// the board's folder is in. `None` until then, and on a window that is still asking which
-    /// repo to open.
+    /// repo to open. Only asked by what reads that folder, which a browser's window never does.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn root_repo_path(&self) -> Option<std::path::PathBuf> {
         let payload = self.review_ref(&self.root_session_id)?.payload.as_ref()?;
         Some(std::path::PathBuf::from(&payload.repo_path))
@@ -290,7 +293,7 @@ impl Model {
             kind,
             text.clone(),
             crate::native::messages::now_unix(),
-            std::time::Instant::now(),
+            web_time::Instant::now(),
         );
         // A repeated message means the same thing; refresh it instead of stacking copies.
         if let Some(existing) = self.toasts.iter_mut().find(|toast| toast.text == text) {

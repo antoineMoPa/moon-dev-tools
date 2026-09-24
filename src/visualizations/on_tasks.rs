@@ -121,10 +121,11 @@ fn record_on_task(repo_path: &Path, task_id: &str, copy_path: &Path) -> Result<(
         kind: TaskResourceKind::Visualization,
         // Codex is the one agent that announces visualizations so far.
         agent: AgentKind::Codex,
-        name: Some(super::page::title_of(copy_path)),
+        name: Some(super::title_of(copy_path)),
         file_path: Some(file_path),
         // Not the run's terminal: taking a resource off a task ends the terminal it names.
         terminal_id: None,
+        terminal_owner: None,
         agent_session_id: None,
         started_at_unix: store::now_unix(),
     });

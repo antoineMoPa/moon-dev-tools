@@ -8,8 +8,8 @@ use std::sync::{
 
 use crate::{
     api::SearchProgress,
+    backend::SearchListener,
     native::{app::App, model::Model, panes::OpenPaneRequest, tasks::ModelEdits},
-    search::SearchListener,
 };
 
 use super::commands::repo_name_of;
@@ -315,7 +315,7 @@ fn refresh_search<T: Send + 'static>(
             let mut listener = ListReports {
                 edits: edits.clone(),
                 ticket,
-                latest,
+                latest: latest.clone(),
                 search_of,
             };
             find(backend, &session_id, &asked, &mut listener)

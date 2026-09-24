@@ -79,8 +79,16 @@ impl Backend for LocalBackend {
         true
     }
 
-    fn connect_target(&self) -> Option<String> {
+    fn connect_target(&self) -> Option<crate::backend::ConnectTarget> {
         None
+    }
+
+    fn mint_pass_key(&self) -> Result<String> {
+        Ok(crate::pass_keys::PassKeys::for_this_machine()?.generate())
+    }
+
+    fn mint_login_ticket(&self, lifetime: std::time::Duration) -> Result<String> {
+        Ok(crate::pass_keys::PassKeys::for_this_machine()?.login_ticket(lifetime))
     }
 
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened> {

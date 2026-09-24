@@ -91,6 +91,7 @@ pub(crate) fn start_resource(
             agent,
             file_path: None,
             terminal_id: Some(terminal_id.clone()),
+            terminal_owner: Some(std::process::id()),
             agent_session_id,
             name: Some(name),
             started_at_unix: store::now_unix(),
@@ -160,6 +161,7 @@ pub(crate) fn resume_resource(
     })?;
 
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
+    metadata.resources[at].terminal_owner = Some(std::process::id());
     metadata.resources[at].name = Some(name);
     store::write_task(&repo_path, task_id, &metadata)?;
 
@@ -214,6 +216,7 @@ pub(crate) fn attach_resource(
         agent: request.agent,
         file_path: None,
         terminal_id: Some(terminal_id.clone()),
+        terminal_owner: Some(std::process::id()),
         agent_session_id: Some(agent_session_id.to_string()),
         name: Some(name),
         started_at_unix: store::now_unix(),

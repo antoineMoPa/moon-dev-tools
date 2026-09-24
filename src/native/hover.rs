@@ -7,12 +7,11 @@
 //! window's: the question goes through [`crate::backend::Backend`] on the window's own tasks,
 //! and the tooltip renders the server's markdown the way the markdown preview does.
 
-use std::time::Instant;
-
 use egui::{Color32, RichText};
 use egui_frames::PaneId;
 use egui_moon_code_ide::{HoveringNext, LanguageSource, LspPosition};
 use egui_moon_editor::{EditorOutput, Word};
+use web_time::Instant;
 
 use crate::native::{app::App, language_source::SessionLanguages, theme::Palette};
 
