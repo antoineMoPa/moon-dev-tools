@@ -23,7 +23,7 @@
 //! what another editor writes to it, and read-only nowhere. The entry is typed into the tab
 //! rather than written to the file: saving is the person's.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use egui_frames::PaneId;
 
 use crate::native::{
@@ -40,6 +40,7 @@ const RULE: &str = "==================================================";
 
 /// How the heading's moment is written, which is `date` in an English locale:
 /// `Tue  1 Sep 2026 18:05:04 EDT`, the day padded to two with a space.
+#[cfg(not(target_arch = "wasm32"))]
 const STAMP_FORMAT: &str = "+%a %e %b %Y %H:%M:%S %Z";
 
 /// The entry being added: the moment it was asked for, which is what heads it.
@@ -54,6 +55,7 @@ impl NewEntry {
     /// `date` rather than a date crate: the heading carries the zone as a name - `EDT` -
     /// which a date crate has no table for. In the C locale, so the day and month read the
     /// same whatever language the window was launched under.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn now() -> Result<Self> {
         let output = std::process::Command::new("date")
             .env("LC_ALL", "C")
@@ -61,10 +63,42 @@ impl NewEntry {
             .output()
             .context("could not run `date`")?;
         if !output.status.success() {
-            bail!("`date` failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!("`date` failed: {}", String::from_utf8_lossy(&output.stderr));
         }
         Ok(Self {
             stamp: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        })
+    }
+
+    /// The same heading in a browser, which has no `date` to run: written out of the page's
+    /// own clock in the same shape. The zone is the name `en-US` gives it, which is `date`'s
+    /// - `EDT` - where it has one, and an offset - `GMT+2` - where it does not.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn now() -> Result<Self> {
+        const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const MONTHS: [&str; 12] = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let date = js_sys::Date::new_0();
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"timeZoneName".into(), &"short".into())
+            .map_err(|error| anyhow::anyhow!("could not ask for the zone's name: {error:?}"))?;
+        let zoned = String::from(date.to_locale_time_string_with_options("en-US", &options));
+        let zone = zoned
+            .rsplit(' ')
+            .next()
+            .context("the page's clock named no zone")?;
+        Ok(Self {
+            stamp: format!(
+                "{} {:>2} {} {} {:02}:{:02}:{:02} {zone}",
+                DAYS[date.get_day() as usize],
+                date.get_date(),
+                MONTHS[date.get_month() as usize],
+                date.get_full_year(),
+                date.get_hours(),
+                date.get_minutes(),
+                date.get_seconds(),
+            ),
         })
     }
 

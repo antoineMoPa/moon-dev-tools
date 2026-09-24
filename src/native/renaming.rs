@@ -18,10 +18,11 @@
 //! since. Half a rename is a project that does not build, and an edit landing on whatever sits
 //! at its line and column now is worse than none.
 
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use egui_frames::PaneId;
 use egui_moon_code_ide::{CanAnswer, LanguageSource, LspFileEdit, LspPosition, still_starting};
+use web_time::Instant;
 
 use crate::native::{
     app::App,

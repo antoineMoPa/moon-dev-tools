@@ -19,9 +19,9 @@
 //! program, make an HTTP request, read a folder, open a file or a shell in the window, say
 //! something in a toast.
 //!
-//! Two are shipped in the executable - `files` and `docker`, out of `extensions/` at the top of
-//! this repo - and every `.rhai` file in `~/.moonreview/extensions/` is one more, or takes the
-//! place of the shipped one of the same name. A file there is read again whenever it changes,
+//! Three are shipped in the executable - `files`, `docker` and `users`, out of `extensions/` at
+//! the top of this repo - and every `.rhai` file in `~/.moonreview/extensions/` is one more, or
+//! takes the place of the shipped one of the same name. A file there is read again whenever it changes,
 //! and the pane keeps its state across the change, so an extension is written with the pane it
 //! draws open beside it.
 
@@ -68,6 +68,10 @@ const SHIPPED: &[Shipped] = &[
     Shipped {
         name: "docker",
         source: include_str!("../../extensions/docker.rhai"),
+    },
+    Shipped {
+        name: "users",
+        source: include_str!("../../extensions/users.rhai"),
     },
 ];
 

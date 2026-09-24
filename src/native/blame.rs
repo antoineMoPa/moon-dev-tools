@@ -19,12 +19,13 @@
 
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use egui::Color32;
 use egui_frames::PaneId;
 use egui_moon_editor::{LineNote, NoteClick};
+use web_time::Instant;
 
 use crate::{
     api::{BlameChunk, BlameOf, Blamed},

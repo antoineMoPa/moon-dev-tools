@@ -146,8 +146,14 @@ pub(crate) fn place_tasks(
     Ok(())
 }
 
-/// Bring a task's record in line with the shells the server actually has, and return whether
-/// anything changed.
+/// Bring a task's record in line with the shells there are, and return whether anything
+/// changed: a run whose shell is gone is written down as ended, which is what offers it to be
+/// resumed.
+///
+/// Gone is not the same as not here. Every moon on the machine reads the same record, and a
+/// shell belongs to the one that started it - a `moon serve` or a second window reading the
+/// board must not end the runs of the window beside it. So a shell another moon holds is let
+/// be while that moon is running, and only one whose moon has exited is taken for ended.
 fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
     let mut changed = false;
 
@@ -158,10 +164,28 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
         if state.terminals.is_live(&terminal_id) {
             continue;
         }
+        let held_elsewhere = resource
+            .terminal_owner
+            .is_some_and(|owner| owner != std::process::id() && process_is_running(owner));
+        if held_elsewhere {
+            continue;
+        }
         resource.terminal_id = None;
+        resource.terminal_owner = None;
         changed = true;
     }
     changed
+}
+
+/// Whether a process of this id is running. `kill` with no signal only asks: it answers
+/// `EPERM` for a process that is there but not this user's, which still counts as running.
+fn process_is_running(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 delivers nothing; it only checks that `pid` names a process.
+    let asked = unsafe { libc::kill(pid, 0) };
+    asked == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
@@ -338,6 +362,7 @@ pub(crate) fn link_file(
         agent: AgentKind::None,
         file_path: Some(file_path.to_string()),
         terminal_id: None,
+        terminal_owner: None,
         agent_session_id: None,
         name: None,
         started_at_unix: store::now_unix(),
@@ -371,6 +396,7 @@ fn release_a_finished_task(
     state.terminals.remove_owned_by(task_id);
     for resource in &mut metadata.resources {
         resource.terminal_id = None;
+        resource.terminal_owner = None;
     }
 }
 

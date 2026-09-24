@@ -7,9 +7,10 @@
 //! file changed on disk, until `[reload]` takes that version or `[save]` writes the edits over
 //! it.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui_frames::PaneId;
+use web_time::Instant;
 
 use super::FileEditor;
 use crate::{api::FileContentPayload, native::app::App};

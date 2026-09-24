@@ -93,12 +93,18 @@ pub(crate) enum CommandAction {
     ToggleTheme,
     /// Paint this window's ground, so it is told from the other windows open beside it.
     MarkWorkspace(crate::native::workspace_color::WorkspaceColor),
+    // This one and the next two start programs on this machine, and `OpenFile` is its file
+    // picker: none of them is anything a browser's window can do.
+    #[cfg(not(target_arch = "wasm32"))]
     InstallLaunchers,
     /// Another window of one of the three programs, on its launch screen.
+    #[cfg(not(target_arch = "wasm32"))]
     NewWindow(crate::cli::Frame),
     /// Start this program again on the repo this window is on, and close this window.
+    #[cfg(not(target_arch = "wasm32"))]
     RestartWindow,
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
+    #[cfg(not(target_arch = "wasm32"))]
     OpenFile,
     /// Turn the palette into the file finder, where what is typed is a file name.
     FindFile,
@@ -116,6 +122,7 @@ pub(crate) enum CommandAction {
     /// Run one of the project's own commands in a shell of its own.
     RunProject(ProjectCommand),
     /// Start an open extension over from its script - see [`crate::extensions`].
+    #[cfg(not(target_arch = "wasm32"))]
     RestartExtension(String),
     /// Ask what the name at the caret of the file tab in front is, and open the palette on it
     /// to type a new one - see [`crate::native::renaming`].
@@ -138,6 +145,15 @@ pub(crate) enum CommandAction {
     ApplyCodeAction(usize),
     /// Open the project's work log at a new dated entry - see [`crate::native::work_log`].
     OpenWorkLog,
+    /// This window's repo in a browser - see `crate::native::open_in_web`. Nothing a
+    /// browser's window has to offer: it is the browser.
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenInWeb,
+    /// A new pass key to this window's server, on the clipboard - see
+    /// `crate::native::pass_key`. A browser's window is let in already, and has no server of
+    /// its own to make one for.
+    #[cfg(not(target_arch = "wasm32"))]
+    GeneratePassKey,
 }
 
 /// Every typed term has to appear somewhere in the title or description, which makes

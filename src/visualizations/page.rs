@@ -11,7 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use super::directives::MAX_FRAGMENT_BYTES;
+use super::{directives::MAX_FRAGMENT_BYTES, title_of};
 
 const FRAGMENT_PLACEHOLDER: &str = "<!--__INLINE_VISUALIZATION_FRAGMENT__-->";
 
@@ -38,15 +38,6 @@ pub(crate) fn page_for(fragment_path: &Path) -> Result<String> {
     let fragment = std::fs::read_to_string(fragment_path)
         .with_context(|| format!("could not read {}", fragment_path.display()))?;
     Ok(render_fragment(&fragment, &title_of(fragment_path)))
-}
-
-/// What a visualization is called: its file's stem, with dashes read as spaces.
-pub(crate) fn title_of(fragment_path: &Path) -> String {
-    fragment_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("Visualization")
-        .replace('-', " ")
 }
 
 fn render_fragment(fragment: &str, title: &str) -> String {

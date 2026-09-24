@@ -1,10 +1,13 @@
 # Extensions
 
-A pane of the window can be a script. Two are built into `moon`, out of
-[extensions/](extensions/): `files` browses the project's folders, and `docker` lists docker's
+A pane of the window can be a script. Three are built into `moon`, out of
+[extensions/](extensions/): `files` browses the project's folders; `docker` lists docker's
 containers, to start, stop and restart them, open a shell in one, or follow its logs - or the
-logs of every running container at once. Any `.rhai` file in `~/.moonreview/extensions/` is
-another, offered in the command palette (`⌘⇧P`) under its file name.
+logs of every running container at once; and `users` (`Tools › Users`) lists who is in this
+machine's moon server - every pass key and browser login, with the address it last came from -
+to kick one out, or everyone at once by making a new secret. Any `.rhai` file in
+`~/.moonreview/extensions/` is another, offered in the command palette (`⌘⇧P`) under its file
+name.
 
 A file there with the same name as a shipped one takes its place, which is how a shipped one is
 changed without building `moon` again:
@@ -149,6 +152,8 @@ the screen: the pane says what was wrong.
 | `parent_of(path)`, `name_of(path)`, `join_path(dir, name)` | |
 | `shell_quote(words)` | quoted for a shell, for `open_shell` |
 | `parse_json(text)` | an object, a list, or a plain value |
+| `server_url()` | where this machine's moon server answers, `http://127.0.0.1:42000` unless the environment says otherwise |
+| `pass_key()` | a new pass key to that server, minted from the secret on this machine as `moon generate-pass-key` mints one - for `fetch` with `Authorization: Bearer <key>`. The `users` extension is a client of the server this way |
 
 The event given to `run_then` or `fetch_then` must not already have the field the answer goes
 in - `result`, and `error` for `fetch_then`.

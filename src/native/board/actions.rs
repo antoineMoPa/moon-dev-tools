@@ -204,7 +204,7 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                         let file_path = backend.open_task_notes(&session_id, &task.id)?;
                         backend.write_file(&session_id, &file_path, &notes)?;
                     }
-                    Ok((task, notes))
+                    Ok((task, notes.clone()))
                 },
                 move |model, result| {
                     model.board.refresh_requested = true;
@@ -308,7 +308,7 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         }
         BoardAction::Place(task_ids, status, position) => {
             app.tasks.spawn(
-                move |backend| backend.place_tasks(&session_id, &task_ids, status, position),
+                move |backend| backend.place_tasks(&session_id, &task_ids, status.clone(), position),
                 |model, result| {
                     // A move the server would not make is not one to keep drawing.
                     if result.is_err() {
@@ -589,6 +589,7 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 title,
             }));
         }
+        #[cfg(not(target_arch = "wasm32"))]
         BoardAction::AmendReviewRequest {
             task_id,
             index,
@@ -615,6 +616,16 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 |model, result| model.report(result, "could not change the review request"),
             );
         }
+        // Its rows are read off the board's folder, which a browser never reads - see
+        // `App::poll_review_requests` - so it has none to amend.
+        #[cfg(target_arch = "wasm32")]
+        BoardAction::AmendReviewRequest {
+            task_id,
+            index,
+            amend,
+        } => unreachable!(
+            "a browser has no review requests to amend, but was asked to {amend:?} {task_id}'s {index}"
+        ),
         BoardAction::OpenReview(repo_path, title) => {
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
                 repo_path,
@@ -627,7 +638,7 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
 /// Run a board action, and read the board again once it is done.
 fn act<W>(app: &App, context: &'static str, work: W)
 where
-    W: FnOnce(&dyn crate::backend::Backend) -> anyhow::Result<()> + Send + 'static,
+    W: Fn(&dyn crate::backend::Backend) -> anyhow::Result<()> + Send + 'static,
 {
     app.tasks.spawn(work, move |model, result| {
         model.report(result, context);

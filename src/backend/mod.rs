@@ -4,6 +4,8 @@
 //! process, and [`remote::RemoteBackend`] reviews a repo on another machine over the HTTP
 //! API its `serve` answers. Only this trait knows which one is in play.
 
+// Reviewing a repo in this process is the server's own work, which a browser has none of.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod local;
 pub(crate) mod remote;
 #[cfg(test)]
@@ -16,8 +18,8 @@ use crate::{
     api::{
         AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
         ContentMatch, FileContentPayload, LspCompletion, LspLocation, LspPosition, LspStatus,
-        LspWork, OpenSessionRequest, PatchPayload, SearchScope, SessionOpened, SessionPayload,
-        SubmoduleHubPayload,
+        LspWork, OpenSessionRequest, PatchPayload, SearchProgress, SearchScope, SessionOpened,
+        SessionPayload, SubmoduleHubPayload,
     },
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
@@ -26,8 +28,28 @@ use crate::{
         TaskView, explainer::ExplainRequest,
     },
     project::{ProjectCommand, ProjectConfig},
-    search::SearchListener,
 };
+
+/// Who a search reports to while it runs. Told what it has found every time that changes,
+/// and asked on every tick whether anyone still wants it - a search whose query has been
+/// typed over is stopped where it is.
+///
+/// Here rather than beside the searches in `crate::search`, which are the server's: a window
+/// in a browser listens to a search all the same.
+pub(crate) trait SearchListener<T> {
+    fn wanted(&mut self) -> bool;
+    fn found(&mut self, progress: SearchProgress<T>);
+}
+
+/// How a window reaches a server on another machine - see [`Backend::connect_target`].
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConnectTarget {
+    /// The full address rather than [`Backend::describe`]'s label: that one has its scheme
+    /// trimmed off for reading, and a window opened on it would fall back to plain HTTP.
+    pub(crate) address: String,
+    pub(crate) pass_key: String,
+}
 
 /// Every review operation the window performs. Calls block, so the UI runs them
 /// on worker threads - a remote backend is a network round-trip.
@@ -39,12 +61,25 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// decides if the window can offer a folder picker for them.
     fn reads_this_machine(&self) -> bool;
 
-    /// What another window would have to be given as `--remote` to reach the same repos.
-    /// `None` for a backend that reads this machine, which needs no address at all.
+    /// What another window would have to be given to reach the same repos: `--remote`, and
+    /// the pass key it is let in with. `None` for a backend that reads this machine, which
+    /// needs neither.
     ///
-    /// The full address rather than [`Backend::describe`]'s label: that one has its scheme
-    /// trimmed off for reading, and a window opened on it would fall back to plain HTTP.
-    fn connect_target(&self) -> Option<String>;
+    /// Only asked by a window starting another, which a browser's never does.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn connect_target(&self) -> Option<ConnectTarget>;
+
+    /// A new pass key for the server this window reads through, for the window to hand on -
+    /// see [`crate::pass_keys`]. Made here for a window of this machine, whose server's secret
+    /// is this machine's, and asked of the far side for one reading another.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mint_pass_key(&self) -> Result<String>;
+
+    /// A login ticket for the server this window reads through, good for `lifetime` and one
+    /// login, to open a browser with - see [`crate::pass_keys`]. Made where
+    /// [`Backend::mint_pass_key`] makes a key, for the same reason.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mint_login_ticket(&self, lifetime: std::time::Duration) -> Result<String>;
 
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened>;
     fn session_state(&self, session_id: &str) -> Result<SessionPayload>;
@@ -228,7 +263,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Start a shell on the repo with one command line typed into it and sent, and answer with
     /// the shell it runs in: what an extension asks for when what it has to show is a program
     /// of its own - `docker logs -f`, a shell inside a container. Attached with
-    /// [`Backend::attach_terminal`], like any other.
+    /// [`Backend::attach_terminal`], like any other. Only extensions ask, which a browser's
+    /// window has none of.
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     /// The shells with something running in them right now, as opposed to the ones sitting at

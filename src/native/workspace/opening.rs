@@ -43,7 +43,7 @@ impl App {
                 self.tasks.spawn(
                     move |backend| {
                         backend.open_session(OpenSessionRequest {
-                            repo_path,
+                            repo_path: repo_path.clone(),
                             diff_target: None,
                             active_commit: None,
                         })
@@ -105,6 +105,7 @@ impl App {
                     self.reveal_file_match(pane_id, &session_id, &file_path, at);
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             OpenPaneRequest::NewFile {
                 session_id,
                 file_path,
@@ -333,6 +334,7 @@ impl App {
                 let frame = self.frame_for(PaneKind::Messages, active_frame);
                 self.model.layout.add_pane(frame, Pane::Messages, None);
             }
+            #[cfg(not(target_arch = "wasm32"))]
             OpenPaneRequest::Extension { name } => {
                 // One pane an extension: asking again brings it forward.
                 if let Some((pane, _)) = self

@@ -1,17 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
-use textdistance::{Algorithm, Jaccard, SorensenDice};
-
 use crate::api::{DiffHunk, HunkMoveHint};
 
 const MIN_CHANGED_LINES: usize = 6;
 const MIN_MOVE_SCORE: f64 = 0.58;
 
-#[derive(Clone)]
+/// The lines a hunk removed or added, and the code tokens in them, each counted once. Every
+/// removed side of a diff is scored against every added side, which in a diff of hundreds of
+/// hunks is tens of thousands of pairs - so what a pair costs is two multiset intersections,
+/// and nothing is counted again per pair.
 struct Candidate {
     hunk_index: usize,
-    line_fingerprints: Vec<String>,
-    token_fingerprints: Vec<String>,
+    lines: Bag,
+    tokens: Bag,
 }
 
 #[derive(Clone)]
@@ -39,18 +40,13 @@ pub(crate) fn detect_hunk_moves(hunks: &[DiffHunk]) -> HunkMoveHints {
         .collect::<Vec<_>>();
 
     let mut matches = Vec::new();
-    let scorer = SimilarityScorer {
-        jaccard: Jaccard::default(),
-        sorensen_dice: SorensenDice::default(),
-    };
-
     for old in &removed {
         for new in &added {
-            if old.hunk_index == new.hunk_index {
+            if old.hunk_index == new.hunk_index || !could_be_a_move(old, new) {
                 continue;
             }
 
-            let score = scorer.similarity_score(old, new);
+            let score = similarity_score(old, new);
             if score >= MIN_MOVE_SCORE {
                 matches.push(Match {
                     removed_index: old.hunk_index,
@@ -90,28 +86,21 @@ pub(crate) fn detect_hunk_moves(hunks: &[DiffHunk]) -> HunkMoveHints {
     }
 }
 
-struct SimilarityScorer {
-    jaccard: Jaccard,
-    sorensen_dice: SorensenDice,
+/// How alike two sides are: the Jaccard similarity of their lines, or the Sørensen-Dice
+/// similarity of their tokens, whichever is higher. (Dice is never below Jaccard on the same
+/// two multisets, so the tokens' Jaccard would add nothing.)
+fn similarity_score(old: &Candidate, new: &Candidate) -> f64 {
+    old.lines
+        .jaccard(&new.lines)
+        .max(old.tokens.sorensen_dice(&new.tokens))
 }
 
-impl SimilarityScorer {
-    fn similarity_score(&self, old: &Candidate, new: &Candidate) -> f64 {
-        let line_score = self
-            .jaccard
-            .for_vec(&old.line_fingerprints, &new.line_fingerprints)
-            .nsim();
-        let token_jaccard_score = self
-            .jaccard
-            .for_vec(&old.token_fingerprints, &new.token_fingerprints)
-            .nsim();
-        let token_dice_score = self
-            .sorensen_dice
-            .for_vec(&old.token_fingerprints, &new.token_fingerprints)
-            .nsim();
-
-        line_score.max(token_jaccard_score).max(token_dice_score)
-    }
+/// Whether the two could score [`MIN_MOVE_SCORE`] at all, told from their sizes alone: two
+/// sides can share no more than the smaller has, which caps both similarities. Most pairs in
+/// a large diff are nothing alike in size, and are dropped here without an intersection.
+fn could_be_a_move(old: &Candidate, new: &Candidate) -> bool {
+    old.lines.most_jaccard_with(&new.lines) >= MIN_MOVE_SCORE
+        || old.tokens.most_sorensen_dice_with(&new.tokens) >= MIN_MOVE_SCORE
 }
 
 fn candidate(hunk_index: usize, lines: Vec<String>) -> Option<Candidate> {
@@ -119,17 +108,95 @@ fn candidate(hunk_index: usize, lines: Vec<String>) -> Option<Candidate> {
         return None;
     }
 
-    let line_fingerprints = lines.clone();
-    let token_fingerprints = token_fingerprints(&lines);
-    if line_fingerprints.is_empty() && token_fingerprints.is_empty() {
+    let tokens = token_fingerprints(&lines);
+    if lines.is_empty() && tokens.is_empty() {
         return None;
     }
 
     Some(Candidate {
         hunk_index,
-        line_fingerprints,
-        token_fingerprints,
+        lines: Bag::of(lines),
+        tokens: Bag::of(tokens),
     })
+}
+
+/// A multiset: each distinct item with how many times it was there.
+struct Bag {
+    counts: HashMap<String, usize>,
+    /// How many items went in, repeats included.
+    size: usize,
+}
+
+impl Bag {
+    fn of(items: Vec<String>) -> Self {
+        let size = items.len();
+        let mut counts = HashMap::new();
+        for item in items {
+            *counts.entry(item).or_insert(0) += 1;
+        }
+        Self { counts, size }
+    }
+
+    /// How many items the two have in common - an item in both three and five times counts
+    /// three. Walks the smaller of the two.
+    fn shared_with(&self, other: &Bag) -> usize {
+        let (fewer, more) = if self.counts.len() <= other.counts.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        fewer
+            .counts
+            .iter()
+            .map(|(item, count)| {
+                more.counts
+                    .get(item)
+                    .map_or(0, |theirs| (*count).min(*theirs))
+            })
+            .sum()
+    }
+
+    /// Shared over the union, repeats included. Two empty bags are alike.
+    fn jaccard(&self, other: &Bag) -> f64 {
+        let shared = self.shared_with(other);
+        let union = self.size + other.size - shared;
+        if union == 0 {
+            1.0
+        } else {
+            shared as f64 / union as f64
+        }
+    }
+
+    /// Twice the shared over both sizes. Two empty bags are alike.
+    fn sorensen_dice(&self, other: &Bag) -> f64 {
+        let total = self.size + other.size;
+        if total == 0 {
+            1.0
+        } else {
+            (2 * self.shared_with(other)) as f64 / total as f64
+        }
+    }
+
+    /// The most [`jaccard`](Bag::jaccard) could answer, with the shared count at its largest:
+    /// the smaller size.
+    fn most_jaccard_with(&self, other: &Bag) -> f64 {
+        let (smaller, larger) = (self.size.min(other.size), self.size.max(other.size));
+        if larger == 0 {
+            1.0
+        } else {
+            smaller as f64 / larger as f64
+        }
+    }
+
+    /// The most [`sorensen_dice`](Bag::sorensen_dice) could answer, the same way.
+    fn most_sorensen_dice_with(&self, other: &Bag) -> f64 {
+        let total = self.size + other.size;
+        if total == 0 {
+            1.0
+        } else {
+            (2 * self.size.min(other.size)) as f64 / total as f64
+        }
+    }
 }
 
 fn hint_for(hunk: &DiffHunk, score: f64) -> HunkMoveHint {

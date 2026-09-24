@@ -86,6 +86,21 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         None,
     ));
     commands.extend(work_log_commands());
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
+        title: "open in web".to_string(),
+        description: "Open this repo in a browser, on the page moon serves at /moon".to_string(),
+        action: CommandAction::OpenInWeb,
+        shortcut: None,
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
+        title: "generate pass key".to_string(),
+        description: "Copy a new key to this window's server, for a browser or another machine"
+            .to_string(),
+        action: CommandAction::GeneratePassKey,
+        shortcut: None,
+    });
     commands.push(single_pane_command(
         app.model
             .layout
@@ -169,7 +184,9 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         None,
     ));
     // Every extension, shipped or the person's own - read again each time, so one written a
-    // moment ago is offered without a restart. See `crate::extensions`.
+    // moment ago is offered without a restart. See `crate::extensions`. Not in a browser,
+    // where there is no machine of the project's for a script to run on.
+    #[cfg(not(target_arch = "wasm32"))]
     for extension in crate::extensions::all() {
         let name = extension.name;
         let opens = match extension.about.is_empty() {
@@ -283,6 +300,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     }
     // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
     // repo that lives on the far side of a `--remote` connection.
+    #[cfg(not(target_arch = "wasm32"))]
     if app.backend().reads_this_machine() {
         commands.push(Command {
             title: "open file".to_string(),
@@ -294,7 +312,9 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
 
     // Another window of each frame, opening on its launch screen. The board, the review and
     // a shell are three windows rather than three panes when that is how you want them; on
-    // macOS these are in the Window menu as well.
+    // macOS these are in the Window menu as well. A browser's window is a page, with no
+    // program of its own to start.
+    #[cfg(not(target_arch = "wasm32"))]
     for frame in crate::cli::NEW_WINDOW_FRAMES {
         commands.push(Command {
             title: format!("new {} window", frame.command()),
@@ -311,7 +331,9 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     }
 
     // Starting again is how a window picks up a rebuilt executable: the one it is running is
-    // the one it started with. On macOS this is the Window menu's Restart.
+    // the one it started with. On macOS this is the Window menu's Restart. A browser's window
+    // runs no executable of its own.
+    #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
         title: "restart window".to_string(),
         description: format!(
@@ -325,7 +347,8 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
     // Only the two platforms that have a launcher to write are offered it.
-    if cfg!(any(target_os = "macos", target_os = "linux")) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
         commands.push(Command {
             title: "install desktop launchers".to_string(),
             // Where they land is said by the toast the install leaves, rather than here: it

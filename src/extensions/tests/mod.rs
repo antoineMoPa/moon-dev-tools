@@ -63,9 +63,15 @@ impl Drop for Scratch {
 }
 
 fn start(extension: Extension, root: &Path, path: String) -> Running {
+    start_against(extension, root, path, "http://127.0.0.1:1".to_string())
+}
+
+/// A script started as a client of the moon server at `server_url`.
+fn start_against(extension: Extension, root: &Path, path: String, server_url: String) -> Running {
     let host = Host {
         project_root: root.to_path_buf(),
         path,
+        server_url,
     };
     Running::start(extension, host, || {})
 }

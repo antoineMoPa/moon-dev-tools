@@ -6,3 +6,7 @@
 /tests/snapshots/*.diff.png
 
 .moontasks/
+
+# Third-party files the browser build is made from are fetched at build time into target/ -
+# see web/build/npm_packages.rs - never kept here. Their licenses are, in web/licenses/.
+/web/assets/

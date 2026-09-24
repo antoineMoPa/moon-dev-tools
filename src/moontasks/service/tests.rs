@@ -200,6 +200,7 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
             file_path: None,
             // No server in this test, so no shell of this name is live.
             terminal_id: Some("terminal-gone".to_string()),
+            terminal_owner: None,
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
@@ -234,6 +235,7 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
             agent: AgentKind::Claude,
             file_path: None,
             terminal_id: Some("terminal-gone".to_string()),
+            terminal_owner: None,
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
@@ -249,4 +251,51 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
     );
 
     assert_eq!(metadata.status, ColumnId::new("done"));
+}
+
+/// A run on this board whose shell another moon holds - the window beside a `moon serve` - is
+/// that moon's to end, not this one's: reading the board here leaves it running. Once that moon
+/// has exited, the run is ended like any other.
+#[test]
+fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
+    let run_owned_by = |owner: u32| TaskMetadata {
+        title: "Fix the login page".to_string(),
+        status: ColumnId::new("in_progress"),
+        created_at_unix: 0,
+        entered_column_at_unix: None,
+        position: 0,
+        tags: Vec::new(),
+        resources: vec![TaskResource {
+            id: "resource".to_string(),
+            kind: TaskResourceKind::Agent,
+            agent: AgentKind::Claude,
+            file_path: None,
+            terminal_id: Some("terminal-elsewhere-1".to_string()),
+            terminal_owner: Some(owner),
+            agent_session_id: None,
+            name: None,
+            started_at_unix: 0,
+        }],
+    };
+    let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
+        std::time::Instant::now(),
+    )));
+
+    // The process that started this test is running, and is not this one.
+    let mut held = run_owned_by(std::os::unix::process::parent_id());
+    assert!(!reconcile(&state, &mut held));
+    assert_eq!(
+        held.resources[0].terminal_id.as_deref(),
+        Some("terminal-elsewhere-1")
+    );
+
+    let mut exited = std::process::Command::new("true")
+        .spawn()
+        .expect("expected to start `true`");
+    let gone = exited.id();
+    exited.wait().expect("expected `true` to exit");
+    let mut orphaned = run_owned_by(gone);
+    assert!(reconcile(&state, &mut orphaned));
+    assert_eq!(orphaned.resources[0].terminal_id, None);
+    assert_eq!(orphaned.resources[0].terminal_owner, None);
 }

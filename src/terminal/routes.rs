@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path as AxumPath, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
@@ -12,11 +12,13 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use portable_pty::PtySize;
-use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::api::{
-    AgentKind, AppError, AppState, TerminalAttentionView, TerminalNameRequest, TerminalView,
+use crate::{
+    api::{
+        AgentKind, AppError, AppState, TerminalAttentionList, TerminalNameRequest, TerminalView,
+    },
+    server::users::{UserId, Users},
 };
 
 use super::naming::{name_for_new_shell, rename};
@@ -99,11 +101,6 @@ pub(crate) async fn terminals_running_a_command(
     }))
 }
 
-#[derive(Serialize, Deserialize)]
-pub(crate) struct TerminalAttentionList {
-    pub(crate) terminals: Vec<TerminalAttentionView>,
-}
-
 /// The shells asking for a person - see [`crate::attention`].
 pub(crate) async fn terminals_wanting_attention(
     AxumPath(session_id): AxumPath<String>,
@@ -149,9 +146,13 @@ pub(crate) async fn rename_terminal(
     Ok("ok")
 }
 
+/// The socket is admitted once, as it opens - see `crate::server::auth` - so it is told who
+/// opened it and hangs up when that user is kicked - see [`Users::kicks`].
 pub(crate) async fn terminal_socket(
     AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
+    State(users): State<Users>,
+    Extension(user): Extension<UserId>,
     upgrade: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
     crate::api::with_session(&state, &session_id, |_| Ok(()))?;
@@ -161,16 +162,22 @@ pub(crate) async fn terminal_socket(
         .ok_or_else(|| AppError(anyhow::anyhow!("unknown terminal {terminal_id}")))?;
 
     Ok(upgrade.on_upgrade(move |socket| async move {
-        if let Err(error) = attach_terminal(socket, session).await {
+        if let Err(error) = attach_terminal(socket, session, users, user).await {
             eprintln!("[moonreview] terminal attachment ended: {error}");
         }
     }))
 }
 
-async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> anyhow::Result<()> {
+async fn attach_terminal(
+    socket: WebSocket,
+    session: Arc<TerminalSession>,
+    users: Users,
+    user: UserId,
+) -> anyhow::Result<()> {
     // Subscribe before replaying so nothing written in between is lost.
     let mut output = session.output.subscribe();
     let mut exited = session.exited.subscribe();
+    let mut kicks = users.kicks();
     let replay = session.scrollback.lock().unwrap().replay();
 
     let (mut socket_sender, mut socket_receiver) = socket.split();
@@ -207,6 +214,13 @@ async fn attach_terminal(socket: WebSocket, session: Arc<TerminalSession>) -> an
             _ = &mut pump_output => break,
             // The shell exited: nothing more will come, so let the tab know.
             _ = exited.changed() => break,
+            // Someone was kicked - this user, or everyone: the socket closes rather than
+            // going on past its admission.
+            kicked = kicks.changed() => {
+                if kicked.is_err() || users.is_kicked(&user) {
+                    break;
+                }
+            }
             incoming = socket_receiver.next() => {
                 let Some(Ok(message)) = incoming else { break };
                 let Message::Text(text) = message else { continue };

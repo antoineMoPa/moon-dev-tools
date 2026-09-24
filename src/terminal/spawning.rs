@@ -166,7 +166,10 @@ impl TerminalRegistry {
                         for asked in session.attention_scanner.lock().unwrap().feed(chunk) {
                             session.asked_for_attention(asked);
                         }
-                        session.scrollback.lock().unwrap().push(chunk);
+                        // A window attached now reads this as it comes, and answers any question
+                        // in it - which a later replay then leaves out.
+                        let seen_live = output.receiver_count() > 0;
+                        session.scrollback.lock().unwrap().push(chunk, seen_live);
                         // No attached tab is normal: the shell keeps running regardless.
                         let _ = output.send(chunk.to_vec());
                     }
@@ -180,7 +183,8 @@ impl TerminalRegistry {
             match failure_notice(&session) {
                 Some(notice) if registry.is_live(&reaped_id) => {
                     session.child_ended.store(true, Ordering::Relaxed);
-                    session.scrollback.lock().unwrap().push(notice.as_bytes());
+                    // Moon's own words, which ask nothing.
+                    session.scrollback.lock().unwrap().push(notice.as_bytes(), true);
                     let _ = output.send(notice.into_bytes());
                 }
                 _ => {

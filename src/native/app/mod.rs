@@ -2,17 +2,20 @@
 
 mod actions;
 mod draw;
+#[cfg(not(target_arch = "wasm32"))]
+mod windows;
 
 pub(crate) use draw::window_title;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Result;
 use egui_frames::{Frames, Layout, PaneId};
+use web_time::Instant;
 
 use crate::{
     api::AgentKind,
@@ -20,7 +23,6 @@ use crate::{
     native::{
         Launch,
         bindings::Keymap,
-        menu::NativeMenu,
         model::{Model, Stage, hash_of},
         palette::CommandAction,
         panes::Pane,
@@ -100,6 +102,7 @@ pub(crate) struct App {
     /// When the window last asked which shells have something running in them.
     last_running_shells_poll: Instant,
     /// When the board's review requests were last read - see [`App::poll_review_requests`].
+    #[cfg(not(target_arch = "wasm32"))]
     last_review_requests_poll: Instant,
     /// When the window last asked what the language servers are doing - see
     /// [`crate::native::status_bar`]. Kept here rather than per pane: the question is about
@@ -138,10 +141,17 @@ pub(crate) struct App {
     /// that has begun - the `C-x` of `C-x o` - between frames.
     keymap: Keymap,
     /// The macOS menu bar, if this platform has one.
-    menu: Option<NativeMenu>,
+    #[cfg(not(target_arch = "wasm32"))]
+    menu: Option<crate::native::menu::NativeMenu>,
     /// Parsed diffs, keyed by hunk. Word diffing a hunk is quadratic in its line lengths,
     /// which a file like `Cargo.lock` has thousands of, so it must not happen per frame.
     diffs: HashMap<String, CachedDiff>,
+    /// Until when this frame may go on reading hunks as code - see
+    /// [`CODE_READING_PER_FRAME`].
+    code_reading_until: Instant,
+    /// Whether a hunk was drawn this frame with its lines left plain for want of time, so
+    /// another frame has to follow to read it.
+    hunks_left_unread: bool,
     /// What each hunk card measured the last time it was drawn, so the diff pane can skip the
     /// ones that are scrolled out of sight instead of laying them out again.
     pub(crate) hunk_heights: HashMap<String, f32>,
@@ -169,24 +179,32 @@ pub(crate) struct App {
     window_title: String,
     /// Until when a quit that was warned about goes through unasked.
     quit_armed_until: Option<Instant>,
+    // `moon open`'s, down to `window_is_in_front` - see `open_from_shell`. A browser has no
+    // shell to type it in.
     /// The socket a `moon open` typed in a shell reaches this window on, and the record
     /// saying which project it is on. `None` in a ui test, which listens for nothing - see
     /// [`App::listen_for_shell_asks`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) shell_asks: Option<crate::instances::window::ShellAsks>,
     /// The project that record was last written with, so it is rewritten when the window
     /// opens another project and not on every frame.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) project_asks_reach_this_window_on: Option<std::path::PathBuf>,
     /// Files shells have asked for, waiting their turn: opening a tab goes through the one
     /// deferred slot every other pane change does, so they are opened one to a frame.
-    pub(crate) asked_files: VecDeque<crate::instances::window::OpenFileAsked>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) asked_files: std::collections::VecDeque<crate::instances::window::OpenFileAsked>,
     /// The tabs `moon edit --wait` asks opened, which the shell that asked is waiting on -
     /// see [`crate::native::open_from_shell::WaitedTab`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) waited_tabs: Vec<crate::native::open_from_shell::WaitedTab>,
     /// The sessions this window opened so it could take files of projects it is not itself
     /// on - see [`crate::native::open_from_shell`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) sessions_for_asked_files: crate::native::open_from_shell::SessionsForAskedFiles,
     /// Whether the window was in front on the last frame, so the frame it comes forward on
     /// is the one that writes that down for the shells to read.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) window_is_in_front: bool,
     /// What `~/.moonreview/settings.json` said, and what it will be written back as.
     settings: crate::settings::Settings,
@@ -202,7 +220,22 @@ struct CachedDiff {
     /// The character count of the longest body among the lines, which is how far the hunk
     /// can be scrolled sideways. Counted once here rather than walked on every frame.
     widest_body_columns: usize,
+    /// Whether the lines carry their syntax, or were built plain because the frame had spent
+    /// its [`CODE_READING_PER_FRAME`] already.
+    read_as_code: bool,
 }
+
+/// How long one frame may spend reading hunks as code before it draws the rest plain and
+/// leaves them to the frames after it.
+///
+/// The first frame of a review has no card heights to skip the off-screen cards by, so it
+/// builds the lines of every hunk in the diff. Reading them all as code in that one frame is
+/// a second or so natively, and seven in a browser, where the grammar's backtracking regexes
+/// run in wasm - with the page frozen the whole time, since the browser's thread is the one
+/// drawing. Spread over frames, a card shows plain for a frame or two and takes its colours
+/// as soon as it comes up; the cards out of sight are skipped once measured and are only read
+/// when scrolled to.
+const CODE_READING_PER_FRAME: Duration = Duration::from_millis(8);
 
 impl App {
     /// Built from a bare [`egui::Context`] rather than an `eframe::CreationContext`, so the
@@ -247,6 +280,7 @@ impl App {
                 project_shell: None,
                 submodule_filter: String::new(),
                 review_requests: Vec::new(),
+                #[cfg(not(target_arch = "wasm32"))]
                 review_request_amendments: 0,
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
@@ -265,6 +299,7 @@ impl App {
                 commit_panes: HashMap::new(),
                 file_editors: HashMap::new(),
                 work_log_entries_waiting: HashMap::new(),
+                #[cfg(not(target_arch = "wasm32"))]
                 extension_panes: HashMap::new(),
                 markdown_cache: Default::default(),
                 find: None,
@@ -300,6 +335,7 @@ impl App {
             last_running_shells_poll: Instant::now()
                 .checked_sub(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
+            #[cfg(not(target_arch = "wasm32"))]
             last_review_requests_poll: Instant::now()
                 .checked_sub(BOARD_POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
@@ -316,8 +352,11 @@ impl App {
             keyboard_pane: None,
             front_pane: None,
             pane_taking_keyboard: None,
+            #[cfg(not(target_arch = "wasm32"))]
             menu: None,
             diffs: HashMap::new(),
+            code_reading_until: Instant::now(),
+            hunks_left_unread: false,
             hunk_heights: HashMap::new(),
             decoded_images: HashMap::new(),
             // Turned on by the window itself - see the field.
@@ -333,11 +372,17 @@ impl App {
             window_title: window_title(launch.frame, None),
             quit_armed_until: None,
             // Started by the window itself - see the field.
+            #[cfg(not(target_arch = "wasm32"))]
             shell_asks: None,
+            #[cfg(not(target_arch = "wasm32"))]
             project_asks_reach_this_window_on: None,
-            asked_files: VecDeque::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            asked_files: std::collections::VecDeque::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             waited_tabs: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
             window_is_in_front: false,
             settings,
             webviews: Default::default(),
@@ -352,9 +397,10 @@ impl App {
     /// Put up the application menu. Only [`crate::native::run`] calls this: on macOS the
     /// menu bar may only be built on the main thread, which is where the window lives but is
     /// not where a test runs.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn install_menu(&mut self) {
         let picks_files = self.backend().reads_this_machine();
-        self.menu = NativeMenu::install(picks_files, self.frame);
+        self.menu = crate::native::menu::NativeMenu::install(picks_files, self.frame);
     }
 
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {
@@ -415,7 +461,9 @@ impl App {
     ///
     /// Reading the code is part of building them rather than something the painter does:
     /// syntax is worked out once per patch here and thrown away with it, where per row or per
-    /// frame it would be a grammar run for every line on screen, every frame.
+    /// frame it would be a grammar run for every line on screen, every frame. Once the frame
+    /// has spent its [`CODE_READING_PER_FRAME`], lines come back plain, and are built again
+    /// with their syntax by the first frame that asks for them with time left.
     pub(crate) fn diff_lines(
         &mut self,
         hunk_id: &str,
@@ -423,14 +471,21 @@ impl App {
         file_path: &str,
     ) -> Arc<Vec<DiffLine>> {
         let patch_hash = hash_of(patch);
+        let has_time_to_read = Instant::now() < self.code_reading_until;
         if let Some(cached) = self.diffs.get(hunk_id)
             && cached.patch_hash == patch_hash
+            && (cached.read_as_code || !has_time_to_read)
         {
+            self.hunks_left_unread |= !cached.read_as_code;
             return Arc::clone(&cached.lines);
         }
 
         let mut lines = build_diff_lines(patch);
-        attach_syntax(&mut lines, file_path);
+        if has_time_to_read {
+            attach_syntax(&mut lines, file_path);
+        } else {
+            self.hunks_left_unread = true;
+        }
         let widest_body_columns = lines
             .iter()
             .filter(|line| !line.is_chrome())
@@ -444,9 +499,23 @@ impl App {
                 patch_hash,
                 lines: Arc::clone(&lines),
                 widest_body_columns,
+                read_as_code: has_time_to_read,
             },
         );
         lines
+    }
+
+    /// Give the frame about to draw the panes its time for reading hunks as code - see
+    /// [`CODE_READING_PER_FRAME`].
+    pub(crate) fn start_reading_hunks(&mut self) {
+        self.code_reading_until = Instant::now() + CODE_READING_PER_FRAME;
+        self.hunks_left_unread = false;
+    }
+
+    /// Whether the panes just drawn left a hunk plain, so a frame has to follow to read it
+    /// even with nothing else moving.
+    pub(crate) fn hunks_left_unread(&self) -> bool {
+        self.hunks_left_unread
     }
 
     /// The character count of the longest line [`diff_lines`](Self::diff_lines) last built

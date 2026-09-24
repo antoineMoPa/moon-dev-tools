@@ -165,7 +165,7 @@ impl App {
             Some(format!("open-project-for-asked-files:{repo_path}")),
             move |backend| {
                 backend.open_session(OpenSessionRequest {
-                    repo_path,
+                    repo_path: repo_path.clone(),
                     diff_target: None,
                     active_commit: None,
                 })

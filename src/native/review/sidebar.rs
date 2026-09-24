@@ -8,14 +8,13 @@ use std::collections::HashMap;
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Ui, vec2};
 
 use crate::{
-    api::CommitView,
+    api::{CommitView, HISTORY_COMMIT_PAGE_SIZE},
     native::{
         app::App,
         review::files::{FileStageStatus, SidebarFile, build_sidebar_files, local_changes_summary},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
-    service::HISTORY_COMMIT_PAGE_SIZE,
 };
 
 /// One line, the same for every file in the list.
@@ -562,7 +561,7 @@ pub(crate) fn select_commit(app: &mut App, session_id: &str, commit: Option<Stri
     let for_call = session_id.to_string();
     app.tasks
         .act(session_id, "could not switch commit", move |backend| {
-            backend.set_active_commit(&for_call, commit)
+            backend.set_active_commit(&for_call, commit.clone())
         });
 }
 

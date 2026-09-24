@@ -3,18 +3,24 @@
 //! `moonreview serve` on the far side is the whole server contract, so no extra daemon is
 //! involved.
 
+mod addresses;
+// The same methods either way: blocking reqwest and tungstenite in a program of its own, and
+// the browser's own requests and sockets in the build for the browser.
+#[cfg(not(target_arch = "wasm32"))]
 mod transport;
+#[cfg(target_arch = "wasm32")]
+#[path = "remote/transport_web.rs"]
+mod transport;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod rounds;
 
-use transport::{RemoteShell, set_read_timeout, urlencode, websocket_url};
+// The server spells repo paths into the addresses it redirects to the same way.
+pub(crate) use addresses::urlencode;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use transport::PASS_KEY_ENV_VAR;
+use addresses::websocket_url;
 
-use std::{
-    sync::{Arc, Mutex, mpsc},
-    thread,
-    time::Duration,
-};
-
-use anyhow::{Context, Result};
-use reqwest::blocking::Client;
+use anyhow::Result;
 use serde_json::json;
 
 use crate::{
@@ -26,7 +32,7 @@ use crate::{
         PatchPayload, SearchScope, SessionOpened, SessionPayload, SubmoduleHubPayload,
         TerminalNameRequest, TerminalView,
     },
-    backend::Backend,
+    backend::{Backend, SearchListener},
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, LinkFileRequest, NewColumnRequest, StartResourceRequest,
@@ -34,19 +40,13 @@ use crate::{
         explainer::ExplainRequest,
     },
     project::{ProjectCommand, ProjectConfig},
-    search::SearchListener,
 };
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long a streamed search may take: as long as `ag` needs on a large tree, which is not
-/// the half minute a plain request gets. A search nobody wants is stopped long before.
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub(crate) struct RemoteBackend {
     /// Base URL of the remote server, without a trailing slash, e.g. `http://dev-box:42000`.
     base_url: String,
     label: String,
-    client: Client,
+    connection: transport::Connection,
 }
 
 impl Backend for RemoteBackend {
@@ -58,8 +58,29 @@ impl Backend for RemoteBackend {
         false
     }
 
-    fn connect_target(&self) -> Option<String> {
-        Some(self.base_url.clone())
+    #[cfg(not(target_arch = "wasm32"))]
+    fn connect_target(&self) -> Option<crate::backend::ConnectTarget> {
+        Some(crate::backend::ConnectTarget {
+            address: self.base_url.clone(),
+            pass_key: self.connection.pass_key.clone(),
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mint_pass_key(&self) -> Result<String> {
+        let minted: crate::api::PassKeyMinted = self.post_json("/api/pass-key", &json!({}))?;
+        Ok(minted.pass_key)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mint_login_ticket(&self, lifetime: std::time::Duration) -> Result<String> {
+        let minted: crate::api::LoginTicketMinted = self.post_json(
+            "/api/login-ticket",
+            &crate::api::LoginTicketRequest {
+                lifetime_seconds: lifetime.as_secs(),
+            },
+        )?;
+        Ok(minted.ticket)
     }
 
     fn open_session(&self, request: OpenSessionRequest) -> Result<SessionOpened> {
@@ -512,6 +533,7 @@ impl Backend for RemoteBackend {
         Ok(outcome.exit_code)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
             &format!("/api/session/{session_id}/run-in-shell"),
@@ -557,7 +579,7 @@ impl Backend for RemoteBackend {
         &self,
         session_id: &str,
     ) -> Result<Vec<crate::api::TerminalAttentionView>> {
-        let list: crate::terminal::TerminalAttentionList =
+        let list: crate::api::TerminalAttentionList =
             self.get(&format!("/api/session/{session_id}/terminals/attention"))?;
         Ok(list.terminals)
     }
@@ -566,7 +588,7 @@ impl Backend for RemoteBackend {
         &self,
         session_id: &str,
     ) -> Result<Vec<crate::visualizations::VisualizationView>> {
-        let list: crate::visualizations::routes::VisualizationList = self.get(&format!(
+        let list: crate::visualizations::VisualizationList = self.get(&format!(
             "/api/session/{session_id}/terminals/visualizations"
         ))?;
         Ok(list.visualizations)
@@ -574,7 +596,7 @@ impl Backend for RemoteBackend {
 
     fn visualization_page(&self, session_id: &str, fragment_path: &str) -> Result<String> {
         let encoded = urlencode(fragment_path);
-        let page: crate::visualizations::routes::VisualizationPage = self.get(&format!(
+        let page: crate::visualizations::VisualizationPage = self.get(&format!(
             "/api/session/{session_id}/visualizations/page?fragment_path={encoded}"
         ))?;
         Ok(page.html)
@@ -803,60 +825,10 @@ impl Backend for RemoteBackend {
     }
 
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream> {
-        let url = websocket_url(
+        self.attach_shell(&websocket_url(
             &self.base_url,
             &format!("/api/session/{session_id}/terminals/{terminal_id}/socket"),
-        );
-        let (socket, _) = tungstenite::connect(&url)
-            .with_context(|| format!("failed to attach to the remote shell at {url}"))?;
-        set_read_timeout(&socket)?;
-
-        let socket = Arc::new(Mutex::new(socket));
-        let (sender, output) = mpsc::channel();
-        let reader_socket = Arc::clone(&socket);
-
-        thread::spawn(move || {
-            loop {
-                let message = {
-                    let Ok(mut socket) = reader_socket.lock() else {
-                        return;
-                    };
-                    match socket.read() {
-                        Ok(message) => Some(message),
-                        // A read timeout is how the writer gets the lock between frames.
-                        Err(tungstenite::Error::Io(error))
-                            if matches!(
-                                error.kind(),
-                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                            ) =>
-                        {
-                            None
-                        }
-                        Err(_) => return,
-                    }
-                };
-
-                let Some(message) = message else {
-                    thread::sleep(Duration::from_millis(4));
-                    continue;
-                };
-
-                let chunk = match message {
-                    tungstenite::Message::Binary(bytes) => bytes.to_vec(),
-                    tungstenite::Message::Text(text) => text.as_bytes().to_vec(),
-                    tungstenite::Message::Close(_) => return,
-                    _ => continue,
-                };
-                if sender.send(chunk).is_err() {
-                    return;
-                }
-            }
-        });
-
-        Ok(egui_tty::TtyStream {
-            output,
-            tty: Arc::new(RemoteShell { socket }),
-        })
+        ))
     }
 }
 

@@ -20,10 +20,9 @@ mod on_disk;
 mod opening;
 mod serving;
 
-use std::time::Instant;
-
 use egui_moon_code_ide::{Completing, LspPosition, Served};
 use egui_moon_editor::{Editor, Language};
+use web_time::Instant;
 
 use crate::api::FileContentPayload;
 
@@ -174,7 +173,9 @@ impl FileEditor {
     }
 
     /// A tab on a path nothing is at yet: empty, and not on disk until its first save creates
-    /// the file. Closing it unsaved leaves nothing behind.
+    /// the file. Closing it unsaved leaves nothing behind. Only `moon edit` asks for one, which
+    /// never reaches a browser's window.
+    #[cfg(not(target_arch = "wasm32"))]
     fn new_file(file_path: String, asks_language_servers: bool) -> Self {
         let mut editor = Self::loading(file_path, asks_language_servers);
         editor.saved = Some(String::new());

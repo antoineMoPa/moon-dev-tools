@@ -45,6 +45,7 @@ RUN set -eux; \
     chmod -R a+rX /opt/zig; \
     zig version
 
+# wasm32 as well: build.rs builds the window for the browser, which each executable embeds.
 RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" --target "${LINUX_TARGET_TRIPLE}" \
+        | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" --target "${LINUX_TARGET_TRIPLE}" --target wasm32-unknown-unknown \
     && chmod -R a+rX /opt/rust

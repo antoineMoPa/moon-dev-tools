@@ -47,7 +47,8 @@ pub(crate) fn logo_image_source(frame: Frame, size: usize) -> egui::ImageSource<
 /// The logo as the window icon: the dock, the task switcher and the title bar all take it
 /// from here. 256 pixels because the Dock on a Retina display draws the icon at up to
 /// 128 points, and eframe hands these exact pixels to `setApplicationIconImage` - a smaller
-/// bitmap is stretched there and arrives blurry.
+/// bitmap is stretched there and arrives blurry. A browser's tab takes the page's own icon.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn window_icon(frame: Frame) -> egui::IconData {
     let image = image::load_from_memory(logo_png(frame, 256))
         .expect("the embedded logo is a valid png")

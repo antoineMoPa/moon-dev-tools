@@ -1,11 +1,12 @@
-//! The two extensions built into the executable, `files` and `docker`, run the way their panes
-//! run them - docker against a stand-in that says what a daemon would.
+//! The extensions built into the executable - `files`, `docker` and `users` - run the way their
+//! panes run them: docker against a stand-in that says what a daemon would, users against a
+//! server of the test's.
 
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::{Heard, PATIENCE, Scratch, start, system_path};
+use super::{Heard, PATIENCE, Scratch, start, start_against, system_path};
 use crate::extensions::{Effect, Input, named};
 
 #[test]
@@ -13,6 +14,7 @@ fn the_extensions_the_executable_ships_are_offered_with_what_they_are_for() {
     // Act
     let files = named("files").expect("files is shipped");
     let docker = named("docker").expect("docker is shipped");
+    let users = named("users").expect("users is shipped");
 
     // Assert
     assert!(files.about.contains("folders"), "got {:?}", files.about);
@@ -21,6 +23,7 @@ fn the_extensions_the_executable_ships_are_offered_with_what_they_are_for() {
         "got {:?}",
         docker.about
     );
+    assert!(users.about.contains("kick"), "got {:?}", users.about);
 }
 
 /// A folder to browse: a subfolder, a file, and a dotfile.
@@ -405,4 +408,40 @@ fn docker_says_what_the_daemon_said_when_it_cannot_be_reached() {
             .iter()
             .any(|text| text.contains("Cannot connect to the Docker daemon"))
     });
+}
+
+/// The pane is a user of the server like any other - `this pane` - and kicks the one its
+/// cursor is on, who is refused from then on.
+#[test]
+fn users_lists_who_is_in_the_server_and_kicks_the_one_selected() {
+    // Arrange: a server that has seen the test's client once.
+    let served = crate::server_tests::serve("users-extension");
+    let check = format!("{}/api/pass-key", served.base_url);
+    let asked = served.client.get(&check).send().expect("failed to ask");
+    assert_eq!(asked.status(), reqwest::StatusCode::NO_CONTENT);
+    let running = start_against(
+        named("users").expect("users is shipped"),
+        &std::env::temp_dir(),
+        system_path(),
+        served.base_url.clone(),
+    );
+    let mut heard = Heard::default();
+    heard.until(&running, |heard| {
+        heard.shows("this pane") && heard.shows("in")
+    });
+    assert!(heard.shows("127.0.0.1"), "got {:?}", heard.texts());
+    assert!(heard.shows("pass key"), "got {:?}", heard.texts());
+
+    // Act: onto the client's row - the one that is `in` - and kick.
+    let client_row = heard.row_showing("in");
+    running.send(Input::Event(
+        client_row.on_click.expect("a row selects on click"),
+    ));
+    running.send(Input::Key("x".to_string()));
+
+    // Assert
+    heard.until(&running, |heard| heard.shows("kicked"));
+    let refused = served.client.get(&check).send().expect("failed to ask");
+    assert_eq!(refused.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert!(heard.shows("this pane"), "the pane's own key is still in");
 }

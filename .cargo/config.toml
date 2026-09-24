@@ -1,0 +1,4 @@
+# getrandom 0.3 only reads randomness from the browser when told to by this cfg as well as by
+# its `wasm_js` feature - see the wasm32 dependencies in Cargo.toml.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

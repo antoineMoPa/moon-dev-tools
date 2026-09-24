@@ -154,8 +154,8 @@ const SWATCH: f32 = 22.0;
 /// The row of swatches this window's ground is picked from.
 ///
 /// Unlike the two boxes above, this writes nothing to the repo: which color a window is
-/// belongs to whoever is looking at it, so it is kept in `~/.moonreview/settings.json`
-/// against the project's path - see `App::set_workspace_color`. The row is here because this
+/// belongs to whoever is looking at it, so it is kept in `~/.moonreview/settings.json` - or
+/// the browser's storage - against the project's path, see `App::set_workspace_color`. The row is here because this
 /// is the pane about this project.
 fn draw_workspace_color(app: &mut App, ui: &mut Ui, palette: &Palette) {
     ui.label(RichText::new("workspace color").size(SMALL_SIZE).strong());

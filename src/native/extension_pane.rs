@@ -210,6 +210,7 @@ impl App {
         let host = Host {
             project_root,
             path: crate::shell_path::installed_tools_path().to_string(),
+            server_url: crate::api::server_url(),
         };
         let repaint = ctx.clone();
         Some(ExtensionPane {

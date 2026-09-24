@@ -5,12 +5,11 @@
 //! [`egui_moon_code_ide::Signing`]'s. What is here is this window's: the question goes through
 //! [`crate::backend::Backend`] on the window's own tasks, and the popup is drawn over the tab.
 
-use std::time::Instant;
-
 use egui::{Align2, Color32, FontId, Key, text::LayoutJob, vec2};
 use egui_frames::PaneId;
 use egui_moon_code_ide::{LanguageSource, SigningNext};
 use egui_moon_editor::EditorOutput;
+use web_time::Instant;
 
 use crate::native::{app::App, language_source::SessionLanguages, theme::Palette};
 

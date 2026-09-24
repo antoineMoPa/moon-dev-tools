@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>moon</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1b1b1b;
+        color: #d8d8d8;
+        font-family: -apple-system, "Segoe UI", sans-serif;
+      }
+      #moon_canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+      #moon_failed {
+        display: none;
+        padding: 2em;
+        white-space: pre-wrap;
+        font-family: Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="moon_canvas"></canvas>
+    <div id="moon_failed"></div>
+    <script type="module">
+      import init, { start, ghostty_log } from "./moonreview.js";
+      import { readLogsWith } from "./ghostty_env.js";
+
+      // A login link opened by a browser that is logged in already: its ticket has no use
+      // here, and is taken off the address so it stays out of the history - see
+      // src/server/login.html, where such a link is the one that logs in.
+      if (location.hash.startsWith("#ticket=")) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+
+      try {
+        await init();
+        readLogsWith(ghostty_log);
+        await start(document.getElementById("moon_canvas"));
+      } catch (error) {
+        const failed = document.getElementById("moon_failed");
+        failed.textContent = `moon could not start: ${error}`;
+        failed.style.display = "block";
+        document.getElementById("moon_canvas").remove();
+        throw error;
+      }
+    </script>
+  </body>
+</html>

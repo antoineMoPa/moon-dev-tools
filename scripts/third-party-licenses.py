@@ -12,13 +12,16 @@ What goes in:
   license files each crate ships;
 - what reaches the executable without being a crate, listed in NOT_CRATES below.
 
-A license text several crates ship word for word is written once, under all of them.
+A license's wording is written once, under every crate whose license file carries it, each crate
+with the copyright lines of its own file: the Apache and MIT texts differ between crates only by
+who holds the copyright, and by spacing.
 
     scripts/third-party-licenses.py          write the file
     scripts/third-party-licenses.py --check  fail when the file is not what would be written
 """
 
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -33,6 +36,8 @@ RELEASE_TARGETS = [
     "aarch64-apple-darwin",
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
+    # The browser build of the window, which each executable embeds - see build.rs.
+    "wasm32-unknown-unknown",
 ]
 
 # A crate's files that are its license, by the start of their name.
@@ -43,6 +48,15 @@ LICENSE_FILE_PREFIXES = ("license", "licence", "copying", "notice", "unlicense")
 LICENSE_TEXTS = ROOT / "scripts" / "license-texts"
 # The words of a license expression that name no license.
 EXPRESSION_WORDS = {"OR", "AND", "WITH"}
+
+# The start of a line that says who holds the copyright - "Copyright (c) 2015 Jane Doe",
+# "(c) 2018 The Foo Authors", "© 2020 Bar" - as opposed to the license's own wording about
+# copyright: "copyright license to reproduce", "Copyright and related rights", "(c) You must".
+COPYRIGHT_LINE = re.compile(
+    r"^(copyright\b(?!\s+(license|notice|owner|holder|and|or|in|to|of)\b)|\(c\)\s*\d{4}|©)", re.I
+)
+# What marks a copyright line as the license's fill-in template rather than a holder's.
+COPYRIGHT_TEMPLATE_MARKS = ("[yyyy]", "[year]", "<year>", "<yyyy>")
 
 # What is compiled into the executable without being a crate: what it is, and its license files
 # relative to the repo root.
@@ -125,6 +139,28 @@ def read(path):
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def is_copyright_line(line):
+    return bool(COPYRIGHT_LINE.match(line)) and not any(
+        mark in line.lower() for mark in COPYRIGHT_TEMPLATE_MARKS
+    )
+
+
+def split_license_file(text):
+    """A license file's lines that say who holds the copyright; the rest, the license's wording,
+    as written; and that wording with its spacing evened out, the same wherever crates lay the
+    same license out differently."""
+    copyrights, wording, key = [], [], []
+    for line in text.splitlines():
+        flat = " ".join(line.split())
+        if is_copyright_line(flat):
+            copyrights.append(flat)
+        else:
+            wording.append(line.rstrip())
+            if flat:
+                key.append(flat)
+    return copyrights, "\n".join(wording).strip("\n"), "\n".join(key)
+
+
 def rendered():
     packages = {}
     for target in RELEASE_TARGETS:
@@ -133,9 +169,11 @@ def rendered():
         for package_id in linked_packages(metadata):
             packages[package_id] = by_id[package_id]
 
-    # Each license file's text, once, under every crate that ships it: the Apache text most
-    # crates carry is word for word the same, while the MIT texts differ by their copyright line.
-    crates_by_text = defaultdict(list)
+    # Each license's wording, once, under every crate whose license file carries it, with that
+    # file's copyright lines: keyed by the wording with its spacing evened out, holding the
+    # wording as the first crate's file writes it.
+    crates_by_wording = defaultdict(list)
+    wording_by_key = {}
     without_files = []
     for package in sorted(packages.values(), key=lambda package: (package["name"], package["version"])):
         crate = f"{package['name']} {package['version']} ({package.get('license') or 'no license given'})"
@@ -144,7 +182,9 @@ def rendered():
             without_files.append((crate, package["license"]))
             continue
         for path in files:
-            crates_by_text[read(path)].append(crate)
+            copyrights, wording, key = split_license_file(read(path))
+            wording_by_key.setdefault(key, wording)
+            crates_by_wording[key].append("\n".join([crate] + [f"    {line}" for line in copyrights]))
 
     rule = "=" * 100
     sections = [
@@ -155,8 +195,8 @@ def rendered():
     for what, paths in NOT_CRATES:
         texts = "\n\n".join(f"--- {Path(path).name}\n\n{read(ROOT / path)}" for path in paths)
         sections.append(f"{rule}\n{what}\n{rule}\n\n{texts}")
-    for text, crates in sorted(crates_by_text.items(), key=lambda entry: entry[1][0]):
-        sections.append(f"{rule}\n" + "\n".join(crates) + f"\n{rule}\n\n{text}")
+    for key, crates in sorted(crates_by_wording.items(), key=lambda entry: entry[1][0]):
+        sections.append(f"{rule}\n" + "\n".join(crates) + f"\n{rule}\n\n{wording_by_key[key]}")
     if without_files:
         sections.append(
             f"{rule}\nCrates that ship no license file, under the license their manifest names\n{rule}\n\n"

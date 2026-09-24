@@ -1,32 +1,34 @@
 //! What the window does between frames: polls the backend, opens reviews and windows, and
 //! runs the commands a keystroke or a menu item asks for.
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use egui_frames::PaneId;
+use web_time::Instant;
 
 use crate::{
     api::OpenSessionRequest,
-    moontasks::review_request,
     native::{
         bindings::Action,
         board, find,
-        menu::{MenuAction, NativeMenu},
         model::{OpenedFile, ProjectEditor, Stage},
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
-        programs::Opens,
     },
     project::{ProjectCommand, ProjectConfig},
 };
 
-use super::{
-    App, BACKGROUND_POLL_INTERVAL, BOARD_POLL_INTERVAL, POLL_INTERVAL, QUIT_CONFIRM_WINDOW,
-    TabAction,
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+    moontasks::review_request,
+    native::menu::{MenuAction, NativeMenu},
 };
+
+use super::{App, BACKGROUND_POLL_INTERVAL, BOARD_POLL_INTERVAL, POLL_INTERVAL, TabAction};
 
 /// The key one read of the board's review requests runs under, which is also how the poll knows
 /// one is already going - see [`App::poll_review_requests`].
+#[cfg(not(target_arch = "wasm32"))]
 const REVIEW_REQUESTS_KEY: &str = "review-requests";
 
 /// The key that keeps the project file to one write at a time - see [`App::save_project`].
@@ -39,7 +41,7 @@ impl App {
         // repo has no business on the launch screen's list.
         let repo_path = open.repo_path.clone();
         self.tasks.spawn(
-            move |backend| backend.open_session(open),
+            move |backend| backend.open_session(open.clone()),
             move |model, result| match result {
                 Ok(opened) => {
                     model.root_session_id = opened.session_id.clone();
@@ -300,6 +302,9 @@ impl App {
     /// row says is not only what the file says - a row is pending until its repo has nothing left
     /// to commit, and that changes when someone commits, not when the file does. The same reason
     /// the submodule hub is on a clock rather than on a watch.
+    ///
+    /// Not in a browser, which is never on the machine the folder is: it has no rows of these.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn poll_review_requests(&mut self) {
         if self.last_review_requests_poll.elapsed() < BOARD_POLL_INTERVAL {
             return;
@@ -424,9 +429,13 @@ impl App {
             CommandAction::OpenPane(request) => self.open_pane(request),
             CommandAction::ToggleTheme => self.set_theme(self.model.theme.toggled()),
             CommandAction::MarkWorkspace(color) => self.set_workspace_color(color),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::InstallLaunchers => self.install_launchers(),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::NewWindow(frame) => self.open_new_window(frame),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::RestartWindow => self.restart_window(ctx),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
             CommandAction::FindFile => {
                 let in_front = self.review_in_front();
@@ -441,6 +450,7 @@ impl App {
             }
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::RestartExtension(name) => self.restart_extension(&name),
             CommandAction::RenameSymbol => crate::native::renaming::start_in_front(self),
             CommandAction::FindPlaces(which) => crate::native::places::ask_in_front(self, which),
@@ -448,6 +458,10 @@ impl App {
             CommandAction::CodeActions => crate::native::code_actions::start_in_front(self),
             CommandAction::ToggleBlame => crate::native::blame::toggle_in_front(self),
             CommandAction::OpenWorkLog => self.open_work_log(),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::OpenInWeb => self.open_in_web(),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::GeneratePassKey => self.generate_pass_key(ctx),
             CommandAction::ApplyCodeAction(index) => {
                 crate::native::code_actions::apply(self, index)
             }
@@ -475,111 +489,16 @@ impl App {
         );
     }
 
-    /// Open another window - of this program or of one of its siblings - on its launch
-    /// screen, where it asks which repo to open.
-    ///
-    /// A window is a process here: each one carries its own review server and its own shells,
-    /// so there is nothing to open a second window out of but a second run of the executable.
-    /// It is left to run on its own; closing this one does not take it with it.
-    fn open_new_window(&mut self, frame: crate::cli::Frame) {
-        let executable = match crate::native::programs::this_executable() {
-            Ok(executable) => executable,
-            Err(error) => {
-                self.model
-                    .error(format!("could not find this window's own program: {error}"));
-                return;
-            }
-        };
-
-        if let Err(error) = self.start_window(frame, &executable, Opens::LaunchScreen) {
-            self.model.error(format!(
-                "could not open a {} window: {error}",
-                frame.display_name()
-            ));
-        }
-    }
-
-    /// Start this program again on the repo this window is on, and close this window once the
-    /// new one is on its way.
-    ///
-    /// A window runs the executable it was started with, so a rebuilt one only reaches the
-    /// screen through a second process. The new instance is started first: a window that
-    /// closed on a failed spawn would leave the user with nothing.
-    pub(crate) fn restart_window(&mut self, ctx: &egui::Context) {
-        let frame = self.frame;
-        let executable = match crate::native::programs::this_executable() {
-            Ok(executable) => executable,
-            Err(error) => {
-                self.model
-                    .error(format!("could not find this window's own program: {error}"));
-                return;
-            }
-        };
-
-        // Without a project the window is on its launch screen, and that is where it comes
-        // back to.
-        let project_path = self.model.project_path.clone();
-        let opens = match &project_path {
-            Some(path) => Opens::Repo(path),
-            None => Opens::LaunchScreen,
-        };
-        match self.start_window(frame, &executable, opens) {
-            Ok(()) => self.close_window(ctx),
-            Err(error) => self
-                .model
-                .error(format!("could not restart this window: {error}")),
-        }
-    }
-
-    /// Close this window because the window itself was told to go, rather than because someone
-    /// pressed ⌘Q.
-    ///
-    /// Asking for a restart is already the answer to "a shell is still running": the window
-    /// arms the confirmation on its way out, so the close it sends itself is not questioned
-    /// back and answered with a toast instead of a new window.
-    pub(crate) fn close_window(&mut self, ctx: &egui::Context) {
-        self.quit_armed_until = Some(Instant::now() + QUIT_CONFIRM_WINDOW);
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-    }
-
-    /// Start another process of `frame`, against the same machine this window reads.
-    fn start_window(
-        &self,
-        frame: crate::cli::Frame,
-        executable: &std::path::Path,
-        opens: Opens<'_>,
-    ) -> std::io::Result<()> {
-        let target = self.backend().connect_target();
-        let launcher = crate::native::launchers::installed_launcher(frame);
-        crate::native::programs::window_command(
-            executable,
-            launcher.as_deref(),
-            frame,
-            target.as_deref(),
-            opens,
-        )
-        .spawn()
-        .map(|_| ())
-    }
-
-    /// Write the launchers the OS lists, and say what landed where.
-    fn install_launchers(&mut self) {
-        match crate::native::launchers::install() {
-            Ok(installed) => {
-                let names: Vec<&str> = installed
-                    .iter()
-                    .map(|launcher| launcher.frame.display_name())
-                    .collect();
-                self.model.info(format!(
-                    "{} in {}",
-                    names.join(", "),
-                    crate::native::launchers::destination_hint()
-                ));
-            }
-            Err(error) => self
-                .model
-                .error(format!("could not write the launchers: {error}")),
-        }
+    /// What a project whose run restarts the window gets in a browser: the program it would
+    /// start again is the server's, rebuilt or not, and a page has no process of it to start.
+    /// Said rather than done some other way - loading the page again would show the program
+    /// the server already had. The palette never offers it there; only a project's run asks.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn restart_window(&mut self, _ctx: &egui::Context) {
+        self.model.error(
+            "a window in a browser cannot restart the program behind it: restart `moon serve`"
+                .to_string(),
+        );
     }
 
     /// The repo the window was launched on, as a path on whichever machine the backend reads.
@@ -600,6 +519,7 @@ impl App {
     /// A file is named to the review server by its path inside the repo, so a pick from
     /// anywhere else on disk has no name to be opened under. Rather than open a tab that
     /// cannot load, the pick is refused and says why.
+    #[cfg(not(target_arch = "wasm32"))]
     fn pick_file_to_edit(&mut self, ctx: &egui::Context) {
         let Some(repo_root) = self.repo_root() else {
             self.model.error("no repo is open in this window yet");
@@ -640,8 +560,10 @@ impl App {
     /// and done once - the same reason `Action::NewWindow` is deferred into one slot.
     pub(super) fn apply_launch_screen_shortcuts(&mut self, ctx: &egui::Context) {
         let mut closes = false;
+        #[cfg(not(target_arch = "wasm32"))]
         let mut new_window = None;
         let mut toggles_theme = false;
+        #[cfg(not(target_arch = "wasm32"))]
         for action in self
             .menu
             .as_ref()
@@ -660,12 +582,14 @@ impl App {
         for action in self.keymap.resolve(ctx, true, false) {
             match action {
                 Action::CloseTab => closes = true,
+                #[cfg(not(target_arch = "wasm32"))]
                 Action::NewWindow => new_window = Some(self.frame),
                 Action::ToggleTheme => toggles_theme = true,
                 _ => {}
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(frame) = new_window {
             self.open_new_window(frame);
         }
@@ -737,10 +661,9 @@ impl App {
         // user is typing in. Only the chords marked as reaching anywhere are the window's
         // while either has the keyboard. An extension's pane is the same: its script is sent
         // every key the window does not claim - see `App::forward_keys_to_extension`.
-        let in_a_shell = matches!(
-            self.active_pane_kind(),
-            Some(PaneKind::Terminal | PaneKind::Extension)
-        );
+        let in_a_shell = self
+            .active_pane_kind()
+            .is_some_and(PaneKind::takes_every_key);
         let typing = ctx.egui_wants_keyboard_input() || in_a_shell;
 
         for action in self.keymap.resolve(ctx, typing, in_a_shell) {
@@ -756,6 +679,7 @@ impl App {
             Action::SelectTab(index) => self.select_tab(index),
             // Deferred into the same slot the menu bar's item uses: on macOS the chord can
             // arrive as both, and two windows is not what one ⌘N asked for.
+            #[cfg(not(target_arch = "wasm32"))]
             Action::NewWindow => self.pending_action = Some(CommandAction::NewWindow(self.frame)),
             Action::SaveFile => {
                 if let Some((pane_id, Pane::File { session_id, .. })) = self.active_pane() {
@@ -844,6 +768,7 @@ impl App {
 
     /// The OS folder picker, opened where the last project was found so the next one is
     /// usually a sibling, or on the home directory. What it comes back with is what opens.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn pick_repo_folder(&mut self, ctx: &egui::Context) -> Option<String> {
         let mut dialog = rfd::FileDialog::new().set_title("Choose a repo");
         if let Some(recent) = self.settings.recent_projects.first() {
@@ -908,6 +833,7 @@ impl App {
 /// Both sides are resolved before they are compared: on macOS a repo is often reached through
 /// a symlink - `/var` for `/private/var`, and the picker hands back the resolved form - so
 /// comparing what was picked against an unresolved root would refuse a file plainly inside it.
+#[cfg(not(target_arch = "wasm32"))]
 fn path_inside_repo(repo_root: &std::path::Path, picked: &std::path::Path) -> Option<String> {
     let repo_root = repo_root.canonicalize().ok()?;
     let picked = picked.canonicalize().ok()?;

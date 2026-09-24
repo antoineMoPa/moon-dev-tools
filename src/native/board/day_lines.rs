@@ -54,6 +54,7 @@ impl LocalDay {
     /// The day a moment falls on, in this machine's zone. `localtime_r` rather than a date
     /// crate: the zone and its daylight-saving rules are the OS's to know, and a zone read
     /// once at startup would be wrong across the night the clocks change.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn of(unix: u64) -> Self {
         let time = unix as libc::time_t;
         // SAFETY: `libc::tm` is plain data - integers, and on macOS a pointer to a zone name
@@ -70,6 +71,19 @@ impl LocalDay {
             year: written.tm_year + 1900,
             month: (written.tm_mon + 1) as u32,
             day: written.tm_mday as u32,
+        }
+    }
+
+    /// The same in a browser, which knows the zone of the machine it runs on the way the OS
+    /// does: a `Date`'s local fields are read in it, rules and all.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn of(unix: u64) -> Self {
+        let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(unix as f64 * 1000.0));
+        Self {
+            year: date.get_full_year() as i32,
+            // `Date` counts January as 0.
+            month: date.get_month() + 1,
+            day: date.get_date(),
         }
     }
 

@@ -19,7 +19,7 @@ use egui_moon_code_ide::{DocumentAsk, LanguageSource, LspStatus};
 
 use crate::native::{app::App, file_pane::FileEditor, language_source::SessionLanguages};
 
-use std::time::Instant;
+use web_time::Instant;
 
 impl App {
     /// Keep the language server's copy of a pane's file up with what is on screen.

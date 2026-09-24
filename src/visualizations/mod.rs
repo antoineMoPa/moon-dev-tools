@@ -15,14 +15,25 @@
 //! The window asks the server which visualizations its terminals have announced, and opens
 //! each in a pane - see `crate::native::visualizations`.
 
+// Finding and serving visualizations is the server's: the window in a browser only lists and
+// shows what the server has found.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod codex_launch;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod directives;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod on_tasks;
+#[cfg(not(target_arch = "wasm32"))]
 mod open_files;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod page;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod rollout;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod routes;
 
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -42,8 +53,30 @@ pub(crate) struct VisualizationView {
     pub(crate) modified_unix_ms: u64,
 }
 
+/// Every visualization the server's terminals have announced, as the window asks for them.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct VisualizationList {
+    pub(crate) visualizations: Vec<VisualizationView>,
+}
+
+/// The page one visualization is shown on - see `page`.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct VisualizationPage {
+    pub(crate) html: String,
+}
+
+/// What a visualization is called: its file's stem, with dashes read as spaces.
+pub(crate) fn title_of(fragment_path: &Path) -> String {
+    fragment_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("Visualization")
+        .replace('-', " ")
+}
+
 /// Where Codex keeps its sessions and visualizations: `$CODEX_HOME`, else `~/.codex` - how
 /// Codex itself finds it.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn codex_home() -> PathBuf {
     match std::env::var_os("CODEX_HOME") {
         Some(codex_home) if !codex_home.is_empty() => PathBuf::from(codex_home),

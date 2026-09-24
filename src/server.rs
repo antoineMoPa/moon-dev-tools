@@ -1,8 +1,11 @@
 //! The HTTP surface a remote window reviews through. Every route is a thin wrapper over
 //! [`crate::service`], which a window on this machine calls directly.
 
+mod auth;
 mod board_routes;
 mod review_routes;
+pub(crate) mod users;
+mod web_page;
 
 use board_routes::{
     add_column, attach_task_resource, create_task, delete_column, delete_task,
@@ -22,14 +25,17 @@ use review_routes::{
 };
 
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
 use axum::{
-    Router,
-    extract::State,
+    Json, Router,
+    extract::{FromRef, State},
+    http::StatusCode,
+    middleware,
     response::{Html, IntoResponse},
     routing::{delete, get, post},
 };
@@ -37,14 +43,19 @@ use axum::{
 use crate::{
     agent::detect_agent_availability,
     api::{AppState, ServerState, bind_host, port, server_url},
+    pass_keys::{LONGEST_TICKET_LIFETIME, PassKeys, RedeemedTickets, SERVE_TICKET_LIFETIME},
 };
+use users::Users;
 
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 /// The state the window and the server share. The app builds this once and hands a clone to
 /// the server it carries, so a remote window reviews the same sessions this one does.
 pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
     AppState {
-        inner: Arc::new(Mutex::new(ServerState::default())),
+        inner: Arc::new(Mutex::new(ServerState {
+            home_repo: repo_started_in(),
+            ..ServerState::default()
+        })),
         agent_availability: detect_agent_availability(),
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
@@ -62,10 +73,85 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
     }
 }
 
-pub(crate) fn router(state: AppState) -> Router {
+/// The repo around the folder this process was started in. A folder that cannot be read -
+/// deleted since, say - is in no repo, the same as one outside every repo.
+fn repo_started_in() -> Option<std::path::PathBuf> {
+    let folder = std::env::current_dir().ok()?;
+    crate::git::find_repo_root(&folder).ok().flatten()
+}
+
+/// What the routes are served with: the reviews, the users a request is let in as - which hold
+/// the keys it is checked against - and the login tickets this server has let a browser in with
+/// already. A handler asks for whichever part it needs - see the [`FromRef`]s below.
+#[derive(Clone)]
+pub(crate) struct Served {
+    app: AppState,
+    users: Users,
+    redeemed_tickets: Arc<RedeemedTickets>,
+}
+
+impl FromRef<Served> for AppState {
+    fn from_ref(served: &Served) -> Self {
+        served.app.clone()
+    }
+}
+
+/// The keys in force right now: `Tools › Users` replaces them - see [`users::Users::kick_everyone`].
+impl FromRef<Served> for PassKeys {
+    fn from_ref(served: &Served) -> Self {
+        served.users.keys()
+    }
+}
+
+impl FromRef<Served> for Users {
+    fn from_ref(served: &Served) -> Self {
+        served.users.clone()
+    }
+}
+
+impl FromRef<Served> for Arc<RedeemedTickets> {
+    fn from_ref(served: &Served) -> Self {
+        Arc::clone(&served.redeemed_tickets)
+    }
+}
+
+/// Every route: the few anyone may reach, and the API behind a pass key.
+///
+/// What is public holds no data - the health check, the root page, and the files of the
+/// browser build, which are the same for every server. The page at `/moon/` is public too, as
+/// the place a browser logs in; it only starts the window once the browser has - see
+/// [`web_page::moon_page`].
+pub(crate) fn router(state: AppState, users: Users) -> Router {
+    let served = Served {
+        app: state,
+        users,
+        redeemed_tickets: Arc::new(RedeemedTickets::default()),
+    };
     Router::new()
         .route("/", get(root))
         .route("/healthz", get(healthz))
+        .route("/moon", get(web_page::moon_without_slash))
+        .route("/moon/", get(web_page::moon_page))
+        .route("/moon/login", post(web_page::log_in))
+        .route("/moon/{*path}", get(web_page::moon_file))
+        .merge(
+            protected_routes().route_layer(middleware::from_fn_with_state(
+                served.clone(),
+                auth::require_pass_key,
+            )),
+        )
+        .layer(middleware::from_fn(auth::browser_boundary))
+        .with_state(served)
+}
+
+/// The API: everything that reads the repo, writes to it or runs something in it.
+fn protected_routes() -> Router<Served> {
+    Router::new()
+        .route("/api/pass-key", get(pass_key_admitted).post(mint_pass_key))
+        .route("/api/users", get(users::list))
+        .route("/api/users/kick-all", post(users::kick_everyone))
+        .route("/api/users/{id}/kick", post(users::kick))
+        .route("/api/login-ticket", post(mint_login_ticket))
         .route(
             "/api/session/{session_id}/resolve/{hunk_id}/{comment_index}",
             get(resolve_comment),
@@ -331,43 +417,69 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/session/{session_id}/terminals/{terminal_id}/socket",
             get(crate::terminal::terminal_socket),
         )
-        .with_state(state)
 }
 
+/// `moon serve`: the server in this terminal, which prints a link that logs a browser in -
+/// once, and for [`SERVE_TICKET_LIFETIME`]: what a terminal prints ends up in scrollback and
+/// logs, which is no place for a key that lasts. The ticket rides in the fragment, which a
+/// browser never sends to a server; the login page takes it off the address. A key that lasts,
+/// for a window's `--pass-key`, is `moon generate-pass-key`'s to print, on purpose.
 pub(crate) async fn run_server() -> Result<()> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let state = build_state(Arc::clone(&last_activity));
-    serve(state, Some(last_activity)).await
+    let users = Users::for_this_machine()?;
+    let listener = bind().await?;
+
+    let ticket = users.keys().login_ticket(SERVE_TICKET_LIFETIME);
+    println!("Moon Review listening on {}", server_url());
+    println!("The window in a browser: {}/moon", server_url());
+    println!(
+        "Log in within {} minutes: {}/moon/#ticket={ticket}",
+        SERVE_TICKET_LIFETIME.as_secs() / 60,
+        server_url()
+    );
+    println!(
+        "`moon generate-pass-key` prints a pass key that lasts, for --pass-key or the login page"
+    );
+    serve_on(state, users, listener, Some(last_activity)).await
 }
 
-/// Serve the review API. `idle_shutdown` is the clock the standalone server stops on;
-/// a window passes `None` because it decides when the process ends itself.
-pub(crate) async fn serve(
-    state: AppState,
-    idle_shutdown: Option<Arc<Mutex<Instant>>>,
-) -> Result<()> {
-    let port = port()?;
-    let host = bind_host();
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .with_context(|| format!("failed to bind {host}:{port}"))?;
+/// Serve the review API from inside a window, which decides itself when the process ends.
+pub(crate) async fn serve(state: AppState) -> Result<()> {
+    let users = Users::for_this_machine()?;
+    let listener = bind().await?;
 
     println!("Moon Review listening on {}", server_url());
-    serve_on(state, listener, idle_shutdown).await
+    println!("The window in a browser: {}/moon", server_url());
+    serve_on(state, users, listener, None).await
+}
+
+async fn bind() -> Result<tokio::net::TcpListener> {
+    let port = port()?;
+    let host = bind_host();
+    tokio::net::TcpListener::bind((host.as_str(), port))
+        .await
+        .with_context(|| format!("failed to bind {host}:{port}"))
 }
 
 /// Serve on a listener the caller already bound, which is how a test gets a free port.
+/// `idle_shutdown` is the clock the standalone server stops on; a window passes `None`.
+///
+/// Every request is told the address it came from, which is what the users list shows - see
+/// [`auth::require_pass_key`].
 pub(crate) async fn serve_on(
     state: AppState,
+    users: Users,
     listener: tokio::net::TcpListener,
     idle_shutdown: Option<Arc<Mutex<Instant>>>,
 ) -> Result<()> {
+    let service = router(state, users).into_make_service_with_connect_info::<SocketAddr>();
     match idle_shutdown {
-        Some(last_activity) => axum::serve(listener, router(state))
+        Some(last_activity) => axum::serve(listener, service)
             .with_graceful_shutdown(shutdown_signal(last_activity))
             .await
             .context("server failed"),
-        None => axum::serve(listener, router(state))
+        None => axum::serve(listener, service)
             .await
             .context("server failed"),
     }
@@ -414,11 +526,48 @@ fn mark_activity(state: &AppState) {
 async fn root(State(state): State<AppState>) -> impl IntoResponse {
     mark_activity(&state);
     Html(
-        "<!doctype html><title>Moon Review</title><p>A review server. Point a window at it with `moonreview --remote`.</p>",
+        "<!doctype html><title>Moon Review</title><p>A review server. Open <a href=\"/moon\">the window</a> here, or point one at it with <code>moon review --remote</code>.</p>",
     )
 }
 
 async fn healthz(State(state): State<AppState>) -> &'static str {
     mark_activity(&state);
     "ok"
+}
+
+/// `GET /api/pass-key`: nothing but the layer's answer, which is how a window checks the key
+/// it was given while it is still connecting rather than on the first thing it asks for.
+async fn pass_key_admitted() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+/// `POST /api/pass-key`: a new key, for a window already let in to hand on - to a person who
+/// asked for one, or a window it starts. It lets its holder do nothing the asker cannot.
+async fn mint_pass_key(State(keys): State<PassKeys>) -> Json<crate::api::PassKeyMinted> {
+    Json(crate::api::PassKeyMinted {
+        pass_key: keys.generate(),
+    })
+}
+
+/// `POST /api/login-ticket`: a login ticket, for a window already let in to open a browser
+/// with - see [`crate::pass_keys`]. A lifetime past [`LONGEST_TICKET_LIFETIME`] is refused: a
+/// ticket is for the moment of logging in, and what is meant to last is a pass key.
+async fn mint_login_ticket(
+    State(keys): State<PassKeys>,
+    Json(asked): Json<crate::api::LoginTicketRequest>,
+) -> Result<Json<crate::api::LoginTicketMinted>, (StatusCode, String)> {
+    let lifetime = Duration::from_secs(asked.lifetime_seconds);
+    if lifetime > LONGEST_TICKET_LIFETIME {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "a login ticket lasts at most {} seconds, not {}\n",
+                LONGEST_TICKET_LIFETIME.as_secs(),
+                asked.lifetime_seconds
+            ),
+        ));
+    }
+    Ok(Json(crate::api::LoginTicketMinted {
+        ticket: keys.login_ticket(lifetime),
+    }))
 }

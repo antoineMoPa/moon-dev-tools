@@ -20,6 +20,7 @@ use crate::{
     git::run_git_no_output,
     moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
     native::language_source::SessionLanguages,
+    pass_keys::of_this_test_run,
 };
 
 struct ServedRepo {
@@ -31,6 +32,11 @@ impl Drop for ServedRepo {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// A key the test servers let in - see [`of_this_test_run`].
+fn pass_key() -> String {
+    of_this_test_run().generate()
 }
 
 /// Start a `moonreview serve` on a free port, over a throwaway repo with pending changes.
@@ -78,7 +84,13 @@ fn serve_a_repo(name: &str) -> ServedRepo {
                 .expect("failed to read the test port")
                 .port();
             port_sender.send(port).expect("failed to report the port");
-            let _ = crate::server::serve_on(state, listener, None).await;
+            let _ = crate::server::serve_on(
+                state,
+                crate::server::users::of_this_test_run(),
+                listener,
+                None,
+            )
+            .await;
         });
     });
 
@@ -95,7 +107,8 @@ fn serve_a_repo(name: &str) -> ServedRepo {
 #[test]
 fn a_remote_review_loads_its_diff_over_http() {
     let served = serve_a_repo("state");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
 
     let opened = backend
         .open_session(OpenSessionRequest {
@@ -119,7 +132,8 @@ fn a_remote_review_loads_its_diff_over_http() {
 #[test]
 fn staging_through_a_remote_review_changes_the_repo() {
     let served = serve_a_repo("stage");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -155,7 +169,8 @@ fn staging_through_a_remote_review_changes_the_repo() {
 #[test]
 fn a_remote_review_answers_that_a_markdown_file_has_no_language_server() {
     let served = serve_a_repo("lsp");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -201,7 +216,8 @@ fn a_remote_review_answers_that_a_markdown_file_has_no_language_server() {
 #[test]
 fn a_remote_review_is_answered_that_nothing_in_a_markdown_file_can_be_renamed() {
     let served = serve_a_repo("lsp-rename");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -232,7 +248,8 @@ fn a_remote_review_is_answered_that_nothing_in_a_markdown_file_can_be_renamed() 
 #[test]
 fn a_remote_review_hears_nothing_about_a_markdown_file_on_hover_or_diagnostics() {
     let served = serve_a_repo("lsp-hover");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -267,7 +284,8 @@ fn a_remote_review_hears_nothing_about_a_markdown_file_on_hover_or_diagnostics()
 #[test]
 fn a_remote_review_is_offered_nothing_to_do_and_no_signature_in_a_markdown_file() {
     let served = serve_a_repo("lsp-actions");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -308,7 +326,8 @@ fn a_remote_review_is_offered_nothing_to_do_and_no_signature_in_a_markdown_file(
 #[test]
 fn a_remote_review_is_asked_what_opens_a_completion_list_through_the_pane_s_own_source() {
     let served = serve_a_repo("lsp-triggers");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -349,7 +368,8 @@ fn a_remote_review_is_asked_what_opens_a_completion_list_through_the_pane_s_own_
 #[test]
 fn a_remote_review_says_its_language_servers_are_doing_nothing_when_none_are_running() {
     let served = serve_a_repo("lsp-working");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -369,7 +389,8 @@ fn a_remote_review_says_its_language_servers_are_doing_nothing_when_none_are_run
 #[test]
 fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
     let served = serve_a_repo("shell");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -418,12 +439,71 @@ fn a_remote_shell_carries_bytes_both_ways_over_the_websocket() {
         .expect("expected the remote shell to close");
 }
 
+/// A shell's socket is admitted as it opens, so a kick has to reach it too: the server hangs
+/// up on the kicked user's shells - see `crate::server::users`.
+#[test]
+fn a_kicked_user_s_remote_shell_is_hung_up_on() {
+    let served = serve_a_repo("shell-kicked");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let terminal_id = backend
+        .create_terminal(&opened.session_id, None)
+        .expect("expected a remote shell to start");
+    let attachment = backend
+        .attach_terminal(&opened.session_id, &terminal_id)
+        .expect("expected to attach to the remote shell");
+
+    // Another user of the server kicks the shell's.
+    let kicker = reqwest::blocking::Client::new();
+    let listed: crate::server::users::UserList = kicker
+        .get(format!("{}/api/users", served.base_url))
+        .bearer_auth(pass_key())
+        .send()
+        .expect("failed to ask for the users")
+        .json()
+        .expect("failed to decode the users");
+    let shell_s_user = listed
+        .users
+        .iter()
+        .find(|user| !user.you)
+        .expect("the shell's user was seen");
+    let kicked = kicker
+        .post(format!(
+            "{}/api/users/{}/kick",
+            served.base_url, shell_s_user.id
+        ))
+        .bearer_auth(pass_key())
+        .send()
+        .expect("failed to ask for the kick");
+    assert_eq!(kicked.status(), reqwest::StatusCode::NO_CONTENT);
+
+    // The socket closes: its output ends rather than staying open for more.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let hung_up = loop {
+        match attachment.output.recv_timeout(Duration::from_millis(200)) {
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break true,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break false,
+        }
+    };
+    assert!(hung_up, "the kicked user's shell stayed attached");
+}
+
 /// Opening the work log over HTTP makes the file, in the board's folder, holding the line an
 /// entry goes above - and says where it is the way the file pane addresses files.
 #[test]
 fn the_work_log_opens_over_http() {
     let served = serve_a_repo("work-log");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -449,7 +529,8 @@ fn the_work_log_opens_over_http() {
 #[test]
 fn task_notes_round_trip_over_http() {
     let served = serve_a_repo("notes");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -507,7 +588,8 @@ fn a_file_outside_the_repo_is_refused_over_http() {
             .to_string_lossy()
     ));
     fs::write(&secret, "a private key\n").expect("failed to write the fixture secret");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -547,7 +629,7 @@ fn a_file_outside_the_repo_is_refused_over_http() {
 #[test]
 fn an_unreachable_address_fails_with_the_address_in_the_message() {
     // Port 1 is reserved and nothing listens there, so this is a connection refusal.
-    let error = match RemoteBackend::connect("127.0.0.1:1") {
+    let error = match RemoteBackend::connect("127.0.0.1:1", pass_key()) {
         Ok(_) => panic!("expected the connect to fail"),
         Err(error) => error,
     };
@@ -558,12 +640,76 @@ fn an_unreachable_address_fails_with_the_address_in_the_message() {
     );
 }
 
+/// A key the server did not make is refused while connecting, with what to do about it,
+/// rather than on whatever the window asks for first.
+#[test]
+fn a_wrong_pass_key_fails_at_connect_saying_how_to_get_one() {
+    let served = serve_a_repo("wrong-key");
+    let other_secret = std::env::temp_dir().join(format!(
+        "moonreview-remote-other-secret-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&other_secret);
+    let wrong = crate::pass_keys::PassKeys::kept_at(&other_secret)
+        .expect("expected a second secret")
+        .generate();
+
+    let error = match RemoteBackend::connect(&served.base_url, wrong) {
+        Ok(_) => panic!("expected a key of another secret to be refused"),
+        Err(error) => error,
+    };
+
+    let message = error.to_string();
+    assert!(
+        message.contains("did not accept the pass key"),
+        "got {message}"
+    );
+    assert!(message.contains("generate-pass-key"), "got {message}");
+    let _ = fs::remove_file(&other_secret);
+}
+
+/// A window hands a browser, or a person, a key of its own making - Tools › Open in Web and
+/// Generate Pass Key - and a key the far side minted lets a new window in.
+#[test]
+fn a_minted_pass_key_lets_another_window_in() {
+    let served = serve_a_repo("minted");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+
+    let minted = backend.mint_pass_key().expect("expected a new key");
+
+    assert!(of_this_test_run().admits(&minted));
+    RemoteBackend::connect(&served.base_url, minted)
+        .expect("the minted key should let a window in");
+}
+
+/// Tools › Open in Web on a remote window opens a browser with a ticket the far side made,
+/// which that server's login redeems.
+#[test]
+fn a_minted_login_ticket_is_the_far_side_s() {
+    let served = serve_a_repo("minted-ticket");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+
+    let ticket = backend
+        .mint_login_ticket(crate::pass_keys::OPEN_IN_WEB_TICKET_LIFETIME)
+        .expect("expected a ticket");
+
+    assert!(
+        crate::pass_keys::RedeemedTickets::default()
+            .redeem(&of_this_test_run(), &ticket)
+            .is_ok()
+    );
+    assert!(!of_this_test_run().admits(&ticket));
+}
+
 /// A file linked over the wire is on the card the next time the board is read, by the same
 /// path the file pane then opens it with.
 #[test]
 fn a_linked_file_round_trips_over_http() {
     let served = serve_a_repo("task-files");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -609,7 +755,8 @@ fn a_linked_file_round_trips_over_http() {
 #[test]
 fn a_remote_shell_is_renamed_over_http() {
     let served = serve_a_repo("shell-name");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),
@@ -664,7 +811,8 @@ fn a_remote_shell_is_renamed_over_http() {
 #[test]
 fn a_column_is_added_where_it_was_asked_for() {
     let served = serve_a_repo("columns");
-    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
     let opened = backend
         .open_session(OpenSessionRequest {
             repo_path: served.root.display().to_string(),

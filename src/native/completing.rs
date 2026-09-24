@@ -18,11 +18,10 @@
 //! said as it started and unchanged for as long as it runs, and on a `--remote` review every
 //! one of these is a round trip.
 
-use std::time::Instant;
-
 use egui_frames::PaneId;
 use egui_moon_code_ide::{Asked, CompletingNext, LanguageSource, TYPING_SETTLES_IN};
 use egui_moon_editor::EditorOutput;
+use web_time::Instant;
 
 use crate::native::{app::App, language_source::SessionLanguages};
 

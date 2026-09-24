@@ -8,10 +8,11 @@
 //! the caret, which is what its fixes are offered for. What comes back is a list in the
 //! palette; the one picked goes in through [`crate::native::workspace_edits`].
 
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use egui_frames::PaneId;
 use egui_moon_code_ide::{CanAnswer, LanguageSource, LspCodeAction, still_starting};
+use web_time::Instant;
 
 use crate::native::{
     app::App,

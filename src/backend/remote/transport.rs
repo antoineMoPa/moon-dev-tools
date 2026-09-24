@@ -4,26 +4,57 @@
 use std::{
     io::{BufRead, BufReader},
     net::TcpStream,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
+    thread,
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use reqwest::blocking::Client;
+use reqwest::{
+    StatusCode,
+    blocking::Client,
+    header::{AUTHORIZATION, HeaderMap, HeaderValue},
+};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
+use tungstenite::client::IntoClientRequest;
 
-use crate::{api::SearchLine, search::SearchListener};
+use crate::{api::SearchLine, backend::SearchListener};
 
-use super::{REQUEST_TIMEOUT, RemoteBackend, SEARCH_TIMEOUT};
+use super::{
+    RemoteBackend,
+    addresses::{base_url_for, label_for},
+};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a streamed search may take: as long as `ag` needs on a large tree, which is not
+/// the half minute a plain request gets. A search nobody wants is stopped long before.
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// What requests go out through: one HTTP client, kept for its connection pool, which shows
+/// the pass key on every request it sends - see [`crate::pass_keys`].
+pub(super) struct Connection {
+    client: Client,
+    /// Kept as well for the one thing the client does not send: a shell's websocket, and a
+    /// window this one starts on the same server.
+    pub(super) pass_key: String,
+}
+
+/// Where a key comes from when `--pass-key` gives none - the same variable a window this one
+/// starts is handed its key in, which keeps the key out of the command line other users see.
+pub(crate) const PASS_KEY_ENV_VAR: &str = "MOON_PASS_KEY";
 
 impl RemoteBackend {
     /// `target` is a URL, or a `host` / `host:port` shorthand that means plain HTTP.
-    pub(crate) fn connect(target: &str) -> Result<Self> {
+    ///
+    /// The key is tried once here, so a wrong one is said to be wrong while connecting rather
+    /// than as the first thing the window asks for failing.
+    pub(crate) fn connect(target: &str, pass_key: String) -> Result<Self> {
         let base_url = base_url_for(target)?;
         let label = label_for(&base_url);
         let client = Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .default_headers(HeaderMap::from_iter([(AUTHORIZATION, bearer(&pass_key)?)]))
             .build()
             .context("failed to build HTTP client")?;
 
@@ -34,16 +65,29 @@ impl RemoteBackend {
         if !health.status().is_success() {
             bail!("{base_url} answered {} for /healthz", health.status());
         }
+        let admitted = client
+            .get(format!("{base_url}/api/pass-key"))
+            .send()
+            .with_context(|| format!("failed to reach a moonreview server at {base_url}"))?;
+        if admitted.status() == StatusCode::UNAUTHORIZED {
+            bail!(
+                "{base_url} did not accept the pass key ({}); run `moon generate-pass-key` on \
+                 that machine and pass what it prints with --pass-key or {PASS_KEY_ENV_VAR}",
+                admitted.text().unwrap_or_default().trim()
+            );
+        }
+        admitted.error_for_status().map_err(remote_refusal)?;
 
         Ok(Self {
             base_url,
             label,
-            client,
+            connection: Connection { client, pass_key },
         })
     }
 
     pub(super) fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.client
+        self.connection
+            .client
             .get(format!("{}{path}", self.base_url))
             .send()
             .with_context(|| format!("GET {path} failed"))?
@@ -58,7 +102,8 @@ impl RemoteBackend {
         path: &str,
         body: &impl Serialize,
     ) -> Result<T> {
-        self.client
+        self.connection
+            .client
             .post(format!("{}{path}", self.base_url))
             .json(body)
             .send()
@@ -70,7 +115,8 @@ impl RemoteBackend {
     }
 
     pub(super) fn post(&self, path: &str, body: &impl Serialize) -> Result<()> {
-        self.client
+        self.connection
+            .client
             .post(format!("{}{path}", self.base_url))
             .json(body)
             .send()
@@ -81,7 +127,8 @@ impl RemoteBackend {
     }
 
     pub(super) fn get_ok(&self, path: &str) -> Result<()> {
-        self.client
+        self.connection
+            .client
             .get(format!("{}{path}", self.base_url))
             .send()
             .with_context(|| format!("GET {path} failed"))?
@@ -100,6 +147,7 @@ impl RemoteBackend {
         listener: &mut dyn SearchListener<T>,
     ) -> Result<()> {
         let response = self
+            .connection
             .client
             .get(format!("{}{path}", self.base_url))
             .timeout(SEARCH_TIMEOUT)
@@ -126,7 +174,8 @@ impl RemoteBackend {
     }
 
     pub(super) fn delete(&self, path: &str) -> Result<()> {
-        self.client
+        self.connection
+            .client
             .delete(format!("{}{path}", self.base_url))
             .send()
             .with_context(|| format!("DELETE {path} failed"))?
@@ -134,6 +183,76 @@ impl RemoteBackend {
             .map_err(remote_refusal)?;
         Ok(())
     }
+
+    /// Attach to a shell on the server through its socket. A thread reads the socket into the
+    /// output channel; writes share the socket with it through a lock.
+    pub(super) fn attach_shell(&self, url: &str) -> Result<egui_tty::TtyStream> {
+        let mut request = url
+            .into_client_request()
+            .with_context(|| format!("{url} is not a websocket address"))?;
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, bearer(&self.connection.pass_key)?);
+        let (socket, _) = tungstenite::connect(request)
+            .with_context(|| format!("failed to attach to the remote shell at {url}"))?;
+        set_read_timeout(&socket)?;
+
+        let socket = Arc::new(Mutex::new(socket));
+        let (sender, output) = mpsc::channel();
+        let reader_socket = Arc::clone(&socket);
+
+        thread::spawn(move || {
+            loop {
+                let message = {
+                    let Ok(mut socket) = reader_socket.lock() else {
+                        return;
+                    };
+                    match socket.read() {
+                        Ok(message) => Some(message),
+                        // A read timeout is how the writer gets the lock between frames.
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            None
+                        }
+                        Err(_) => return,
+                    }
+                };
+
+                let Some(message) = message else {
+                    thread::sleep(Duration::from_millis(4));
+                    continue;
+                };
+
+                let chunk = match message {
+                    tungstenite::Message::Binary(bytes) => bytes.to_vec(),
+                    tungstenite::Message::Text(text) => text.as_bytes().to_vec(),
+                    tungstenite::Message::Close(_) => return,
+                    _ => continue,
+                };
+                if sender.send(chunk).is_err() {
+                    return;
+                }
+            }
+        });
+
+        Ok(egui_tty::TtyStream {
+            output,
+            tty: Arc::new(RemoteShell { socket }),
+        })
+    }
+}
+
+/// `Authorization` for `pass_key`, marked sensitive so that nothing printing a request prints
+/// the key along with it.
+fn bearer(pass_key: &str) -> Result<HeaderValue> {
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {pass_key}"))
+        .context("a pass key is letters, digits, `-`, `_` and a `.`, which this is not")?;
+    authorization.set_sensitive(true);
+    Ok(authorization)
 }
 
 /// The server puts the real reason in the body, so a bare status line is not enough.
@@ -141,47 +260,10 @@ fn remote_refusal(error: reqwest::Error) -> anyhow::Error {
     anyhow!("{error}")
 }
 
-fn base_url_for(target: &str) -> Result<String> {
-    let target = target.trim().trim_end_matches('/');
-    if target.is_empty() {
-        bail!("remote server address must not be empty");
-    }
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return Ok(target.to_string());
-    }
-    if target.contains("://") {
-        bail!("remote server address must be http:// or https://, got {target}");
-    }
-    // A bare `host` or `host:port` is the common case over an SSH tunnel.
-    if target.contains(':') {
-        Ok(format!("http://{target}"))
-    } else {
-        Ok(format!("http://{target}:{}", crate::api::DEFAULT_PORT))
-    }
-}
-
-fn label_for(base_url: &str) -> String {
-    base_url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .to_string()
-}
-
-pub(super) fn websocket_url(base_url: &str, path: &str) -> String {
-    let socket_base = if let Some(rest) = base_url.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = base_url.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        base_url.to_string()
-    };
-    format!("{socket_base}{path}")
-}
-
 /// Both halves of an attached remote shell run on the socket, so writes go through the
 /// same lock the reader thread holds between frames.
-pub(super) struct RemoteShell {
-    pub(super) socket: Arc<Mutex<SharedSocket>>,
+struct RemoteShell {
+    socket: Arc<Mutex<SharedSocket>>,
 }
 
 type SharedSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
@@ -229,7 +311,7 @@ impl RemoteShell {
 
 /// Reads have to give the lock up so keystrokes can go out, so the socket polls instead of
 /// blocking forever.
-pub(super) fn set_read_timeout(socket: &SharedSocket) -> Result<()> {
+fn set_read_timeout(socket: &SharedSocket) -> Result<()> {
     let timeout = Some(Duration::from_millis(20));
     match socket.get_ref() {
         tungstenite::stream::MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout)?,
@@ -239,69 +321,4 @@ pub(super) fn set_read_timeout(socket: &SharedSocket) -> Result<()> {
         _ => bail!("unsupported terminal socket transport"),
     }
     Ok(())
-}
-
-pub(super) fn urlencode(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(*byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bare_host_becomes_an_http_url_on_the_default_port() {
-        assert_eq!(
-            base_url_for("dev-box").expect("expected a URL"),
-            format!("http://dev-box:{}", crate::api::DEFAULT_PORT)
-        );
-    }
-
-    #[test]
-    fn host_and_port_shorthand_keeps_the_port() {
-        assert_eq!(
-            base_url_for("127.0.0.1:9000").expect("expected a URL"),
-            "http://127.0.0.1:9000"
-        );
-    }
-
-    #[test]
-    fn explicit_urls_are_kept_and_trailing_slashes_dropped() {
-        assert_eq!(
-            base_url_for("https://review.example.com/").expect("expected a URL"),
-            "https://review.example.com"
-        );
-    }
-
-    #[test]
-    fn non_http_schemes_are_rejected() {
-        let error = base_url_for("ssh://dev-box").expect_err("expected ssh:// to be rejected");
-        assert!(error.to_string().contains("must be http:// or https://"));
-    }
-
-    #[test]
-    fn websocket_urls_follow_the_http_scheme() {
-        assert_eq!(
-            websocket_url("http://dev-box:42000", "/socket"),
-            "ws://dev-box:42000/socket"
-        );
-        assert_eq!(
-            websocket_url("https://dev-box", "/socket"),
-            "wss://dev-box/socket"
-        );
-    }
-
-    #[test]
-    fn file_paths_with_spaces_and_unicode_are_encoded() {
-        assert_eq!(urlencode("src/a b/é.rs"), "src%2Fa%20b%2F%C3%A9.rs");
-    }
 }

@@ -62,7 +62,9 @@ pub(crate) fn small_spinner(ui: &mut Ui, color: Color32) -> Response {
     response
 }
 
+// The wait below is only an extension's pane's, which a browser's window has none of.
 /// What stands between the spinner and the line under it.
+#[cfg(not(target_arch = "wasm32"))]
 const WAIT_GAP: f32 = 6.0;
 
 /// A pane with nothing to draw yet: a spinner over a line saying what is being waited for,
@@ -70,6 +72,7 @@ const WAIT_GAP: f32 = 6.0;
 ///
 /// Answers with the space the spinner and the line took together, which is what says where
 /// the pair ended up.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn centered_wait(ui: &mut Ui, palette: &Palette, waiting_for: &str) -> egui::Rect {
     // How tall the pair stands follows from the fonts and the spacing the theme sets, so it
     // is laid out once without being drawn rather than guessed at: a guess that is wrong by
@@ -85,6 +88,7 @@ pub(crate) fn centered_wait(ui: &mut Ui, palette: &Palette, waiting_for: &str) -
 }
 
 /// The spinner and the line under it, across the middle of whatever they are given.
+#[cfg(not(target_arch = "wasm32"))]
 fn wait_block(ui: &mut Ui, palette: &Palette, waiting_for: &str) -> egui::Rect {
     ui.vertical_centered(|ui| {
         let spinner = ui.spinner().rect;

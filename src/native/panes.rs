@@ -36,7 +36,9 @@ pub(crate) enum PaneKind {
     Project,
     /// Every message the window has posted, the way emacs keeps a `*Messages*` buffer.
     Messages,
-    /// A pane a script draws - see [`crate::extensions`].
+    /// A pane a script draws - see [`crate::extensions`]. Not in a browser, where there is no
+    /// machine of the project's for a script to run on.
+    #[cfg(not(target_arch = "wasm32"))]
     Extension,
     /// An agent's visualization, drawn by the system's webview - see
     /// [`crate::native::visualizations`].
@@ -109,6 +111,7 @@ pub(crate) enum Pane {
     Messages,
     /// A pane one of the extensions draws, by the extension's name. What the script holds is
     /// not kept with the layout: a pane put back by the next run starts its script over.
+    #[cfg(not(target_arch = "wasm32"))]
     Extension {
         name: String,
     },
@@ -118,6 +121,19 @@ pub(crate) enum Pane {
         /// The fragment the page is built from, on the machine the terminal runs on.
         fragment_path: String,
     },
+}
+
+impl PaneKind {
+    /// Whether a pane of this kind is sent every key the window does not claim: a shell's
+    /// program, or an extension's script.
+    pub(crate) fn takes_every_key(self) -> bool {
+        match self {
+            Self::Terminal => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Extension => true,
+            _ => false,
+        }
+    }
 }
 
 impl Pane {
@@ -133,6 +149,7 @@ impl Pane {
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
             Self::Messages => PaneKind::Messages,
+            #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { .. } => PaneKind::Extension,
             Self::Visualization { .. } => PaneKind::Visualization,
         }
@@ -170,9 +187,10 @@ impl Pane {
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
             Self::Messages => "messages".to_string(),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { name } => name.clone(),
             Self::Visualization { fragment_path } => {
-                crate::visualizations::page::title_of(std::path::Path::new(fragment_path))
+                crate::visualizations::title_of(std::path::Path::new(fragment_path))
             }
         }
     }
@@ -198,6 +216,7 @@ impl Pane {
     }
 
     /// Whether this pane is the one of a particular extension.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn runs_extension(&self, name: &str) -> bool {
         matches!(self, Self::Extension { name: open } if open == name)
     }
@@ -256,7 +275,9 @@ pub(crate) enum OpenPaneRequest {
         line: usize,
     },
     /// A file of the repo nothing is at yet: the tab opens empty, and its first save is what
-    /// creates the file. How `moon edit` of a path with no file at it arrives.
+    /// creates the file. How `moon edit` of a path with no file at it arrives, which a
+    /// browser's window is never reached by.
+    #[cfg(not(target_arch = "wasm32"))]
     NewFile {
         session_id: String,
         file_path: String,
@@ -283,6 +304,7 @@ pub(crate) enum OpenPaneRequest {
     /// Everything the window has said.
     Messages,
     /// One of the extensions, by name.
+    #[cfg(not(target_arch = "wasm32"))]
     Extension {
         name: String,
     },
@@ -470,6 +492,7 @@ impl PaneView<Pane> for App {
             Pane::Submodules => crate::native::submodules::draw(self, ui),
             Pane::Project => crate::native::project_pane::draw(self, ui),
             Pane::Messages => crate::native::messages::draw(self, ui),
+            #[cfg(not(target_arch = "wasm32"))]
             Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),
             Pane::Visualization { .. } => crate::native::webview_pane::draw(self, ui, pane_id),
         }
