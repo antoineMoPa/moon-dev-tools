@@ -1,7 +1,7 @@
 //! Reviews the repo in this process. Calls [`crate::service`] straight through, so the
 //! window and anything reaching the embedded server see one shared review.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 
@@ -413,6 +413,10 @@ impl Backend for LocalBackend {
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String> {
         crate::terminal::start_workspace_shell(&self.state, session_id, command)
+    }
+
+    fn create_terminal_in_folder(&self, session_id: &str, folder: &Path) -> Result<String> {
+        crate::terminal::start_workspace_shell_in_folder(&self.state, session_id, folder)
     }
 
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {

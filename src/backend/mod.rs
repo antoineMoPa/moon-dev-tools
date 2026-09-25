@@ -9,7 +9,11 @@
 pub(crate) mod local;
 pub(crate) mod remote;
 #[cfg(test)]
+mod remote_shell_tests;
+#[cfg(test)]
 mod remote_tests;
+
+use std::path::Path;
 
 use anyhow::Result;
 
@@ -275,6 +279,10 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn commit_run_outcome(&self, session_id: &str, terminal_id: &str) -> Result<Option<i32>>;
 
     fn create_terminal(&self, session_id: &str, command: Option<AgentKind>) -> Result<String>;
+    /// Start a login shell in a folder of the repo rather than at its root, and answer with
+    /// the shell it runs in: what `moon shell <folder>` typed in a terminal asks the window
+    /// for. The folder is absolute, resolved, and inside the session's repo.
+    fn create_terminal_in_folder(&self, session_id: &str, folder: &Path) -> Result<String>;
     /// Start a shell on the repo with one command line typed into it and sent, and answer with
     /// the shell it runs in: what an extension asks for when what it has to show is a program
     /// of its own - `docker logs -f`, a shell inside a container. Attached with

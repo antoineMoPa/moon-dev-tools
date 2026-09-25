@@ -280,6 +280,53 @@ fn a_file_of_another_project_is_taken_as_well() {
     assert_eq!(arrived[0].path, Path::new("/somewhere/else/main.rs"));
 }
 
+/// `moon shell <folder>`: the folder is taken the way a file is, and kept apart from the
+/// files - a shell is started in it rather than a tab opened on it.
+#[test]
+fn a_folder_for_a_shell_is_taken_and_kept_apart_from_the_files() {
+    let project = temporary_project("shell-folder");
+    let folder = project.join("src");
+    std::fs::create_dir_all(&folder).expect("expected a folder");
+
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+
+    let answer = this_process(&project.display().to_string())
+        .ask(&Ask::OpenShell {
+            folder: folder.display().to_string(),
+        })
+        .expect("expected an answer");
+
+    assert_eq!(answer, Answer::Opened);
+    assert!(asks.drain().is_empty(), "a folder is no file to open");
+    let shells = asks.drain_shells();
+    assert_eq!(shells.len(), 1);
+    assert_eq!(shells[0].folder, folder);
+    assert!(asks.drain_shells().is_empty(), "drained once");
+}
+
+/// A window whose repo is on another machine reads none of the folders a shell here can name
+/// either, so a shell asked for there is refused the same way.
+#[test]
+fn a_shell_in_a_window_on_another_machines_repo_is_refused() {
+    let project = temporary_project("remote-shell");
+    let asks = ShellAsks::listen("moon shell".to_string(), false, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+
+    let answer = this_process(&project.display().to_string())
+        .ask(&Ask::OpenShell {
+            folder: project.display().to_string(),
+        })
+        .expect("expected an answer");
+
+    assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+    assert!(asks.drain_shells().is_empty());
+}
+
 /// A window whose repo is on another machine reads none of the files a shell here can name,
 /// so it refuses and the shell tries the next window.
 #[test]

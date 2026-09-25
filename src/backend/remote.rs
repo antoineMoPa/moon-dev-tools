@@ -20,6 +20,8 @@ pub(crate) use addresses::urlencode;
 pub(crate) use transport::PASS_KEY_ENV_VAR;
 use addresses::websocket_url;
 
+use std::path::Path;
+
 use anyhow::Result;
 use serde_json::json;
 
@@ -577,6 +579,19 @@ impl Backend for RemoteBackend {
         let created: Created = self.post_json(
             &format!("/api/session/{session_id}/terminals"),
             &json!({ "command": command }),
+        )?;
+        Ok(created.terminal_id)
+    }
+
+    fn create_terminal_in_folder(&self, session_id: &str, folder: &Path) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct Created {
+            terminal_id: String,
+        }
+
+        let created: Created = self.post_json(
+            &format!("/api/session/{session_id}/terminals"),
+            &json!({ "command": null, "folder": folder.display().to_string() }),
         )?;
         Ok(created.terminal_id)
     }

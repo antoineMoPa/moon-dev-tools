@@ -6,6 +6,9 @@
 //! and when it was last in front, and `<pid>.sock` beside it is where it is asked to open a
 //! file. Both are written when the window opens a project and taken away when it closes; a
 //! window that was killed leaves them behind, and the next read clears those out.
+//!
+//! `moon shell <folder>` reaches a window the same way, and asks it for a shell in that
+//! folder rather than a tab on a file.
 
 pub(crate) mod window;
 
@@ -66,16 +69,18 @@ pub(crate) enum Ask {
     },
     /// Whether the tab a `moon edit --wait` opened on this file is still open.
     StillOpen { path: String },
+    /// Open a shell in this folder, in a tab: `moon shell <folder>`.
+    OpenShell { folder: String },
 }
 
 /// What the window answers.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "answer", rename_all = "snake_case")]
 pub(crate) enum Answer {
-    /// The window has the file and is opening it.
+    /// The window has the file or the folder and is opening it.
     Opened,
     /// The window will not open it, and says why - it has no project open yet, or the repo
-    /// it is open on is on another machine, so the file the shell named is not one it reads.
+    /// it is open on is on another machine, so the path the shell named is not one it reads.
     Refused { reason: String },
     /// The file a `moon edit --wait` is waiting on is still open, or about to be.
     StillOpen,
@@ -227,30 +232,31 @@ pub(crate) fn running() -> Vec<Instance> {
     found.into_iter().map(|(_, instance)| instance).collect()
 }
 
-/// The windows that could open this file, the likeliest first: the window whose shell the
-/// ask was typed in, then every window whose project holds the file, the innermost project
-/// first - a window on a submodule is a better answer than one on the repo around it - and
-/// then the rest of the windows, the one most recently in front first.
+/// The windows that could open this path - a file, or a folder to start a shell in - the
+/// likeliest first: the window whose shell the ask was typed in, then every window whose
+/// project holds the path, the innermost project first - a window on a submodule is a better
+/// answer than one on the repo around it - and then the rest of the windows, the one most
+/// recently in front first.
 ///
-/// The rest are there because a file whose project no window is open on still has to land
-/// somewhere: the window being looked at opens a session on that project and puts the file
-/// in a tab of it, which beats an error telling somebody to open a window first.
+/// The rest are there because a path whose project no window is open on still has to land
+/// somewhere: the window being looked at opens a session on that project and puts the tab
+/// in it, which beats an error telling somebody to open a window first.
 ///
-/// `file` has to be absolute and resolved, as the project paths in the records are, or a
+/// `path` has to be absolute and resolved, as the project paths in the records are, or a
 /// project holding it cannot be recognised.
 pub(crate) fn windows_for(
-    file: &Path,
+    path: &Path,
     shell_window: Option<u32>,
     mut running: Vec<Instance>,
 ) -> Vec<Instance> {
     running.sort_by_key(|instance| {
-        let holds_the_file = file.starts_with(&instance.project_path);
+        let holds_the_path = path.starts_with(&instance.project_path);
         (
             Some(instance.pid) != shell_window,
-            !holds_the_file,
-            // The innermost project wins among the windows that hold the file, and says
+            !holds_the_path,
+            // The innermost project wins among the windows that hold the path, and says
             // nothing about the ones that do not - they are ordered by their time in front.
-            match holds_the_file {
+            match holds_the_path {
                 true => usize::MAX - instance.project_path.len(),
                 false => 0,
             },
@@ -266,25 +272,44 @@ pub(crate) fn shell_window() -> Option<u32> {
 }
 
 /// Hand a file to a window: the first one that takes it, in the order [`windows_for`] puts
-/// them in. A window that refuses says why, and the last of those reasons is what is
-/// reported when no window took the file - it is the nearest thing to an explanation there is.
+/// them in.
 pub(crate) fn open_file(file: &Path, line: Option<usize>, wait: bool) -> Result<Instance> {
-    let candidates = windows_for(file, shell_window(), running());
-    if candidates.is_empty() {
-        bail!(
-            "no moon window is open on this machine to put {} in",
-            file.display()
-        );
-    }
-
     let ask = Ask::OpenFile {
         path: file.display().to_string(),
         line,
         wait,
     };
+    hand_to_a_window(file, &ask)
+}
+
+/// Hand a folder to a window for a shell to be started in: the first one that takes it, in
+/// the order [`windows_for`] puts them in. `None` when no window is open on this machine at
+/// all, which is the one case a shell has somewhere else to go - a window of its own.
+pub(crate) fn open_shell(folder: &Path) -> Result<Option<Instance>> {
+    if running().is_empty() {
+        return Ok(None);
+    }
+    let ask = Ask::OpenShell {
+        folder: folder.display().to_string(),
+    };
+    hand_to_a_window(folder, &ask).map(Some)
+}
+
+/// Ask the windows that could take `path` in turn, and say which one did. A window that
+/// refuses says why, and the last of those reasons is what is reported when no window took
+/// it - it is the nearest thing to an explanation there is.
+fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
+    let candidates = windows_for(path, shell_window(), running());
+    if candidates.is_empty() {
+        bail!(
+            "no moon window is open on this machine to put {} in",
+            path.display()
+        );
+    }
+
     let mut refusal = None;
     for instance in candidates {
-        match instance.ask(&ask) {
+        match instance.ask(ask) {
             Ok(Answer::Opened) => return Ok(instance),
             Ok(Answer::Refused { reason }) => refusal = Some(reason),
             Ok(other) => bail!("the window answered an open with {other:?}"),
@@ -295,10 +320,10 @@ pub(crate) fn open_file(file: &Path, line: Option<usize>, wait: bool) -> Result<
     }
 
     match refusal {
-        Some(reason) => bail!("no window opened {}: {reason}", file.display()),
+        Some(reason) => bail!("no window opened {}: {reason}", path.display()),
         None => bail!(
             "no window answered about {} - the ones that were open have closed",
-            file.display()
+            path.display()
         ),
     }
 }

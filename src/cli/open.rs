@@ -150,6 +150,19 @@ fn file_to_open(path: &str) -> Result<(PathBuf, bool)> {
     Ok((folder.join(name), true))
 }
 
+/// The folder `moon shell <folder>` names, resolved the way the windows' records are. It has
+/// to be there: a shell is started in it, and a folder that is not is more likely a typo
+/// than a place to start one.
+pub(super) fn folder_to_open(path: &str) -> Result<PathBuf> {
+    let folder = Path::new(path)
+        .canonicalize()
+        .with_context(|| format!("there is no folder at {path}"))?;
+    if !folder.is_dir() {
+        bail!("{} is not a folder", folder.display());
+    }
+    Ok(folder)
+}
+
 pub(super) fn list_windows() -> Result<()> {
     let running = instances::running();
     if running.is_empty() {
@@ -312,6 +325,28 @@ mod tests {
             std::fs::read_to_string(&path).expect("expected a file"),
             "already written"
         );
+    }
+
+    /// `moon shell <folder>` starts a shell in the folder, so the folder has to be there and
+    /// be a folder: a file is not somewhere a shell starts.
+    #[test]
+    fn a_shell_s_folder_is_resolved_and_a_file_is_refused() {
+        let folder = temporary_folder("shell-folder");
+        let file = folder.join("notes.md");
+        std::fs::write(&file, "").expect("expected to write the file");
+
+        assert_eq!(
+            folder_to_open(&folder.display().to_string()).expect("expected the folder"),
+            folder
+        );
+        let error = folder_to_open(&file.display().to_string()).expect_err("expected a refusal");
+        assert!(
+            format!("{error}").contains("is not a folder"),
+            "got {error}"
+        );
+        let error = folder_to_open(&folder.join("nowhere").display().to_string())
+            .expect_err("expected a refusal");
+        assert!(format!("{error}").contains("no folder at"), "got {error}");
     }
 
     #[test]

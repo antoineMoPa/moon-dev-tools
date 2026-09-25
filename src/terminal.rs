@@ -7,8 +7,8 @@ mod spawning;
 pub(crate) use naming::{name_for_new_shell, name_for_new_shell_called, rename};
 pub(crate) use routes::{
     close_terminal, create_terminal, list_terminals, rename_terminal, run_in_shell,
-    start_workspace_shell, start_workspace_shell_running, terminal_socket, terminal_view,
-    terminals_running_a_command, terminals_wanting_attention,
+    start_workspace_shell, start_workspace_shell_in_folder, start_workspace_shell_running,
+    terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
 };
 
 use std::{
@@ -79,6 +79,10 @@ enum ClientMessage {
 #[derive(Deserialize)]
 pub(crate) struct CreateTerminalRequest {
     command: Option<AgentKind>,
+    /// A folder inside the repo to start the shell in, for `moon shell <folder>`. Without it
+    /// the shell starts at the repo's root, which is where every other shell starts.
+    #[serde(default)]
+    folder: Option<String>,
 }
 
 /// A command line to start a shell with - see [`start_workspace_shell_running`].

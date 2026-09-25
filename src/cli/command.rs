@@ -19,7 +19,7 @@ use super::{
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
     git::{find_repo_root, project_root},
-    server,
+    instances, server,
 };
 
 /// What the command line asked for. One executable, so this is the whole of what it does.
@@ -53,6 +53,12 @@ pub(super) enum MoonCommand {
     },
     /// What `open` and `edit` take, printed and nothing opened.
     OpenHelp,
+    /// `moon shell <folder>`: a shell in that folder, as a tab of the window already open on
+    /// its project - and of the window last in front when no window is open on it - the way
+    /// [`MoonCommand::Open`] puts a file in one. A window of its own only when none is open.
+    OpenShell {
+        path: String,
+    },
     /// Which windows are open, and what they are open on.
     ListWindows,
     /// moon's license, and the licenses and notices of everything it is built from.
@@ -105,6 +111,7 @@ pub(crate) fn run() -> Result<()> {
             Ok(())
         }
         MoonCommand::ListWindows => open::list_windows(),
+        MoonCommand::OpenShell { path } => open_shell(&path),
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
         MoonCommand::Window { frame, args } => open_window(frame, args),
@@ -145,6 +152,18 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
                 });
             }
             return parse_new_task(&rest[1..]);
+        }
+        // `moon shell .` and `moon shell <folder>` are a shell in that folder, and a shell is
+        // a tab: it joins a window that is already open, the way `moon edit` does, rather
+        // than opening another window. Anything with an option in it is still the window's
+        // own to read - `--pick`, `--repo`, `--remote` - and so is a bare `moon shell`.
+        if frame == Frame::Shell
+            && let [folder] = rest.as_slice()
+            && !folder.starts_with('-')
+        {
+            return Ok(MoonCommand::OpenShell {
+                path: folder.clone(),
+            });
         }
         return Ok(MoonCommand::Window { frame, args: rest });
     }
@@ -287,6 +306,25 @@ fn install_launchers() -> Result<()> {
         launchers::destination_hint()
     );
     Ok(())
+}
+
+/// `moon shell <folder>`: a shell in that folder, in a window that is already open - and,
+/// when no window is open on this machine at all, a window of its own on the folder's
+/// project, which is what `moon shell` typed there would open.
+fn open_shell(path: &str) -> Result<()> {
+    let folder = open::folder_to_open(path)?;
+    match instances::open_shell(&folder)? {
+        Some(instance) => {
+            println!(
+                "shell in {} → {} on {}",
+                folder.display(),
+                instance.program,
+                instance.project_path
+            );
+            Ok(())
+        }
+        None => open_repo(&folder, Frame::Shell),
+    }
 }
 
 /// The window opened on nothing, asking which repo to open.
@@ -470,6 +508,7 @@ Examples:
   {PROGRAM} tasks new \"fix the races\"
   {PROGRAM} review src/main.rs
   {PROGRAM} shell
+  {PROGRAM} shell .
   {PROGRAM} open src/main.rs:42
 
 Open a window inside any git repository you want to work in. The board and the shell run just
@@ -477,8 +516,9 @@ as well in a folder that is no repository: the review is the part that needs one
 
 `{PROGRAM} <window> --help` says what that window can be opened on; `--pick` opens it on its
 launch screen instead, and `--remote <host>` opens it against a `serve` on another machine.
-`{PROGRAM} open --help` says how a file is named. Every command answers `--help` with its help
-and does nothing else.
+`{PROGRAM} open --help` says how a file is named. `{PROGRAM} shell <folder>` is a tab the same
+way: a shell in that folder, in the window already open on its project. Every command answers
+`--help` with its help and does nothing else.
 
 Desktop launchers:
   `install-launchers` gives each window an entry the OS offers - an application bundle on
@@ -510,6 +550,32 @@ that needs one.\n"
         ""
     };
 
+    // The shell is the one window a folder opens as a tab of rather than a window on, so its
+    // one path is a folder, and none of what a path narrows a review to is true of it.
+    let (path_usage, path_example) = if frame == Frame::Shell {
+        ("<folder>", "src")
+    } else {
+        ("<path>", "src/main.rs")
+    };
+    let shell_in_a_folder = if frame == Frame::Shell {
+        "`{command} .` and `{command} <folder>` open a shell in that folder as a tab of a window
+that is already open - the one on the folder's project, or the one last in front when no
+window is open on it - the way `{PROGRAM} edit` puts a file in one. Only when no window is
+open at all do they open a window on the folder's project, as `{command}` alone would.\n"
+            .replace("{command}", &command)
+            .replace("{PROGRAM}", PROGRAM)
+    } else {
+        String::new()
+    };
+    let narrows_the_review = if frame == Frame::Shell {
+        String::new()
+    } else {
+        "Run `{command} .` to limit the review to the current directory.
+Pass one path to review only that file or directory's working-tree changes.
+Pass two paths to review a read-only comparison of those files.\n"
+            .replace("{command}", &command)
+    };
+
     // The board is the one window with a command that touches it without opening it.
     let makes_a_card_usage = if frame == Frame::Tasks {
         format!("\n  {command} new <title>")
@@ -533,7 +599,7 @@ Opens a window on {opens}.
 Usage:
   {command}{makes_a_card_usage}
   {command} .
-  {command} <path>
+  {command} {path_usage}
   {command} <before-path> <after-path>
   {command} <commit>
   {command} diff <target>
@@ -544,21 +610,18 @@ Usage:
 Examples:
   {command}
   {command} .
-  {command} src/main.rs
+  {command} {path_example}
   {command} before.json after.json
   {command} 4542abe
   {command} diff dev
   {command} --remote dev-box --repo /home/you/project
 
 Run it inside any git repository you want to work in.
-{opens_without_a_repo}{makes_a_card}`--pick` opens the window on its launch screen instead, which is where recent projects and
+{opens_without_a_repo}{makes_a_card}{shell_in_a_folder}`--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
 `--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
 what the Window menu's Restart hands the instance it starts.
-Run `{command} .` to limit the review to the current directory.
-Pass one path to review only that file or directory's working-tree changes.
-Pass two paths to review a read-only comparison of those files.
-
+{narrows_the_review}
 `{command} <commit>` opens a read-only review of a single commit.
 `{command} diff <target>` opens a read-only diff review against a git target.
 Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`.

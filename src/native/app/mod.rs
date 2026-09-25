@@ -195,6 +195,10 @@ pub(crate) struct App {
     /// deferred slot every other pane change does, so they are opened one to a frame.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) asked_files: std::collections::VecDeque<crate::instances::window::OpenFileAsked>,
+    /// Folders `moon shell <folder>` asked for a shell in, waiting for this window to be on a
+    /// project so the shell has a session to be started through.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) asked_shells: std::collections::VecDeque<crate::instances::window::OpenShellAsked>,
     /// The tabs `moon edit --wait` asks opened, which the shell that asked is waiting on -
     /// see [`crate::native::open_from_shell::WaitedTab`].
     #[cfg(not(target_arch = "wasm32"))]
@@ -377,6 +381,8 @@ impl App {
             project_asks_reach_this_window_on: None,
             #[cfg(not(target_arch = "wasm32"))]
             asked_files: std::collections::VecDeque::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            asked_shells: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             waited_tabs: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]

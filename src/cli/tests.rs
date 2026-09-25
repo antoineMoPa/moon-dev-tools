@@ -209,6 +209,62 @@ fn a_window_is_named_by_the_word_after_moon() {
     );
 }
 
+/// `moon shell .` and `moon shell <folder>` are a shell in that folder as a tab of a window
+/// that is already open, the way `moon edit` is a file in one - not another window.
+#[test]
+fn a_shell_in_a_folder_joins_a_window_that_is_open() {
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+
+    assert_eq!(
+        parse(&["shell", "."]),
+        MoonCommand::OpenShell {
+            path: ".".to_string()
+        }
+    );
+    assert_eq!(
+        parse(&["shell", "src/native"]),
+        MoonCommand::OpenShell {
+            path: "src/native".to_string()
+        }
+    );
+}
+
+/// Everything else `moon shell` is asked is the window's own: a bare `moon shell` opens a
+/// window, and so does anything with an option in it.
+#[test]
+fn a_shell_asked_for_any_other_way_opens_a_window() {
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+    let window = |args: &[&str]| MoonCommand::Window {
+        frame: Frame::Shell,
+        args: args.iter().map(|arg| arg.to_string()).collect(),
+    };
+
+    assert_eq!(parse(&["shell"]), window(&[]));
+    assert_eq!(parse(&["shell", "--pick"]), window(&["--pick"]));
+    assert_eq!(
+        parse(&["shell", "--repo", "/repos/project"]),
+        window(&["--repo", "/repos/project"])
+    );
+    assert_eq!(parse(&["shell", "--help"]), window(&["--help"]));
+    // A review's two paths are not a folder, so the window reads them and says what it makes
+    // of them.
+    assert_eq!(parse(&["shell", "a", "b"]), window(&["a", "b"]));
+    // A folder is only a shell's business: the other windows open on it as they always have.
+    assert_eq!(
+        parse(&["review", "."]),
+        MoonCommand::Window {
+            frame: Frame::Review,
+            args: vec![".".to_string()]
+        }
+    );
+}
+
 /// A macOS bundle passes no arguments at all, so the window it opens is the one its plist
 /// named in the environment - see `crate::cli::FRAME_ENV`.
 #[test]

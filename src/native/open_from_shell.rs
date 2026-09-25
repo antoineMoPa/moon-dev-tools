@@ -1,5 +1,5 @@
-//! `moon open <file>` arriving in the window: the tab it opens, and what the window writes
-//! down about itself so a shell can find it in the first place.
+//! `moon open <file>` and `moon shell <folder>` arriving in the window: the tab each opens,
+//! and what the window writes down about itself so a shell can find it in the first place.
 //!
 //! A file of the project this window is on opens in the window's own review. A file of any
 //! other project opens too: the shell hands it here when no window is open on its project -
@@ -7,6 +7,9 @@
 //! the same way a submodule review is opened, so the file has a repo to be read and written
 //! in. One session per project, kept in [`SessionsForAskedFiles`], so a second file of the
 //! same project lands in a tab beside the first rather than opening the project again.
+//!
+//! A folder goes the way a submodule's shell does: the session on its project is opened as
+//! the shell is started - see [`App::open_shell_in_folder`] - so it needs no session kept.
 
 use std::{
     collections::HashMap,
@@ -16,7 +19,7 @@ use std::{
 
 use crate::{
     api::OpenSessionRequest,
-    instances::window::{OpenFileAsked, ShellAsks},
+    instances::window::{OpenFileAsked, OpenShellAsked, ShellAsks},
     native::{
         app::App,
         panes::{OpenAt, Pane},
@@ -88,19 +91,27 @@ impl App {
                 eprintln!("[moonreview] could not write this window down: {error}");
             }
             self.asked_files.extend(arrived);
+            self.asked_shells.extend(asks.drain_shells());
         }
         self.release_closed_tabs();
+
+        // A file is opened by its path inside a project, and a shell is started through the
+        // window's own session, so an ask that arrives before this window's own project has
+        // finished opening waits for it rather than being refused.
+        let Some(repo_root) = repo_root else {
+            return;
+        };
+        // A shell is started on a task of its own rather than through the deferred pane slot,
+        // so every folder asked for since the last frame starts now.
+        for asked in std::mem::take(&mut self.asked_shells) {
+            self.open_asked_shell(ctx, asked);
+        }
 
         // One a frame: a tab is opened through the same deferred slot every other pane change
         // goes through, and what is left waits for the next frame rather than being dropped.
         if self.pending_action.is_some() {
             return;
         }
-        // A file is opened by its path inside a project, so an ask that arrives before this
-        // window's own project has finished opening waits for it rather than being refused.
-        let Some(repo_root) = repo_root else {
-            return;
-        };
         let Some(asked) = self.asked_files.front() else {
             return;
         };
@@ -243,6 +254,13 @@ impl App {
             query: String::new(),
         });
         self.open_file_pane_at(session_id, &file_path, at);
+    }
+
+    /// Start the shell a `moon shell <folder>` asked for, and bring the window to the front -
+    /// the ask was typed somewhere else, so this window is not the one being looked at.
+    fn open_asked_shell(&mut self, ctx: &egui::Context, asked: OpenShellAsked) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.open_shell_in_folder(asked.folder);
     }
 
     /// Stop the shell waiting on a file this window will never open a tab on.

@@ -1,5 +1,6 @@
-//! The window's end of `moon open`: the socket a shell reaches it on, and the files that
-//! have come in over it waiting for the next frame to open them.
+//! The window's end of `moon open` and `moon shell <folder>`: the socket a shell reaches it
+//! on, and the files and folders that have come in over it waiting for the next frame to
+//! open them.
 //!
 //! Only a real window listens. Every other caller of the app is a ui test, and a test must
 //! not put itself in the way of a `moon open` typed in the window the developer running it
@@ -29,6 +30,12 @@ pub(crate) struct OpenFileAsked {
     pub(crate) wait: bool,
 }
 
+/// A folder a shell asked this window to start a shell in: `moon shell <folder>`.
+pub(crate) struct OpenShellAsked {
+    /// Absolute and resolved, the way the shell that asked named it.
+    pub(crate) folder: PathBuf,
+}
+
 /// What a window keeps so shells can reach it: the project it is written down as being on,
 /// and the asks that have arrived since the last frame.
 pub(crate) struct ShellAsks {
@@ -36,6 +43,9 @@ pub(crate) struct ShellAsks {
     /// file into yet, and written by the window whenever it opens another project.
     project: Arc<Mutex<Option<String>>>,
     arrived: Arc<Mutex<Vec<OpenFileAsked>>>,
+    /// The folders `moon shell <folder>` asked for a shell in, kept apart from the files: a
+    /// shell is started rather than opened in a tab, so it goes a different way.
+    arrived_shells: Arc<Mutex<Vec<OpenShellAsked>>>,
     /// The files a `moon edit --wait` is waiting on, from the moment the ask is taken until
     /// the window [releases](ShellAsks::release) them. Written into by the listening thread
     /// as the ask arrives, so a shell asking straight after is told the file is still open
@@ -71,13 +81,17 @@ impl ShellAsks {
         let asks = Self {
             project: Arc::new(Mutex::new(None)),
             arrived: Arc::new(Mutex::new(Vec::new())),
+            arrived_shells: Arc::new(Mutex::new(Vec::new())),
             waited_on: Arc::new(Mutex::new(HashSet::new())),
             program,
             focused_at_unix: Arc::new(Mutex::new(0)),
         };
         let project = asks.project.clone();
-        let arrived = asks.arrived.clone();
-        let waited_on = asks.waited_on.clone();
+        let arrived = Arrived {
+            files: asks.arrived.clone(),
+            shells: asks.arrived_shells.clone(),
+            waited_on: asks.waited_on.clone(),
+        };
         thread::Builder::new()
             .name("moon-shell-asks".to_string())
             .spawn(move || {
@@ -85,9 +99,7 @@ impl ShellAsks {
                     // One ask per connection, and each is answered before the next is read:
                     // a shell waits for its answer, so nothing is gained by doing several at
                     // once, and the window is only ever asked as fast as somebody types.
-                    if let Err(error) =
-                        answer(stream, reads_this_machine, &project, &arrived, &waited_on)
-                    {
+                    if let Err(error) = answer(stream, reads_this_machine, &project, &arrived) {
                         eprintln!("[moonreview] could not answer a `moon` ask: {error}");
                         continue;
                     }
@@ -150,6 +162,18 @@ impl ShellAsks {
     pub(crate) fn drain(&self) -> Vec<OpenFileAsked> {
         std::mem::take(&mut *self.arrived.lock().expect("the arrived lock"))
     }
+
+    /// The folders a shell was asked for in since the last time this was called.
+    pub(crate) fn drain_shells(&self) -> Vec<OpenShellAsked> {
+        std::mem::take(&mut *self.arrived_shells.lock().expect("the arrived shells lock"))
+    }
+}
+
+/// Where the listening thread puts what arrives, for the window to drain on its next frame.
+struct Arrived {
+    files: Arc<Mutex<Vec<OpenFileAsked>>>,
+    shells: Arc<Mutex<Vec<OpenShellAsked>>>,
+    waited_on: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl Drop for ShellAsks {
@@ -160,20 +184,19 @@ impl Drop for ShellAsks {
 
 /// Read one ask off a connection and answer it.
 ///
-/// A file of another project is taken as readily as one of this window's own: the window
-/// opens a session on the project holding it and puts the file in a tab of that - see
+/// A file or folder of another project is taken as readily as one of this window's own: the
+/// window opens a session on the project holding it and puts the tab in that - see
 /// [`crate::native::open_from_shell`]. Which window is asked first is the shell's business,
-/// and it asks the ones open on the file's project before any other.
+/// and it asks the ones open on the path's project before any other.
 ///
-/// What is refused is a window with nothing to open a file into: one still on its launch
-/// screen, and one whose repo is on another machine, where a path typed in a shell here
-/// names nothing at all.
+/// What is refused is a window with nothing to open into: one still on its launch screen,
+/// and one whose repo is on another machine, where a path typed in a shell here names
+/// nothing at all.
 fn answer(
     stream: UnixStream,
     reads_this_machine: bool,
     project: &Arc<Mutex<Option<String>>>,
-    arrived: &Arc<Mutex<Vec<OpenFileAsked>>>,
-    waited_on: &Arc<Mutex<HashSet<PathBuf>>>,
+    arrived: &Arrived,
 ) -> Result<()> {
     let mut asked = String::new();
     BufReader::new(&stream)
@@ -183,17 +206,41 @@ fn answer(
         .with_context(|| format!("failed to read {asked:?} as an ask"))?;
 
     let answer = match asked {
-        Ask::OpenFile { path, line, wait } => answer_open_file(
-            PathBuf::from(path),
-            line,
-            wait,
-            reads_this_machine,
-            project,
-            arrived,
-            waited_on,
-        ),
+        Ask::OpenFile { path, line, wait } => match refusal(reads_this_machine, project) {
+            Some(refused) => refused,
+            None => {
+                let path = PathBuf::from(path);
+                if wait {
+                    arrived
+                        .waited_on
+                        .lock()
+                        .expect("the waited-on lock")
+                        .insert(path.clone());
+                }
+                arrived
+                    .files
+                    .lock()
+                    .expect("the arrived lock")
+                    .push(OpenFileAsked { path, line, wait });
+                Answer::Opened
+            }
+        },
+        Ask::OpenShell { folder } => match refusal(reads_this_machine, project) {
+            Some(refused) => refused,
+            None => {
+                arrived
+                    .shells
+                    .lock()
+                    .expect("the arrived shells lock")
+                    .push(OpenShellAsked {
+                        folder: PathBuf::from(folder),
+                    });
+                Answer::Opened
+            }
+        },
         Ask::StillOpen { path } => {
-            if waited_on
+            if arrived
+                .waited_on
                 .lock()
                 .expect("the waited-on lock")
                 .contains(&PathBuf::from(path))
@@ -210,34 +257,15 @@ fn answer(
     writing.flush().context("failed to answer the shell")
 }
 
-fn answer_open_file(
-    path: PathBuf,
-    line: Option<usize>,
-    wait: bool,
-    reads_this_machine: bool,
-    project: &Arc<Mutex<Option<String>>>,
-    arrived: &Arc<Mutex<Vec<OpenFileAsked>>>,
-    waited_on: &Arc<Mutex<HashSet<PathBuf>>>,
-) -> Answer {
+/// Why this window will not open anything a shell here names, or `None` when it will.
+fn refusal(reads_this_machine: bool, project: &Arc<Mutex<Option<String>>>) -> Option<Answer> {
     match project.lock().expect("the project lock").clone() {
-        Some(project) if !reads_this_machine => Answer::Refused {
+        Some(project) if !reads_this_machine => Some(Answer::Refused {
             reason: format!("this window is open on {project} on another machine"),
-        },
-        Some(_) => {
-            if wait {
-                waited_on
-                    .lock()
-                    .expect("the waited-on lock")
-                    .insert(path.clone());
-            }
-            arrived
-                .lock()
-                .expect("the arrived lock")
-                .push(OpenFileAsked { path, line, wait });
-            Answer::Opened
-        }
-        None => Answer::Refused {
+        }),
+        Some(_) => None,
+        None => Some(Answer::Refused {
             reason: "this window has no project open yet".to_string(),
-        },
+        }),
     }
 }

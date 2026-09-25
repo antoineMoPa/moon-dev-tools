@@ -1,6 +1,9 @@
 //! The HTTP and websocket routes a window reaches the server's shells through.
 
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use axum::{
     Extension, Json,
@@ -35,12 +38,46 @@ pub(crate) fn start_workspace_shell(
 ) -> anyhow::Result<String> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    spawn_workspace_shell(state, repo_path.clone(), repo_path, command)
+}
+
+/// A login shell started in a folder of the repo rather than at its root: what
+/// `moon shell <folder>` typed in a terminal asks the window for. The folder has to be inside
+/// the session's repo - a folder outside it belongs to another session, and the window opens
+/// that one first.
+pub(crate) fn start_workspace_shell_in_folder(
+    state: &AppState,
+    session_id: &str,
+    folder: &Path,
+) -> anyhow::Result<String> {
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    if !folder.starts_with(&repo_path) {
+        anyhow::bail!(
+            "{} is outside {}, so no shell of that repo starts there",
+            folder.display(),
+            repo_path.display()
+        );
+    }
+    if !folder.is_dir() {
+        anyhow::bail!("{} is not a folder", folder.display());
+    }
+    spawn_workspace_shell(state, repo_path, folder.to_path_buf(), None)
+}
+
+/// A shell of the workspace's own, named after its program and started in `cwd`.
+fn spawn_workspace_shell(
+    state: &AppState,
+    repo_path: PathBuf,
+    cwd: PathBuf,
+    command: Option<AgentKind>,
+) -> anyhow::Result<String> {
     let program = TerminalProgram::of_agent(command);
     // A workspace shell belongs to no task, so its name is the program and the number alone.
     let name = name_for_new_shell(state, &repo_path, None, &program)?;
     state
         .terminals
-        .spawn(TerminalSpec::shell(repo_path, command, Some(name)))
+        .spawn(TerminalSpec::shell(cwd, command, Some(name)))
 }
 
 /// The same shell with one command line typed into it and sent: what an extension opens when
@@ -67,7 +104,10 @@ pub(crate) async fn create_terminal(
     State(state): State<AppState>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let terminal_id = start_workspace_shell(&state, &session_id, request.command)?;
+    let terminal_id = match request.folder {
+        Some(folder) => start_workspace_shell_in_folder(&state, &session_id, Path::new(&folder))?,
+        None => start_workspace_shell(&state, &session_id, request.command)?,
+    };
     Ok(Json(TerminalCreated { terminal_id }))
 }
 

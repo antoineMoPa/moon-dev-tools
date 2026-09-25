@@ -163,6 +163,37 @@ impl App {
         );
     }
 
+    /// A shell started in a folder - of the window's own repo or of any other - beside the
+    /// other shells: what `moon shell <folder>` typed in a terminal asks this window for.
+    ///
+    /// The session it starts through is the one on the folder's project, opened on the way
+    /// the way [`Self::open_shell_in_repo`] opens one. A project that already has a session
+    /// answers with that session, so the folder's own window is a session opened twice, not
+    /// two sessions.
+    ///
+    /// `folder` is absolute and resolved, as the shell that asked named it. Only a window
+    /// that reads this machine is asked - see [`crate::instances::window`] - so the folder is
+    /// on the disk the backend reads.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_shell_in_folder(&mut self, folder: std::path::PathBuf) {
+        let session_id = self.model.root_session_id.clone();
+        self.spawn_shell(
+            session_id,
+            None,
+            TerminalPlacement::WithOtherShells,
+            ShellMarks::default(),
+            move |backend| {
+                let project = crate::git::project_root(&folder)?;
+                let opened = backend.open_session(OpenSessionRequest {
+                    repo_path: project.display().to_string(),
+                    diff_target: None,
+                    active_commit: None,
+                })?;
+                backend.create_terminal_in_folder(&opened.session_id, &folder)
+            },
+        );
+    }
+
     /// Start a shell whichever way `start` starts it, then open a pane attached to it.
     fn spawn_shell(
         &mut self,
