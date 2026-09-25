@@ -229,7 +229,9 @@ pub(crate) struct TagComposer {
     /// The write goes out on a worker thread, and the next tag is typed well inside the time
     /// it takes to come back. Built on the task's tags as the board still has them, that next
     /// tag would be written over the one before; built on these, it goes after it. Several
-    /// writes can be out at once, and only the last of them is what the box stands for.
+    /// writes can be out at once, and only the last of them is what the box stands for - which
+    /// holds because they are written in the order they were sent, see
+    /// [`crate::native::tasks::Tasks::spawn_in_order`].
     pub(crate) sent: Option<Vec<String>>,
 }
 

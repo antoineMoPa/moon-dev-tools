@@ -256,16 +256,18 @@ fn a_right_click_moves_a_card_to_done() {
         harness.query_by_label("move to DONE").is_none(),
         "and the menu should have closed behind the answer"
     );
-    let written = std::fs::read_to_string(
-        fixture
-            .root
-            .join(".moontasks")
-            .join(TASK)
-            .join("metadata.json"),
-    )
-    .expect("the task's metadata is there");
+    // The board moves the card as it asks, and the write lands on a worker thread after.
+    let metadata = fixture
+        .root
+        .join(".moontasks")
+        .join(TASK)
+        .join("metadata.json");
+    let read_metadata =
+        || std::fs::read_to_string(&metadata).expect("the task's metadata is there");
     assert!(
-        written.contains("\"status\": \"done\""),
-        "the move should be written to the task's folder, which reads:\n{written}"
+        settle(&mut harness, || read_metadata()
+            .contains("\"status\": \"done\"")),
+        "the move should be written to the task's folder, which reads:\n{}",
+        read_metadata()
     );
 }

@@ -66,6 +66,11 @@ fn files_pane(name: &str) -> (Harness<'static>, Arc<AtomicBool>, Fixture) {
                 Ordering::Relaxed,
             );
         });
+    // The filter takes the keyboard as the pane opens, and a blinking caret would make the
+    // image differ run to run.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
 
     let until = Instant::now() + PATIENCE;
     while harness.query_by_label("notes.txt").is_none() {

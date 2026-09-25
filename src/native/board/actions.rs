@@ -484,9 +484,18 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         }
         BoardAction::CancelRename => app.model.board.renaming = None,
         BoardAction::SetTags(task_id, tags) => {
-            act(app, "could not set the tags", move |backend| {
-                backend.set_task_tags(&session_id, &task_id, &tags)
-            });
+            // Each write is the card's whole list, and the next tag is typed well before the
+            // last write is back: they land in the order they were sent - see
+            // [`crate::native::model::board::TagComposer::sent`].
+            let lane = format!("the tags of {task_id}");
+            app.tasks.spawn_in_order(
+                lane,
+                move |backend| backend.set_task_tags(&session_id, &task_id, &tags),
+                |model, result| {
+                    model.report(result, "could not set the tags");
+                    model.board.refresh_requested = true;
+                },
+            );
         }
         BoardAction::PickFile(task_id) => {
             let root = app.model.root_session_id.clone();

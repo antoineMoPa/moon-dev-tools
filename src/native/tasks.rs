@@ -11,7 +11,7 @@
 //! the same as a worker's would.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -21,6 +21,19 @@ use crate::{backend::Backend, native::model::Model};
 
 /// An edit the UI applies to the model once a task finishes.
 type Apply = Box<dyn FnOnce(&mut Model) + Send>;
+
+/// A task asked for in a lane, waiting for the one before it to finish.
+type Waiting = Box<dyn FnOnce() + Send>;
+
+/// What a running task holds until it finishes.
+enum Hold {
+    Nothing,
+    /// Its key, which no second task can be started under meanwhile - see
+    /// [`Tasks::spawn_keyed`].
+    Key(String),
+    /// Its lane, whose next task starts once it lets go - see [`Tasks::spawn_in_order`].
+    Lane(String),
+}
 
 /// The way a task edits the model while it is still running, for work that has something
 /// to show before it is done - a search streaming its matches in. Each edit lands in the
@@ -46,6 +59,8 @@ pub(crate) struct Tasks {
     inbox: Arc<Mutex<Vec<Apply>>>,
     /// Keys of tasks already running, so holding a key down cannot queue a hundred of them.
     inflight: Arc<Mutex<HashSet<String>>>,
+    /// Lanes with a task running, each with the tasks asked for behind it, first first.
+    lanes: Arc<Mutex<HashMap<String, VecDeque<Waiting>>>>,
     ctx: egui::Context,
 }
 
@@ -55,6 +70,7 @@ impl Tasks {
             backend,
             inbox: Arc::new(Mutex::new(Vec::new())),
             inflight: Arc::new(Mutex::new(HashSet::new())),
+            lanes: Arc::new(Mutex::new(HashMap::new())),
             ctx,
         }
     }
@@ -92,19 +108,66 @@ impl Tasks {
         W: Fn(&dyn Backend, &ModelEdits) -> Result<T> + Send + 'static,
         A: FnOnce(&mut Model, Result<T>) + Send + 'static,
     {
-        if let Some(key) = &key {
-            let Ok(mut inflight) = self.inflight.lock() else {
-                return;
-            };
-            if !inflight.insert(key.clone()) {
-                return;
+        let hold = match key {
+            None => Hold::Nothing,
+            Some(key) => {
+                let Ok(mut inflight) = self.inflight.lock() else {
+                    return;
+                };
+                if !inflight.insert(key.clone()) {
+                    return;
+                }
+                Hold::Key(key)
+            }
+        };
+        self.start(hold, work, apply);
+    }
+
+    /// The same, but after every task asked for in `lane` before it has finished.
+    ///
+    /// For writes that each say the whole of something - a card's tags - and are sent faster
+    /// than they come back: side by side on worker threads, an earlier one landing last would
+    /// be written over the later.
+    pub(crate) fn spawn_in_order<T, W, A>(&self, lane: String, work: W, apply: A)
+    where
+        T: Send + 'static,
+        W: Fn(&dyn Backend) -> Result<T> + Send + 'static,
+        A: FnOnce(&mut Model, Result<T>) + Send + 'static,
+    {
+        let tasks = self.clone();
+        let hold = Hold::Lane(lane.clone());
+        let start: Waiting =
+            Box::new(move || tasks.start(hold, move |backend, _| work(backend), apply));
+        let mut lanes = self.lanes.lock().expect("the lanes lock was poisoned");
+        match lanes.get_mut(&lane) {
+            Some(waiting) => waiting.push_back(start),
+            None => {
+                lanes.insert(lane, VecDeque::new());
+                drop(lanes);
+                start();
             }
         }
-        self.start(key, work, apply);
+    }
+
+    /// Start the task waiting next in `lane`, or let the lane go when none is.
+    fn next_in(&self, lane: &str) {
+        let mut lanes = self.lanes.lock().expect("the lanes lock was poisoned");
+        let waiting = lanes
+            .get_mut(lane)
+            .expect("a lane is kept for as long as a task of it runs");
+        match waiting.pop_front() {
+            Some(start) => {
+                drop(lanes);
+                start();
+            }
+            None => {
+                lanes.remove(lane);
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn start<T, W, A>(&self, key: Option<String>, work: W, apply: A)
+    fn start<T, W, A>(&self, hold: Hold, work: W, apply: A)
     where
         T: Send + 'static,
         W: Fn(&dyn Backend, &ModelEdits) -> Result<T> + Send + 'static,
@@ -117,18 +180,23 @@ impl Tasks {
                 ctx: tasks.ctx.clone(),
             };
             let result = work(tasks.backend.as_ref(), &edits);
-            tasks.finish(key.as_deref(), Box::new(move |model| apply(model, result)));
+            tasks.finish(hold, Box::new(move |model| apply(model, result)));
         });
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn start<T, W, A>(&self, key: Option<String>, work: W, apply: A)
+    fn start<T, W, A>(&self, hold: Hold, work: W, apply: A)
     where
         T: Send + 'static,
         W: Fn(&dyn Backend, &ModelEdits) -> Result<T> + Send + 'static,
         A: FnOnce(&mut Model, Result<T>) + Send + 'static,
     {
-        self.attempt(crate::backend::remote::rounds::Round::new(), key, work, apply);
+        self.attempt(
+            crate::backend::remote::rounds::Round::new(),
+            hold,
+            work,
+            apply,
+        );
     }
 
     /// One run of the work in its round - see the module. The edits a run pushes are held
@@ -137,7 +205,7 @@ impl Tasks {
     fn attempt<T, W, A>(
         &self,
         round: crate::backend::remote::rounds::Round,
-        key: Option<String>,
+        hold: Hold,
         work: W,
         apply: A,
     ) where
@@ -154,7 +222,7 @@ impl Tasks {
         if round.is_waiting() {
             let tasks = self.clone();
             let again = round.clone();
-            round.when_answered(move || tasks.attempt(again, key, work, apply));
+            round.when_answered(move || tasks.attempt(again, hold, work, apply));
             return;
         }
 
@@ -162,17 +230,21 @@ impl Tasks {
         if let Ok(mut inbox) = self.inbox.lock() {
             inbox.extend(held);
         }
-        self.finish(key.as_deref(), Box::new(move |model| apply(model, result)));
+        self.finish(hold, Box::new(move |model| apply(model, result)));
     }
 
-    fn finish(&self, key: Option<&str>, apply: Apply) {
-        if let Some(key) = key
+    fn finish(&self, hold: Hold, apply: Apply) {
+        if let Hold::Key(key) = &hold
             && let Ok(mut inflight) = self.inflight.lock()
         {
             inflight.remove(key);
         }
         if let Ok(mut inbox) = self.inbox.lock() {
             inbox.push(apply);
+        }
+        // After its result is in the inbox, so the next one's lands behind it.
+        if let Hold::Lane(lane) = &hold {
+            self.next_in(lane);
         }
         // The result is only visible once the UI draws again, and the UI may well be
         // idle waiting for exactly this.

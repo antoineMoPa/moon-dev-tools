@@ -261,8 +261,23 @@ impl TerminalRegistry {
         let Some(session) = removed else {
             return;
         };
-        let mut child = session.child.lock().unwrap();
-        let _ = child.kill();
-        let _ = child.wait();
+        end(&session);
     }
+}
+
+/// The shells go with the registry that started them. A server's registry lives as long as
+/// the process does, but a window a test opens has one of its own, and shells left running
+/// after it hold their ptys open until the test process runs out of files.
+impl Drop for TerminalRegistry {
+    fn drop(&mut self) {
+        for session in self.sessions.get_mut().unwrap().values() {
+            end(session);
+        }
+    }
+}
+
+fn end(session: &TerminalSession) {
+    let mut child = session.child.lock().unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
 }

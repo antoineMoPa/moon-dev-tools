@@ -152,7 +152,9 @@ impl TerminalRegistry {
             std::thread::spawn(move || type_ahead(&typing_into, &text));
         }
 
-        let registry = Arc::clone(self);
+        // Weak, so the shell does not keep the registry alive: a registry that is let go of
+        // ends its shells - see its `Drop`.
+        let registry = Arc::downgrade(self);
         let reaped_id = terminal_id.clone();
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; OUTPUT_CHUNK_SIZE];
@@ -180,6 +182,11 @@ impl TerminalRegistry {
             // window closes the tab of a shell marked exited. So its session is kept, with a
             // notice saying how it ended, until the user closes it themselves. A shell taken
             // out of the registry already was ended on purpose, and has nothing to explain.
+            // No registry is one being dropped, which has ended this shell on purpose.
+            let Some(registry) = registry.upgrade() else {
+                exited.send_replace(true);
+                return;
+            };
             match failure_notice(&session) {
                 Some(notice) if registry.is_live(&reaped_id) => {
                     session.child_ended.store(true, Ordering::Relaxed);
