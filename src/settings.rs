@@ -5,15 +5,22 @@
 //! That is a preference, it outlives both, and it is kept somewhere a person can open and
 //! edit - one file, in the obvious place, in a format they can read.
 //!
-//! The window in a browser has no home directory to keep a file in, so there the same JSON
-//! is one entry of the page's `localStorage` - see [`BROWSER_STORAGE_KEY`]. It is still the
-//! viewer's rather than the repo's: the page opened in another browser starts unmarked, the
-//! way a `--remote` window on another machine does.
+//! The file is the server's: it sits on the machine the repos are on, and every window reads
+//! and changes it through its backend - see [`Backend::settings`](crate::backend::Backend).
+//! A `--remote` window, or the window in a browser, is someone at another machine working on
+//! this one's repos, so it gets this machine's recent projects, agent and workspace colors
+//! rather than starting blank. What it is not is the viewer's own: two machines each serving
+//! a window keep two files.
+//!
+//! A window never writes the file whole. It sends one [`SettingsChange`] at a time, which the
+//! server applies to what the file says then - so two windows on one server, each holding
+//! the copy it read when it opened, cannot write back each other's changes.
 
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -23,11 +30,6 @@ use crate::{api::AgentKind, native::workspace_color::WorkspaceColor};
 const SETTINGS_DIR_NAME: &str = ".moonreview";
 #[cfg(not(target_arch = "wasm32"))]
 const SETTINGS_FILE_NAME: &str = "settings.json";
-/// The `localStorage` entry the browser keeps the settings in. Beside eframe's own entries
-/// and the workspace layout (`moonreview-workspace-layout`), which are the window's rather
-/// than the person's.
-#[cfg(target_arch = "wasm32")]
-const BROWSER_STORAGE_KEY: &str = "moonreview-settings";
 
 /// How many projects the launch screen offers. Enough to cover what someone is working on this
 /// week, short enough that the list stays a list rather than a history.
@@ -41,10 +43,10 @@ pub(crate) struct Settings {
     /// The projects opened before, most recent first, offered again by the launch screen.
     #[serde(default)]
     pub(crate) recent_projects: Vec<String>,
-    /// The color each project's window is marked with, by the project's path. Which color a
-    /// window is belongs to whoever is looking at it rather than to the repo, so it is kept
-    /// here rather than in the repo's `.moonreview.json` - and a repo read over a connection
-    /// to another machine can be marked without writing anything to that machine.
+    /// The color each project's window is marked with, by the project's path. It is the
+    /// person's way of telling their projects apart rather than a fact about the repo, so it
+    /// is kept here rather than in the repo's `.moonreview.json`, where it would be committed
+    /// to everyone else working on it.
     ///
     /// A project that is not in the map is one nobody has marked, which is
     /// [`WorkspaceColor::Plain`]. Ordered so the file reads the same twice running.
@@ -52,7 +54,36 @@ pub(crate) struct Settings {
     pub(crate) workspace_colors: BTreeMap<String, WorkspaceColor>,
 }
 
+/// One change a window asks the server to make to the file.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SettingsChange {
+    SelectAgent(AgentKind),
+    RememberProject(String),
+    MarkWorkspace {
+        project_path: String,
+        color: WorkspaceColor,
+    },
+}
+
 impl Settings {
+    /// Returns whether anything changed, so a change to what the file already says does not
+    /// rewrite it.
+    pub(crate) fn apply(&mut self, change: SettingsChange) -> bool {
+        match change {
+            SettingsChange::SelectAgent(agent) => {
+                let changed = self.selected_agent != agent;
+                self.selected_agent = agent;
+                changed
+            }
+            SettingsChange::RememberProject(path) => self.remember_project(&path),
+            SettingsChange::MarkWorkspace {
+                project_path,
+                color,
+            } => self.mark_workspace(&project_path, color),
+        }
+    }
+
     /// Put a project at the head of the recent list. Opening one that is already there moves
     /// it up rather than listing it twice, and the oldest fall off the end.
     ///
@@ -155,66 +186,86 @@ pub(crate) fn path() -> Option<PathBuf> {
 /// Nothing stored yet is the ordinary case on a first run. A file that cannot be parsed is a
 /// file someone has been editing: it is reported and then ignored, because starting with the
 /// defaults is a far better outcome than refusing to start.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load() -> Settings {
-    let Some((text, place)) = read_stored() else {
+    let Some(path) = path() else {
         return Settings::default();
     };
-    match serde_json::from_str(&text) {
-        Ok(settings) => settings,
-        Err(error) => {
-            eprintln!("[moonreview] ignoring {place}: {error}");
-            Settings::default()
-        }
-    }
+    read_at(&path).unwrap_or_else(|error| {
+        eprintln!("[moonreview] ignoring {}: {error:#}", path.display());
+        Settings::default()
+    })
 }
 
+/// What the tests seed a window's server with before it opens.
+#[cfg(test)]
 pub(crate) fn store(settings: &Settings) -> Result<()> {
-    let text = serde_json::to_string_pretty(settings)?;
-    write_stored(format!("{text}\n"))
+    write_at(
+        &path().context("no home directory to keep settings in")?,
+        settings,
+    )
 }
 
-/// The stored JSON and, for the report when it does not parse, where it was read from.
+/// Held across each change the server makes, so two windows changing the file at once each
+/// read what the other wrote.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_stored() -> Option<(String, String)> {
-    let path = path()?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    Some((text, path.display().to_string()))
+static CHANGING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The settings as the server serves them to a window - see [`load`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn served(state: &crate::api::AppState) -> Settings {
+    let Some(path) = &state.settings_path else {
+        return Settings::default();
+    };
+    let _held = CHANGING.lock().expect("the settings lock");
+    read_at(path).unwrap_or_else(|error| {
+        eprintln!("[moonreview] ignoring {}: {error:#}", path.display());
+        Settings::default()
+    })
+}
+
+/// Make one change to the file, on top of what it says now.
+///
+/// A file that cannot be parsed is refused here rather than read as the defaults, which
+/// would write back a file with everything but this change gone.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn change(state: &crate::api::AppState, change: SettingsChange) -> Result<()> {
+    let path = state
+        .settings_path
+        .as_ref()
+        .context("no home directory to keep settings in")?;
+    let _held = CHANGING.lock().expect("the settings lock");
+    let mut settings = read_at(path)?;
+    if !settings.apply(change) {
+        return Ok(());
+    }
+    write_at(path, &settings)
+}
+
+/// No file yet reads as the defaults; one that is there has to parse.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_at(path: &std::path::Path) -> Result<Settings> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Settings::default());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    serde_json::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_stored(text: String) -> Result<()> {
-    let path = path().context("no home directory to keep settings in")?;
+fn write_at(path: &std::path::Path, settings: &Settings) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
     }
-    std::fs::write(&path, text).with_context(|| format!("failed to write {}", path.display()))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn read_stored() -> Option<(String, String)> {
-    let text = browser_storage()
-        .ok()?
-        .get_item(BROWSER_STORAGE_KEY)
-        .ok()??;
-    Some((text, format!("localStorage[{BROWSER_STORAGE_KEY}]")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn write_stored(text: String) -> Result<()> {
-    browser_storage()?
-        .set_item(BROWSER_STORAGE_KEY, &text)
-        .map_err(|error| anyhow::anyhow!("failed to write {BROWSER_STORAGE_KEY}: {error:?}"))
-}
-
-/// The page's `localStorage`, which a browser set to block site data does not give it.
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage> {
-    web_sys::window()
-        .context("moon runs in a window")?
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("the browser refused this page storage: {error:?}"))?
-        .context("the browser gives this page no storage")
+    let text = serde_json::to_string_pretty(settings)?;
+    std::fs::write(path, format!("{text}\n"))
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 #[cfg(test)]
@@ -303,6 +354,32 @@ mod tests {
 
         assert!(!settings.mark_workspace("/repos/one", WorkspaceColor::Moss));
         assert!(!settings.mark_workspace("/repos/two", WorkspaceColor::Plain));
+    }
+
+    #[test]
+    fn a_change_to_what_the_file_already_says_changes_nothing() {
+        let mut settings = Settings::default();
+
+        assert!(!settings.apply(SettingsChange::SelectAgent(AgentKind::None)));
+        assert!(settings.apply(SettingsChange::SelectAgent(AgentKind::Claude)));
+        assert!(!settings.apply(SettingsChange::SelectAgent(AgentKind::Claude)));
+        assert!(settings.apply(SettingsChange::RememberProject("/a".to_string())));
+        assert!(!settings.apply(SettingsChange::RememberProject("/a".to_string())));
+    }
+
+    /// The change travels as JSON, and reads as what it asks for.
+    #[test]
+    fn a_change_names_what_it_changes() {
+        let encoded = serde_json::to_string(&SettingsChange::MarkWorkspace {
+            project_path: "/repos/one".to_string(),
+            color: WorkspaceColor::Teal,
+        })
+        .expect("expected json");
+
+        assert_eq!(
+            encoded,
+            r#"{"mark_workspace":{"project_path":"/repos/one","color":"teal"}}"#
+        );
     }
 
     #[test]

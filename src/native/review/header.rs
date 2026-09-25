@@ -27,7 +27,9 @@ fn review_label(payload: &crate::api::SessionPayload) -> String {
         .unwrap_or_else(|| active.chars().take(7).collect())
 }
 
-pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+/// `beside` says whether the sidebar stands beside the diff; when it does not, the header
+/// carries the button that swaps one for the other.
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, beside: bool, palette: &Palette) {
     let Some(payload) = app
         .model
         .review_ref(session_id)
@@ -52,6 +54,21 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     let full_file_path = payload.full_file_path.as_deref();
 
     ui.horizontal(|ui| {
+        // First, so a header too long for the pane does not push it out of reach.
+        if !beside {
+            let review = app.model.review(session_id);
+            let (label, hint) = if review.sidebar_in_front {
+                ("[diff]", "back to the diff")
+            } else {
+                ("[files]", "the files and comments of this review")
+            };
+            if widgets::quiet_button(ui, label)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                review.sidebar_in_front = !review.sidebar_in_front;
+            }
+        }
         // The repo's name is where a shell on it opens from: at its root, beside the review.
         let repo = widgets::clickable(
             ui.add(egui::Label::new(RichText::new(repo_name).strong()).sense(egui::Sense::click())),

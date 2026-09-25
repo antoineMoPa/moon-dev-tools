@@ -34,7 +34,14 @@ use crate::{
 use actions::{copy_selected_lines, draw_hunk_toolbar};
 use lines::draw_hunk_body;
 
-pub(super) const GUTTER_WIDTH: f32 = 74.0;
+/// The gutter of a row with room for both of a line's numbers, the old and the new.
+const TWO_NUMBER_GUTTER_WIDTH: f32 = 74.0;
+/// The gutter of a row narrower than [`ROOM_FOR_TWO_NUMBERS`]: one number, the line's place
+/// in the new file - or in the old one, for a line that was taken out.
+const ONE_NUMBER_GUTTER_WIDTH: f32 = 38.0;
+/// How wide a row has to be to spare the room for both numbers. A phone held upright is
+/// not: two numbers there leave the code a third of the screen.
+const ROOM_FOR_TWO_NUMBERS: f32 = 480.0;
 pub(super) const LINE_HEIGHT: f32 = 15.0;
 
 /// One diff line's widget id. Derived from the hunk and the line rather than from the
@@ -59,12 +66,26 @@ pub(crate) fn body_text_x(rect: Rect, scroll_x: f32) -> f32 {
     code_rect(rect).min.x - scroll_x
 }
 
+/// Whether a row `row_width` wide shows both of a line's numbers, or only one.
+pub(super) fn shows_both_numbers(row_width: f32) -> bool {
+    row_width >= ROOM_FOR_TWO_NUMBERS
+}
+
+/// How wide the line numbers are down the left of a row `row_width` wide.
+pub(super) fn gutter_width(row_width: f32) -> f32 {
+    if shows_both_numbers(row_width) {
+        TWO_NUMBER_GUTTER_WIDTH
+    } else {
+        ONE_NUMBER_GUTTER_WIDTH
+    }
+}
+
 /// The part of a row its code shows in: right of the gutter and the marker column. A body
 /// scrolled sideways slides under the marker and out of this, so everything drawn from the
 /// body's columns is clipped to it - the gutter and the marker stay put.
 pub(super) fn code_rect(rect: Rect) -> Rect {
     Rect::from_min_max(
-        egui::pos2(rect.min.x + GUTTER_WIDTH + 6.0 + 9.0, rect.min.y),
+        egui::pos2(rect.min.x + gutter_width(rect.width()) + 6.0 + 9.0, rect.min.y),
         rect.max,
     )
 }
@@ -136,12 +157,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
 
     let scroll_target = app.model.review(session_id).scroll_to.take();
 
+    // With a mouse, dragging is how lines get selected, so it must not also mean "scroll". A
+    // finger has no wheel: on a touch screen a drag is the scroll, up and down through the
+    // hunks and sideways along the one under it - and a line is picked with a tap.
+    let touch = ui.input(|input| input.has_touch_screen());
+    if touch
+        && ui.input(|input| input.pointer.primary_down())
+        && ui.rect_contains_pointer(ui.max_rect())
+    {
+        ui.input_mut(|input| input.smooth_scroll_delta.x += input.pointer.delta().x);
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        // Dragging is how lines get selected here, so it must not also mean "scroll" - not
-        // even on a touch screen, where it is the default.
         .scroll_source(egui::containers::scroll_area::ScrollSource {
-            drag: egui::containers::scroll_area::DragScroll::Never,
+            drag: egui::containers::scroll_area::DragScroll::OnTouch,
             ..Default::default()
         })
         .show(ui, |ui| {

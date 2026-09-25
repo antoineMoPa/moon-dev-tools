@@ -344,6 +344,18 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         shortcut: None,
     });
 
+    // Project > Switch Project in the menu bar: the launch screen again, in this window and on
+    // the machine it reads, so a remote window gets there without a new pass key.
+    commands.push(Command {
+        title: "switch project".to_string(),
+        description: format!(
+            "Put {} down and go back to the launch screen, to open another",
+            root_repo_name(app)
+        ),
+        action: CommandAction::SwitchProject,
+        shortcut: None,
+    });
+
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
     // Only the two platforms that have a launcher to write are offered it.

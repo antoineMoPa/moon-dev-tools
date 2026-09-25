@@ -71,6 +71,14 @@ pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> V
                     );
                 });
                 ui.menu_button("Project", |ui| {
+                    item(
+                        ui,
+                        "Switch Project…",
+                        None,
+                        MenuAction::SwitchProject,
+                        &mut picked,
+                    );
+                    ui.separator();
                     let mut offered_any = false;
                     for which in [
                         ProjectCommand::Build,

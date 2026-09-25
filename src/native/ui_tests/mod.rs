@@ -16,6 +16,7 @@ mod board_new_task_pane;
 mod board_pending_card;
 mod board_selection;
 mod board_tags;
+mod board_touch;
 mod board_task_pane;
 mod board_task_pane_boxes;
 mod diff_comments;
@@ -35,6 +36,7 @@ mod open_from_shell;
 mod palette;
 mod project;
 mod review_header;
+mod review_phone;
 mod shell_input;
 mod shell_lifecycle;
 mod sidebar_menu;
@@ -517,6 +519,32 @@ fn marked_task(app: &crate::native::app::App) -> Option<String> {
         "expected one card marked, got {marked:?}"
     );
     marked.pop()
+}
+
+/// One finger's worth of a gesture, the way a browser reports it: the touch itself, and the
+/// primary button it stands for.
+pub(super) fn finger(harness: &mut Harness<'_>, at: egui::Pos2, phase: egui::TouchPhase) {
+    let events = &mut harness.input_mut().events;
+    events.push(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(0),
+        id: egui::TouchId(0),
+        phase,
+        pos: at,
+        force: None,
+    });
+    events.push(egui::Event::PointerMoved(at));
+    match phase {
+        egui::TouchPhase::Start | egui::TouchPhase::End => {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: phase == egui::TouchPhase::Start,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        _ => {}
+    }
+    harness.step();
 }
 
 /// Step frames until the condition holds, which is how a background task's result is waited on.

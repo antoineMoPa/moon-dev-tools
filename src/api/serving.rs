@@ -2,7 +2,7 @@
 //! server reads. Never compiled for the browser, whose window writes its requests out itself -
 //! see `crate::backend::remote`.
 
-use std::env;
+use std::{env, sync::OnceLock};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ pub(crate) fn client_host() -> String {
     }
 }
 
+/// The port the server is asked to listen on: `MOONREVIEW_PORT`, or [`DEFAULT_PORT`]. Where
+/// it ends up listening may be a port or two up - see [`record_bound_port`].
 pub(crate) fn port() -> Result<u16> {
     match env::var(PORT_ENV_VAR) {
         Ok(raw) => raw
@@ -34,8 +36,25 @@ pub(crate) fn port() -> Result<u16> {
     }
 }
 
+/// The port this process's server is listening on, once it is: the asked port when that was
+/// free, and the next free one after it when another server - a window, or a `moon serve` -
+/// already had it. Every address handed out afterwards is on this port.
+static BOUND_PORT: OnceLock<u16> = OnceLock::new();
+
+/// Say which port the server bound - once, as a process serves once.
+pub(crate) fn record_bound_port(port: u16) {
+    BOUND_PORT
+        .set(port)
+        .expect("a process binds its server once");
+}
+
+/// The port addresses are written with: the one bound when the server is up, the one asked for
+/// before that.
 fn port_or_default() -> u16 {
-    port().unwrap_or(DEFAULT_PORT)
+    match BOUND_PORT.get() {
+        Some(bound) => *bound,
+        None => port().unwrap_or(DEFAULT_PORT),
+    }
 }
 
 pub(crate) fn server_url() -> String {

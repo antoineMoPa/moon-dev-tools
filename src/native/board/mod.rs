@@ -24,7 +24,7 @@ pub(crate) mod work_on_marked;
 pub(super) use actions::BoardAction;
 use actions::apply;
 use column::draw_column;
-use motion::hold_the_off_axis;
+use motion::{hold_the_off_axis, scroll_under_the_finger};
 
 use egui::{Align, Layout as UiLayout, RichText, ScrollArea, Ui, vec2};
 
@@ -33,7 +33,7 @@ use crate::{
     moontasks::ColumnId,
     native::{
         app::App,
-        model::PendingColumnPlace,
+        model::{CardMenu, PendingColumnPlace},
         panes::{Pane, PaneKind},
         theme::Palette,
     },
@@ -93,21 +93,48 @@ fn settle_gesture(app: &mut App, ui: &Ui, actions: &mut Vec<BoardAction>) {
     if app.model.board.carrying.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
+    // A finger resting on a card picks it up once it has rested long enough, which is a frame
+    // that has to be drawn whether or not anything moves.
+    if app
+        .model
+        .board
+        .press
+        .as_ref()
+        .is_some_and(|press| !press.picks_up && !press.travelled)
+    {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(gesture::HOLD_TO_PICK_UP));
+    }
 
     let Some(ended) = ui.input(|input| gesture::settle(&mut app.model.board, input)) else {
         return;
     };
-    let gesture::Ended::Click {
-        on,
-        on_title,
-        on_a_button,
-        modifiers,
-    } = ended
-    else {
-        // Dropped: the column it was let go of over has already made the move.
-        app.model.board.carrying = None;
-        app.model.board.landing = None;
-        return;
+    let (on, on_title, on_a_button, modifiers) = match ended {
+        gesture::Ended::Click {
+            on,
+            on_title,
+            on_a_button,
+            modifiers,
+        } => (on, on_title, on_a_button, modifiers),
+        // A finger held on a card and lifted: the card's menu, where a right click would have
+        // put it - see `card_menu`.
+        gesture::Ended::Held { on, at } => {
+            app.model.board.carrying = None;
+            app.model.board.card_menu = Some(CardMenu { task_id: on, at });
+            return;
+        }
+        gesture::Ended::Dropped => {
+            // The column it was let go of over has already made the move.
+            app.model.board.carrying = None;
+            app.model.board.landing = None;
+            return;
+        }
+        // The board has already scrolled under the finger as it went, and carries on at the
+        // speed it was flicked at.
+        gesture::Ended::Swiped => {
+            app.model.board.flung = ui.input(|input| input.pointer.velocity());
+            return;
+        }
     };
 
     // A press that went down on one of the card's own buttons and stayed there is that
@@ -254,6 +281,7 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     // both at once: a nested pair of scroll areas would otherwise take a component each and
     // send the board off diagonally. Held for the length of the gesture, so a flick that
     // starts across does not swap axis halfway through as the fingers drift.
+    scroll_under_the_finger(app, ui);
     let held_back = hold_the_off_axis(app, ui);
     let columns = ScrollArea::horizontal()
         .id_salt("moontasks-columns")

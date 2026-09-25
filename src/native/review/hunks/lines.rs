@@ -23,8 +23,8 @@ use super::actions::{
 };
 use super::comments::{bubble_rect, draw_comment_bubble, draw_composer, draw_inline_comment};
 use super::{
-    GUTTER_WIDTH, LINE_HEIGHT, body_text_x, code_rect, column_at, diff_line_id, sideways,
-    word_bounds_at,
+    LINE_HEIGHT, body_text_x, code_rect, column_at, diff_line_id, gutter_width, shows_both_numbers,
+    sideways, word_bounds_at,
 };
 
 /// Draws the hunk's lines, and the comments and composers under them. `scroll_to_line` is
@@ -186,10 +186,12 @@ fn draw_diff_line(
     let response = ui.interact(
         rect,
         diff_line_id(&hunk.id, index),
-        if selectable {
+        if selectable && !ui.input(|input| input.has_touch_screen()) {
             // Dragging is how a run of lines gets picked, the same gesture as sweeping over
-            // text anywhere else.
+            // text anywhere else - except under a finger, where a drag scrolls the diff.
             Sense::click_and_drag()
+        } else if selectable {
+            Sense::click()
         } else {
             Sense::hover()
         },
@@ -471,19 +473,32 @@ fn draw_diff_line(
 
 fn draw_gutter(ui: &Ui, rect: egui::Rect, line: &DiffLine, palette: &Palette) {
     let painter = ui.painter();
+    let gutter = gutter_width(rect.width());
     painter.rect_filled(
-        egui::Rect::from_min_size(rect.min, vec2(GUTTER_WIDTH, rect.height())),
+        egui::Rect::from_min_size(rect.min, vec2(gutter, rect.height())),
         CornerRadius::ZERO,
         palette.diff_gutter_bg,
     );
     painter.vline(
-        rect.min.x + GUTTER_WIDTH,
+        rect.min.x + gutter,
         rect.y_range(),
         Stroke::new(1.0, palette.diff_gutter_line),
     );
 
     let font = egui::FontId::monospace(CODE_SIZE - 1.0);
     let number = |value: Option<usize>| value.map(|value| value.to_string()).unwrap_or_default();
+    // Room for one number: where the line is in the new file, and where it was for a line
+    // that is only in the old one.
+    if !shows_both_numbers(rect.width()) {
+        painter.text(
+            egui::pos2(rect.min.x + gutter - 6.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            number(line.new_line_number.or(line.old_line_number)),
+            font,
+            palette.muted,
+        );
+        return;
+    }
     painter.text(
         egui::pos2(rect.min.x + 32.0, rect.center().y),
         Align2::RIGHT_CENTER,
@@ -518,7 +533,10 @@ pub(super) fn draw_line_text(
         LineKind::Other => palette.muted,
         _ => palette.diff_line_ink(line.kind.prefix()),
     };
-    let text_origin = egui::pos2(rect.min.x + GUTTER_WIDTH + 6.0, rect.center().y);
+    let text_origin = egui::pos2(
+        rect.min.x + gutter_width(rect.width()) + 6.0,
+        rect.center().y,
+    );
 
     // The prefix column stays fixed so code lines up whatever the change is.
     let prefix = match line.kind {

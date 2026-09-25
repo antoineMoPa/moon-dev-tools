@@ -195,6 +195,7 @@ impl App {
                                 }
                                 None => place_shell(
                                     &mut self.model.layout,
+                                    self.model.columns_fit,
                                     &TerminalPlacement::WithOtherShells,
                                     shell,
                                 ),
@@ -287,7 +288,7 @@ impl App {
                     Some(frame) => {
                         self.model.layout.add_pane(frame, pane, None);
                     }
-                    None => add_right_column(&mut self.model.layout, pane),
+                    None => add_right_column(&mut self.model.layout, self.model.columns_fit, pane),
                 }
             }
             OpenPaneRequest::Project => {
@@ -435,7 +436,7 @@ impl App {
                     .and_then(|frame| frame.panes().first().copied());
                 self.model.layout.add_pane(frame, pane, first);
             }
-            None => add_right_column(&mut self.model.layout, pane),
+            None => add_right_column(&mut self.model.layout, self.model.columns_fit, pane),
         }
     }
 

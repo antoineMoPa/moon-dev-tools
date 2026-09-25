@@ -198,7 +198,7 @@ impl App {
                         command,
                         task_id: None,
                     };
-                    place_shell(&mut model.layout, &placement, pane);
+                    place_shell(&mut model.layout, model.columns_fit, &placement, pane);
                     if let Ok(mut inbox) = inbox.lock() {
                         inbox.push(AttachedTerminal {
                             terminal_id,
@@ -241,6 +241,7 @@ impl App {
                     }
                     place_shell(
                         &mut model.layout,
+                        model.columns_fit,
                         &TerminalPlacement::WithOtherShells,
                         Pane::Terminal {
                             terminal_id,

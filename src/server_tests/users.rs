@@ -6,7 +6,7 @@ use std::time::Duration;
 use reqwest::{
     StatusCode,
     blocking::Client,
-    header::{AUTHORIZATION, COOKIE},
+    header::{ACCEPT_ENCODING, AUTHORIZATION, COOKIE},
 };
 
 use super::{Served, serve, serve_with};
@@ -144,6 +144,59 @@ fn a_kicked_key_is_refused_from_then_on_and_shows_as_kicked() {
             .expect("failed to ask")
             .status(),
         StatusCode::NO_CONTENT
+    );
+}
+
+/// A browser whose login was kicked is shown the login page at `/moon/`, saying so, rather
+/// than the window - which could ask the server for nothing, and has nowhere to paste a key.
+#[test]
+fn a_kicked_browser_login_is_shown_the_login_page_in_place_of_the_window() {
+    let served = serve("users-kick-browser");
+    let session = of_this_test_run().browser_session();
+    let cookie = format!("moon_pass_key={session}");
+    let page = format!("{}/moon/?repo=%2Fsomewhere&frame=shell", served.base_url);
+    let window = bare_client()
+        .get(&page)
+        .header(COOKIE, &cookie)
+        .header(ACCEPT_ENCODING, "gzip")
+        .send()
+        .expect("failed to ask for the page");
+    assert_eq!(window.status(), StatusCode::OK, "logged in: the window");
+    // The window's first request is what makes the browser a user the server has seen.
+    let knocked = bare_client()
+        .get(format!("{}{CHECK}", served.base_url))
+        .header(COOKIE, &cookie)
+        .send()
+        .expect("failed to ask")
+        .status();
+    assert_eq!(knocked, StatusCode::NO_CONTENT);
+    let browser = users_of(&served)
+        .into_iter()
+        .find(|user| user.kind == UserKind::Browser)
+        .expect("the browser was seen")
+        .id;
+
+    assert_eq!(
+        kick(&served, &browser.to_string()).status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let login = bare_client()
+        .get(&page)
+        .header(COOKIE, &cookie)
+        .header(ACCEPT_ENCODING, "gzip")
+        .send()
+        .expect("failed to ask for the page");
+    assert_eq!(login.status(), StatusCode::UNAUTHORIZED);
+    let login = login.text().expect("expected a page");
+    assert!(login.contains("name=\"pass_key\""), "the login page: {login}");
+    assert!(
+        login.contains("kicked out"),
+        "the login page says the login was kicked: {login}"
+    );
+    assert!(
+        login.contains("action=\"/moon/login?repo=%2Fsomewhere&amp;frame=shell\""),
+        "a new key brings the browser back to the same repo and frame: {login}"
     );
 }
 

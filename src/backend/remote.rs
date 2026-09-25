@@ -35,11 +35,12 @@ use crate::{
     backend::{Backend, SearchListener},
     moontasks::{
         AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, LinkFileRequest, NewColumnRequest, StartResourceRequest,
-        TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened, WorkLogPayload,
-        explainer::ExplainRequest,
+        CreateTaskRequest, LinkFileRequest, NewColumnRequest, ReviewRequestView,
+        StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened,
+        WorkLogPayload, explainer::ExplainRequest, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
+    settings::{Settings, SettingsChange},
 };
 
 pub(crate) struct RemoteBackend {
@@ -355,6 +356,31 @@ impl Backend for RemoteBackend {
             &format!("/api/session/{session_id}/columns/{column_id}/sort"),
             &crate::moontasks::ColumnSortRequest { sort },
         )
+    }
+
+    fn list_review_requests(&self, session_id: &str) -> Result<Vec<ReviewRequestView>> {
+        self.get(&format!("/api/session/{session_id}/review-requests"))
+    }
+
+    fn amend_review_request(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        index: usize,
+        amend: Amend,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/review-requests/{index}"),
+            &amend,
+        )
+    }
+
+    fn settings(&self) -> Result<Settings> {
+        self.get("/api/settings")
+    }
+
+    fn change_settings(&self, change: SettingsChange) -> Result<()> {
+        self.post("/api/settings", &change)
     }
 
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {

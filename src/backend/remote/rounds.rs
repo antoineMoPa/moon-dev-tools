@@ -145,6 +145,24 @@ impl Round {
     }
 }
 
+/// What the server answers a browser whose login is over: its session ran out, or was kicked
+/// out - see `crate::server::auth`. Every request the window makes from then on is answered
+/// the same, so the window is not left standing with nothing it can ask for.
+const LOGIN_OVER: u16 = 401;
+
+/// Reload the page: the server shows a browser whose login is over the login page in place of
+/// the window, at the same address - see `crate::server::web_page` - so the person is put where
+/// a new pass key goes, and comes back to the same repo and frame once it is in.
+fn log_in_again() {
+    let reloaded = web_sys::window()
+        .expect("a round runs in a page")
+        .location()
+        .reload();
+    if let Err(error) = reloaded {
+        web_sys::console::error_1(&error);
+    }
+}
+
 /// Ask the server, through the round of the task whose work is running. Every backend call in
 /// a browser is made from a task's work - see `crate::native::tasks`.
 pub(super) fn request(method: &str, url: &str, body: Option<&str>) -> Result<String> {
@@ -175,6 +193,9 @@ fn send(
             200..=299 => Ok(text),
             _ => Err(format!("{described} answered {status}: {text}")),
         };
+        if status == LOGIN_OVER {
+            log_in_again();
+        }
         round.answered(at, answer);
     });
     request.set_onloadend(Some(on_end.unchecked_ref()));

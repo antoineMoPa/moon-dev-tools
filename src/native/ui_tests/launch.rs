@@ -36,11 +36,13 @@ fn the_review_window_draws_the_diff_it_was_opened_on() {
 }
 
 /// The agent belongs to the person reviewing, not to a session that is new every launch, so it
-/// is written to `~/.moonreview/settings.json` and asked for again on the way up.
+/// is written to the server's `~/.moonreview/settings.json` and asked for again on the way up.
 #[test]
 fn the_agent_the_last_run_ended_on_comes_back() {
     let fixture = seeded_fixture("agent-memory");
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    // The settings are a round trip to the server, like everything else it is asked for.
+    drain_until(&mut app, |app| app.model.settings.is_some());
 
     // A window that ends on Claude says so. The restored agent is cleared first: until it has
     // been put back, the session still reads as no agent at all.
@@ -67,6 +69,9 @@ fn the_agent_the_last_run_ended_on_comes_back() {
         export_text: String::new(),
     }));
     app.remember_selected_agent();
+    drain_until(&mut app, |_| {
+        crate::settings::load().selected_agent == crate::api::AgentKind::Claude
+    });
 
     assert_eq!(
         crate::settings::load().selected_agent,
@@ -75,7 +80,8 @@ fn the_agent_the_last_run_ended_on_comes_back() {
     );
 
     // And the next one starts by asking for it back.
-    let next = app_for(&fixture.root, ThemeMode::Dark);
+    let mut next = app_for(&fixture.root, ThemeMode::Dark);
+    drain_until(&mut next, |next| next.model.settings.is_some());
 
     assert_eq!(
         next.model.restored_agent,
@@ -85,6 +91,18 @@ fn the_agent_the_last_run_ended_on_comes_back() {
 
     if let Some(path) = crate::settings::path() {
         let _ = fs::remove_file(path);
+    }
+}
+
+/// Take in what the backend has answered until the window has what the test is waiting for.
+fn drain_until(
+    app: &mut crate::native::app::App,
+    mut done: impl FnMut(&crate::native::app::App) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !done(app) && std::time::Instant::now() < deadline {
+        app.tasks.drain(&mut app.model);
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -640,5 +658,74 @@ fn every_glyph_the_chrome_draws_is_in_the_bundled_fonts() {
     assert!(
         missing.is_empty(),
         "these glyphs would render as empty boxes: {missing:?}"
+    );
+}
+
+/// Project > Switch Project takes the window back to its launch screen rather than opening
+/// another, so a remote window keeps the connection it has. The project's tabs go with it;
+/// their arrangement is kept for the next one to open in.
+#[test]
+fn switching_project_goes_back_to_the_launch_screen() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("switch-project");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let seen = Arc::new(Mutex::new(None));
+    let seen_in_ui = Arc::clone(&seen);
+    let switch = Arc::new(AtomicBool::new(false));
+    let switch_in_ui = Arc::clone(&switch);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .build_ui(move |ui| {
+            if switch_in_ui.swap(false, Ordering::Relaxed) {
+                app.switch_project(ui.ctx());
+            }
+            app.draw(ui);
+            *seen_in_ui.lock().expect("the window's state") = Some((
+                matches!(app.model.stage, crate::native::model::Stage::Prompt { .. }),
+                app.model.project_path.clone(),
+                app.model.layout.is_empty(),
+                app.model.restored_layout.is_some(),
+            ));
+        });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let opened = || {
+        seen.lock()
+            .expect("the window's state")
+            .as_ref()
+            .is_some_and(|(_, project, _, _)| project.is_some())
+    };
+    while Instant::now() < deadline && !opened() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(opened(), "the window never opened its project");
+
+    switch.store(true, Ordering::Relaxed);
+    harness.run_steps(3);
+
+    let (on_launch_screen, project, layout_empty, layout_kept) = seen
+        .lock()
+        .expect("the window's state")
+        .clone()
+        .expect("the window was drawn");
+    assert!(on_launch_screen, "expected the launch screen after switching");
+    assert_eq!(project, None, "expected the project to have been put down");
+    assert!(layout_empty, "expected the project's tabs to have gone");
+    assert!(
+        layout_kept,
+        "expected the arrangement to be kept for the next project"
+    );
+    assert!(
+        harness
+            .query_by_label(crate::cli::Frame::Review.asks_for_repo(true))
+            .is_some(),
+        "expected the launch screen to ask which repo to open"
+    );
+    assert!(
+        !asked_to_close(&harness),
+        "an empty workspace after a switch is not a window to close"
     );
 }

@@ -121,6 +121,8 @@ pub(crate) enum CommandAction {
     Split(DropSide),
     /// Run one of the project's own commands in a shell of its own.
     RunProject(ProjectCommand),
+    /// Put this window's project down and go back to its launch screen, to open another.
+    SwitchProject,
     /// Start an open extension over from its script - see [`crate::extensions`].
     #[cfg(not(target_arch = "wasm32"))]
     RestartExtension(String),

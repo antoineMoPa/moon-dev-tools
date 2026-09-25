@@ -58,12 +58,17 @@ pub(crate) struct Model {
     pub(crate) stage: Stage,
     pub(crate) theme: ThemeMode,
     /// The color this window's ground is painted, which is how one window is told from
-    /// another. Read from the settings once the project is known - see
+    /// another. Read from the server's settings once the project is known - see
     /// `App::follow_project_color` - and changed by the palette's commands or the project
     /// pane's swatches.
     pub(crate) workspace_color: WorkspaceColor,
     /// The panes, and the frames and splits they are arranged in.
     pub(crate) layout: Layout<Pane>,
+    /// Whether the workspace, as last drawn, is wide enough to give a pane a column of its
+    /// own. A phone held upright is not: a pane that would have taken a column there is
+    /// another tab in the frame in front instead, at the width of the screen - see
+    /// `add_right_column`.
+    pub(crate) columns_fit: bool,
     /// The review the window was launched on. Submodule reviews are opened beside it.
     pub(crate) root_session_id: String,
     /// The review the last shell was started in. A new shell asked for from a frame that
@@ -87,11 +92,10 @@ pub(crate) struct Model {
     pub(crate) review_requests: Vec<ReviewRequestView>,
     /// How many times the rows above have been changed from the board - a line dismissed or
     /// crossed off - since the window opened. The change is made to the rows at once and to
-    /// the file on a worker thread, and a read of the files that started before the change
+    /// the server's file behind them, and a read of the files that started before the change
     /// would put the row back for a tick: the read carries the count it started under, and
     /// is dropped if the count has moved on - see `App::poll_review_requests`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) review_request_amendments: u64,
+        pub(crate) review_request_amendments: u64,
     /// The shells the server says have something running in them, as of the last poll. What
     /// quitting would interrupt is these rather than every open shell, so this is what the
     /// quit warning is about - see `App::quit_would_kill_shells`.
@@ -132,6 +136,9 @@ pub(crate) struct Model {
     pub(crate) visualizations: crate::native::visualizations::Visualizations,
     /// The agent the last run ended on, applied to the session once the review opens.
     pub(crate) restored_agent: Option<AgentKind>,
+    /// The server's `settings.json`, as it was read when the window opened and changed since
+    /// by this window. `None` until the server has answered - see `App::load_settings`.
+    pub(crate) settings: Option<crate::settings::Settings>,
     /// What each review's commit pane is holding: the message being written, and the last
     /// run. Keyed by review rather than by pane, so closing the tab keeps the message.
     pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,

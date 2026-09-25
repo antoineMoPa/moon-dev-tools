@@ -21,6 +21,10 @@ use crate::native::model::{BoardState, CardMenu};
 /// slow press by a hand that is not quite still, and every one of those is a click.
 const GRAB_TRAVEL: f32 = 10.0;
 
+/// How long a finger rests on a card before carrying it picks the card up, in seconds. A
+/// finger that moves before then is scrolling the board - see [`Press::picks_up`].
+pub(crate) const HOLD_TO_PICK_UP: f64 = 0.5;
+
 /// The buttons drawn inside something the board is watching for presses - a card, a column -
 /// and whether one of them has the pointer down on it.
 ///
@@ -92,6 +96,16 @@ pub(crate) struct Press {
     pub(crate) modifiers: Modifiers,
     /// Whether it has carried far enough to be a card being picked up.
     pub(crate) travelled: bool,
+    /// Whether carrying it picks a card up. On a touch screen only once the finger has rested
+    /// for [`HOLD_TO_PICK_UP`]: until then a finger carried across the board is the board
+    /// being scrolled under it - see [`super::motion::scroll_under_the_finger`].
+    pub(crate) picks_up: bool,
+    /// Whether it earned that by resting: a finger held on a card. Let go of without carrying,
+    /// it is the card being asked for its menu - a touch screen's right click, see
+    /// [`Ended::Held`]. Never set by a mouse, whose press picks up from the start.
+    pub(crate) held: bool,
+    /// When it went down, by egui's clock.
+    pub(crate) pressed_at: f64,
 }
 
 /// What a press turned out to be, once the button comes back up.
@@ -103,8 +117,14 @@ pub(crate) enum Ended {
         on_a_button: bool,
         modifiers: Modifiers,
     },
+    /// Rested on a card for [`HOLD_TO_PICK_UP`] and let go of without carrying it anywhere:
+    /// the card's menu is wanted, at the spot the finger held - what a right click asks for,
+    /// on a screen that has none.
+    Held { on: String, at: Pos2 },
     /// Carried somewhere: the cards were being dragged, and this is them being let go of.
     Dropped,
+    /// A finger carried across a touch screen: the board was scrolled, and that is all.
+    Swiped,
 }
 
 /// Take the press, if one has just begun inside `within` and nothing else has claimed it.
@@ -175,6 +195,9 @@ pub(crate) fn claim(
         origin,
         modifiers: ui.input(|input| input.modifiers),
         travelled: false,
+        picks_up: !ui.input(|input| input.has_touch_screen()),
+        held: false,
+        pressed_at: ui.input(|input| input.time),
     });
 }
 
@@ -197,15 +220,34 @@ pub(crate) fn settle(board: &mut BoardState, input: &egui::InputState) -> Option
         // down again.
         press.travelled |= press.origin.distance(at) > GRAB_TRAVEL;
     }
+    // A finger that rested long enough without moving has hold of the card.
+    if !press.picks_up && !press.travelled && input.time - press.pressed_at >= HOLD_TO_PICK_UP {
+        press.picks_up = true;
+        press.held = true;
+    }
     if !input.pointer.any_released() {
         return None;
     }
 
-    let press = board.press.take()?;
+    board.press.take().map(ended_as)
+}
+
+/// What a press was, now the button has come back up.
+fn ended_as(press: Press) -> Ended {
     // A press that carried is only a drag if it had hold of a card. One that began on the board
     // beside the cards is the marks being let go of, wherever it wandered before it was.
-    Some(if press.travelled && press.on.is_some() {
+    if press.travelled && !press.picks_up {
+        Ended::Swiped
+    } else if press.travelled && press.on.is_some() {
         Ended::Dropped
+    } else if press.held
+        && !press.on_a_button
+        && let Some(on) = press.on.clone()
+    {
+        Ended::Held {
+            on,
+            at: press.origin,
+        }
     } else {
         Ended::Click {
             on: press.on,
@@ -213,7 +255,7 @@ pub(crate) fn settle(board: &mut BoardState, input: &egui::InputState) -> Option
             on_a_button: press.on_a_button,
             modifiers: press.modifiers,
         }
-    })
+    }
 }
 
 /// Whether the press being held is not the press the pointer is making.
@@ -241,7 +283,7 @@ fn stale(press: Option<&Press>, pointer_began_at: Option<Pos2>, released: bool) 
 pub(crate) fn grabbed(board: &BoardState) -> Option<(&str, Modifiers)> {
     let press = board.press.as_ref()?;
     let task_id = press.on.as_deref()?;
-    press.travelled.then_some((task_id, press.modifiers))
+    (press.travelled && press.picks_up).then_some((task_id, press.modifiers))
 }
 
 #[cfg(test)]
@@ -256,6 +298,9 @@ mod tests {
             origin: Pos2::new(100.0, 100.0),
             modifiers: Modifiers::NONE,
             travelled: false,
+            picks_up: true,
+            held: false,
+            pressed_at: 0.0,
         }
     }
 
@@ -291,6 +336,59 @@ mod tests {
         assert!(
             stale(Some(&press), None, false),
             "while no button down and no release is a press that ended out of sight"
+        );
+    }
+
+    /// On a touch screen a finger carried across the board is the board scrolling, so it picks
+    /// no card up and ends as a swipe rather than a drop or a click.
+    #[test]
+    fn a_finger_carried_across_a_touch_screen_is_a_swipe() {
+        let mut board = BoardState::default();
+        board.press = Some(Press {
+            picks_up: false,
+            travelled: true,
+            ..press_on("one")
+        });
+        assert!(grabbed(&board).is_none(), "a swipe should pick nothing up");
+
+        let press = board.press.take().expect("expected the press");
+        assert!(matches!(ended_as(press), Ended::Swiped));
+    }
+
+    /// A finger that rested on a card and was lifted without carrying it wants the card's
+    /// menu; one that rested and then carried is the card being dropped, as before; and a
+    /// mouse held down without moving is still a click, since a mouse has a right button.
+    #[test]
+    fn a_finger_rested_on_a_card_and_lifted_asks_for_its_menu() {
+        let rested = Press {
+            picks_up: true,
+            held: true,
+            ..press_on("one")
+        };
+        assert!(matches!(
+            ended_as(rested.clone()),
+            Ended::Held { ref on, at } if on == "one" && at == rested.origin
+        ));
+        assert!(matches!(
+            ended_as(Press {
+                travelled: true,
+                ..rested.clone()
+            }),
+            Ended::Dropped
+        ));
+        assert!(
+            matches!(
+                ended_as(Press {
+                    on_a_button: true,
+                    ..rested.clone()
+                }),
+                Ended::Click { on_a_button: true, .. }
+            ),
+            "a button held down is the button's press, not the card's"
+        );
+        assert!(
+            matches!(ended_as(press_on("one")), Ended::Click { .. }),
+            "a mouse picks up from the start and never rests its way to a hold"
         );
     }
 

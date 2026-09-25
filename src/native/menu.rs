@@ -48,6 +48,8 @@ pub(crate) enum MenuAction {
     RunProject(crate::project::ProjectCommand),
     /// Open the pane those commands are set in.
     OpenProject,
+    /// Put this window's project down and go back to its launch screen, to open another.
+    SwitchProject,
     /// Open another window of one of the three programs, on its launch screen.
     #[cfg(not(target_arch = "wasm32"))]
     NewWindow(crate::cli::Frame),
@@ -91,6 +93,7 @@ mod platform {
         /// One per command the Project menu runs, in the order the menu has them.
         project_commands: Vec<(MenuId, ProjectCommand)>,
         open_project: MenuId,
+        switch_project: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
         restart_window: MenuId,
@@ -258,7 +261,11 @@ mod platform {
             })
             .collect();
             let open_project = MenuItem::new("Project Settings…", true, None);
+            // Back to the launch screen and its recent projects, in this same window.
+            let switch_project = MenuItem::new("Switch Project…", true, None);
             let project_menu = Submenu::new("Project", true);
+            project_menu.append(&switch_project).ok()?;
+            project_menu.append(&PredefinedMenuItem::separator()).ok()?;
             for (item, _) in &project_commands {
                 project_menu.append(item).ok()?;
             }
@@ -360,6 +367,7 @@ mod platform {
                     .map(|(item, which)| (item.id().clone(), *which))
                     .collect(),
                 open_project: open_project.id().clone(),
+                switch_project: switch_project.id().clone(),
                 new_windows: new_windows
                     .iter()
                     .map(|(item, frame)| (item.id().clone(), *frame))
@@ -403,6 +411,8 @@ mod platform {
                     MenuAction::OpenSubmodules
                 } else if event.id == self.open_project {
                     MenuAction::OpenProject
+                } else if event.id == self.switch_project {
+                    MenuAction::SwitchProject
                 } else if let Some((_, which)) =
                     self.project_commands.iter().find(|(id, _)| *id == event.id)
                 {

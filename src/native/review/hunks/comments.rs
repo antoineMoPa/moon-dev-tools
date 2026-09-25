@@ -16,8 +16,8 @@ use crate::{
     },
 };
 
-use super::GUTTER_WIDTH;
 use super::actions::{current_selection, open_draft};
+use super::gutter_width;
 
 /// How big the bubble that opens a composer is. Wider than a diff row is tall, because a row
 /// is 15 points high and a mark that size is one nobody can hit.
@@ -118,7 +118,7 @@ pub(super) fn draw_inline_comment(
         .corner_radius(CornerRadius::same(4))
         .inner_margin(egui::Margin::symmetric(8, 5))
         .outer_margin(egui::Margin {
-            left: GUTTER_WIDTH as i8 + 6,
+            left: gutter_width(ui.available_width()) as i8 + 6,
             right: 6,
             top: 3,
             bottom: 3,
@@ -269,7 +269,7 @@ pub(super) fn draw_composer(
         .corner_radius(CornerRadius::same(4))
         .inner_margin(egui::Margin::symmetric(8, 6))
         .outer_margin(egui::Margin {
-            left: GUTTER_WIDTH as i8 + 6,
+            left: gutter_width(ui.available_width()) as i8 + 6,
             right: 6,
             top: 3,
             bottom: 3,

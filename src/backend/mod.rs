@@ -24,10 +24,11 @@ use crate::{
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
     moontasks::{
-        AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, StartResourceRequest,
-        TaskView, explainer::ExplainRequest,
+        AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, ReviewRequestView,
+        StartResourceRequest, TaskView, explainer::ExplainRequest, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
+    settings::{Settings, SettingsChange},
 };
 
 /// Who a search reports to while it runs. Told what it has found every time that changes,
@@ -239,6 +240,20 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Put a column at a place among the others, which is what dragging its heading does. Its
     /// cards go with it, because a card names its column rather than its place on screen.
     fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()>;
+
+    /// Every repo the board's tasks ask to have looked at, read where the board's folder is.
+    fn list_review_requests(&self, session_id: &str) -> Result<Vec<ReviewRequestView>>;
+    fn amend_review_request(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        index: usize,
+        amend: Amend,
+    ) -> Result<()>;
+
+    /// This server's `settings.json`, which every window on it shares - see [`crate::settings`].
+    fn settings(&self) -> Result<Settings>;
+    fn change_settings(&self, change: SettingsChange) -> Result<()>;
 
     /// The two commands the Project menu runs, out of the reviewed repo's own file.
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig>;

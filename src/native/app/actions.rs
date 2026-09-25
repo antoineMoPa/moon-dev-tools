@@ -19,16 +19,12 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{
-    moontasks::review_request,
-    native::menu::{MenuAction, NativeMenu},
-};
+use crate::native::menu::{MenuAction, NativeMenu};
 
 use super::{App, BACKGROUND_POLL_INTERVAL, BOARD_POLL_INTERVAL, POLL_INTERVAL, TabAction};
 
 /// The key one read of the board's review requests runs under, which is also how the poll knows
 /// one is already going - see [`App::poll_review_requests`].
-#[cfg(not(target_arch = "wasm32"))]
 const REVIEW_REQUESTS_KEY: &str = "review-requests";
 
 /// The key that keeps the project file to one write at a time - see [`App::save_project`].
@@ -294,30 +290,26 @@ impl App {
 
     /// Read what the board's tasks have asked to have looked at, and how each of them stands.
     ///
-    /// Straight off the folder, on a worker thread, rather than through the server: these are a
-    /// few short files in a folder the window already knows, and going round the API for them
-    /// would be a route and three implementations to keep in step with the format.
+    /// Through the server, which is where the board's folder and the repos its rows name are:
+    /// a `--remote` window or one in a browser is on another machine.
     ///
     /// Read whole on every tick rather than only when one of the files has been written. What a
     /// row says is not only what the file says - a row is pending until its repo has nothing left
     /// to commit, and that changes when someone commits, not when the file does. The same reason
     /// the submodule hub is on a clock rather than on a watch.
-    ///
-    /// Not in a browser, which is never on the machine the folder is: it has no rows of these.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn poll_review_requests(&mut self) {
-        if self.last_review_requests_poll.elapsed() < BOARD_POLL_INTERVAL {
+        if self.model.root_session_id.is_empty()
+            || self.last_review_requests_poll.elapsed() < BOARD_POLL_INTERVAL
+        {
             return;
         }
-        let Some(repo_path) = self.model.root_repo_path() else {
-            return;
-        };
+        let session_id = self.model.root_session_id.clone();
         self.last_review_requests_poll = Instant::now();
         let amendments_when_started = self.model.review_request_amendments;
 
         self.tasks.spawn_keyed(
             Some(REVIEW_REQUESTS_KEY.to_string()),
-            move |_| Ok(review_request::list_for_repo(&repo_path)),
+            move |backend| backend.list_review_requests(&session_id),
             move |model, result| {
                 // A read that started before a row was dismissed or crossed off from the
                 // board may not have seen the change yet; the rows already show it, and the
@@ -450,6 +442,7 @@ impl App {
             }
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
+            CommandAction::SwitchProject => self.switch_project(ctx),
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::RestartExtension(name) => self.restart_extension(&name),
             CommandAction::RenameSymbol => crate::native::renaming::start_in_front(self),
@@ -771,7 +764,12 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn pick_repo_folder(&mut self, ctx: &egui::Context) -> Option<String> {
         let mut dialog = rfd::FileDialog::new().set_title("Choose a repo");
-        if let Some(recent) = self.settings.recent_projects.first() {
+        if let Some(recent) = self
+            .model
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.recent_projects.first())
+        {
             let beside = std::path::Path::new(recent).parent().unwrap_or_else(|| {
                 // A project at the filesystem root has no parent to open beside it.
                 std::path::Path::new(recent)

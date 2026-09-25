@@ -108,6 +108,7 @@ impl App {
         *self.frames.style_mut() = self.palette_of().frames_style();
 
         ui.add_space(WORKSPACE_TOP_INSET);
+        self.model.columns_fit = holds_two_columns(ui.available_width());
 
         // The workspace draws moonreview's own panes, so the view it needs is this app: both it
         // and the arrangement are lent out for the call and put back straight after.
@@ -254,14 +255,27 @@ fn frame_at_the_right(layout: &Layout<Pane>) -> Option<FrameId> {
     }
 }
 
-/// Put a pane in a column of its own down the right of the workspace.
-fn add_right_column(layout: &mut Layout<Pane>, pane: Pane) {
-    layout.add_pane_against_edge(DropSide::Right, egui_frames::DEFAULT_EDGE_SHARE, pane);
+/// Put a pane in a column of its own down the right of the workspace - or, in a workspace too
+/// narrow to give one up (see [`Model::columns_fit`]), in front as another tab in the frame the
+/// keyboard is in. A column on a phone is a sliver whose tab cannot even be closed.
+///
+/// [`Model::columns_fit`]: crate::native::model::Model::columns_fit
+fn add_right_column(layout: &mut Layout<Pane>, columns_fit: bool, pane: Pane) {
+    if columns_fit {
+        layout.add_pane_against_edge(DropSide::Right, egui_frames::DEFAULT_EDGE_SHARE, pane);
+    } else {
+        layout.add_pane(layout.active_frame(), pane, None);
+    }
 }
 
 /// Put a shell's pane where the placement says, falling back to a column of its own.
-fn place_shell(layout: &mut Layout<Pane>, placement: &TerminalPlacement, pane: Pane) {
-    let column = add_right_column;
+fn place_shell(
+    layout: &mut Layout<Pane>,
+    columns_fit: bool,
+    placement: &TerminalPlacement,
+    pane: Pane,
+) {
+    let column = |layout: &mut Layout<Pane>, pane| add_right_column(layout, columns_fit, pane);
 
     match placement {
         TerminalPlacement::WithOtherShells => {
@@ -292,6 +306,12 @@ fn fits_another_column(frame_width: f32) -> bool {
     let new_column = frame_width * egui_frames::DEFAULT_EDGE_SHARE;
     let left_behind = frame_width * (1.0 - egui_frames::DEFAULT_EDGE_SHARE);
     new_column >= MIN_COLUMN_WIDTH && left_behind >= MIN_COLUMN_WIDTH
+}
+
+/// Whether a workspace this wide can stand two panes side by side at all - which a phone held
+/// upright cannot, whatever share of it a new column would take.
+fn holds_two_columns(workspace_width: f32) -> bool {
+    workspace_width >= 2.0 * MIN_COLUMN_WIDTH
 }
 
 /// How often a window with a shell in it redraws. The terminal widget asks for its own frames
@@ -330,13 +350,55 @@ mod tests {
             title: "review".to_string(),
         });
 
-        place_shell(&mut layout, &TerminalPlacement::WithOtherShells, shell("a"));
+        place_shell(
+            &mut layout,
+            true,
+            &TerminalPlacement::WithOtherShells,
+            shell("a"),
+        );
         assert_eq!(layout.frame_count(), 2, "the first shell takes a column");
 
-        place_shell(&mut layout, &TerminalPlacement::WithOtherShells, shell("b"));
+        place_shell(
+            &mut layout,
+            true,
+            &TerminalPlacement::WithOtherShells,
+            shell("b"),
+        );
         assert_eq!(layout.frame_count(), 2, "the second joins its tabs");
         assert_eq!(layout.pane_count(), 3);
         assert!(layout.is_coherent());
+    }
+
+    /// A phone held upright has no room for a second column: a pane that would have taken one
+    /// is a tab in front of the frame the keyboard is in, at the whole width of the screen.
+    #[test]
+    fn a_workspace_too_narrow_for_two_columns_takes_the_pane_as_a_tab() {
+        assert!(!holds_two_columns(390.0), "a phone held upright");
+        assert!(
+            holds_two_columns(900.0),
+            "a narrow desktop window still splits"
+        );
+
+        let mut layout = Layout::with_pane(Pane::Tasks);
+        let board = layout.active_frame();
+        place_shell(
+            &mut layout,
+            false,
+            &TerminalPlacement::RightColumn,
+            shell("a"),
+        );
+
+        assert_eq!(layout.frame_count(), 1, "the workspace was not split");
+        let front = layout
+            .frame(board)
+            .and_then(egui_frames::Frame::active_pane);
+        assert!(
+            matches!(
+                front.and_then(|pane| layout.pane(pane)),
+                Some(Pane::Terminal { .. })
+            ),
+            "the shell should be the tab in front"
+        );
     }
 
     /// What the palette's split commands ask for: the frame in two, the shell in the new half.
@@ -350,6 +412,7 @@ mod tests {
 
         place_shell(
             &mut layout,
+            true,
             &TerminalPlacement::Beside {
                 frame,
                 side: DropSide::Bottom,
@@ -378,9 +441,10 @@ mod tests {
             "the frame went with its shell"
         );
 
-        place_shell(&mut layout, &TerminalPlacement::Tab(gone), shell("a"));
+        place_shell(&mut layout, true, &TerminalPlacement::Tab(gone), shell("a"));
         place_shell(
             &mut layout,
+            true,
             &TerminalPlacement::Beside {
                 frame: gone,
                 side: DropSide::Right,

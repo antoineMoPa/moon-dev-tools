@@ -21,6 +21,7 @@ use crate::{
 use super::{
     auth::{cookie_key, logged_in_cookie},
     mark_activity,
+    users::{UserId, Users},
 };
 
 /// Every file of the browser build, by its path under `/moon/`, gzipped - build.rs packs them,
@@ -49,16 +50,23 @@ pub(super) async fn moon_without_slash(Query(asked): Query<Vec<(String, String)>
 /// assuming it, so it can be copied to open the same repo.
 ///
 /// A browser that has not logged in is shown the login page in its place, at the same address,
-/// so that logging in comes back to the same repo and frame.
+/// so that logging in comes back to the same repo and frame. So is one whose login was kicked
+/// out - see [`super::users`] - told so: the API would refuse every request the window made,
+/// and a window that cannot ask for anything has no way of showing where to paste a new key.
 pub(super) async fn moon_page(
     State(state): State<AppState>,
-    State(keys): State<PassKeys>,
+    State(users): State<Users>,
     Query(asked): Query<Vec<(String, String)>>,
     headers: HeaderMap,
 ) -> Response {
     mark_activity(&state);
-    if !cookie_key(&headers).is_some_and(|session| keys.admits_browser_session(session)) {
+    let session_id = cookie_key(&headers)
+        .and_then(|session| users.keys().admitted_browser_session_id(session));
+    let Some(session_id) = session_id else {
         return login_page(&asked, None);
+    };
+    if users.is_kicked(&UserId::BrowserSession(session_id)) {
+        return login_page(&asked, Some(LOGIN_KICKED));
     }
     let names_repo = asked.iter().any(|(name, _)| name == REPO_PARAMETER);
     if !names_repo && home_repo(&state).is_some() {
@@ -127,6 +135,7 @@ pub(super) async fn log_in(
 /// The page a browser logs in on, kept apart as HTML - see `login.html` beside this file.
 const LOGIN_PAGE: &str = include_str!("login.html");
 const KEY_REFUSED: &str = "that pass key is not valid";
+const LOGIN_KICKED: &str = "this browser's login was kicked out of the server; log in with a new pass key";
 
 /// The login page, posting back to the query it was asked with. 401 either way: until the key
 /// is in, the page the address names is not being shown.

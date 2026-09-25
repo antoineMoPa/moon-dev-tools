@@ -25,7 +25,9 @@ use anyhow::{Context, Result, bail};
 use crate::{
     api::{AgentKind, AppState},
     moontasks::{
-        CreateTaskRequest, TaskResourceView, TaskView, agent_launch, column_sort,
+        CreateTaskRequest, ReviewRequestView, TaskResourceView, TaskView, agent_launch,
+        column_sort,
+        review_request::{self, Amend},
         store::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
@@ -398,6 +400,26 @@ fn release_a_finished_task(
         resource.terminal_id = None;
         resource.terminal_owner = None;
     }
+}
+
+/// Every repo the board's tasks ask to have looked at, and how each of them stands - see
+/// [`review_request::list_for_repo`].
+pub(crate) fn list_review_requests(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Vec<ReviewRequestView>> {
+    Ok(review_request::list_for_repo(&repo_of(state, session_id)?))
+}
+
+/// Dismiss one line of a task's `request_for_review.txt`, or cross it off or back on.
+pub(crate) fn amend_review_request(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    index: usize,
+    amend: Amend,
+) -> Result<()> {
+    review_request::amend(&repo_of(state, session_id)?, task_id, index, amend)
 }
 
 pub(crate) fn delete_task(state: &AppState, session_id: &str, task_id: &str) -> Result<()> {

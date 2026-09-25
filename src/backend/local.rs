@@ -14,11 +14,12 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest,
-        StartResourceRequest, TaskView, explainer::ExplainRequest,
+        self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, ReviewRequestView,
+        StartResourceRequest, TaskView, explainer::ExplainRequest, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
     search::SearchListener,
+    settings::{Settings, SettingsChange},
     service,
     terminal::TerminalSession,
 };
@@ -271,6 +272,28 @@ impl Backend for LocalBackend {
 
     fn place_column(&self, session_id: &str, column_id: &ColumnId, position: usize) -> Result<()> {
         moontasks::service::place_column(&self.state, session_id, column_id, position)
+    }
+
+    fn list_review_requests(&self, session_id: &str) -> Result<Vec<ReviewRequestView>> {
+        moontasks::service::list_review_requests(&self.state, session_id)
+    }
+
+    fn amend_review_request(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        index: usize,
+        amend: Amend,
+    ) -> Result<()> {
+        moontasks::service::amend_review_request(&self.state, session_id, task_id, index, amend)
+    }
+
+    fn settings(&self) -> Result<Settings> {
+        Ok(crate::settings::served(&self.state))
+    }
+
+    fn change_settings(&self, change: SettingsChange) -> Result<()> {
+        crate::settings::change(&self.state, change)
     }
 
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {

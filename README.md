@@ -262,7 +262,6 @@ cd /home/you/project
 MOONREVIEW_HOST=127.0.0.1 MOONREVIEW_PORT=42000 moon serve
 ```
 
-Keep that terminal open and copy the pass key Moon prints. In a second terminal on your
 local machine, start the tunnel:
 
 ```bash

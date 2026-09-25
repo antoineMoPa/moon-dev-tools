@@ -127,13 +127,19 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str) {
         return;
     }
 
+    let beside = sidebar_fits_beside(ui.available_width());
     egui::Panel::top(egui::Id::new(("review-header", session_id)))
         .frame(
             egui::Frame::new()
                 .fill(palette.header_bg)
                 .inner_margin(egui::Margin::symmetric(8, 5)),
         )
-        .show(ui, |ui| header::draw(app, ui, session_id, &palette));
+        .show(ui, |ui| header::draw(app, ui, session_id, beside, &palette));
+
+    if !beside {
+        draw_one_at_a_time(app, ui, session_id, &palette);
+        return;
+    }
 
     egui::Panel::left(egui::Id::new(("review-sidebar", session_id)))
         .resizable(true)
@@ -153,6 +159,45 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str) {
                 .inner_margin(egui::Margin::symmetric(8, 6)),
         )
         .show(ui, |ui| hunks::draw(app, ui, session_id, &palette));
+}
+
+/// How wide a review pane has to be to stand the sidebar beside the diff: the sidebar at its
+/// narrowest, and room left for code. A phone held upright is not.
+const ROOM_FOR_THE_SIDEBAR: f32 = 640.0;
+
+/// Whether a review pane this wide draws its sidebar beside the diff, or one of the two at a
+/// time with the header's button to swap them.
+fn sidebar_fits_beside(pane_width: f32) -> bool {
+    pane_width >= ROOM_FOR_THE_SIDEBAR
+}
+
+/// A pane too narrow for both: the sidebar or the diff, across the whole of it. The diff comes
+/// back to the front whenever something asks for a hunk to be brought into view - a file
+/// picked in the sidebar, a comment's "go to" - since that something wants it seen.
+fn draw_one_at_a_time(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    let review = app.model.review(session_id);
+    if review.scroll_to.is_some() {
+        review.sidebar_in_front = false;
+    }
+    let sidebar_in_front = review.sidebar_in_front;
+    let fill = if sidebar_in_front {
+        palette.panel
+    } else {
+        palette.bg
+    };
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::new()
+                .fill(fill)
+                .inner_margin(egui::Margin::symmetric(8, 6)),
+        )
+        .show(ui, |ui| {
+            if sidebar_in_front {
+                sidebar::draw(app, ui, session_id, palette);
+            } else {
+                hunks::draw(app, ui, session_id, palette);
+            }
+        });
 }
 
 fn draw_placeholder(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {

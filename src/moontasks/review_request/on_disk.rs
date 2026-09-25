@@ -187,37 +187,6 @@ pub(crate) fn amend(repo_path: &Path, task_id: &str, index: usize, amend: Amend)
     std::fs::write(&path, kept).with_context(|| format!("failed to write {}", path.display()))
 }
 
-/// The same change, made to the rows a window is showing: what [`amend`] will do to the
-/// file, done to the list ahead of it so the board answers the click at once. A dismissed
-/// row goes, and the rows under it in the same file move up one - their index is their
-/// place in the file, and the file is one line shorter.
-pub(crate) fn amend_views(
-    requests: &mut Vec<ReviewRequestView>,
-    task_id: &str,
-    index: usize,
-    amend: Amend,
-) {
-    match amend {
-        Amend::Dismiss => {
-            requests.retain(|request| !(request.task_id == task_id && request.index == index));
-            for request in requests
-                .iter_mut()
-                .filter(|request| request.task_id == task_id && request.index > index)
-            {
-                request.index -= 1;
-            }
-        }
-        Amend::Done(done) => {
-            if let Some(request) = requests
-                .iter_mut()
-                .find(|request| request.task_id == task_id && request.index == index)
-            {
-                request.done = done;
-            }
-        }
-    }
-}
-
 /// One line of a task's file, against the repo the board belongs to.
 fn view_of(
     repo_path: &Path,
@@ -434,6 +403,7 @@ fn path_of(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::moontasks::review_request::amend_views;
 
     fn subject_of(request: &ReviewRequest) -> Option<&str> {
         request

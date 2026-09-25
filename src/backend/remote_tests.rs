@@ -18,9 +18,10 @@ use crate::{
     api::{LspPosition, LspStatus, LspTriggersPayload, OpenSessionRequest},
     backend::{Backend, remote::RemoteBackend},
     git::run_git_no_output,
-    moontasks::{ColumnEnd, ColumnId, CreateTaskRequest},
-    native::language_source::SessionLanguages,
+    moontasks::{ColumnEnd, ColumnId, CreateTaskRequest, review_request::Amend},
+    native::{language_source::SessionLanguages, workspace_color::WorkspaceColor},
     pass_keys::of_this_test_run,
+    settings::SettingsChange,
 };
 
 struct ServedRepo {
@@ -127,6 +128,40 @@ fn a_remote_review_loads_its_diff_over_http() {
     assert!(hunk.patch_preview.contains("println!(\"two\")"));
     assert!(!payload.read_only, "a working-tree review is writable");
     assert_eq!(backend.describe(), served.base_url.replace("http://", ""));
+}
+
+/// A window on another machine is working on the server's projects, so it gets the server's
+/// settings - the color a project was marked from one machine is the color it is on another.
+#[test]
+fn a_remote_window_reads_and_changes_the_server_s_settings() {
+    let served = serve_a_repo("settings");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+    let project_path = served.root.display().to_string();
+
+    backend
+        .change_settings(SettingsChange::MarkWorkspace {
+            project_path: project_path.clone(),
+            color: WorkspaceColor::Ember,
+        })
+        .expect("expected the mark to be written");
+    backend
+        .change_settings(SettingsChange::RememberProject(project_path.clone()))
+        .expect("expected the project to be remembered");
+
+    let settings = backend.settings().expect("expected the server's settings");
+    assert_eq!(settings.workspace_color(&project_path), WorkspaceColor::Ember);
+    assert_eq!(settings.recent_projects.first(), Some(&project_path));
+    // The one change after the other: the second did not write back a file without the first.
+    assert_eq!(
+        crate::settings::load().workspace_color(&project_path),
+        WorkspaceColor::Ember,
+        "the mark should be in the server's own file"
+    );
+
+    if let Some(path) = crate::settings::path() {
+        let _ = fs::remove_file(path);
+    }
 }
 
 #[test]
@@ -522,6 +557,56 @@ fn the_work_log_opens_over_http() {
         .expect("expected the file pane's read to reach the work log");
     assert_eq!(content.content, "#now#\n");
     assert!(served.root.join(".moontasks/.gitignore").is_file());
+}
+
+/// A task's `request_for_review.txt` is on the server, beside the board, so a remote window is
+/// told its rows over HTTP and crosses them off there - not in a folder of its own machine.
+#[test]
+fn review_requests_are_read_and_crossed_off_over_http() {
+    let served = serve_a_repo("review-requests");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let task = backend
+        .create_task(
+            &opened.session_id,
+            &CreateTaskRequest {
+                title: "Deploy the thing".to_string(),
+                status: ColumnId::new("todo"),
+                joins: ColumnEnd::Top,
+            },
+        )
+        .expect("expected the remote task to be created");
+    // Written the way an agent writes it: straight into the task's folder on the server.
+    fs::write(
+        served
+            .root
+            .join(format!(".moontasks/{}/request_for_review.txt", task.id)),
+        ". // fix: the thing\n",
+    )
+    .expect("expected the request to be written");
+
+    let requests = backend
+        .list_review_requests(&opened.session_id)
+        .expect("expected the remote review requests");
+    assert_eq!(requests.len(), 1, "expected the one line");
+    assert_eq!(requests[0].task_id, task.id);
+    assert!(!requests[0].done);
+
+    backend
+        .amend_review_request(&opened.session_id, &task.id, 0, Amend::Done(true))
+        .expect("expected the line to be crossed off");
+
+    let requests = backend
+        .list_review_requests(&opened.session_id)
+        .expect("expected the remote review requests");
+    assert!(requests[0].done, "the line should read as crossed off");
 }
 
 /// The card's notes and the file pane read the same file: opening the notes makes it real,

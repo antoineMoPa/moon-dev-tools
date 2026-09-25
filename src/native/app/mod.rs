@@ -2,6 +2,8 @@
 
 mod actions;
 mod draw;
+mod settings;
+mod switching;
 #[cfg(not(target_arch = "wasm32"))]
 mod windows;
 
@@ -102,8 +104,7 @@ pub(crate) struct App {
     /// When the window last asked which shells have something running in them.
     last_running_shells_poll: Instant,
     /// When the board's review requests were last read - see [`App::poll_review_requests`].
-    #[cfg(not(target_arch = "wasm32"))]
-    last_review_requests_poll: Instant,
+        last_review_requests_poll: Instant,
     /// When the window last asked what the language servers are doing - see
     /// [`crate::native::status_bar`]. Kept here rather than per pane: the question is about
     /// the session's servers, and every pane on that session is waiting on the same answer.
@@ -206,8 +207,6 @@ pub(crate) struct App {
     /// is the one that writes that down for the shells to read.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) window_is_in_front: bool,
-    /// What `~/.moonreview/settings.json` said, and what it will be written back as.
-    settings: crate::settings::Settings,
     /// The native webviews laid over webview panes - see [`crate::native::webview_pane`].
     pub(crate) webviews: crate::native::webview_pane::Webviews,
 }
@@ -249,7 +248,6 @@ impl App {
 
         let tasks = Tasks::new(Arc::clone(&launch.backend), ctx);
         let connection = launch.backend.describe();
-        let settings = crate::settings::load();
 
         let stage = match &launch.open {
             Some(_) => Stage::Opening,
@@ -266,6 +264,8 @@ impl App {
                 // Marked once the project is known, which the review opening is what says.
                 workspace_color: WorkspaceColor::default(),
                 layout: Layout::new(),
+                // Until the workspace is first drawn and measured.
+                columns_fit: true,
                 root_session_id: String::new(),
                 last_shell_session_id: None,
                 reviews: HashMap::new(),
@@ -280,8 +280,7 @@ impl App {
                 project_shell: None,
                 submodule_filter: String::new(),
                 review_requests: Vec::new(),
-                #[cfg(not(target_arch = "wasm32"))]
-                review_request_amendments: 0,
+                                review_request_amendments: 0,
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
                 shells_wanting_attention: Vec::new(),
@@ -312,9 +311,10 @@ impl App {
                 open_shell_pending: false,
                 restored_layout: None,
                 visualizations: Default::default(),
-                // The agent the person last picked, put back once the review says this
-                // machine still has it.
-                restored_agent: Some(settings.selected_agent),
+                // The agent the person last picked, put back once the settings have come
+                // and the review says this machine still has it - see `App::load_settings`.
+                restored_agent: None,
+                settings: None,
             },
             tasks,
             terminals: HashMap::new(),
@@ -335,8 +335,7 @@ impl App {
             last_running_shells_poll: Instant::now()
                 .checked_sub(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
-            #[cfg(not(target_arch = "wasm32"))]
-            last_review_requests_poll: Instant::now()
+                        last_review_requests_poll: Instant::now()
                 .checked_sub(BOARD_POLL_INTERVAL)
                 .unwrap_or_else(Instant::now),
             // Backdated like the rest, so the first pane that has a server behind it is asked
@@ -384,10 +383,10 @@ impl App {
             sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(not(target_arch = "wasm32"))]
             window_is_in_front: false,
-            settings,
             webviews: Default::default(),
         };
 
+        app.load_settings();
         if let Some(open) = launch.open {
             app.open_review(open);
         }
@@ -418,42 +417,6 @@ impl App {
 
     pub(crate) fn set_theme(&mut self, theme: ThemeMode) {
         self.model.theme = theme;
-        self.needs_style = true;
-    }
-
-    /// Mark this window's project with a color, and keep `settings.json` in step.
-    ///
-    /// A window that is on no project yet - the launch screen - has nothing to mark: the
-    /// color is remembered against the project's path, so there is nowhere to put it.
-    pub(crate) fn set_workspace_color(&mut self, color: WorkspaceColor) {
-        self.model.workspace_color = color;
-        // The ground is baked into the style, so the whole window has to be restyled.
-        self.needs_style = true;
-
-        let Some(project_path) = self.model.project_path.clone() else {
-            return;
-        };
-        if !self.settings.mark_workspace(&project_path, color) {
-            return;
-        }
-        if let Err(error) = crate::settings::store(&self.settings) {
-            // Worth saying once, but not worth a toast: the window is that color either way.
-            eprintln!("[moonreview] could not save settings: {error}");
-        }
-    }
-
-    /// Paint the window in the color its project was last marked with. The project arrives a
-    /// moment after the window does - opening a review is a round trip - so this runs each
-    /// frame and does nothing until the path it is waiting for is there.
-    fn follow_project_color(&mut self) {
-        let Some(project_path) = self.model.project_path.as_deref() else {
-            return;
-        };
-        let color = self.settings.workspace_color(project_path);
-        if color == self.model.workspace_color {
-            return;
-        }
-        self.model.workspace_color = color;
         self.needs_style = true;
     }
 
@@ -547,7 +510,7 @@ impl App {
 
 /// Where the pane arrangement is kept between runs. Which agent comments go to is not here:
 /// that belongs to the person rather than to the window, so it lives in
-/// [`crate::settings`] - one file, in their home directory, that they can read and edit.
+/// [`crate::settings`] - one file, in the server's home directory, that they can read and edit.
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
 
 impl eframe::App for App {
@@ -616,28 +579,6 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Keep `settings.json` in step with the selector at the top of the review.
-    ///
-    /// Written when the choice changes rather than on a clock: the file is one line, and a
-    /// selector nobody has touched should leave it exactly as the user last left it - or as
-    /// they last edited it by hand.
-    pub(crate) fn remember_selected_agent(&mut self) {
-        // Before the restored agent has been put back, the session still reads as `None`, and
-        // writing that would throw away the very choice being restored.
-        if self.model.restored_agent.is_some() {
-            return;
-        }
-        let selected = self.selected_agent();
-        if selected == self.settings.selected_agent {
-            return;
-        }
-
-        self.settings.selected_agent = selected;
-        if let Err(error) = crate::settings::store(&self.settings) {
-            // Worth saying once, but not worth a toast every frame: the review still works.
-            eprintln!("[moonreview] could not save settings: {error}");
-        }
-    }
 
     /// Quitting kills every shell the window holds, along with whatever they were in the
     /// middle of, so the first ⌘Q says so and the second one goes through.
@@ -686,20 +627,6 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
-    /// Write a project that has just opened to the head of the recent list, so the next launch
-    /// screen offers it.
-    fn remember_opened_project(&mut self) {
-        let Some(path) = self.model.opened_project.take() else {
-            return;
-        };
-        if !self.settings.remember_project(&path) {
-            return;
-        }
-        if let Err(error) = crate::settings::store(&self.settings) {
-            // Worth saying once, but not worth a toast: the review is open either way.
-            eprintln!("[moonreview] could not save settings: {error}");
-        }
-    }
 
     /// A session starts on no agent at all, so the one the last run ended on is put back - once
     /// the review has said which agents this machine actually has, since asking for one that is

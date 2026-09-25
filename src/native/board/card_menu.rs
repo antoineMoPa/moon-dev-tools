@@ -1,4 +1,5 @@
-//! The menu a card is right-clicked for: what is done *to* a task, rather than started in it.
+//! The menu a card is right-clicked for - or held under a finger for, on a touch screen - see
+//! [`super::gesture::Ended::Held`]: what is done *to* a task, rather than started in it.
 //!
 //! The `[start]` menu is the work a card offers - a review, a shell, an agent. This one is the
 //! task folder itself - where it is, and a shell standing in it - and the card's place on the

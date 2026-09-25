@@ -27,6 +27,10 @@ pub(crate) struct AppState {
     /// The language servers running for these reviews. Repo-side like the shells beside it,
     /// because a server has to read the files it answers about - see [`crate::lsp`].
     pub(crate) lsp: Arc<moon_lsp::LspRegistry>,
+    /// The `settings.json` every window on this server reads and changes, fixed when the
+    /// state is built - under test that is on the test's own thread, which is what gives
+    /// each test a file of its own. See [`crate::settings::path`].
+    pub(crate) settings_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Default)]

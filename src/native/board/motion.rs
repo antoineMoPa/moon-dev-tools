@@ -37,6 +37,50 @@ fn scroll_axis(settled: Option<Axis>, along: egui::Vec2) -> Option<Axis> {
     }))
 }
 
+/// How quickly a flicked board slows down, in points a second, each second. egui's own
+/// kinetic scrolling slows at the same rate.
+const FLING_FRICTION: f32 = 1000.0;
+
+/// Below this speed, in points a second, a flicked board has stopped.
+const FLING_STOP_SPEED: f32 = 20.0;
+
+/// Scroll the board with a finger carried across a touch screen, the way a wheel scrolls it,
+/// and keep it going at the speed it was flicked at once the finger lets go.
+///
+/// The board's scroll areas do not scroll on a drag, because a drag with a mouse is a card or a
+/// column being moved. A finger has no wheel, so on a touch screen a press on the board that
+/// travels is the scroll instead - it picks nothing up, see [`super::gesture::Press::picks_up`] -
+/// and goes in as a wheel's scroll would, so it is held to one axis like one.
+pub(super) fn scroll_under_the_finger(app: &mut App, ui: &Ui) {
+    let board = &mut app.model.board;
+    if let Some(press) = &board.press {
+        // A finger down again stops a board still moving from the last flick.
+        board.flung = egui::Vec2::ZERO;
+        if !press.picks_up {
+            ui.input_mut(|input| input.smooth_scroll_delta += input.pointer.delta());
+        }
+    } else if board.flung != egui::Vec2::ZERO {
+        let dt = ui.input(|input| input.stable_dt).min(0.1);
+        let flung = board.flung;
+        ui.input_mut(|input| input.smooth_scroll_delta += flung * dt);
+        board.flung = slowed(flung, dt);
+        ui.ctx().request_repaint();
+    }
+}
+
+/// A flick's speed one frame of `dt` seconds later.
+fn slowed(flung: egui::Vec2, dt: f32) -> egui::Vec2 {
+    let slow = |speed: f32| {
+        let slower = speed.abs() - FLING_FRICTION * dt;
+        if slower < FLING_STOP_SPEED {
+            0.0
+        } else {
+            slower * speed.signum()
+        }
+    };
+    vec2(slow(flung.x), slow(flung.y))
+}
+
 pub(super) fn hold_the_off_axis(app: &mut App, ui: &Ui) -> HeldBack {
     let along = ui.input(|input| input.smooth_scroll_delta);
     let Some(axis) = scroll_axis(app.model.board.scroll_axis, along) else {
@@ -141,7 +185,7 @@ pub(super) fn stamp_place(ui: &Ui, axis: Axis, id: egui::Id, origin: f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Axis, scroll_axis};
+    use super::{Axis, scroll_axis, slowed};
     use egui::vec2;
 
     /// A gesture picks its axis once and keeps it, so a flick that starts across the board and
@@ -173,6 +217,24 @@ mod tests {
             scroll_axis(Some(Axis::Horizontal), vec2(0.0, 0.0)),
             None,
             "the gesture ends when the scrolling stops, and the next one picks again"
+        );
+    }
+
+    /// A flick slows the way egui's own kinetic scrolling does, and stops rather than
+    /// creeping on forever.
+    #[test]
+    fn a_flick_slows_and_then_stops() {
+        let flung = vec2(-1200.0, 0.0);
+        let later = slowed(flung, 0.5);
+        assert_eq!(
+            later,
+            vec2(-700.0, 0.0),
+            "slowed by the friction, in its own direction"
+        );
+        assert_eq!(
+            slowed(later, 1.0),
+            egui::Vec2::ZERO,
+            "and stopped once it is spent"
         );
     }
 }

@@ -36,7 +36,10 @@ impl PassKeys {
         )
     }
 
-    /// Whether `session` is one this machine's secret made and that has not run out.
+    /// Whether `session` is one this machine's secret made and that has not run out. The
+    /// server asks for the id instead - see [`Self::admitted_browser_session_id`] - since who
+    /// the session is decides whether it is let in; this is the tests' short way of asking.
+    #[cfg(test)]
     pub(crate) fn admits_browser_session(&self, session: &str) -> bool {
         self.admits_browser_session_at(session, unix_seconds_now())
     }
@@ -47,6 +50,7 @@ impl PassKeys {
         self.admitted_browser_session_id_at(session, unix_seconds_now())
     }
 
+    #[cfg(test)]
     fn admits_browser_session_at(&self, session: &str, now: u64) -> bool {
         self.admitted_browser_session_id_at(session, now).is_some()
     }

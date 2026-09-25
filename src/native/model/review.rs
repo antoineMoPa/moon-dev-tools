@@ -147,6 +147,9 @@ pub(crate) struct ReviewState {
     /// Set to ask the review pane to bring a hunk, or a line of one, into view on the next
     /// frame - see [`ScrollTo`].
     pub(crate) scroll_to: Option<ScrollTo>,
+    /// Whether a pane too narrow for the sidebar beside the diff is showing the sidebar in
+    /// its place - see `review::sidebar_fits_beside`.
+    pub(crate) sidebar_in_front: bool,
     pub(crate) selection: Option<LineSelection>,
     /// The hunk a drag is currently sweeping lines in, if the button is still down.
     pub(crate) selecting_in: Option<String>,
@@ -189,6 +192,7 @@ impl ReviewState {
             collapsed_files: HashSet::new(),
             active_hunk_id: None,
             scroll_to: None,
+            sidebar_in_front: false,
             selection: None,
             selecting_in: None,
             drafts: Vec::new(),

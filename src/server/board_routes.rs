@@ -1,5 +1,5 @@
 //! The routes the task board is read and changed through: its tasks, columns and the shells
-//! and agents running on them, and the project's commands.
+//! and agents running on them, the project's commands, and the settings every window shares.
 
 use anyhow::Result;
 use axum::{
@@ -11,9 +11,10 @@ use crate::{
     api::{AppError, AppState},
     moontasks::{
         self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        LinkFileRequest, NewColumnRequest, StartResourceRequest, TaskNotesPayload,
-        TaskPlacementRequest, TaskTagsRequest, TaskTitleRequest, TaskView, TerminalOpened,
-        WorkLogPayload,
+        LinkFileRequest, NewColumnRequest, ReviewRequestView, StartResourceRequest,
+        TaskNotesPayload, TaskPlacementRequest, TaskTagsRequest, TaskTitleRequest, TaskView,
+        TerminalOpened, WorkLogPayload,
+        review_request::Amend,
         store::{BoardColumn, ColumnId},
     },
 };
@@ -47,6 +48,41 @@ pub(super) async fn delete_task(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     moontasks::service::delete_task(&state, &session_id, &task_id)?;
+    Ok("ok")
+}
+
+pub(super) async fn list_review_requests(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ReviewRequestView>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::list_review_requests(
+        &state,
+        &session_id,
+    )?))
+}
+
+pub(super) async fn amend_review_request(
+    AxumPath((session_id, task_id, index)): AxumPath<(String, String, usize)>,
+    State(state): State<AppState>,
+    Json(amend): Json<Amend>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::amend_review_request(&state, &session_id, &task_id, index, amend)?;
+    Ok("ok")
+}
+
+pub(super) async fn settings(State(state): State<AppState>) -> Json<crate::settings::Settings> {
+    mark_activity(&state);
+    Json(crate::settings::served(&state))
+}
+
+pub(super) async fn change_settings(
+    State(state): State<AppState>,
+    Json(change): Json<crate::settings::SettingsChange>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::settings::change(&state, change)?;
     Ok("ok")
 }
 

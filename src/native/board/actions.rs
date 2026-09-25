@@ -598,17 +598,14 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 title,
             }));
         }
-        #[cfg(not(target_arch = "wasm32"))]
         BoardAction::AmendReviewRequest {
             task_id,
             index,
             amend,
         } => {
-            let Some(repo_path) = app.model.root_repo_path() else {
-                return;
-            };
-            // The rows show the change now, and the file gets it on a worker thread, the way
-            // the requests are read. Waiting for the file and the next read of it would leave
+            let session_id = app.model.root_session_id.clone();
+            // The rows show the change now, and the server's file gets it behind them, the
+            // way the requests are read. Waiting for the file and the next read of it would leave
             // the row up for a tick and the git it takes to tell how each row stands, which
             // is long enough for a dismiss to look ignored - see `App::poll_review_requests`.
             crate::moontasks::review_request::amend_views(
@@ -619,22 +616,10 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
             );
             app.model.review_request_amendments += 1;
             app.tasks.spawn(
-                move |_| {
-                    crate::moontasks::review_request::amend(&repo_path, &task_id, index, amend)
-                },
+                move |backend| backend.amend_review_request(&session_id, &task_id, index, amend),
                 |model, result| model.report(result, "could not change the review request"),
             );
         }
-        // Its rows are read off the board's folder, which a browser never reads - see
-        // `App::poll_review_requests` - so it has none to amend.
-        #[cfg(target_arch = "wasm32")]
-        BoardAction::AmendReviewRequest {
-            task_id,
-            index,
-            amend,
-        } => unreachable!(
-            "a browser has no review requests to amend, but was asked to {amend:?} {task_id}'s {index}"
-        ),
         BoardAction::OpenReview(repo_path, title) => {
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {
                 repo_path,

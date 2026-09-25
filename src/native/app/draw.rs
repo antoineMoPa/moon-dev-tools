@@ -108,7 +108,7 @@ impl App {
                     }
                 });
 
-                if let Some(recent) = draw_recent_projects(ui, &self.settings, &palette) {
+                if let Some(recent) = draw_recent_projects(ui, self.model.settings.as_ref(), &palette) {
                     open_path = Some(recent);
                 }
             });
@@ -257,6 +257,7 @@ impl App {
                 MenuAction::OpenProject => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
                 }
+                MenuAction::SwitchProject => CommandAction::SwitchProject,
                 MenuAction::OpenReview => {
                     self.open_root_review();
                     continue;
@@ -375,8 +376,6 @@ impl App {
         let focused = ctx.input(|input| input.focused);
         self.poll_reviews(focused);
         self.poll_submodules(focused);
-        // Read off the board's folder, which a browser is never on - see the method.
-        #[cfg(not(target_arch = "wasm32"))]
         self.poll_review_requests();
         self.poll_running_shells();
         self.poll_visualizations();
@@ -519,9 +518,10 @@ pub(crate) fn window_title(frame: crate::cli::Frame, project: Option<&str>) -> S
 /// two checkouts of the same repo can be told apart.
 fn draw_recent_projects(
     ui: &mut Ui,
-    settings: &crate::settings::Settings,
+    settings: Option<&crate::settings::Settings>,
     palette: &Palette,
 ) -> Option<String> {
+    let settings = settings?;
     if settings.recent_projects.is_empty() {
         return None;
     }

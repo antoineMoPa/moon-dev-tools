@@ -8,6 +8,7 @@ pub(crate) mod users;
 mod web_page;
 
 use board_routes::{
+    amend_review_request, change_settings, list_review_requests, settings,
     add_column, attach_task_resource, create_task, delete_column, delete_task,
     delete_task_resource, explain_task_changes, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_work_log, place_column, place_tasks, project_commands,
@@ -70,6 +71,7 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
                     env!("CARGO_PKG_VERSION"),
                 )),
         ),
+        settings_path: crate::settings::path(),
     }
 }
 
@@ -226,6 +228,15 @@ fn protected_routes() -> Router<Served> {
         .route(
             "/api/session/{session_id}/columns",
             get(list_columns).post(add_column),
+        )
+        .route("/api/settings", get(settings).post(change_settings))
+        .route(
+            "/api/session/{session_id}/review-requests",
+            get(list_review_requests),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/review-requests/{index}",
+            post(amend_review_request),
         )
         .route(
             "/api/session/{session_id}/project",
@@ -454,12 +465,36 @@ pub(crate) async fn serve(state: AppState) -> Result<()> {
     serve_on(state, users, listener, None).await
 }
 
+/// How many ports up from the asked one are tried before giving up: enough for every window
+/// and `moon serve` one machine has open at once.
+const PORTS_TRIED: u16 = 20;
+
+/// Bind the asked port - see [`crate::api::port`] - or, when another server already has it,
+/// the first free one after it: a second window or a `moon serve` beside a window gets a
+/// server of its own rather than an error. The port bound is recorded, so the address printed
+/// and handed to agents is the one that answers - see [`crate::api::record_bound_port`].
 async fn bind() -> Result<tokio::net::TcpListener> {
-    let port = port()?;
+    let asked = port()?;
     let host = bind_host();
-    tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .with_context(|| format!("failed to bind {host}:{port}"))
+    for port in asked..asked.saturating_add(PORTS_TRIED) {
+        match tokio::net::TcpListener::bind((host.as_str(), port)).await {
+            Ok(listener) => {
+                if port != asked {
+                    println!("port {asked} is taken; listening on {port} instead");
+                }
+                crate::api::record_bound_port(port);
+                return Ok(listener);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to bind {host}:{port}"));
+            }
+        }
+    }
+    anyhow::bail!(
+        "every port from {asked} to {} on {host} is taken",
+        asked.saturating_add(PORTS_TRIED) - 1
+    )
 }
 
 /// Serve on a listener the caller already bound, which is how a test gets a free port.

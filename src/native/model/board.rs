@@ -100,6 +100,9 @@ pub(crate) struct BoardState {
     /// up and down inside one. Settled on the first frame of the gesture and let go of when
     /// the scrolling stops - see [`crate::native::board::hold_the_off_axis`].
     pub(crate) scroll_axis: Option<crate::native::board::motion::Axis>,
+    /// How fast a finger flicked the board as it let go, in points a second, which the board
+    /// keeps scrolling at as it slows - see [`crate::native::board::motion`].
+    pub(crate) flung: egui::Vec2,
     /// Where the card being dragged would land. Worked out at the end of a frame and read by
     /// the next one, which is what lets the board draw the card where it is going instead of
     /// where it came from.
