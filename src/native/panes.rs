@@ -300,6 +300,13 @@ pub(crate) enum OpenPaneRequest {
         session_id: String,
         file_path: String,
     },
+    /// A file with no name: the tab opens empty, and its first save asks where to put it.
+    /// `placeholder_path` is only what the tab is called until then.
+    #[cfg(not(target_arch = "wasm32"))]
+    UntitledFile {
+        session_id: String,
+        placeholder_path: String,
+    },
     Tasks,
     /// One task, in a tab of its own.
     TaskStart {
@@ -471,6 +478,18 @@ impl PaneView<Pane> for App {
     }
 
     fn pane_ui(&mut self, ui: &mut Ui, pane_id: PaneId, pane: &Pane) {
+        // What a task's shells and files stand under: its whole title, and its tags.
+        if let Pane::Terminal {
+            task_id: Some(task_id),
+            ..
+        }
+        | Pane::File {
+            task_id: Some(task_id),
+            ..
+        } = pane
+        {
+            crate::native::board::header::draw(self, ui, task_id);
+        }
         match pane {
             Pane::Review { session_id, .. } => {
                 let session_id = session_id.clone();

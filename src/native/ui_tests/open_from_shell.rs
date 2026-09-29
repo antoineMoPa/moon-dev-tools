@@ -170,6 +170,55 @@ fn a_file_that_is_not_there_yet_is_created_by_saving_its_tab() {
     );
 }
 
+/// File > New opens an empty tab with a name of its own that nothing is at, and asking again
+/// opens another rather than the same one. Nothing is written until a save says where.
+#[test]
+fn file_new_opens_untitled_tabs_and_writes_nothing() {
+    let fixture = Fixture::new("moon-file-new");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let asks = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let asks_in_ui = Arc::clone(&asks);
+    let names = Arc::new(Mutex::new(Vec::<String>::new()));
+    let names_in_ui = Arc::clone(&names);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if asks_in_ui.load(Ordering::Relaxed) > 0 && app.repo_root().is_some() {
+                asks_in_ui.fetch_sub(1, Ordering::Relaxed);
+                app.pending_action = Some(crate::native::palette::CommandAction::NewFile);
+            }
+            app.draw(ui);
+            let mut open: Vec<String> = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    Pane::File { file_path, .. } => Some(file_path.clone()),
+                    _ => None,
+                })
+                .collect();
+            open.sort();
+            *names_in_ui.lock().expect("poisoned") = open;
+        });
+
+    harness.run_steps(5);
+    asks.store(1, Ordering::Relaxed);
+    assert!(settle(&mut harness, || names.lock().expect("poisoned").len() == 1));
+    asks.store(1, Ordering::Relaxed);
+    assert!(settle(&mut harness, || names.lock().expect("poisoned").len() == 2));
+
+    assert_eq!(
+        *names.lock().expect("poisoned"),
+        ["untitled", "untitled-2"]
+    );
+    assert!(!fixture.root.join("untitled").exists());
+}
+
 /// A file of a project this window is not on: no window was open on it, so the shell handed
 /// it here and the window opens a session on that project to put it in a tab of.
 #[test]

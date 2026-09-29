@@ -95,6 +95,17 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                     );
                                 }
                                 ui.add_space(LINE_GAP);
+                                if !task.attachments.is_empty() {
+                                    board::attachments::draw_list(
+                                        app,
+                                        ui,
+                                        &task,
+                                        &mut board::gesture::Controls::elsewhere(),
+                                        &palette,
+                                        true,
+                                    );
+                                    ui.add_space(LINE_GAP);
+                                }
                                 board::start::draw_list(app, ui, &task, &mut actions);
                                 ui.add_space(LINE_GAP);
                                 draw_tags(app, ui, &task, &palette, &mut actions);

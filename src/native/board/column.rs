@@ -60,6 +60,15 @@ pub(super) fn draw_column(
                 .as_ref()
                 .filter(|pending| pending.column == status)
                 .map(|pending| pending.joins);
+            // What has been typed on that pane so far, which the card shows as it is typed.
+            let written = app
+                .model
+                .board
+                .card_being_written
+                .as_ref()
+                .and_then(|pending| app.model.board.drafts.get(&pending.draft_id))
+                .map(|draft| (draft.title.clone(), draft.notes.clone()))
+                .unwrap_or_default();
 
             // Where a drop would land, counted against the cards it would be put among - so the
             // slot the dragged card is standing in is taken back out of the reckoning, and moving
@@ -108,6 +117,7 @@ pub(super) fn draw_column(
                                 actions,
                                 &status,
                                 ColumnEnd::Top,
+                                &written,
                             );
                             ui.add_space(CARD_SPACING);
                         }
@@ -145,6 +155,7 @@ pub(super) fn draw_column(
                                 actions,
                                 &status,
                                 ColumnEnd::Bottom,
+                                &written,
                             );
                             ui.add_space(CARD_SPACING);
                         }

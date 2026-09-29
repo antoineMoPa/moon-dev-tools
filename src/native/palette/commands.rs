@@ -303,6 +303,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     #[cfg(not(target_arch = "wasm32"))]
     if app.backend().reads_this_machine() {
         commands.push(Command {
+            title: "new file".to_string(),
+            description: "Open an empty file in a tab, to save later or not at all".to_string(),
+            action: CommandAction::NewFile,
+            shortcut: None,
+        });
+        commands.push(Command {
             title: "open file".to_string(),
             description: "Open a file of the repo in a tab, to read and edit".to_string(),
             action: CommandAction::OpenFile,

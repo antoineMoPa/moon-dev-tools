@@ -184,6 +184,16 @@ fn the_brief_names_the_task_and_its_folder() {
     assert!(brief.contains("/repo/.moontasks/task"));
 }
 
+/// The brief only points at the attachments format, so an agent that attaches nothing does not
+/// carry it.
+#[test]
+fn the_brief_points_at_the_attachments_format_without_spelling_it_out() {
+    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+
+    assert!(brief.contains(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME));
+    assert!(!brief.contains(crate::moontasks::ATTACHMENTS_FILE_NAME));
+}
+
 #[test]
 fn a_finished_agent_is_cleared_without_moving_its_task() {
     let mut metadata = TaskMetadata {

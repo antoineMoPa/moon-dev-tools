@@ -53,6 +53,7 @@ mod tests {
             repo_path: "/repo".to_string(),
             tags: Vec::new(),
             notes: String::new(),
+                attachments: Vec::new(),
             resources: Vec::new(),
         }
     }

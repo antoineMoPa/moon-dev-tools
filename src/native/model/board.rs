@@ -292,6 +292,8 @@ pub(crate) struct OpenedFile {
 /// Where the card being written on the new-task pane is going: the column the `+` belonged to,
 /// and which of its two ends it was.
 pub(crate) struct PendingCard {
+    /// The draft the card stands for, whose title and notes it shows as they are typed.
+    pub(crate) draft_id: String,
     pub(crate) column: crate::moontasks::ColumnId,
     pub(crate) joins: crate::moontasks::ColumnEnd,
 }

@@ -429,6 +429,8 @@ impl App {
             CommandAction::RestartWindow => self.restart_window(ctx),
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::OpenFile => self.pick_file_to_edit(ctx),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::NewFile => self.open_untitled_file(),
             CommandAction::FindFile => {
                 let in_front = self.review_in_front();
                 self.model.palette.show_files(in_front);
@@ -504,6 +506,34 @@ impl App {
     /// Where a file of the review sits on this machine, if the repo is on this machine at all.
     pub(crate) fn repo_file_path(&self, file_path: &str) -> Option<std::path::PathBuf> {
         Some(self.repo_root()?.join(file_path))
+    }
+
+    /// Open an empty tab for a file that has no name yet. The tab is called `untitled`, or
+    /// `untitled-2` and on while one of those is in use.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_untitled_file(&mut self) {
+        let Some(repo_root) = self.repo_root() else {
+            self.model.error("no repo is open in this window yet");
+            return;
+        };
+        let in_use = |name: &str| {
+            repo_root.join(name).exists()
+                || self.model.layout.find_pane(|pane| {
+                    matches!(pane, Pane::File { file_path, .. } if file_path == name)
+                })
+                .is_some()
+        };
+        let placeholder_path = (1..)
+            .map(|number| match number {
+                1 => "untitled".to_string(),
+                _ => format!("untitled-{number}"),
+            })
+            .find(|name| !in_use(name))
+            .expect("an unused untitled name is always there");
+        self.open_pane(OpenPaneRequest::UntitledFile {
+            session_id: self.model.root_session_id.clone(),
+            placeholder_path,
+        });
     }
 
     /// The OS file picker, opened on the repo, for a file to read and edit in a tab of its
@@ -832,7 +862,7 @@ impl App {
 /// a symlink - `/var` for `/private/var`, and the picker hands back the resolved form - so
 /// comparing what was picked against an unresolved root would refuse a file plainly inside it.
 #[cfg(not(target_arch = "wasm32"))]
-fn path_inside_repo(repo_root: &std::path::Path, picked: &std::path::Path) -> Option<String> {
+pub(in crate::native) fn path_inside_repo(repo_root: &std::path::Path, picked: &std::path::Path) -> Option<String> {
     let repo_root = repo_root.canonicalize().ok()?;
     let picked = picked.canonicalize().ok()?;
     let relative = picked.strip_prefix(&repo_root).ok()?;

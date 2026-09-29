@@ -138,6 +138,7 @@ mod tests {
             repo_path: String::new(),
             tags: Vec::new(),
             notes: notes.to_string(),
+            attachments: Vec::new(),
             resources: Vec::new(),
         }
     }

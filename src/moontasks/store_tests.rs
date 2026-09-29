@@ -121,6 +121,27 @@ fn a_deleted_task_leaves_the_board_and_keeps_its_folder() {
     fs::remove_dir_all(repo).expect("failed to remove the test repo");
 }
 
+/// The documents a task lists are the lines of its attachments file, without the blank ones.
+#[test]
+fn a_task_lists_its_attachments_one_per_line() {
+    let repo = temp_repo("attachments");
+    let task_id = create_task(&repo, "Has files", &ColumnId::new("todo"), ColumnEnd::Top)
+        .expect("expected a task");
+    assert!(read_attachments(&repo, &task_id).is_empty());
+
+    let listing = tasks_root(&repo)
+        .join(&task_id)
+        .join(crate::moontasks::ATTACHMENTS_FILE_NAME);
+    fs::write(&listing, "file1.pdf\n\n  file2.xls \n").expect("expected the listing written");
+
+    assert_eq!(
+        read_attachments(&repo, &task_id),
+        ["file1.pdf", "file2.xls"]
+    );
+
+    fs::remove_dir_all(repo).expect("failed to remove the test repo");
+}
+
 /// A card joins the end of the column its `+` was pressed at, and the cards already there
 /// keep the order they were in.
 #[test]

@@ -63,6 +63,18 @@ pub(super) fn activity_dot(ui: &mut Ui, activity: Activity, palette: &Palette) {
     };
 }
 
+/// The dot of a document listed on the task: filled with the accent color, in the place a
+/// shell's or a run's dot goes.
+pub(super) fn attachment_dot(ui: &mut Ui, palette: &Palette) {
+    const DIAMETER: f32 = 7.0;
+
+    let (rect, _) = ui.allocate_exact_size(vec2(DIAMETER, DIAMETER), egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .circle_filled(rect.center(), DIAMETER / 2.0, palette.accent);
+    }
+}
+
 /// A linked file's mark, in the place a shell's or a run's dot goes: a small page, so the row
 /// reads as a file at a glance and lines up with the rows above it.
 ///

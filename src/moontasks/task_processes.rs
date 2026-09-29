@@ -123,6 +123,8 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          \n\
          To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME}\n\
          \n\
+         To attach a document to this task (a PDF, a spreadsheet, etc.), check {ATTACHMENTS_BRIEF_FILE_NAME}\n\
+         \n\
          New card on this board: `{program} tasks new \"<title>\"`, which prints its folder.",
         program = crate::cli::PROGRAM
     )
@@ -135,6 +137,34 @@ pub(crate) const BRIEF_FILE_NAME: &str = "brief.md";
 /// The task's description and shared notes, in its folder. The card draws its first lines
 /// under the title, and agents are told to write theirs there.
 pub(crate) const NOTES_FILE_NAME: &str = "notes.md";
+
+/// The file in a task's folder that lists the documents the task is about, one per line.
+pub(crate) const ATTACHMENTS_FILE_NAME: &str = "file_attachments.txt";
+
+/// What the format is written down in, in the task's folder beside the file it describes. The
+/// brief only points here, as it does for the review request, so the agents that never attach
+/// anything are not made to read it.
+pub(crate) const ATTACHMENTS_BRIEF_FILE_NAME: &str = "attach_files.md";
+
+/// The whole of the attachments format, for an agent that has a document to attach.
+pub(crate) const ATTACHMENTS_BRIEF: &str = "\
+# Attaching a document
+
+List the document in `file_attachments.txt` in this task folder, one path per line, for
+example a PDF you made or a spreadsheet you were given:
+
+```
+report.pdf
+/Users/someone/Documents/figures.xlsx
+```
+
+A relative path is from this task folder, so a file left in the folder is just its name.
+Anything else is an absolute path. Add a line, and leave the other lines alone: the file is
+also written by hand.
+
+The task's pane lists the files under `Files`, and a click opens one with the machine's own
+opener.
+";
 
 /// The notes file as the file pane addresses it: relative to the repo root.
 pub(crate) fn notes_repo_path(task_id: &str) -> String {

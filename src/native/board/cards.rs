@@ -288,7 +288,8 @@ pub(super) fn draw_empty_slot(ui: &Ui, slot: egui::Rect, palette: &Palette) {
 ///
 /// It stands at whichever end of the column the `+` that opened the pane was, so a task is
 /// written with its place on the board already in front of you rather than appearing somewhere
-/// once it is made. Nothing is drawn in it: what would be in it is being typed on the pane.
+/// once it is made. What is drawn in it is what has been typed on the pane so far, the way a
+/// made card draws its title and notes, so the card fills in as the task is written.
 pub(super) fn draw_pending_card(
     ui: &mut Ui,
     palette: &Palette,
@@ -296,9 +297,9 @@ pub(super) fn draw_pending_card(
     actions: &mut Vec<BoardAction>,
     column: &ColumnId,
     joins: ColumnEnd,
+    (title, notes): &(String, String),
 ) {
-    let (_, slot) = ui.allocate_space(vec2(ui.available_width(), PENDING_CARD_HEIGHT));
-    draw_empty_slot(ui, slot, palette);
+    let slot = draw_written_slot(ui, palette, title, notes);
 
     // The empty card is the task as it stands, so clicking it brings the pane it is being
     // written on back in front - the same offer a made card's title makes. It is worth having
@@ -333,6 +334,52 @@ pub(super) fn draw_pending_card(
     if controls.pressed(&cross) {
         actions.push(BoardAction::CancelNewTask);
     }
+}
+
+/// The outlined slot of the card being written, with its title and the start of its notes in
+/// it. It is [`PENDING_CARD_HEIGHT`] tall at the least and grows with what is written, cut the
+/// way a made card cuts them. Answers with where it stands.
+fn draw_written_slot(ui: &mut Ui, palette: &Palette, title: &str, notes: &str) -> egui::Rect {
+    let width = ui.available_width();
+    let inner_width = width
+        - f32::from(CARD_MARGIN.left)
+        - f32::from(CARD_MARGIN.right)
+        - CLOSE_MARK_SIZE
+        - ui.spacing().item_spacing.x;
+    let card = egui::Frame::new()
+        .corner_radius(CornerRadius::same(6))
+        .fill(palette.control_bg)
+        .stroke(egui::Stroke::new(1.0, palette.accent))
+        .inner_margin(CARD_MARGIN)
+        .show(ui, |ui| {
+            ui.set_width(width - f32::from(CARD_MARGIN.left) - f32::from(CARD_MARGIN.right));
+            ui.set_min_height(
+                PENDING_CARD_HEIGHT - f32::from(CARD_MARGIN.top) - f32::from(CARD_MARGIN.bottom),
+            );
+            if !title.trim().is_empty() {
+                let title = widgets::cut_to_fit(
+                    ui,
+                    title.trim(),
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    palette.ink,
+                    inner_width,
+                    TITLE_ROWS,
+                );
+                ui.add(egui::Label::new(title).selectable(false));
+            }
+            if !notes.trim().is_empty() {
+                let preview = widgets::cut_to_fit(
+                    ui,
+                    notes.trim(),
+                    egui::FontId::proportional(SMALL_SIZE),
+                    palette.muted,
+                    ui.available_width(),
+                    NOTES_ROWS,
+                );
+                ui.add(egui::Label::new(preview).selectable(false));
+            }
+        });
+    card.response.rect
 }
 
 /// The id the empty card is interacted by - named the way a card's and a column's handles are,
@@ -518,6 +565,11 @@ fn draw_card_body(
 
             resources::draw_list(app, ui, task, &mut card, palette, actions);
             if !task.resources.is_empty() {
+                ui.add_space(3.0);
+            }
+            // The documents the task lists, under what runs in it.
+            super::attachments::draw_list(app, ui, task, &mut card, palette, false);
+            if !task.attachments.is_empty() {
                 ui.add_space(3.0);
             }
             // At the foot of the card, over the row that opens their box: what a card is
@@ -825,6 +877,7 @@ mod tests {
                 repo_path: String::new(),
                 tags: Vec::new(),
                 notes: String::new(),
+                attachments: Vec::new(),
                 resources: Vec::new(),
             })
             .collect()

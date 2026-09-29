@@ -4,7 +4,7 @@
 use egui_frames::PaneId;
 use egui_moon_code_ide::LanguageSource;
 
-use crate::native::{app::App, language_source::SessionLanguages};
+use crate::native::{app::App, language_source::SessionLanguages, panes::Pane};
 
 use super::FileEditor;
 
@@ -59,7 +59,7 @@ impl App {
         file_path: String,
         task_id: String,
     ) {
-        use crate::native::panes::{Pane, PaneKind};
+        use crate::native::panes::PaneKind;
 
         let pane_id = match self.model.layout.find_pane(|pane| {
             matches!(pane, Pane::File { file_path: open, revision: None, .. } if *open == file_path)
@@ -157,6 +157,72 @@ impl App {
             .or_insert_with(|| FileEditor::new_file(file_path.to_string(), asks_language_servers));
     }
 
+    /// Start a tab on a file with no name yet - see [`FileEditor::untitled_file`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn begin_untitled_file(&mut self, pane_id: PaneId, placeholder_path: &str) {
+        let asks_language_servers = self.asks_language_servers;
+        self.model.file_editors.entry(pane_id).or_insert_with(|| {
+            FileEditor::untitled_file(placeholder_path.to_string(), asks_language_servers)
+        });
+    }
+
+    /// Ask where an untitled tab's file goes, and name the tab after the answer. `false` when
+    /// nothing was chosen - the dialog was cancelled, or the place is outside the repo - and
+    /// the tab stays untitled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn name_untitled_file(&mut self, pane_id: PaneId) -> bool {
+        let Some(repo_root) = self.repo_root() else {
+            self.model.error("no repo is open in this window yet");
+            return false;
+        };
+        let placeholder = self.model.file_editors[&pane_id].file_path.clone();
+        let picked = rfd::FileDialog::new()
+            .set_title("Save the new file")
+            .set_directory(&repo_root)
+            .set_file_name(&placeholder)
+            .save_file();
+        self.tasks.request_repaint();
+        let Some(picked) = picked else {
+            return false;
+        };
+        // The file may not exist yet, so its folder is what is checked to be in the repo.
+        let (Some(folder), Some(name)) = (picked.parent(), picked.file_name()) else {
+            self.model
+                .error(format!("{} is not a place a file can go", picked.display()));
+            return false;
+        };
+        let Some(folder_in_repo) = crate::native::app::path_inside_repo(&repo_root, folder) else {
+            self.model.error(format!(
+                "{} is outside {}, and only files of the repo can be saved here",
+                picked.display(),
+                repo_root.display()
+            ));
+            return false;
+        };
+        let file_path = std::path::Path::new(&folder_in_repo)
+            .join(name)
+            .display()
+            .to_string();
+        // The dialog has already asked about replacing a file that is there.
+        let exists = picked.exists();
+        if let Some(Pane::File {
+            file_path: named, ..
+        }) = self.model.layout.pane_mut(pane_id)
+        {
+            *named = file_path.clone();
+        }
+        let editor = self
+            .model
+            .file_editors
+            .get_mut(&pane_id)
+            .expect("the tab being named has an editor");
+        editor.set_language_of(&file_path);
+        editor.file_path = file_path;
+        editor.untitled = false;
+        editor.on_disk = exists;
+        true
+    }
+
     /// The file a pane is showing, fetched on first sight - as it is, or as the commit
     /// `revision` had it.
     pub(super) fn ensure_file_editor(
@@ -208,6 +274,16 @@ impl App {
 
     /// Write the file a pane is editing back to the working tree.
     pub(crate) fn save_file_pane(&mut self, pane_id: PaneId, session_id: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self
+            .model
+            .file_editors
+            .get(&pane_id)
+            .is_some_and(|editor| editor.untitled && !editor.saving)
+            && !self.name_untitled_file(pane_id)
+        {
+            return;
+        }
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };

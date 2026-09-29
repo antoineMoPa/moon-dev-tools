@@ -372,6 +372,24 @@ pub(crate) fn read_notes(repo_path: &Path, task_id: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The documents listed in a task's attachments file: one per line, blank lines skipped. A
+/// task without the file has none.
+pub(crate) fn read_attachments(repo_path: &Path, task_id: &str) -> Vec<String> {
+    let Ok(dir) = task_dir(repo_path, task_id) else {
+        return Vec::new();
+    };
+    let Ok(listing) = fs::read_to_string(dir.join(crate::moontasks::ATTACHMENTS_FILE_NAME))
+    else {
+        return Vec::new();
+    };
+    listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Write the whole of a task's notes file, creating it if it is not there.
 pub(crate) fn write_notes(repo_path: &Path, task_id: &str, content: &str) -> Result<()> {
     let dir = task_dir(repo_path, task_id)?;

@@ -100,6 +100,17 @@ fn draw_pills(app: &mut App, ui: &mut Ui, task: &TaskView, palette: &Palette, ca
     ui.add_space(3.0);
 }
 
+/// The tags as pills that cannot be pressed, for a place that says what the task is marked
+/// with without being where it is edited.
+pub(crate) fn draw_read_only(ui: &mut Ui, tags: &[String], palette: &Palette) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 3.0);
+        for tag in tags {
+            paint_pill(ui, tag, None, palette, Sense::hover());
+        }
+    });
+}
+
 /// Open the card's tag box with the keyboard in it, shutting whichever card's box was open.
 fn open_box(app: &mut App, task: &TaskView) {
     app.model.board.tagging_card = Some(task.id.clone());

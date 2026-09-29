@@ -276,8 +276,27 @@ impl Drop for TerminalRegistry {
     }
 }
 
+/// How long an agent gets to write its session down after being hung up on.
+const HANGUP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// End a shell the way closing its terminal window would: hang up on everything it started
+/// and give it a moment to leave, so an agent can save its session and be resumed. Only what
+/// is still there after that is killed - an agent killed outright leaves its session half
+/// written, and one started under the shell would be left running with nothing attached.
 fn end(session: &TerminalSession) {
     let mut child = session.child.lock().unwrap();
+    if let Some(pid) = session.child_pid {
+        // The shell leads its own process group, so this reaches the agent it started too.
+        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGHUP) };
+        let deadline = Instant::now() + HANGUP_GRACE;
+        while Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+    }
     let _ = child.kill();
     let _ = child.wait();
 }

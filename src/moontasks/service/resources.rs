@@ -442,6 +442,10 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     )
     .with_context(|| format!("failed to write {}", path.display()))?;
 
+    let path = dir.join(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME);
+    std::fs::write(&path, crate::moontasks::ATTACHMENTS_BRIEF)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
     Ok(Fillings {
         values: vec![
             ("{brief}", brief),

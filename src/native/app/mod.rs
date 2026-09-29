@@ -1,6 +1,8 @@
 //! The window itself: what it holds, how it is built, and what it hands to eframe.
 
 mod actions;
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::native) use actions::path_inside_repo;
 mod draw;
 mod settings;
 mod switching;

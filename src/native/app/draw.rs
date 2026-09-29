@@ -251,6 +251,8 @@ impl App {
                 MenuAction::RestartWindow => CommandAction::RestartWindow,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenFile => CommandAction::OpenFile,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::NewFile => CommandAction::NewFile,
                 MenuAction::FindFile => CommandAction::FindFile,
                 MenuAction::SearchContent => CommandAction::SearchContent,
                 MenuAction::RunProject(which) => CommandAction::RunProject(which),

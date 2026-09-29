@@ -6,6 +6,7 @@
 
 pub(crate) mod actions;
 pub(crate) mod attach;
+pub(crate) mod attachments;
 pub(crate) mod card_menu;
 pub(crate) mod cards;
 pub(crate) mod column;
@@ -13,6 +14,7 @@ pub(crate) mod columns;
 pub(crate) mod day_lines;
 pub(crate) mod filter;
 pub(crate) mod gesture;
+pub(crate) mod header;
 pub(crate) mod marks;
 pub(crate) mod motion;
 pub(crate) mod resources;

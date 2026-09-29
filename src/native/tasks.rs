@@ -75,6 +75,12 @@ impl Tasks {
         }
     }
 
+    /// Ask for another frame, for work done on the UI thread that the window will not hear
+    /// the end of by itself - a native dialog, over which the window loses its events.
+    pub(crate) fn request_repaint(&self) {
+        self.ctx.request_repaint();
+    }
+
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {
         &self.backend
     }

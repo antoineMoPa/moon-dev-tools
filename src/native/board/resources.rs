@@ -375,7 +375,7 @@ const ROW_INSET: f32 = 3.0;
 /// will do is plain before it is made. A row with nothing to open stays as it is. The row is a
 /// click of its own, on everything the marks at its right do not cover - the marks are drawn
 /// after it, so a click on one of them is the mark's and not the row's.
-fn draw_row(ui: &mut Ui, palette: &Palette, opens: bool, hover: &str) -> Response {
+pub(super) fn draw_row(ui: &mut Ui, palette: &Palette, opens: bool, hover: &str) -> Response {
     let (rect, row) = ui.allocate_exact_size(
         vec2(ui.available_width(), ui.spacing().interact_size.y),
         if opens {
@@ -406,7 +406,7 @@ fn hover_of(kind: TaskResourceKind) -> &'static str {
 }
 
 /// Draw a row's contents inside the space [`draw_row`] took for it, inset from its fill.
-fn draw_in_row(ui: &mut Ui, rect: Rect, contents: impl FnOnce(&mut Ui)) {
+pub(super) fn draw_in_row(ui: &mut Ui, rect: Rect, contents: impl FnOnce(&mut Ui)) {
     let inside = rect.shrink2(vec2(ROW_INSET, 0.0));
     ui.scope_builder(
         UiBuilder::new()

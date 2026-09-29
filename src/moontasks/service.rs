@@ -288,6 +288,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
         repo_path: repo_path.display().to_string(),
         tags: metadata.tags.clone(),
         notes: store::read_notes(repo_path, task_id),
+        attachments: store::read_attachments(repo_path, task_id),
         resources,
     }
 }

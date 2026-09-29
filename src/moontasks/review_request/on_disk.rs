@@ -41,8 +41,7 @@ optional: a line may name a repo and nothing else. Write `.` for the repo the bo
 Write the line when the work is there to be looked at, committed or not - the person reviews it
 and makes the commit, using the message you wrote. The branch after `#` is the branch the commit
 belongs on: name the one you worked on, which you create if you are working on a branch at all.
-The review opens wherever that branch is checked out, so a worktree you made is where it goes,
-and nobody's checkout is moved to reach it. It is also how one task's commit is told from
+It is also how one task's commit is told from
 another's: the message you wrote is offered on that branch and nowhere else, so a line naming a
 branch that has been merged and left behind cannot hand its message to the next piece of work in
 the same repo.

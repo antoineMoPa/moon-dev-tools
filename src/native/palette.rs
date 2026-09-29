@@ -106,6 +106,9 @@ pub(crate) enum CommandAction {
     /// Ask the OS which file of the repo to open for editing, and open it in a tab.
     #[cfg(not(target_arch = "wasm32"))]
     OpenFile,
+    /// Open an empty tab with no name, which its first save asks for.
+    #[cfg(not(target_arch = "wasm32"))]
+    NewFile,
     /// Turn the palette into the file finder, where what is typed is a file name.
     FindFile,
     /// Put a file of the repo on a task's card, then open it: what the file finder does with

@@ -113,6 +113,14 @@ impl App {
                 let pane_id = self.file_pane_for(&session_id, &file_path, active_frame);
                 self.begin_new_file(pane_id, &file_path);
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            OpenPaneRequest::UntitledFile {
+                session_id,
+                placeholder_path,
+            } => {
+                let pane_id = self.file_pane_for(&session_id, &placeholder_path, active_frame);
+                self.begin_untitled_file(pane_id, &placeholder_path);
+            }
             OpenPaneRequest::FileAt {
                 session_id,
                 file_path,
@@ -239,6 +247,7 @@ impl App {
                     } = open
                     {
                         self.model.board.card_being_written = Some(PendingCard {
+                            draft_id: written_on.clone(),
                             column: column.clone(),
                             joins: *joins,
                         });
@@ -258,6 +267,7 @@ impl App {
                 // The column draws an empty card at that end for as long as the pane is open,
                 // so the task has its place on the board while it is being written.
                 self.model.board.card_being_written = Some(PendingCard {
+                    draft_id: draft_id.clone(),
                     column: column.clone(),
                     joins,
                 });

@@ -165,6 +165,7 @@ mod tests {
             repo_path: String::new(),
             tags: Vec::new(),
             notes: String::new(),
+                attachments: Vec::new(),
             resources: Vec::new(),
         }
     }

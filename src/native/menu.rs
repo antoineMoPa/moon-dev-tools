@@ -17,6 +17,9 @@ pub(crate) enum MenuAction {
     /// Ask the OS which file of the repo to open for editing.
     #[cfg(not(target_arch = "wasm32"))]
     OpenFile,
+    /// Open an empty tab with no name, which its first save asks for.
+    #[cfg(not(target_arch = "wasm32"))]
+    NewFile,
     /// Open the palette on the file finder, where what is typed is a file name.
     FindFile,
     /// Open the palette on the content search, where what is typed is looked for in the
@@ -79,6 +82,7 @@ mod platform {
         toggle_theme: MenuId,
         command_palette: MenuId,
         open_file: MenuId,
+        new_file: MenuId,
         find_file: MenuId,
         search_content: MenuId,
         new_tab: MenuId,
@@ -131,6 +135,7 @@ mod platform {
             // A File menu with the one thing this window opens files for: reading and editing
             // one in a tab. ⌘O is what the chord means everywhere else, and the review's own
             // way to a file - clicking it in the sidebar - opens the same tab.
+            let new_file = MenuItem::new("New File", picks_files, None);
             let open_file = MenuItem::new(
                 "Open File…",
                 picks_files,
@@ -156,6 +161,7 @@ mod platform {
             let file_menu = Submenu::new("File", true);
             file_menu
                 .append_items(&[
+                    &new_file,
                     &open_file,
                     &PredefinedMenuItem::separator(),
                     &find_file,
@@ -351,6 +357,7 @@ mod platform {
                 toggle_theme: toggle_theme.id().clone(),
                 command_palette: command_palette.id().clone(),
                 open_file: open_file.id().clone(),
+                new_file: new_file.id().clone(),
                 find_file: find_file.id().clone(),
                 search_content: search_content.id().clone(),
                 new_tab: new_tab.id().clone(),
@@ -387,6 +394,8 @@ mod platform {
                     MenuAction::OpenCommandPalette
                 } else if event.id == self.open_file {
                     MenuAction::OpenFile
+                } else if event.id == self.new_file {
+                    MenuAction::NewFile
                 } else if event.id == self.find_file {
                     MenuAction::FindFile
                 } else if event.id == self.search_content {

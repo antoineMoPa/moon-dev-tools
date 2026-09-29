@@ -91,6 +91,9 @@ pub(crate) struct FileEditor {
     /// see [`FileEditor::new_file`] - until its first save creates the file: there is nothing
     /// to read back from the disk before then, and that save creates rather than writes.
     on_disk: bool,
+    /// Whether the tab was opened by File > New and has no name yet: its path is only a
+    /// placeholder, and the first save asks where to put it. Closing it unsaved leaves nothing.
+    untitled: bool,
     /// Where the caret was as the editor last drew, which is the place a rename asks about -
     /// see [`crate::native::renaming`]. Kept rather than asked for, because a rename is
     /// started from the palette and the key map as well as from the pane, and neither has
@@ -148,6 +151,7 @@ impl FileEditor {
             last_disk_check: None,
             writes_sent: 0,
             on_disk: true,
+            untitled: false,
             caret: None,
             caret_word: None,
             asked_to_format: None,
@@ -185,6 +189,21 @@ impl FileEditor {
         // rendered page.
         editor.preview = false;
         editor.on_disk = false;
+        editor
+    }
+
+    /// Read the text as the language `file_path` says, once the tab has been given that name.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn set_language_of(&mut self, file_path: &str) {
+        self.code.set_language(Language::of_path(file_path));
+        self.preview = false;
+    }
+
+    /// A tab for File > New: empty like [`FileEditor::new_file`], but with no name of its own.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn untitled_file(placeholder_path: String, asks_language_servers: bool) -> Self {
+        let mut editor = Self::new_file(placeholder_path, asks_language_servers);
+        editor.untitled = true;
         editor
     }
 
@@ -324,6 +343,7 @@ mod tests {
             last_disk_check: None,
             writes_sent: 0,
             on_disk: true,
+            untitled: false,
             caret: None,
             caret_word: None,
             asked_to_format: None,

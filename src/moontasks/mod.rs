@@ -45,6 +45,11 @@ pub(crate) struct TaskView {
     /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
     /// card draws its first lines as the task's description, and typing there writes it back.
     pub(crate) notes: String,
+    /// The documents the task's `file_attachments.txt` lists, one per line, as written there:
+    /// a path from the task's folder, or an absolute one. The task's pane lists them so a
+    /// document is found from the task.
+    #[serde(default)]
+    pub(crate) attachments: Vec<String>,
     pub(crate) resources: Vec<TaskResourceView>,
 }
 
