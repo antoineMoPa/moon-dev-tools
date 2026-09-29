@@ -133,7 +133,7 @@ impl App {
 
     /// Where a pane of this kind goes: with the others of its kind, else the frame whose tab
     /// strip is the app header.
-    fn frame_for(&self, kind: PaneKind, preferred: FrameId) -> FrameId {
+    pub(crate) fn frame_for(&self, kind: PaneKind, preferred: FrameId) -> FrameId {
         self.model
             .layout
             .frame_holding(preferred, |pane| pane.kind() == kind)

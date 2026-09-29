@@ -213,6 +213,13 @@ pub(crate) struct App {
     pub(crate) window_is_in_front: bool,
     /// The native webviews laid over webview panes - see [`crate::native::webview_pane`].
     pub(crate) webviews: crate::native::webview_pane::Webviews,
+    /// The windows of other programs laid over application panes, and the X11 session they are
+    /// managed in - see [`crate::native::application_pane`].
+    #[cfg(target_os = "linux")]
+    pub(crate) applications: crate::native::application_pane::Applications,
+    /// Whether this window is the window manager of the session it runs in - what
+    /// `moon desktop` opens. A window inside somebody else's desktop manages nothing.
+    pub(crate) manages_the_session: bool,
 }
 
 struct CachedDiff {
@@ -390,6 +397,9 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             window_is_in_front: false,
             webviews: Default::default(),
+            #[cfg(target_os = "linux")]
+            applications: Default::default(),
+            manages_the_session: false,
         };
 
         app.load_settings();
@@ -526,7 +536,11 @@ impl eframe::App for App {
         // this is handed, and the ui tests draw without one.
         #[cfg(target_os = "macos")]
         self.place_webviews(frame, ui.ctx());
-        #[cfg(not(target_os = "macos"))]
+        // The same, for the windows of other programs: they are children of this window, and
+        // X is told where they go once the panes they belong to have been drawn.
+        #[cfg(target_os = "linux")]
+        self.place_application_windows(frame, ui.ctx());
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let _ = frame;
     }
 

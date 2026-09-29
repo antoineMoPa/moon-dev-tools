@@ -55,6 +55,8 @@ impl App {
         self.set_theme(left.model.theme);
         self.model.restored_layout = Some(left.model.layout);
         self.asks_language_servers = left.asks_language_servers;
+        // A window that is the session's window manager goes on being it across a switch.
+        self.manages_the_session = left.manages_the_session;
         // Installing either twice would stack a second copy on the context.
         self.loaders_installed = left.loaders_installed;
         self.fonts_installed = left.fonts_installed;

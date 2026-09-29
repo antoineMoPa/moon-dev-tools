@@ -68,6 +68,13 @@ pub(super) enum MoonCommand {
     NewTask {
         title: String,
     },
+    /// The window as the desktop of the X11 session it was started in: full screen, and the
+    /// window manager of every program started from it - see
+    /// [`crate::native::application_pane`]. This is what the session file of `os/` runs.
+    Desktop {
+        /// The folder the window opens on, which is the home directory unless one is named.
+        path: Option<String>,
+    },
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -114,6 +121,7 @@ pub(crate) fn run() -> Result<()> {
         MoonCommand::OpenShell { path } => open_shell(&path),
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
+        MoonCommand::Desktop { path } => open_desktop(path.as_deref()),
         MoonCommand::Window { frame, args } => open_window(frame, args),
     }
 }
@@ -175,7 +183,7 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
         // `edit` and `open` are one thing said two ways: the tab it lands in is one that
         // edits the file, and both are words a hand reaches for.
         "open" | "edit" => open::parse_open(rest),
-        "list" | "serve" | "licenses" | "install-launchers" | "generate-pass-key"
+        "list" | "serve" | "licenses" | "install-launchers" | "generate-pass-key" | "desktop"
             if asks_for_help =>
         {
             Ok(MoonCommand::Help)
@@ -185,6 +193,13 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
             false => bail!("`{PROGRAM} list` says which windows are open, so it takes nothing"),
         },
         "serve" => parse_serve(rest),
+        "desktop" => match rest.len() {
+            0 => Ok(MoonCommand::Desktop { path: None }),
+            1 => Ok(MoonCommand::Desktop {
+                path: Some(rest[0].clone()),
+            }),
+            _ => bail!("`{PROGRAM} desktop` takes one folder to open on, or none"),
+        },
         "licenses" => match rest.is_empty() {
             true => Ok(MoonCommand::Licenses),
             false => bail!("`{PROGRAM} licenses` takes nothing else"),
@@ -325,6 +340,36 @@ fn open_shell(path: &str) -> Result<()> {
         }
         None => open_repo(&folder, Frame::Shell),
     }
+}
+
+/// `moon desktop`: the window as the whole session.
+///
+/// It is the shell window - a session is started from shells - opened on the home directory
+/// unless a folder was named, full screen, and told to manage the session. Everything else a
+/// desktop needs, it already had: frames to put windows in, a palette to start things from,
+/// and the `applications` extension to say what there is to start.
+fn open_desktop(path: Option<&str>) -> Result<()> {
+    let folder = match path {
+        Some(path) => PathBuf::from(path),
+        None => dirs_home()?,
+    };
+    let repo_path = project_root(&folder).unwrap_or(folder);
+    let launch = crate::native::launch_local(
+        OpenSessionRequest {
+            repo_path: repo_path.display().to_string(),
+            diff_target: Some(DiffTarget::default()),
+            active_commit: None,
+        },
+        Frame::Shell,
+    )?;
+    crate::native::run_desktop(launch)
+}
+
+/// The home directory of whoever is logged in, which is where a desktop session opens.
+fn dirs_home() -> Result<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("there is no HOME to open the desktop on"))
 }
 
 /// The window opened on nothing, asking which repo to open.
@@ -497,6 +542,8 @@ Usage:
   {PROGRAM} list                      which windows are open, and what they are on
   {PROGRAM} serve [--logs]            the review server, for a window on another machine or a
                                  browser; it prints a link that logs a browser in, once
+  {PROGRAM} desktop [<folder>]        the window as the desktop of this X11 session: full
+                                 screen, with every program started from it in a frame
   {PROGRAM} install-launchers         entries the OS offers for the three windows
   {PROGRAM} generate-pass-key         a pass key for this machine's server, printed alone
   {PROGRAM} licenses                  moon's license, and those of what it is built from

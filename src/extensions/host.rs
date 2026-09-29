@@ -43,6 +43,11 @@ const MAX_FUNCTION_EXPR_DEPTH: usize = 128;
 /// the prelude's builders under them.
 const MAX_CALL_LEVELS: usize = 64;
 
+/// The biggest file `read_file` hands a script. A desktop entry, a config file or a listing is
+/// kilobytes; a script that reaches for something the size of a log is asking for the operation
+/// cap above, and says so more clearly this way.
+const MAX_FILE_TO_READ: u64 = 4 * 1024 * 1024;
+
 /// How long `run` lets a program go before it is stopped, unless the script says otherwise.
 /// The pane's thread waits on a program, so one that never ends would otherwise hold the pane
 /// still for good - the operation cap only counts what the script itself does.
@@ -264,6 +269,15 @@ pub(super) fn engine(
             let entries = read_dir(Path::new(path))
                 .map_err(|error| runtime_error(format!("could not read {path}: {error}")))?;
             to_dynamic(&entries)
+        },
+    );
+
+    engine.register_fn(
+        "read_file",
+        |path: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            let read = read_file(Path::new(path))
+                .map_err(|error| runtime_error(format!("could not read {path}: {error}")))?;
+            Ok(Dynamic::from(read))
         },
     );
 
@@ -570,6 +584,17 @@ fn read_dir(path: &Path) -> std::io::Result<Vec<Entry>> {
     }
     entries.sort_by(|one, other| one.name.cmp(&other.name));
     Ok(entries)
+}
+
+/// A script that wants a slice of something large runs a program that cuts it.
+fn read_file(path: &Path) -> std::io::Result<String> {
+    let size = std::fs::metadata(path)?.len();
+    if size > MAX_FILE_TO_READ {
+        return Err(std::io::Error::other(format!(
+            "it is {size} bytes, over the {MAX_FILE_TO_READ} a script may read at once"
+        )));
+    }
+    std::fs::read_to_string(path)
 }
 
 fn strings_of(args: Array) -> Result<Vec<String>, Box<EvalAltResult>> {

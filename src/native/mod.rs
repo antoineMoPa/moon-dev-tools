@@ -60,6 +60,9 @@ pub(crate) mod theme;
 #[cfg(test)]
 pub(crate) mod ui_tests;
 pub(crate) mod visualizations;
+/// Only where a session can be managed: X11, which is Linux here.
+#[cfg(target_os = "linux")]
+pub(crate) mod application_pane;
 pub(crate) mod webview_pane;
 pub(crate) mod widgets;
 pub(crate) mod work_log;
@@ -71,7 +74,7 @@ use std::sync::Arc;
 
 use crate::{api::OpenSessionRequest, backend::Backend};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use desktop::{launch_local, launch_prompt, launch_remote, run};
+pub(crate) use desktop::{launch_local, launch_prompt, launch_remote, run, run_desktop};
 
 pub(crate) struct Launch {
     pub(crate) backend: Arc<dyn Backend>,

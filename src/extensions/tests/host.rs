@@ -313,3 +313,48 @@ fn a_file_is_opened_at_the_line_asked_for() {
     };
     heard.until(&running, |heard| heard.effects.contains(&opened));
 }
+
+#[test]
+fn a_file_is_read_as_text_and_a_huge_one_is_refused() {
+    // Arrange
+    let scratch = Scratch::new("read-file");
+    scratch.write("a.txt", "first\nsecond\n");
+    let running = start(
+        script(
+            r#"
+            fn init(root) {
+                #{ said: read_file(join_path(root, "a.txt")) }
+            }
+            fn view() { text(this.said.split("\n")[1]) }
+            "#,
+        ),
+        &scratch.dir,
+        system_path(),
+    );
+    let mut heard = Heard::default();
+
+    // Assert
+    heard.until(&running, |heard| heard.shows("second"));
+
+    // Act
+    let missing = start(
+        script(
+            r#"
+            fn init(root) {
+                let said = "";
+                try {
+                    read_file(join_path(root, "nowhere.txt"));
+                } catch (error) {
+                    said = "refused";
+                }
+                #{ said: said }
+            }
+            fn view() { text(this.said) }
+            "#,
+        ),
+        &scratch.dir,
+        system_path(),
+    );
+    let mut about_missing = Heard::default();
+    about_missing.until(&missing, |heard| heard.shows("refused"));
+}

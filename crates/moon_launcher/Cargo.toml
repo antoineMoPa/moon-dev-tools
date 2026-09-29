@@ -1,0 +1,13 @@
+[package]
+name = "moon_launcher"
+version = "0.1.0"
+edition = "2024"
+description = "moon as the window manager of an X11 session: other programs' windows, put in its frames"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# The X11 protocol in Rust, with no Xlib under it. The launcher is a second connection to the
+# same display the window itself is on: winit owns the window, this owns the screen.
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }

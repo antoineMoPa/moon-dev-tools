@@ -87,7 +87,18 @@ pub(crate) fn launch_prompt(frame: crate::cli::Frame) -> Result<Launch> {
     })
 }
 
+/// The window as the whole of an X11 session - `moon desktop`. It opens full screen and takes
+/// the session over: the windows every program started from it opens are put in its frames.
+/// See [`super::application_pane`].
+pub(crate) fn run_desktop(launch: Launch) -> Result<()> {
+    run_window(launch, true)
+}
+
 pub(crate) fn run(launch: Launch) -> Result<()> {
+    run_window(launch, false)
+}
+
+fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
     // Which project it is on is only known once the session opens, and the window says so
     // then; until then it is named after the executable alone.
     let title = app::window_title(launch.frame, None);
@@ -97,6 +108,9 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([720.0, 420.0])
             .with_app_id("moonreview")
+            // The desktop of a session is the session's whole screen. Elsewhere the size above
+            // is what the window opens at.
+            .with_fullscreen(manages_the_session)
             // Each executable wears its own logo, which is also what its launcher carries.
             .with_icon(logos::window_icon(launch.frame)),
         persist_window: true,
@@ -108,6 +122,8 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
         options,
         Box::new(|creation| {
             let mut app = app::App::new(creation.egui_ctx.clone(), launch);
+            // The window manager of the session, when this is the window that is the session.
+            app.manages_the_session = manages_the_session;
             // A real window is the one caller that wants language servers: it is looking at
             // a repo someone is working in, and starting rust-analyzer for it is the point.
             // Every other caller of `App::new` is a ui test - see the field.

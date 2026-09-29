@@ -43,6 +43,10 @@ pub(crate) enum PaneKind {
     /// An agent's visualization, drawn by the system's webview - see
     /// [`crate::native::visualizations`].
     Visualization,
+    /// Another program's window, in a session moon is the window manager of - see
+    /// [`crate::native::application_pane`].
+    #[cfg(target_os = "linux")]
+    Application,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -121,6 +125,16 @@ pub(crate) enum Pane {
         /// The fragment the page is built from, on the machine the terminal runs on.
         fragment_path: String,
     },
+    /// A window another program opened, which X draws over this pane - see
+    /// [`crate::native::application_pane`]. Nothing of it is worth keeping with the layout: the
+    /// window belongs to a program that will not be running the next time moon is.
+    #[cfg(target_os = "linux")]
+    Application {
+        /// The window's X id, which is what the launcher is told to move and hide.
+        client: u32,
+        /// What the window calls itself, which it renames as it goes.
+        title: String,
+    },
 }
 
 impl PaneKind {
@@ -152,6 +166,8 @@ impl Pane {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { .. } => PaneKind::Extension,
             Self::Visualization { .. } => PaneKind::Visualization,
+            #[cfg(target_os = "linux")]
+            Self::Application { .. } => PaneKind::Application,
         }
     }
 
@@ -192,6 +208,8 @@ impl Pane {
             Self::Visualization { fragment_path } => {
                 crate::visualizations::title_of(std::path::Path::new(fragment_path))
             }
+            #[cfg(target_os = "linux")]
+            Self::Application { title, .. } => title.clone(),
         }
     }
 
@@ -382,6 +400,8 @@ impl PaneView<Pane> for App {
             Pane::Start { title, .. } => format!("Start something in {title}"),
             Pane::NewTask { .. } => "Name this task to make its card".to_string(),
             Pane::Visualization { fragment_path } => fragment_path.clone(),
+            #[cfg(target_os = "linux")]
+            Pane::Application { title, .. } => title.clone(),
             // The title the program set, which the tab of a named shell does not show - a
             // plain shell's directory, an agent's own status line - and how the tab is renamed.
             Pane::Terminal { terminal_id, .. } => {
@@ -495,6 +515,8 @@ impl PaneView<Pane> for App {
             #[cfg(not(target_arch = "wasm32"))]
             Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),
             Pane::Visualization { .. } => crate::native::webview_pane::draw(self, ui, pane_id),
+            #[cfg(target_os = "linux")]
+            Pane::Application { .. } => crate::native::application_pane::draw(self, ui, pane_id),
         }
     }
 

@@ -109,6 +109,15 @@ wasm-bindgen = "=0.2.126"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Location", "Window", "Storage", "XmlHttpRequest", "WebSocket", "BinaryType", "MessageEvent", "UrlSearchParams", "console", "HtmlCanvasElement"] }
 
+# What moon needs to be the window manager of an X11 session - `moon desktop`, and the machine
+# in `os/` that boots into one. The windows of other programs become children of this one and
+# are laid over its panes; see `src/native/application_pane.rs`.
+[target.'cfg(target_os = "linux")'.dependencies]
+moon_launcher = { version = "0.1", path = "crates/moon_launcher" }
+# The X id of the window eframe drew, which those windows are made children of. eframe hands
+# out the handle; this is the type it is handed out as.
+raw-window-handle = "0.6"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.19", default-features = false }
 # Dictation, the emoji picker and the rest of what types without a key press reach the

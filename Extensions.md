@@ -93,17 +93,6 @@ fn down() { this.selected += global::PAGE; }
 
 An `import` names a file from the script's own folder.
 
-## Rhai, and what catches people out
-
-- **A function of yours takes the place of Rhai's method of the same name.** Write `fn keys()`
-  and every `map.keys()` in the script calls yours. `len`, `contains`, `keys`, `values`,
-  `split`, `trim` and the rest of the built-in methods are names to leave alone.
-- **A helper that reads `this` is called as a method**: `this.load()`, or `state.load()` in
-  `init`. Called plainly - `load()` - it has no `this`.
-- **Some string methods change the string rather than answer with a new one.** `s.trim()` trims
-  `s`, and `let t = s.trim()` is `()`.
-- **A field the state has not got reads as `()`**, and the error that follows is about `()`:
-  `Function not found: + ((), i64)` is a field that was never set.
 
 ## What a view is made of
 
@@ -130,8 +119,6 @@ follows its selected row. It draws only the rows on screen. A button in a cell w
 row for the click, so a row's actions go in its `menu`, or in a row of buttons over the table
 acting on the selected row.
 
-A kind the window does not draw, or a field it would not read, is refused rather than left off
-the screen: the pane says what was wrong.
 
 ## What a script can do
 
@@ -142,6 +129,7 @@ the screen: the pane says what was wrong.
 | `fetch(url)`, `fetch(url, #{ method, headers, body })` | an HTTP request, and waits: `#{ ok, status, headers, body }`, the body as text and the header names in lowercase. A status that is not a success is still a response; no response at all is an error to `catch`. Given up on after 30 s |
 | `fetch_then(url, event)`, `fetch_then(url, options, event)` | the same without waiting; `update` gets `event` with the `result` added - or `error`, when there was no response |
 | `read_dir(path)` | the entries of a folder in name order: `#{ name, path, is_dir, is_link, link_to, size, modified }` |
+| `read_file(path)` | a file's text. |
 | `open_file(path)`, `open_file(path, line)` | opens a file of the project in a tab, at a line counted from one |
 | `open_shell(command)` | opens a shell in the project with `command` typed into it and sent |
 | `copy(words)` | puts them on the clipboard |

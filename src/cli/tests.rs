@@ -385,6 +385,34 @@ fn parse_serve_with_and_without_logs() {
     );
 }
 
+/// `moon desktop` is the session: the folder it opens on is optional, and it takes nothing
+/// else - the window it opens is the whole screen, not a review of something.
+#[test]
+fn parse_desktop_with_and_without_a_folder() {
+    assert_eq!(
+        parse_command(None, vec!["desktop".to_string()]).expect("expected it to parse"),
+        MoonCommand::Desktop { path: None }
+    );
+    assert_eq!(
+        parse_command(None, vec!["desktop".to_string(), "/srv/work".to_string()])
+            .expect("expected it to parse"),
+        MoonCommand::Desktop {
+            path: Some("/srv/work".to_string())
+        }
+    );
+
+    let error = parse_command(
+        None,
+        vec![
+            "desktop".to_string(),
+            "/srv/work".to_string(),
+            "/srv/other".to_string(),
+        ],
+    )
+    .expect_err("expected two folders to be refused");
+    assert!(error.to_string().contains("one folder"), "got {error}");
+}
+
 /// A word that names no command says so, rather than being read as something to review.
 #[test]
 fn a_command_that_is_not_one_is_refused() {

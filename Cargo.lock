@@ -2840,12 +2840,14 @@ dependencies = [
  "image",
  "js-sys",
  "libc",
+ "moon_launcher",
  "moon_lsp",
  "muda",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
  "portable-pty",
  "pulldown-cmark",
+ "raw-window-handle",
  "reqwest",
  "rfd",
  "rhai",
@@ -2866,6 +2868,14 @@ dependencies = [
  "web-time",
  "webbrowser",
  "wry",
+]
+
+[[package]]
+name = "moon_launcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "x11rb",
 ]
 
 [[package]]
