@@ -185,8 +185,12 @@ impl App {
     /// The chords that raise tabs reach the active frame, so its tabs and only its tabs wear
     /// them at the right of their titles. A frame with a single tab wears none: cmd+1 there
     /// would change nothing worth signposting.
-    pub(super) fn stamp_tab_shortcuts(&mut self) {
+    pub(super) fn stamp_tab_shortcuts(&mut self, ctx: &egui::Context) {
         self.tab_shortcuts.clear();
+        // A phone has no keyboard to press them on.
+        if super::in_a_phone_window(ctx) {
+            return;
+        }
         let frame = self.model.layout.active_frame();
         let Some(open) = self.model.layout.frame(frame) else {
             return;

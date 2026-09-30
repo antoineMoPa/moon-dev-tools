@@ -26,7 +26,12 @@ const BAR_ID: &str = "moonreview-menu-bar";
 
 /// Draw the bar, and say what was picked from it this frame. `project` decides which of the
 /// project's commands are offered: only the ones it has set.
-pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> Vec<MenuAction> {
+pub(crate) fn draw(
+    ui: &mut Ui,
+    palette: &Palette,
+    project: &ProjectConfig,
+    tabs: &[TabEntry],
+) -> Vec<MenuAction> {
     let mut picked = Vec::new();
     egui::Panel::top(BAR_ID)
         .resizable(false)
@@ -38,109 +43,177 @@ pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> V
         )
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    item(
-                        ui,
-                        "Find File…",
-                        Some(Action::FindFile),
-                        MenuAction::FindFile,
-                        &mut picked,
-                    );
-                    item(
-                        ui,
-                        "Search Contents…",
-                        Some(Action::SearchContent),
-                        MenuAction::SearchContent,
-                        &mut picked,
-                    );
-                });
-                ui.menu_button("View", |ui| {
-                    item(
-                        ui,
-                        "Switch Light and Dark",
-                        Some(Action::ToggleTheme),
-                        MenuAction::ToggleTheme,
-                        &mut picked,
-                    );
-                    item(
-                        ui,
-                        "Command Palette",
-                        Some(Action::OpenPalette),
-                        MenuAction::OpenCommandPalette,
-                        &mut picked,
-                    );
-                });
-                ui.menu_button("Project", |ui| {
-                    item(
-                        ui,
-                        "Switch Project…",
-                        None,
-                        MenuAction::SwitchProject,
-                        &mut picked,
-                    );
-                    ui.separator();
-                    let mut offered_any = false;
-                    for which in [
-                        ProjectCommand::Build,
-                        ProjectCommand::Run,
-                        ProjectCommand::BuildAndRun,
-                    ] {
-                        if project.line(which).is_none() {
-                            continue;
-                        }
-                        offered_any = true;
-                        let mut label = which.label().to_string();
-                        label[..1].make_ascii_uppercase();
-                        item(ui, &label, None, MenuAction::RunProject(which), &mut picked);
-                    }
-                    if offered_any {
-                        ui.separator();
-                    }
-                    item(
-                        ui,
-                        "Project Settings…",
-                        None,
-                        MenuAction::OpenProject,
-                        &mut picked,
-                    );
-                });
-                ui.menu_button("Tools", |ui| {
-                    item(
-                        ui,
-                        "Review",
-                        Some(Action::OpenReview),
-                        MenuAction::OpenReview,
-                        &mut picked,
-                    );
-                    item(ui, "Tasks", None, MenuAction::OpenTasks, &mut picked);
-                    item(ui, "Work Log", None, MenuAction::OpenWorkLog, &mut picked);
-                    item(
-                        ui,
-                        "Submodule Status",
-                        Some(Action::OpenSubmodules),
-                        MenuAction::OpenSubmodules,
-                        &mut picked,
-                    );
-                });
-                ui.menu_button("Window", |ui| {
-                    item(
-                        ui,
-                        "New Terminal Tab",
-                        Some(Action::NewShellTab),
-                        MenuAction::NewTab,
-                        &mut picked,
-                    );
-                    item(
-                        ui,
-                        "Close Tab",
-                        Some(Action::CloseTab),
-                        MenuAction::CloseTab,
-                        &mut picked,
-                    );
+                menus(ui, project, &mut picked);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    hamburger(ui, egui::vec2(30.0, 20.0), tabs, None, &mut picked);
                 });
             });
         });
     picked
+}
+
+/// The bar's menus, File to Window.
+fn menus(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
+    ui.menu_button("File", |ui| {
+        item(
+            ui,
+            "Find File…",
+            Some(Action::FindFile),
+            MenuAction::FindFile,
+            picked,
+        );
+        item(
+            ui,
+            "Search Contents…",
+            Some(Action::SearchContent),
+            MenuAction::SearchContent,
+            picked,
+        );
+    });
+    ui.menu_button("View", |ui| {
+        item(
+            ui,
+            "Switch Light and Dark",
+            Some(Action::ToggleTheme),
+            MenuAction::ToggleTheme,
+            picked,
+        );
+        item(
+            ui,
+            "Command Palette",
+            Some(Action::OpenPalette),
+            MenuAction::OpenCommandPalette,
+            picked,
+        );
+    });
+    ui.menu_button("Project", |ui| {
+        item(
+            ui,
+            "Switch Project…",
+            None,
+            MenuAction::SwitchProject,
+            picked,
+        );
+        ui.separator();
+        let mut offered_any = false;
+        for which in [
+            ProjectCommand::Build,
+            ProjectCommand::Run,
+            ProjectCommand::BuildAndRun,
+        ] {
+            if project.line(which).is_none() {
+                continue;
+            }
+            offered_any = true;
+            let mut label = which.label().to_string();
+            label[..1].make_ascii_uppercase();
+            item(ui, &label, None, MenuAction::RunProject(which), picked);
+        }
+        if offered_any {
+            ui.separator();
+        }
+        item(
+            ui,
+            "Project Settings…",
+            None,
+            MenuAction::OpenProject,
+            picked,
+        );
+    });
+    ui.menu_button("Tools", |ui| {
+        item(
+            ui,
+            "Review",
+            Some(Action::OpenReview),
+            MenuAction::OpenReview,
+            picked,
+        );
+        item(ui, "Tasks", None, MenuAction::OpenTasks, picked);
+        item(ui, "Work Log", None, MenuAction::OpenWorkLog, picked);
+        item(
+            ui,
+            "Submodule Status",
+            Some(Action::OpenSubmodules),
+            MenuAction::OpenSubmodules,
+            picked,
+        );
+    });
+    ui.menu_button("Window", |ui| {
+        item(
+            ui,
+            "New Terminal Tab",
+            Some(Action::NewShellTab),
+            MenuAction::NewTab,
+            picked,
+        );
+        item(
+            ui,
+            "Close Tab",
+            Some(Action::CloseTab),
+            MenuAction::CloseTab,
+            picked,
+        );
+    });
+}
+
+/// A tab as the hamburger at the right of the bar lists it.
+pub(crate) struct TabEntry {
+    pub(crate) pane_id: egui_frames::PaneId,
+    pub(crate) title: String,
+    /// Whether it is the tab in front of the frame the keyboard is in, which the menu leaves out.
+    pub(crate) in_front: bool,
+}
+
+/// The hamburger: every open tab, in the order `tabs` has them - a window's frames show only
+/// a few at a time, and on a phone a strip of tabs is mostly out of reach. A window with no bar
+/// of its own passes its `project`, and the bar's menus follow the tabs in the list.
+pub(crate) fn hamburger(
+    ui: &mut Ui,
+    size: egui::Vec2,
+    tabs: &[TabEntry],
+    project: Option<&ProjectConfig>,
+    picked: &mut Vec<MenuAction>,
+) {
+    // Painted rather than typed: no font is promised to have the glyph.
+    let (button, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let ink = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().text_color()
+    };
+    let reach = size.x * 0.27;
+    let gap = size.y * 0.25;
+    for line in 0..3 {
+        let y = button.center().y + (line as f32 - 1.0) * gap;
+        ui.painter().line_segment(
+            [
+                egui::pos2(button.center().x - reach, y),
+                egui::pos2(button.center().x + reach, y),
+            ],
+            egui::Stroke::new(1.5, ink),
+        );
+    }
+    egui::Popup::menu(&response).width(240.0).show(|ui| {
+        // Not the tab in front: there is nowhere to switch to from it, and its row would only
+        // push the others down.
+        for tab in tabs.iter().filter(|tab| !tab.in_front) {
+            let row = egui::Button::new(egui::RichText::new(&tab.title)).min_size(egui::vec2(ui.available_width(), 28.0));
+            if ui.add(row).clicked() {
+                picked.push(MenuAction::FocusTab(tab.pane_id));
+                ui.close();
+            }
+        }
+        if let Some(project) = project {
+            // Said rather than left blank, so a window with one tab does not look as though
+            // the list failed to load.
+            if tabs.iter().all(|tab| tab.in_front) {
+                ui.weak("no other tabs");
+            }
+            ui.separator();
+            menus(ui, project, picked);
+        }
+    });
 }
 
 /// One item of a menu: its label, the chord of the binding that does the same thing when
@@ -186,7 +259,7 @@ mod tests {
                 picked_in_ui
                     .lock()
                     .expect("the picks")
-                    .extend(draw(ui, &palette, &project));
+                    .extend(draw(ui, &palette, &project, &[]));
             });
         (harness, picked)
     }

@@ -562,11 +562,27 @@ impl PaneView<Pane> for App {
         if !primary {
             return;
         }
+        // On a phone the strip's own controls are all one size, the height of its tab.
+        // (Not read from the frames' style: they are lent out to the draw this is called from.)
+        let phone_height = crate::native::workspace::in_a_phone_window(ui.ctx())
+            .then_some(crate::native::workspace::PHONE_TAB_HEIGHT);
+        #[cfg(target_arch = "wasm32")]
+        if let Some(height) = phone_height {
+            let mut picked = Vec::new();
+            crate::native::menu::bar::hamburger(
+                ui,
+                vec2(height, height),
+                &self.tab_entries_for_strip,
+                Some(&self.model.project),
+                &mut picked,
+            );
+            self.apply_menu_actions(picked);
+        }
         // The bundled fonts have no sun or moon glyph, so the switch is drawn rather than
         // typeset - see the glyph test in `ui_tests`.
         let palette = self.palette_of();
         let next = self.model.theme.toggled();
-        if theme_switch(ui, self.model.theme, &palette)
+        if theme_switch(ui, self.model.theme, &palette, phone_height)
             .on_hover_text(format!("switch to {} (⌘J)", next.label()))
             .clicked()
         {
@@ -576,8 +592,14 @@ impl PaneView<Pane> for App {
 }
 
 /// The light/dark switch: a moon in light mode, a sun in dark mode.
-fn theme_switch(ui: &mut Ui, theme: ThemeMode, palette: &Palette) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(17.0, 15.0), Sense::click());
+fn theme_switch(ui: &mut Ui, theme: ThemeMode, palette: &Palette, phone_height: Option<f32>) -> Response {
+    // Drawn larger, in a square the height of the strip, where a thumb is to hit it.
+    let scale = phone_height.map_or(1.0, |height| height / 18.0);
+    let size = match phone_height {
+        Some(height) => vec2(height, height),
+        None => vec2(17.0, 15.0),
+    };
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let response = widgets::clickable(response);
     if !ui.is_rect_visible(rect) {
         return response;
@@ -590,15 +612,15 @@ fn theme_switch(ui: &mut Ui, theme: ThemeMode, palette: &Palette) -> Response {
     };
     let center = rect.center();
     match theme {
-        ThemeMode::Light => draw_moon(ui.painter(), center, 5.5, ink, palette.header_bg),
+        ThemeMode::Light => draw_moon(ui.painter(), center, 5.5 * scale, ink, palette.header_bg),
         ThemeMode::Dark => {
-            ui.painter().circle_filled(center, 3.5, ink);
+            ui.painter().circle_filled(center, 3.5 * scale, ink);
             for step in 0..8 {
                 let angle = std::f32::consts::TAU * step as f32 / 8.0;
                 let direction = vec2(angle.cos(), angle.sin());
                 ui.painter().line_segment(
-                    [center + direction * 5.0, center + direction * 7.0],
-                    Stroke::new(1.0, ink),
+                    [center + direction * 5.0 * scale, center + direction * 7.0 * scale],
+                    Stroke::new(scale.max(1.0), ink),
                 );
             }
         }

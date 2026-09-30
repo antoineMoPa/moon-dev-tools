@@ -239,9 +239,16 @@ impl App {
 
     /// Do what the menu asked for. Each pick is deferred into `pending_action` like a
     /// palette command, or into the tab slot, so nothing is opened while the tree is drawn.
-    fn apply_menu_actions(&mut self, picked: Vec<MenuAction>) {
+    pub(crate) fn apply_menu_actions(&mut self, picked: Vec<MenuAction>) {
         for action in picked {
             self.pending_action = Some(match action {
+                #[cfg(any(target_arch = "wasm32", test))]
+                MenuAction::FocusTab(pane_id) => {
+                    // Not focused here: the hamburger of a phone's tab strip is drawn while the
+                    // workspace has the layout lent out, and focusing in it would find nothing.
+                    self.pending_tab_focus = Some(pane_id);
+                    continue;
+                }
                 MenuAction::ToggleTheme => CommandAction::ToggleTheme,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::InstallLaunchers => CommandAction::InstallLaunchers,
@@ -343,6 +350,8 @@ impl App {
         self.update_window_title(ctx);
         self.drain_attachments();
         self.keep_parked_spaces_alive();
+        #[cfg(target_arch = "wasm32")]
+        self.remember_tab_order();
         self.model
             .tick_toasts(ctx.input(|input| input.stable_dt).min(0.25));
 
@@ -438,9 +447,20 @@ impl App {
         // top - before the workspace, like the strip, so the frames are laid out under it.
         #[cfg(target_arch = "wasm32")]
         {
-            let picked =
-                crate::native::menu::bar::draw(ui, &self.palette_of(), &self.model.project);
-            self.apply_menu_actions(picked);
+            let tabs = self.tab_menu_entries();
+            // A phone's window has no room for a bar: its menus are in the hamburger of the
+            // tab strip, which is drawn with the workspace.
+            if crate::native::workspace::in_a_phone_window(ctx) {
+                self.tab_entries_for_strip = tabs;
+            } else {
+                let picked = crate::native::menu::bar::draw(
+                    ui,
+                    &self.palette_of(),
+                    &self.model.project,
+                    &tabs,
+                );
+                self.apply_menu_actions(picked);
+            }
         }
         // Before the workspace, so the strip is taken off the bottom of the window and the
         // frames are laid out in what is left rather than under it.
@@ -459,6 +479,10 @@ impl App {
 
         // A place a language server named, gone to or listed now the tree is drawn.
         crate::native::places::follow(self);
+        #[cfg(any(target_arch = "wasm32", test))]
+        if let Some(pane_id) = self.pending_tab_focus.take() {
+            self.model.layout.focus_pane(pane_id);
+        }
         // Deferred so a pane is never mutated while the tree that holds it is being drawn.
         if let Some(action) = self.pending_action.take() {
             self.run_action(ctx, action);

@@ -126,6 +126,16 @@ pub(crate) struct App {
     /// The chord that raises each tab within cmd+1..cmd+9's reach - the active frame's tabs -
     /// worked out before the strips are drawn and worn at the right of their titles.
     pub(crate) tab_shortcuts: HashMap<PaneId, String>,
+    /// Every open tab, the one most recently in front first - what the browser's tab menu lists.
+    /// A tab the hamburger asked to bring to the front, done once the workspace is drawn.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) pending_tab_focus: Option<PaneId>,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) tabs_most_recent_first: Vec<PaneId>,
+    /// The tabs as the hamburger in the strip of a phone's window lists them, worked out before
+    /// the workspace is drawn: while it is, the layout is lent out to it.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) tab_entries_for_strip: Vec<crate::native::menu::bar::TabEntry>,
     /// The tab the keyboard was last handed to, so a different one coming to the front -
     /// however it got there - is noticed once rather than every frame it stays there.
     pub(crate) keyboard_pane: Option<PaneId>,
@@ -371,6 +381,12 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             tunnel: None,
             tab_shortcuts: HashMap::new(),
+            #[cfg(any(target_arch = "wasm32", test))]
+            pending_tab_focus: None,
+            #[cfg(target_arch = "wasm32")]
+            tabs_most_recent_first: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            tab_entries_for_strip: Vec::new(),
             keyboard_pane: None,
             front_pane: None,
             pane_taking_keyboard: None,

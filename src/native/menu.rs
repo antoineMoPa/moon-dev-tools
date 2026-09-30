@@ -27,6 +27,9 @@ pub(crate) enum MenuAction {
     SearchContent,
     NewTab,
     CloseTab,
+    /// Bring this tab to the front of its frame.
+    #[cfg(any(target_arch = "wasm32", test))]
+    FocusTab(egui_frames::PaneId),
     /// The submodule hub: every submodule of the repo, and the changed ones' reviews.
     OpenSubmodules,
     /// Bring this window's own review forward, opening it if it is not open.

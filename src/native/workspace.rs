@@ -19,12 +19,25 @@ use crate::{
     native::{
         app::App,
         panes::{Pane, PaneKind},
+        theme,
     },
 };
 
 /// The narrowest a frame may be left at by opening a shell beside it. Below this, the shell
 /// joins a frame's tabs instead of taking a column of its own.
 const MIN_COLUMN_WIDTH: f32 = 320.0;
+
+/// Narrower than this, a browser's window is a phone's: its tabs are listed in the menu rather
+/// than laid out in a strip.
+const PHONE_WIDTH: f32 = 600.0;
+
+/// Whether the window is a phone's: a browser's, and narrow.
+pub(crate) fn in_a_phone_window(ctx: &egui::Context) -> bool {
+    cfg!(target_arch = "wasm32") && ctx.content_rect().width() < PHONE_WIDTH
+}
+
+/// How tall the tab strip is in a phone's window, and so how big each of its controls is.
+pub(crate) const PHONE_TAB_HEIGHT: f32 = 30.0;
 
 /// A breath between the top of the window and the first frame's border. Frames are separated
 /// from each other by their dividers, so only the window's own top edge reads as cramped.
@@ -104,8 +117,17 @@ impl App {
         self.model.layout.drop_empty_frames();
         self.follow_front_tab(ui.ctx());
         self.follow_task_in_front();
-        self.stamp_tab_shortcuts();
+        self.stamp_tab_shortcuts(ui.ctx());
         *self.frames.style_mut() = self.palette_of().frames_style();
+        if in_a_phone_window(ui.ctx()) {
+            // The hamburger at the top right lists the tabs, so the strip is just the one in
+            // front, big enough to read and to close with a thumb.
+            let style = self.frames.style_mut();
+            style.only_front_tab = true;
+            style.font = egui::FontId::proportional(theme::SMALL_SIZE + 4.0);
+            style.tab_height = PHONE_TAB_HEIGHT;
+            style.close_size = 20.0;
+        }
 
         ui.add_space(WORKSPACE_TOP_INSET);
         self.model.columns_fit = holds_two_columns(ui.available_width());

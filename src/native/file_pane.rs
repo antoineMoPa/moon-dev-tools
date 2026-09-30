@@ -311,7 +311,7 @@ impl FileEditor {
 
 /// Whether the file is written in markdown, which is what decides if the pane opens on the
 /// rendered page and offers the way back to the text.
-fn is_markdown(file_path: &str) -> bool {
+pub(crate) fn is_markdown(file_path: &str) -> bool {
     std::path::Path::new(file_path)
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))

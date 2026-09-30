@@ -53,6 +53,8 @@ pub(crate) mod renaming;
 pub(crate) mod review;
 pub(crate) mod signature;
 pub(crate) mod space_selector;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod tab_menu;
 pub(crate) mod start_pane;
 pub(crate) mod status_bar;
 pub(crate) mod submodules;

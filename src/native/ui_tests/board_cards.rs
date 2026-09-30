@@ -603,3 +603,97 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
         "escape did not close the attach modal"
     );
 }
+
+/// A markdown document listed in a task's `file_attachments.txt` is text the window writes
+/// itself, so a click on it opens a tab on it the way `moon edit` does rather than handing it
+/// to the machine's opener.
+#[test]
+fn a_markdown_attachment_opens_in_a_tab() {
+    use egui_kittest::kittest::Queryable as _;
+
+    const TASK: &str = "write-the-parser-1111";
+    let fixture = seeded_fixture("board-markdown-attachment");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        &format!(".moontasks/{TASK}/file_attachments.txt"),
+        "plan.md\n",
+    );
+    fixture.write(&format!(".moontasks/{TASK}/plan.md"), "# The plan\n");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+    // The files open in the window, each with whether it was opened in the window's own
+    // session: the document is of the board's repo, so no other project is opened for it.
+    let file_panes = Arc::new(Mutex::new(Vec::<(String, bool)>::new()));
+    let file_panes_in_ui = Arc::clone(&file_panes);
+    let errors = Arc::new(AtomicBool::new(false));
+    let errors_in_ui = Arc::clone(&errors);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded
+                    && app
+                        .model
+                        .board
+                        .tasks
+                        .iter()
+                        .any(|task| !task.attachments.is_empty()),
+                Ordering::Relaxed,
+            );
+            let root_session_id = app.model.root_session_id.clone();
+            *file_panes_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    Pane::File {
+                        file_path,
+                        session_id,
+                        ..
+                    } => Some((file_path.clone(), *session_id == root_session_id)),
+                    _ => None,
+                })
+                .collect();
+            errors_in_ui.store(!app.model.toasts.is_empty(), Ordering::Relaxed);
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the board never read the task's attachment"
+    );
+    harness.run_steps(3);
+
+    harness.get_by_label("plan.md").click();
+    let files_open = || file_panes.lock().expect("poisoned").clone();
+    assert!(
+        settle(&mut harness, || !files_open().is_empty()),
+        "clicking the attachment should have opened a tab on it"
+    );
+    assert_eq!(
+        files_open(),
+        vec![(format!(".moontasks/{TASK}/plan.md"), true)]
+    );
+    assert!(
+        !errors.load(Ordering::Relaxed),
+        "opening it said something went wrong"
+    );
+}
