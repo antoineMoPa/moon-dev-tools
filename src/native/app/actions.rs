@@ -51,7 +51,7 @@ impl App {
                     model.stage = Stage::Ready;
                     model.opened_project = Some(repo_path.clone());
                     model.project_path = Some(repo_path.clone());
-                    model.adopt_shells_pending = true;
+                    model.adopt_shells_pending = model.adopts_shells_on_open;
                     model.project_pending = true;
                     model.board.refresh_requested = true;
                     // `moonshell` opens on a shell, which has to be started before there is

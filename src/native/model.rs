@@ -127,6 +127,10 @@ pub(crate) struct Model {
     pub(crate) connection: String,
     /// Set once a review is open, so the window picks up shells the server already has.
     pub(crate) adopt_shells_pending: bool,
+    /// Whether opening a review sets [`Self::adopt_shells_pending`]. A space built after the
+    /// window's first is on a server whose shells belong to the spaces already there, so
+    /// adopting them all would show a shell started in one space in every space built later.
+    pub(crate) adopts_shells_on_open: bool,
     /// The same, for the shell `moonshell` opens on: it needs a session to start in.
     pub(crate) open_shell_pending: bool,
     /// The arrangement the last run left behind, applied once the first review opens.

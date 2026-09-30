@@ -139,14 +139,17 @@ impl App {
                 diff_target: None,
                 active_commit: None,
             });
-        App::new(
+        let mut built = App::new(
             ctx.clone(),
             Launch {
                 backend: Arc::clone(self.backend()),
                 open,
                 frame: self.frame,
             },
-        )
+        );
+        // The review opens on a later frame, so this is set before it asks.
+        built.model.adopts_shells_on_open = false;
+        built
     }
 
     /// Bring the space at this place in the list to the front, building it first if nobody has

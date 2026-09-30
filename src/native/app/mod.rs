@@ -325,6 +325,7 @@ impl App {
                 opened_project: None,
                 project_path: None,
                 adopt_shells_pending: false,
+                adopts_shells_on_open: true,
                 open_shell_pending: false,
                 restored_layout: None,
                 visualizations: Default::default(),
