@@ -41,6 +41,20 @@ struct PlacedView {
     arrival: u64,
 }
 
+#[cfg(target_os = "macos")]
+impl Webviews {
+    /// Hide every webview, for a space that is being put down: the next frame is not drawn
+    /// from this space's panes, so nothing else would hide them.
+    pub(crate) fn hide_all(&mut self) {
+        for placed in self.views.values() {
+            placed
+                .view
+                .set_visible(false)
+                .expect("a webview can always be hidden");
+        }
+    }
+}
+
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
     // Only what can be seen of the pane: a webview is not clipped by the frame around it.
     let rect = ui.max_rect().intersect(ui.clip_rect());

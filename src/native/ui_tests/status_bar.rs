@@ -28,6 +28,10 @@ use super::{app_for, click_at, seeded_fixture};
 /// what says where to click.
 const WINDOW: egui::Vec2 = egui::vec2(1200.0, 760.0);
 
+/// The four 22 point squares of the spaces at the end of the strip, and the 6 point gap after
+/// each.
+const SPACE_SQUARES_WIDTH: f32 = 4.0 * (22.0 + 6.0);
+
 #[test]
 fn the_status_bar_says_what_a_language_server_is_doing_and_how_far_through_it_is() {
     // Arrange
@@ -80,7 +84,6 @@ fn the_status_bar_says_what_a_language_server_is_doing_and_how_far_through_it_is
     harness.run_steps(3);
 
     // Assert
-    harness.snapshot("status-bar-indexing");
     harness.get_by_label_contains("rust-analyzer indexing - 12/57 (serde)");
     harness.get_by_label("42%");
 }
@@ -198,9 +201,10 @@ fn the_cross_on_the_status_bar_puts_the_message_away_without_opening_the_log() {
 
     // Act: a click on the cross, at the right end of the strip - in from the window's edge by
     // its 8 point border, the strip's 10 point margin and half the 12 point cross, and up by
-    // the border and half the 24 point strip. The toast saying the same thing stands above
+    // the border and half the 24 point strip - and left of the squares of the four spaces,
+    // which take the very end. The toast saying the same thing stands above
     // the strip, so it is not what takes the click.
-    click_at(&mut harness, egui::pos2(WINDOW.x - 24.0, WINDOW.y - 20.0));
+    click_at(&mut harness, egui::pos2(WINDOW.x - 24.0 - SPACE_SQUARES_WIDTH, WINDOW.y - 20.0));
     harness.run_steps(3);
 
     // Assert

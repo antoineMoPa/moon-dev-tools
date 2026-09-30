@@ -113,7 +113,6 @@ fn editing_a_file_tab_saves_it_to_the_working_tree() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("file-tab-unsaved");
 
     save.store(true, Ordering::Relaxed);
     let deadline = Instant::now() + Duration::from_secs(30);

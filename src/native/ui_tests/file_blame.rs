@@ -174,7 +174,6 @@ fn a_file_tab_shows_who_last_touched_each_stretch_of_it() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("file-pane-blame");
 
     // Pointing at a stretch lights its hash up at once, and tells the whole of it once the
     // pointer has rested there - the way every tooltip waits, which is real time. The
@@ -196,11 +195,9 @@ fn a_file_tab_shows_who_last_touched_each_stretch_of_it() {
         egui::CursorIcon::PointingHand,
         "the hash reads as a link under the pointer"
     );
-    harness.snapshot("file-pane-blame-hash-pointed");
     let rested = Instant::now() + Duration::from_millis(900);
     settle(&mut harness, || Instant::now() >= rested);
     assert!(tooltip_is_up(&harness), "the tooltip never came up");
-    harness.snapshot("file-pane-blame-pointed");
 
     // A click on the uncommitted stretch, away from where a hash would be, opens the file as
     // the last commit has it: a second tab, read-only, with the blame of that version up -
@@ -226,7 +223,6 @@ fn a_file_tab_shows_who_last_touched_each_stretch_of_it() {
         .events
         .push(egui::Event::PointerMoved(egui::pos2(600.0, 400.0)));
     harness.run_steps(3);
-    harness.snapshot("file-pane-at-revision");
 
     // Back on the file as it is, a click on the hash opens the review on its commit and
     // brings the review forward.

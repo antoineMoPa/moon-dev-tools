@@ -52,17 +52,35 @@ impl App {
         );
         let mut left = std::mem::replace(self, fresh);
 
-        self.set_theme(left.model.theme);
+        self.take_window_from(&mut left);
         self.model.restored_layout = Some(left.model.layout);
+        ctx.request_repaint();
+    }
+}
+
+impl App {
+    /// Take what belongs to the window rather than to the project or space `left` is on: the
+    /// menu bar, the socket `moon open` reaches it on, the theme, the settings, and - where
+    /// there is one - the session it manages. Both a switch of project and a switch of space
+    /// hand these across, so what the window is stays the same window.
+    pub(super) fn take_window_from(&mut self, left: &mut App) {
+        self.set_theme(left.model.theme);
+        self.model.settings = left.model.settings.take();
+        self.model.messages = std::mem::take(&mut left.model.messages);
+        self.spaces = std::mem::take(&mut left.spaces);
         self.asks_language_servers = left.asks_language_servers;
         // A window that is the session's window manager goes on being it across a switch.
         self.manages_the_session = left.manages_the_session;
+        #[cfg(target_os = "linux")]
+        {
+            self.applications = std::mem::take(&mut left.applications);
+        }
         // Installing either twice would stack a second copy on the context.
         self.loaders_installed = left.loaders_installed;
         self.fonts_installed = left.fonts_installed;
         // What the title bar says now, which names the project left: the fresh one's would
         // read as already said, and the bar would go on naming it.
-        self.window_title = left.window_title;
+        self.window_title = std::mem::take(&mut left.window_title);
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.menu = left.menu.take();
@@ -70,6 +88,5 @@ impl App {
             self.sessions_for_asked_files = Arc::clone(&left.sessions_for_asked_files);
             self.window_is_in_front = left.window_is_in_front;
         }
-        ctx.request_repaint();
     }
 }

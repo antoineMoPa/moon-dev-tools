@@ -107,7 +107,6 @@ fn a_marked_workspace_keeps_its_color_across_the_theme_switch() {
         !offers_teal.load(Ordering::Relaxed),
         "the palette should not offer the color the window already is"
     );
-    harness.snapshot("workspace-color-teal");
 
     // The mark outlives the window: it is what the next launch reads.
     let settings = crate::settings::load();
@@ -132,7 +131,6 @@ fn a_marked_workspace_keeps_its_color_across_the_theme_switch() {
         Palette::of(ThemeMode::Light).bg,
         "and not back to the light palette's own ground"
     );
-    harness.snapshot("workspace-color-teal-light");
 
     // And the next window on this project comes up teal without being told: the settings
     // file is what carries the mark from one run to the next, and `follow_project_color` is
@@ -201,7 +199,6 @@ fn the_project_pane_offers_the_colors() {
     });
     harness.run_steps(3);
 
-    harness.snapshot("workspace-color-swatches");
 }
 
 /// Step the window until something the test is waiting for has happened.

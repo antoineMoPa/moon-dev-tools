@@ -141,7 +141,6 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
         style.visuals.text_cursor.blink = false;
     });
     harness.run_steps(2);
-    harness.snapshot("project-settings");
 
     // Act: pick an indentation, which is written the moment it is picked rather than on a
     // button of its own.

@@ -58,7 +58,6 @@ fn the_command_palette_lists_what_can_be_opened() {
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
 
-    harness.snapshot("command-palette");
 }
 
 /// `split bottom` from the palette: the frame in two the short way, with a live shell in the

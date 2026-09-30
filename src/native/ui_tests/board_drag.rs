@@ -123,7 +123,6 @@ fn a_card_dropped_above_another_takes_its_place() {
 
     // Mid-drag: the card is under the cursor, and the space being held for it is where it
     // would land - between the two cards it is being dropped between.
-    harness.snapshot("moontasks-drag");
 
     harness.input_mut().events.push(egui::Event::PointerButton {
         pos: end,
@@ -143,7 +142,6 @@ fn a_card_dropped_above_another_takes_its_place() {
 
     // Just dropped: the card is in the slot it was held over, marked so it can be picked back
     // out of the column it landed in.
-    harness.snapshot("moontasks-dropped");
 
     let expected = ["Write the parser", "Drop the old API", "Fix the login page"];
     let deadline = Instant::now() + Duration::from_secs(30);

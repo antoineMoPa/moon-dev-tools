@@ -126,6 +126,15 @@ pub(crate) enum CommandAction {
     RunProject(ProjectCommand),
     /// Put this window's project down and go back to its launch screen, to open another.
     SwitchProject,
+    /// The space at this place in the list comes to the front.
+    GoToSpace(usize),
+    NextSpace,
+    /// The space at `from` takes the place `to` in the list, the ones between it and there
+    /// making room.
+    MoveSpace { from: usize, to: usize },
+    PreviousSpace,
+    /// Put the space at this place in the list away, unless it is the only one.
+    CloseSpaceAt(usize),
     /// Start an open extension over from its script - see [`crate::extensions`].
     #[cfg(not(target_arch = "wasm32"))]
     RestartExtension(String),

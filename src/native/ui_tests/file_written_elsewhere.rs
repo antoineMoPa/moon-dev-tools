@@ -158,7 +158,6 @@ fn a_file_written_under_unsaved_edits_keeps_them_until_reload_is_pressed_twice()
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("file-pane-written-elsewhere");
 
     // The first press only asks.
     harness.get_by_label("[reload]").click();

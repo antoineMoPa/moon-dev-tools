@@ -86,7 +86,11 @@ impl App {
                     .stroke(Stroke::NONE)
                     .inner_margin(egui::Margin::symmetric(10, 3)),
             )
-            .show(ui, |ui| draw_line(ui, line.as_ref(), &palette))
+            .show(ui, |ui| {
+                draw_line(ui, line.as_ref(), &palette, |ui| {
+                    crate::native::space_selector::draw(self, ui, &palette)
+                })
+            })
             .inner;
 
         match pressed {
@@ -246,7 +250,12 @@ enum StripPress {
 
 /// Draw the strip and answer what was pressed on it. A `line` of `None` is a strip with
 /// nothing on it, which is still there to be hovered and clicked.
-fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> StripPress {
+fn draw_line(
+    ui: &mut Ui,
+    line: Option<&StatusLine>,
+    palette: &Palette,
+    spaces: impl FnOnce(&mut Ui),
+) -> StripPress {
     let hovered = ui.rect_contains_pointer(ui.max_rect());
     let response = ui.interact(
         ui.max_rect(),
@@ -267,6 +276,8 @@ fn draw_line(ui: &mut Ui, line: Option<&StatusLine>, palette: &Palette) -> Strip
     // line is cut to what is left of the strip rather than pushing the cross off it.
     let dismissed = ui
         .with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            // The outermost, so the squares are always in the same place on the screen.
+            spaces(ui);
             let dismissed = match line {
                 Some(StatusLine::Said { .. }) => crate::native::widgets::close_button(ui, palette)
                     .on_hover_text("Dismiss")

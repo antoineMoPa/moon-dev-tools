@@ -445,6 +445,11 @@ impl App {
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
             CommandAction::SwitchProject => self.switch_project(ctx),
+            CommandAction::GoToSpace(index) => self.go_to_space(ctx, index),
+            CommandAction::MoveSpace { from, to } => self.move_space(from, to),
+            CommandAction::NextSpace => self.go_to_next_space(ctx),
+            CommandAction::PreviousSpace => self.go_to_previous_space(ctx),
+            CommandAction::CloseSpaceAt(index) => self.close_space(ctx, index),
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::RestartExtension(name) => self.restart_extension(&name),
             CommandAction::RenameSymbol => crate::native::renaming::start_in_front(self),
@@ -608,6 +613,9 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 Action::NewWindow => new_window = Some(self.frame),
                 Action::ToggleTheme => toggles_theme = true,
+                // A space on its launch screen is left the way it is entered.
+                Action::NextSpace => self.pending_action = Some(CommandAction::NextSpace),
+                Action::PreviousSpace => self.pending_action = Some(CommandAction::PreviousSpace),
                 _ => {}
             }
         }
@@ -619,8 +627,13 @@ impl App {
         if toggles_theme {
             self.set_theme(self.model.theme.toggled());
         }
+        // The launch screen is not drawn with the workspace's pending action, so what the
+        // chords above asked for is run here.
+        if let Some(action) = self.pending_action.take() {
+            self.run_action(ctx, action);
+        }
         if closes {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.close_space_or_window(ctx);
         }
     }
 
@@ -629,7 +642,7 @@ impl App {
     pub(super) fn close_active_tab(&mut self, ctx: &egui::Context) {
         match self.active_pane_id() {
             Some(pane_id) => self.pending_close = Some(pane_id),
-            None => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            None => self.close_space_or_window(ctx),
         }
     }
 
@@ -714,7 +727,11 @@ impl App {
             Action::AdvanceHunk => self.apply_hunk_shortcut(true),
             Action::ReverseHunk => self.apply_hunk_shortcut(false),
             Action::FocusNextFrame => self.focus_next_frame(),
-            Action::Find => find::open(self),
+            // Deferred: switching swaps the whole app, which cannot happen under the frame
+            // that is still being drawn from it.
+            Action::NextSpace => self.pending_action = Some(CommandAction::NextSpace),
+            Action::PreviousSpace => self.pending_action = Some(CommandAction::PreviousSpace),
+                        Action::Find => find::open(self),
             Action::FindFile => {
                 let in_front = self.review_in_front();
                 self.model.palette.show_files(in_front);

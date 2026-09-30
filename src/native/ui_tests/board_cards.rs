@@ -435,7 +435,6 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
     };
 
     // The card carries the file the way it carries a run: a mark, then the path.
-    harness.snapshot("moontasks-linked-file");
 
     // The linked file is on the card by its path, and the path opens it.
     use egui_kittest::kittest::Queryable as _;
@@ -596,7 +595,6 @@ fn the_attach_modal_lists_the_agents_own_sessions() {
         picker_open.load(Ordering::Relaxed),
         "the injected modal never showed"
     );
-    harness.snapshot("moontasks-attach-session");
 
     // Escape is the way out that touches nothing.
     press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);

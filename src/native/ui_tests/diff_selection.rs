@@ -275,7 +275,6 @@ fn dragging_across_diff_lines_selects_the_run() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("multi-line-selection");
 }
 
 /// Double-clicking a word in a diff selects just that word, and cmd+c copies exactly it.

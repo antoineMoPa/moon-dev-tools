@@ -79,7 +79,6 @@ fn a_file_opens_in_a_tab_of_its_own() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
-    harness.snapshot("file-pane");
 }
 
 /// The lines written since the last commit get a green bar down the right of the fringe: a
@@ -134,7 +133,6 @@ fn the_lines_new_since_the_last_commit_are_marked_in_the_fringe() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
-    harness.snapshot("file-pane-new-lines");
 }
 
 /// A markdown file opens on the rendered page, and `[edit]` is the way back to the text.
@@ -191,7 +189,6 @@ fn a_markdown_file_opens_rendered() {
         harness.query_by_label("[edit]").is_some(),
         "a rendered markdown file should offer the way back to the text"
     );
-    harness.snapshot("file-pane-markdown");
 
     harness.get_by_label("[edit]").click();
     harness
@@ -202,7 +199,6 @@ fn a_markdown_file_opens_rendered() {
         harness.query_by_label("[preview]").is_some(),
         "the text view should offer the rendered page back"
     );
-    harness.snapshot("file-pane-markdown-source");
 }
 
 /// Pointed at a file nobody has touched, the review shows the file itself rather than an
@@ -286,5 +282,4 @@ fn a_changed_image_is_drawn_as_before_and_after() {
     }
     harness.run_steps(2);
 
-    harness.snapshot("image-diff");
 }

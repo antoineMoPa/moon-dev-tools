@@ -5,11 +5,13 @@ mod actions;
 pub(in crate::native) use actions::path_inside_repo;
 mod draw;
 mod settings;
+mod spaces;
 mod switching;
 #[cfg(not(target_arch = "wasm32"))]
 mod windows;
 
 pub(crate) use draw::window_title;
+pub(crate) use spaces::{SpaceView, Spaces};
 
 use std::{
     collections::HashMap,
@@ -222,6 +224,8 @@ pub(crate) struct App {
     /// Whether this window is the window manager of the session it runs in - what
     /// `moon desktop` opens. A window inside somebody else's desktop manages nothing.
     pub(crate) manages_the_session: bool,
+    /// The other spaces of this window, parked - see [`spaces`].
+    pub(crate) spaces: Spaces,
 }
 
 struct CachedDiff {
@@ -402,6 +406,7 @@ impl App {
             #[cfg(target_os = "linux")]
             applications: Default::default(),
             manages_the_session: false,
+            spaces: Spaces::default(),
         };
 
         app.load_settings();

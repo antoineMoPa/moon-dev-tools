@@ -196,7 +196,6 @@ fn a_commit_a_task_asked_for_is_in_the_box_before_anything_is_staged() {
 
     // The header says the repo is on the branch the line asked for, so there is no pill saying
     // the commit belongs somewhere else.
-    harness.snapshot("commit-pane-requested");
 }
 
 /// A line about a branch this repo is not on keeps its message to itself.
@@ -223,7 +222,6 @@ fn a_commit_asked_for_on_another_branch_stays_out_of_the_box() {
 
     // The header carries the `asked for ship-it` pill, which is what says whose message this was
     // and why it is not in the box.
-    harness.snapshot("commit-pane-asked-elsewhere");
 }
 
 /// The commit that lands in the box is the one written for the branch the repo is on.

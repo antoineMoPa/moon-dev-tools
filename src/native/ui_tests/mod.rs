@@ -40,6 +40,7 @@ mod review_phone;
 mod shell_input;
 mod shell_lifecycle;
 mod sidebar_menu;
+mod spaces;
 mod status_bar;
 mod submodules;
 mod tab_rename;

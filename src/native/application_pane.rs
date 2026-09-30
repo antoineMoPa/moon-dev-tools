@@ -47,6 +47,28 @@ pub(crate) struct Applications {
     asked_to_close: std::collections::HashSet<u32>,
 }
 
+impl Applications {
+    /// Take every window of a space that is being put down off the screen, and forget where
+    /// each was: the space that comes forward has other panes under the same ids, and would
+    /// read their places as the ones these were put at.
+    pub(crate) fn take_windows_off_the_screen(
+        &mut self,
+        layout: &egui_frames::Layout<crate::native::panes::Pane>,
+    ) {
+        if let Some(launcher) = &self.launcher {
+            for (pane_id, pane) in layout.panes() {
+                if let crate::native::panes::Pane::Application { client, .. } = pane
+                    && self.placed.contains_key(&pane_id)
+                {
+                    launcher.place(*client, None);
+                }
+            }
+        }
+        self.placed.clear();
+        self.has_the_keyboard = None;
+    }
+}
+
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
     // Only what can be seen of the pane: an X window is not clipped by the frame around it.
     let rect = ui.max_rect().intersect(ui.clip_rect());
@@ -125,12 +147,16 @@ impl App {
 
         // A pane the person closed is a window nothing shows any more: the program is asked to
         // close it, the way a title bar's x would ask.
+        // A window in the pane of a space that is put down is not orphaned by being off the
+        // screen: its space will show it again.
+        let in_parked_spaces = self.application_clients_in_parked_spaces();
         let orphaned: Vec<u32> = self
             .applications
             .known
             .iter()
             .filter(|client| {
                 !showing.values().any(|showing| showing == *client)
+                    && !in_parked_spaces.contains(client)
                     && !self.applications.asked_to_close.contains(client)
             })
             .copied()

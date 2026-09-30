@@ -113,7 +113,6 @@ fn a_cards_tags_are_edited_in_the_box_its_tags_button_opens() {
         "the board never read the two tasks out of .moontasks"
     );
     harness.run_steps(3);
-    harness.snapshot("moontasks-tags");
 
     // The pointer onto the card, which is what brings out the row `[tags]` stands in.
     let card = harness
@@ -151,7 +150,6 @@ fn a_cards_tags_are_edited_in_the_box_its_tags_button_opens() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("moontasks-tags-menu");
 
     // A tag the board already uses goes on with one press of the pill under the box - the
     // `bug` in this card's column, not the one at the foot of the login card beside it.

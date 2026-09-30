@@ -265,15 +265,20 @@ fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
     };
     let text = editor.code.text().to_string();
 
-    egui::ScrollArea::vertical()
+    // Measured out here: inside a scroll area that scrolls sideways, the room on offer has no
+    // end, and the column would be centred on nothing.
+    let pane_width = ui.available_width();
+    // Both ways, so a table or image wider than the column scrolls sideways instead of running
+    // off the pane's edge.
+    egui::ScrollArea::both()
         .id_salt(("file-pane-preview", pane_id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let width = (ui.available_width() - 2.0 * PREVIEW_SIDE_PADDING)
+            let width = (pane_width - 2.0 * PREVIEW_SIDE_PADDING)
                 .min(PREVIEW_MAX_WIDTH)
                 // A pane too narrow for the full padding still gets a readable column.
-                .max(ui.available_width() * 0.5);
-            let margin = ((ui.available_width() - width) / 2.0).max(0.0);
+                .max(pane_width * 0.5);
+            let margin = ((pane_width - width) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
                 ui.add_space(margin);
                 ui.vertical(|ui| {

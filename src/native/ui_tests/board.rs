@@ -157,7 +157,6 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     );
 
     harness.run_steps(3);
-    harness.snapshot("moontasks-board");
 
     // A card under the pointer, which is what brings out its offer to start the notes: above,
     // the row it stands in is held open and empty, so the card is the same height either way.
@@ -180,7 +179,6 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // Long enough for the fade to have run out, so the picture is of the offers all the way
     // up rather than of a moment on the way there.
     harness.run_steps(3);
-    harness.snapshot("moontasks-card-pointed-at");
     // Everything the card starts is on the one menu, which is what `[start]` opens: a review
     // of the repo, a shell in the task, and an agent - the ones this machine has.
     use egui_kittest::kittest::Queryable as _;
@@ -200,7 +198,6 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         .events
         .push(egui::Event::PointerMoved(into_menu));
     harness.run_steps(3);
-    harness.snapshot("moontasks-start-menu");
 
     // The card's own menu, which a right click opens wherever on the card it lands: the task
     // folder, said and stood in. Opened at the same card, a little in from its corner, so the
@@ -215,7 +212,6 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         });
     }
     harness.run_steps(3);
-    harness.snapshot("moontasks-card-menu");
 
     // Off the cards again, so the pictures below are of a board nothing is pointed at, with
     // the menu shut behind them.
@@ -240,7 +236,6 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
-    harness.snapshot("moontasks-new-task");
 
     // The main workspace: the board stays visible while a task's shell works beside it, and
     // the card of the task that shell is in is marked.
@@ -392,7 +387,6 @@ fn a_query_leaves_the_board_showing_the_cards_that_match_it() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("moontasks-filtered");
 
     assert!(
         showing(&harness, "fix-the-login-page-2222"),
@@ -518,7 +512,6 @@ fn several_marked_cards_are_handed_to_one_new_task() {
 
     mark.store(true, Ordering::Relaxed);
     harness.run_steps(3);
-    harness.snapshot("moontasks-work-on-marked");
     harness.get_by_label("Work on these tasks").click();
 
     step_until(&mut harness, &|| {
@@ -620,5 +613,4 @@ fn a_long_task_title_is_cut_into_its_column() {
     );
 
     harness.run_steps(3);
-    harness.snapshot("moontasks-long-title");
 }

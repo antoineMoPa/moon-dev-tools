@@ -327,3 +327,9 @@ Moonreview started as a lunch-time project named `noon-review` by an AI tool. Th
 terrible name, so it became Moonreview: close enough to the original, more fun, and fitting for
 reviewing after a long hacking day. Moontasks and Moonshell joined it later, and
 `moon-dev-tools` became the home for the whole collection.
+
+## Regenerating the docs screenshots
+
+```bash
+UPDATE_SNAPSHOTS=1 cargo test --lib -- native::ui_tests::board native::ui_tests::launch
+```

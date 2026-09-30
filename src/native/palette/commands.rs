@@ -362,6 +362,37 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         shortcut: None,
     });
 
+    // Spaces: the desktops of this window, each a project with its own tabs.
+    commands.push(Command {
+        title: "next space".to_string(),
+        description: "Go to the space after this one".to_string(),
+        action: CommandAction::NextSpace,
+        shortcut: bindings::chord_of(Action::NextSpace),
+    });
+    commands.push(Command {
+        title: "previous space".to_string(),
+        description: "Go to the space before this one".to_string(),
+        action: CommandAction::PreviousSpace,
+        shortcut: bindings::chord_of(Action::PreviousSpace),
+    });
+    commands.push(Command {
+        title: "close space".to_string(),
+        description: "Empty this space; its shells keep running".to_string(),
+        action: CommandAction::CloseSpaceAt(app.spaces.front()),
+        shortcut: None,
+    });
+    for (index, space) in app.space_views().iter().enumerate() {
+        if index == app.spaces.front() {
+            continue;
+        }
+        commands.push(Command {
+            title: format!("space {}: {}", index + 1, space.name()),
+            description: "Go to this space".to_string(),
+            action: CommandAction::GoToSpace(index),
+            shortcut: None,
+        });
+    }
+
     // The window's own actions. On macOS these are in the menu bar too; here is where every
     // platform can reach them.
     // Only the two platforms that have a launcher to write are offered it.

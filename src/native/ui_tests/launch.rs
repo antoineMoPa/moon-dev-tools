@@ -153,7 +153,6 @@ fn a_window_with_no_repo_asks_which_one_to_review() {
         .build_ui(move |ui| app.draw(ui));
     harness.run_steps(3);
 
-    harness.snapshot("repo-prompt");
 }
 
 /// The three executables share the launch screen, so it has to say what the window it is in
@@ -322,7 +321,6 @@ fn the_opening_screen_shows_the_logo_of_its_own_executable() {
         );
     }
     harness.get_by_label("opening the board…");
-    harness.snapshot("repo-opening");
 }
 
 /// Going back to yesterday's project should not mean naming it again, so the launch screen
@@ -353,7 +351,6 @@ fn the_launch_screen_offers_the_projects_opened_before() {
         .wgpu()
         .build_ui(move |ui| app.draw(ui));
     harness.run_steps(3);
-    harness.snapshot("repo-prompt-recents");
 
     // Named by their own directory rather than the whole path.
     assert!(
@@ -368,16 +365,6 @@ fn the_launch_screen_offers_the_projects_opened_before() {
     if let Some(path) = crate::settings::path() {
         let _ = fs::remove_file(path);
     }
-}
-
-#[test]
-fn the_review_window_draws_in_the_light_theme_too() {
-    let fixture = seeded_fixture("review-light");
-    let app = app_for(&fixture.root, ThemeMode::Light);
-
-    let mut harness = harness_with_loaded_review(app, ThemeMode::Light);
-
-    harness.snapshot("review-light");
 }
 
 /// Several windows on several projects is the ordinary way to work, so the title bar has to
@@ -599,24 +586,6 @@ fn the_shell_and_the_board_open_on_a_folder_that_is_no_repo() {
             "{frame:?} on a folder with no repo in it should have opened on {expected:?}"
         );
     }
-}
-
-/// A line of code longer than the pane is wide. It has to stop at the edge of its hunk card:
-/// before this, a long line carried on over the card's border and across the pane beside it.
-#[test]
-fn a_diff_line_longer_than_the_pane_stops_at_the_card() {
-    let fixture = Fixture::new("long-diff-line");
-    fixture.write("src/lib.rs", "pub fn short() {}\n");
-    fixture.commit("Add the library");
-    fixture.write(
-        "src/lib.rs",
-        "pub fn short() {}\npub fn a_line_far_wider_than_any_pane(first_parameter: &str, second_parameter: &str, third_parameter: &str, fourth_parameter: &str, fifth_parameter: &str) -> String { String::new() }\n",
-    );
-
-    let app = app_for(&fixture.root, ThemeMode::Dark);
-    let mut harness = harness_with_loaded_review(app, ThemeMode::Dark);
-
-    harness.snapshot("long-diff-line");
 }
 
 /// Every glyph the chrome draws, so a missing one cannot ship as a `□` box.

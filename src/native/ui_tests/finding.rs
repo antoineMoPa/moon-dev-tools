@@ -72,7 +72,6 @@ fn a_file_opened_at_a_match_is_scrolled_to_it_and_marks_it() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(3);
-    harness.snapshot("file-pane-at-a-match");
 }
 
 /// ⌘F over a review searches every hunk it is showing, not only the lines on screen, and
@@ -162,7 +161,6 @@ fn find_searches_a_whole_review_and_steps_through_the_matches() {
     );
 
     // What the bar and the marked matches actually look like over a review.
-    harness.snapshot("find-bar");
 
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
     let after_step = seen.lock().expect("poisoned").clone();
@@ -385,7 +383,6 @@ fn find_marks_a_file_and_steps_only_while_the_query_box_has_the_keyboard() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("file-find-marks");
 
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
     assert_eq!(
@@ -482,5 +479,4 @@ fn find_scrolls_a_file_to_a_match_below_the_fold() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("file-find-scrolled");
 }

@@ -332,6 +332,7 @@ impl App {
         self.follow_project_color();
         self.update_window_title(ctx);
         self.drain_attachments();
+        self.keep_parked_spaces_alive();
         self.model
             .tick_toasts(ctx.input(|input| input.stable_dt).min(0.25));
 
@@ -465,13 +466,10 @@ impl App {
         // the same reason.
         crate::native::board::close_the_new_task_page(self);
 
-        // Closing the last tab closes the window: an empty workspace has nothing to show and
-        // no way back other than the palette.
-        if self.model.layout.is_empty() {
-            if self.had_panes {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        } else {
+        // Closing the last tab closes the space, and the window with the last space: an empty
+        // workspace has nothing to show and no way back other than the palette.
+        let emptied = self.model.layout.is_empty() && self.had_panes;
+        if !self.model.layout.is_empty() {
             self.had_panes = true;
         }
 
@@ -481,6 +479,11 @@ impl App {
         } else {
             POLL_INTERVAL
         });
+
+        // Last, because it can put this whole app away for another space's.
+        if emptied {
+            self.close_space_or_window(ctx);
+        }
     }
 }
 

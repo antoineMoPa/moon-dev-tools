@@ -61,6 +61,9 @@ pub(crate) enum Action {
     /// Put the blame of the file tab in front up beside its lines, or take it down - see
     /// [`crate::native::blame`].
     ToggleBlame,
+    /// Go to the next space of the window, wrapping round - see [`crate::native::app`]'s spaces.
+    NextSpace,
+    PreviousSpace,
 }
 
 /// One press: a key and the modifiers held with it.
@@ -97,6 +100,7 @@ pub(crate) struct Binding {
 
 const COMMAND_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 const ALT_SHIFT: Modifiers = Modifiers::ALT.plus(Modifiers::SHIFT);
+const CTRL_ALT: Modifiers = Modifiers::CTRL.plus(Modifiers::ALT);
 
 /// The whole keyboard, laid out as values. Order matters only in that the first exact match
 /// wins, which cannot happen while every chord here is distinct.
@@ -249,6 +253,18 @@ pub(crate) const BINDINGS: &[Binding] = &[
         action: Action::ToggleBlame,
         chord: &[press(ALT_SHIFT, Key::B)],
         reach: Reach::OutsideShells,
+    },
+    // Ctrl+Alt with the arrows steps through the spaces, which is where classic gnome and xfce
+    // put it, and a chord a shell program is not sent.
+    Binding {
+        action: Action::NextSpace,
+        chord: &[press(CTRL_ALT, Key::ArrowRight)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::PreviousSpace,
+        chord: &[press(CTRL_ALT, Key::ArrowLeft)],
+        reach: Reach::Anywhere,
     },
     // Ctrl+X is a prefix here, because leaving a shell has to be possible from inside one.
     // A program in that shell still gets it: `C-x` is only held while it is going somewhere,

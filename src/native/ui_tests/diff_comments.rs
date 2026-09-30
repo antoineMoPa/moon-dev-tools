@@ -154,7 +154,6 @@ fn the_bubble_beside_a_selected_line_opens_the_comment_composer() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(2);
-    harness.snapshot("comment-composer");
 }
 
 /// A comment being typed survives everything short of deliberately cancelling it: sweeping

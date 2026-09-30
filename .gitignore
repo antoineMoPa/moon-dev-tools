@@ -1,9 +1,6 @@
 /target
 
 # What a failing UI snapshot leaves behind. The baselines themselves are committed.
-/tests/snapshots/*.new.png
-/tests/snapshots/*.old.png
-/tests/snapshots/*.diff.png
 
 .moontasks/
 

@@ -50,6 +50,7 @@ pub(crate) mod project_pane;
 pub(crate) mod renaming;
 pub(crate) mod review;
 pub(crate) mod signature;
+pub(crate) mod space_selector;
 pub(crate) mod start_pane;
 pub(crate) mod status_bar;
 pub(crate) mod submodules;

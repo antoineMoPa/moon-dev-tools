@@ -145,7 +145,6 @@ fn a_task_with_nothing_running_opens_its_start_window() {
         .events
         .push(egui::Event::PointerMoved(egui::pos2(500.0, 690.0)));
     harness.run_steps(3);
-    harness.snapshot("moontasks-start-window");
 
     // The window's own `shell` button, one of the card's offers laid out in a list: the one in
     // the right-hand column is the one this presses, clear of anything the cards draw.

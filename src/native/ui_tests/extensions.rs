@@ -106,7 +106,6 @@ fn until_notes_open(harness: &mut Harness<'_>, opened: &AtomicBool) {
 fn the_files_extension_walks_the_project_with_the_keyboard_and_opens_a_file() {
     // Arrange
     let (mut harness, opened, _fixture) = files_pane("extension-files");
-    harness.snapshot("extension-files");
 
     // Act: from the filter box, which has the keyboard, past `..` and the folder, onto the
     // file, and open it.

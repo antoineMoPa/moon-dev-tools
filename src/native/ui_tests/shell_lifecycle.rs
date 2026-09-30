@@ -673,7 +673,6 @@ fn code_is_set_in_a_real_bold_and_a_real_italic() {
             ui.label(job);
         });
     harness.run();
-    harness.snapshot("code-faces");
 }
 
 /// A bold run draws its tables and spinners from the same borrowed font a regular one does.

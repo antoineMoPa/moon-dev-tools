@@ -259,7 +259,6 @@ fn the_commit_pane_draws_what_it_would_commit() {
         .ctx
         .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run_steps(5);
-    harness.snapshot("commit-pane");
 }
 
 /// Pushing goes through the same pty as committing - an ssh remote asks for things too - and

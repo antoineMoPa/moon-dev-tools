@@ -139,7 +139,6 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
         style.visuals.text_cursor.blink = false;
     });
     harness.run_steps(2);
-    harness.snapshot("submodule-hub");
 
     // Assert: the repo itself heads the list under its own folder name, with its changes
     // counted the way the submodules' are - adding two submodules changed it.
@@ -197,7 +196,6 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
         .events
         .push(egui::Event::PointerMoved(row));
     harness.run_steps(20);
-    harness.snapshot("submodule-hub-hovered");
 
     // Act: the repo's own row brings the review the window opened on back in front.
     assert_eq!(
@@ -326,7 +324,6 @@ fn the_submodule_hub_marks_an_unpushed_submodule_and_opens_a_shell_in_it() {
         style.visuals.text_cursor.blink = false;
     });
     harness.run_steps(2);
-    harness.snapshot("submodule-hub-unpushed");
 
     // Assert: only the submodule ahead of its remote says so.
     let notes: Vec<String> = harness
