@@ -135,10 +135,13 @@ pub(crate) async fn terminals_running_a_command(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
-    Ok(Json(TerminalList {
-        terminal_ids: state.terminals.terminals_running_a_command(),
-    }))
+    // Waits for the session lock and asks the ptys, both on a clock: kept off the async workers.
+    let terminal_ids = tokio::task::spawn_blocking(move || {
+        crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+        anyhow::Ok(state.terminals.terminals_running_a_command())
+    })
+    .await??;
+    Ok(Json(TerminalList { terminal_ids }))
 }
 
 /// The shells asking for a person - see [`crate::attention`].
@@ -146,10 +149,12 @@ pub(crate) async fn terminals_wanting_attention(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
-    Ok(Json(TerminalAttentionList {
-        terminals: state.terminals.wanting_attention(),
-    }))
+    let terminals = tokio::task::spawn_blocking(move || {
+        crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+        anyhow::Ok(state.terminals.wanting_attention())
+    })
+    .await??;
+    Ok(Json(TerminalAttentionList { terminals }))
 }
 
 pub(crate) async fn close_terminal(

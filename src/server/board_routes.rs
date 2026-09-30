@@ -26,7 +26,10 @@ pub(super) async fn list_tasks(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TaskView>>, AppError> {
     mark_activity(&state);
-    Ok(Json(moontasks::service::list_tasks(&state, &session_id)?))
+    let tasks =
+        tokio::task::spawn_blocking(move || moontasks::service::list_tasks(&state, &session_id))
+            .await??;
+    Ok(Json(tasks))
 }
 
 pub(super) async fn create_task(
@@ -56,10 +59,11 @@ pub(super) async fn list_review_requests(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ReviewRequestView>>, AppError> {
     mark_activity(&state);
-    Ok(Json(moontasks::service::list_review_requests(
-        &state,
-        &session_id,
-    )?))
+    let requests = tokio::task::spawn_blocking(move || {
+        moontasks::service::list_review_requests(&state, &session_id)
+    })
+    .await??;
+    Ok(Json(requests))
 }
 
 pub(super) async fn amend_review_request(

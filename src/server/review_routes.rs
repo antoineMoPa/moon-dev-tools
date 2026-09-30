@@ -31,7 +31,12 @@ pub(super) async fn session_submodules(
     State(state): State<AppState>,
 ) -> Result<Json<SubmoduleHubPayload>, AppError> {
     mark_activity(&state);
-    Ok(Json(service::session_submodules(&state, &session_id)?))
+    // Git runs here, and a window polls it: kept off the async workers, which also carry every
+    // shell's socket - a worker held by git is a keystroke held with it.
+    let hub =
+        tokio::task::spawn_blocking(move || service::session_submodules(&state, &session_id))
+            .await??;
+    Ok(Json(hub))
 }
 
 pub(super) async fn open_session(
@@ -47,7 +52,12 @@ pub(super) async fn session_state(
     State(state): State<AppState>,
 ) -> Result<Json<SessionPayload>, AppError> {
     mark_activity(&state);
-    Ok(Json(service::session_state(&state, &session_id)?))
+    // Kept off the async workers, as `session_submodules` is: this is the longest thing the
+    // server does, and a window asks for it every second.
+    let payload =
+        tokio::task::spawn_blocking(move || service::session_state(&state, &session_id))
+            .await??;
+    Ok(Json(payload))
 }
 
 pub(super) async fn commit_history(
@@ -56,12 +66,16 @@ pub(super) async fn commit_history(
     State(state): State<AppState>,
 ) -> Result<Json<CommitHistoryPayload>, AppError> {
     mark_activity(&state);
-    Ok(Json(service::commit_history(
-        &state,
-        &session_id,
-        query.offset.unwrap_or(0),
-        query.limit.unwrap_or(service::HISTORY_COMMIT_PAGE_SIZE),
-    )?))
+    let history = tokio::task::spawn_blocking(move || {
+        service::commit_history(
+            &state,
+            &session_id,
+            query.offset.unwrap_or(0),
+            query.limit.unwrap_or(service::HISTORY_COMMIT_PAGE_SIZE),
+        )
+    })
+    .await??;
+    Ok(Json(history))
 }
 
 pub(super) async fn update_agent(
