@@ -607,3 +607,37 @@ fn a_login_ticket_is_minted_only_for_a_client_let_in_and_only_short_lived() {
         .expect("failed to ask");
     assert_eq!(too_long.status(), StatusCode::BAD_REQUEST);
 }
+
+#[test]
+fn every_answer_asks_search_engines_to_leave_the_server_out() {
+    let served = serve("auth-robots");
+    let client = bare_client();
+
+    // A page anyone may read, and a refusal: both are answers a crawler could be handed.
+    for path in ["/", CHECK] {
+        let answer = client
+            .get(format!("{}{path}", served.base_url))
+            .send()
+            .expect("failed to ask");
+        assert_eq!(
+            answer
+                .headers()
+                .get("x-robots-tag")
+                .and_then(|value| value.to_str().ok()),
+            Some("noindex, nofollow"),
+            "{path} was answered without asking not to be indexed"
+        );
+    }
+
+    let robots = client
+        .get(format!("{}/robots.txt", served.base_url))
+        .send()
+        .expect("failed to ask for robots.txt");
+    assert_eq!(robots.status(), StatusCode::OK);
+    assert!(
+        robots
+            .text()
+            .expect("failed to read robots.txt")
+            .contains("Disallow: /")
+    );
+}

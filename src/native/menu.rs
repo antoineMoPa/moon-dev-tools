@@ -40,6 +40,18 @@ pub(crate) enum MenuAction {
     /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,
+    /// The palette's `start cloudflare tunnel` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    StartCloudflareTunnel,
+    /// The palette's `stop cloudflare tunnel` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    StopCloudflareTunnel,
+    /// The palette's `view cloudflare tunnel link` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    ViewCloudflareTunnelLink,
+    /// The palette's `open cloudflare tunnel in browser` command, as a menu item.
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenCloudflareTunnelInBrowser,
     /// A new pass key to this window's server, on the clipboard - the palette's
     /// `generate pass key` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
@@ -91,6 +103,17 @@ mod platform {
         open_tasks: MenuId,
         open_work_log: MenuId,
         open_in_web: MenuId,
+        start_cloudflare_tunnel: MenuId,
+        stop_cloudflare_tunnel: MenuId,
+        view_cloudflare_tunnel_link: MenuId,
+        open_cloudflare_tunnel_in_browser: MenuId,
+        /// The items that only make sense with a tunnel running, and the one that only makes
+        /// sense without - see [`Self::show_tunnel_running`].
+        tunnel_start_item: MenuItem,
+        tunnel_running_items: Vec<MenuItem>,
+        /// What the items were last set for, so a frame that changes nothing asks the OS for
+        /// nothing.
+        tunnel_shown_running: std::cell::Cell<Option<bool>>,
         generate_pass_key: MenuId,
         open_users: MenuId,
         open_submodules: MenuId,
@@ -308,6 +331,21 @@ mod platform {
             // Unbound too: `wl` typed into the palette is the chord.
             let open_work_log = MenuItem::new("Work Log", true, None);
             let open_in_web = MenuItem::new("Open in Web", true, None);
+            // Set to what a tunnel not running allows before the first frame.
+            let start_cloudflare_tunnel = MenuItem::new("Start Tunnel", true, None);
+            let stop_cloudflare_tunnel = MenuItem::new("Stop Tunnel", false, None);
+            let view_cloudflare_tunnel_link = MenuItem::new("View Link", false, None);
+            let open_cloudflare_tunnel_in_browser =
+                MenuItem::new("Open Tunnel in Browser", false, None);
+            let cloudflare_menu = Submenu::new("Cloudflare", true);
+            cloudflare_menu
+                .append_items(&[
+                    &start_cloudflare_tunnel,
+                    &stop_cloudflare_tunnel,
+                    &view_cloudflare_tunnel_link,
+                    &open_cloudflare_tunnel_in_browser,
+                ])
+                .ok()?;
             let generate_pass_key = MenuItem::new("Generate Pass Key", true, None);
             let open_users = MenuItem::new("Users", true, None);
             let tools_menu = Submenu::new("Tools", true);
@@ -319,6 +357,7 @@ mod platform {
                     &open_submodules,
                     &PredefinedMenuItem::separator(),
                     &open_in_web,
+                    &cloudflare_menu,
                     &generate_pass_key,
                     &open_users,
                 ])
@@ -366,6 +405,17 @@ mod platform {
                 open_tasks: open_tasks.id().clone(),
                 open_work_log: open_work_log.id().clone(),
                 open_in_web: open_in_web.id().clone(),
+                start_cloudflare_tunnel: start_cloudflare_tunnel.id().clone(),
+                stop_cloudflare_tunnel: stop_cloudflare_tunnel.id().clone(),
+                view_cloudflare_tunnel_link: view_cloudflare_tunnel_link.id().clone(),
+                open_cloudflare_tunnel_in_browser: open_cloudflare_tunnel_in_browser.id().clone(),
+                tunnel_start_item: start_cloudflare_tunnel.clone(),
+                tunnel_running_items: vec![
+                    stop_cloudflare_tunnel.clone(),
+                    view_cloudflare_tunnel_link.clone(),
+                    open_cloudflare_tunnel_in_browser.clone(),
+                ],
+                tunnel_shown_running: std::cell::Cell::new(None),
                 generate_pass_key: generate_pass_key.id().clone(),
                 open_users: open_users.id().clone(),
                 open_submodules: open_submodules.id().clone(),
@@ -382,6 +432,18 @@ mod platform {
                 restart_window: restart_window.id().clone(),
                 install_launchers: install_launchers.id().clone(),
             })
+        }
+
+        /// Grey out what a tunnel's state makes impossible: only Start without one, only the
+        /// rest with one.
+        pub(crate) fn show_tunnel_running(&self, running: bool) {
+            if self.tunnel_shown_running.replace(Some(running)) == Some(running) {
+                return;
+            }
+            self.tunnel_start_item.set_enabled(!running);
+            for item in &self.tunnel_running_items {
+                item.set_enabled(running);
+            }
         }
 
         /// Everything the menu was asked for since the last frame.
@@ -412,6 +474,14 @@ mod platform {
                     MenuAction::OpenWorkLog
                 } else if event.id == self.open_in_web {
                     MenuAction::OpenInWeb
+                } else if event.id == self.start_cloudflare_tunnel {
+                    MenuAction::StartCloudflareTunnel
+                } else if event.id == self.stop_cloudflare_tunnel {
+                    MenuAction::StopCloudflareTunnel
+                } else if event.id == self.view_cloudflare_tunnel_link {
+                    MenuAction::ViewCloudflareTunnelLink
+                } else if event.id == self.open_cloudflare_tunnel_in_browser {
+                    MenuAction::OpenCloudflareTunnelInBrowser
                 } else if event.id == self.generate_pass_key {
                     MenuAction::GeneratePassKey
                 } else if event.id == self.open_users {
@@ -455,6 +525,8 @@ mod platform {
         pub(crate) fn install(_picks_files: bool, _frame: crate::cli::Frame) -> Option<Self> {
             None
         }
+
+        pub(crate) fn show_tunnel_running(&self, _running: bool) {}
 
         pub(crate) fn drain(&self) -> Vec<MenuAction> {
             Vec::new()

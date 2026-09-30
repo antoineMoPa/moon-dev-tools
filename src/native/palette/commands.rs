@@ -95,6 +95,35 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     });
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
+        title: "start cloudflare tunnel".to_string(),
+        description: "Reach this window's server from another device: a tunnel, its address and a QR code"
+            .to_string(),
+        action: CommandAction::StartCloudflareTunnel,
+        shortcut: None,
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
+        title: "stop cloudflare tunnel".to_string(),
+        description: "Close the tunnel to this window's server".to_string(),
+        action: CommandAction::StopCloudflareTunnel,
+        shortcut: None,
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
+        title: "view cloudflare tunnel link".to_string(),
+        description: "Show the tunnel's address and QR code again".to_string(),
+        action: CommandAction::ViewCloudflareTunnelLink,
+        shortcut: None,
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
+        title: "open cloudflare tunnel in browser".to_string(),
+        description: "Open the tunnel's address in this machine's browser".to_string(),
+        action: CommandAction::OpenCloudflareTunnelInBrowser,
+        shortcut: None,
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.push(Command {
         title: "generate pass key".to_string(),
         description: "Copy a new key to this window's server, for a browser or another machine"
             .to_string(),

@@ -132,6 +132,7 @@ pub(crate) fn router(state: AppState, users: Users) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/healthz", get(healthz))
+        .route("/robots.txt", get(robots_txt))
         .route("/moon", get(web_page::moon_without_slash))
         .route("/moon/", get(web_page::moon_page))
         .route("/moon/login", post(web_page::log_in))
@@ -143,7 +144,23 @@ pub(crate) fn router(state: AppState, users: Users) -> Router {
             )),
         )
         .layer(middleware::from_fn(auth::browser_boundary))
+        .layer(middleware::map_response(ask_not_to_be_indexed))
         .with_state(served)
+}
+
+/// Nothing this server answers with belongs in a search engine. A server is reachable from
+/// the internet whenever it is behind a tunnel - see `crate::native::tunnel` - and its login
+/// page, and every error page, would otherwise be indexed if the address ever leaked.
+async fn ask_not_to_be_indexed(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        "x-robots-tag",
+        axum::http::HeaderValue::from_static("noindex, nofollow"),
+    );
+    response
+}
+
+async fn robots_txt() -> &'static str {
+    "User-agent: *\nDisallow: /\n"
 }
 
 /// The API: everything that reads the repo, writes to it or runs something in it.

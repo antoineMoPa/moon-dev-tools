@@ -271,6 +271,16 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenInWeb => CommandAction::OpenInWeb,
                 #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::StartCloudflareTunnel => CommandAction::StartCloudflareTunnel,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::StopCloudflareTunnel => CommandAction::StopCloudflareTunnel,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::ViewCloudflareTunnelLink => CommandAction::ViewCloudflareTunnelLink,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenCloudflareTunnelInBrowser => {
+                    CommandAction::OpenCloudflareTunnelInBrowser
+                }
+                #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::GeneratePassKey => CommandAction::GeneratePassKey,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenUsers => {
@@ -364,6 +374,9 @@ impl App {
                 .map(NativeMenu::drain)
                 .unwrap_or_default();
             self.apply_menu_actions(picked);
+            if let Some(menu) = &self.menu {
+                menu.show_tunnel_running(self.tunnel.is_some());
+            }
         }
 
         self.quit_would_kill_shells(ctx);
@@ -384,6 +397,8 @@ impl App {
         self.poll_visualizations();
         self.poll_language_server_work();
         self.poll_board();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_tunnel(ctx);
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
         if let Some((task_id, title)) = self.model.board.opened_task_page.take() {
@@ -438,6 +453,8 @@ impl App {
         palette::draw(self, ctx);
         find::draw(self, ctx);
         self.draw_armed_prefix(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.draw_tunnel(ctx);
         self.draw_toasts(ctx, crate::native::status_bar::BAR_HEIGHT);
 
         // A place a language server named, gone to or listed now the tree is drawn.

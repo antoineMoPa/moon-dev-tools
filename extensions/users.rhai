@@ -204,6 +204,7 @@ fn view() {
                 standing,
                 text(kinds[user.kind]),
                 text(user.ip, #{ mono: true }),
+                muted(if user.user_agent == () { "" } else { user.user_agent }),
                 text(user.id, #{ mono: true, small: true }),
                 muted(ago(now - user.last_seen)),
                 muted(ago(now - user.first_seen)),
@@ -220,7 +221,7 @@ fn view() {
         row(actions),
         muted("x kick · X kick everyone · g refresh · a kick outlives the server; a new secret takes every key back"),
         separator(),
-        table(["", "kind", "ip", "id", "last seen", "first seen", "requests"], rows),
+        table(["", "kind", "ip", "user agent", "id", "last seen", "first seen", "requests"], rows),
     ])
 }
 
@@ -233,6 +234,7 @@ fn menu_of(user, index) {
     }
     menu += [
         #{ label: "copy ip", event: #{ copy: user.ip } },
+        #{ label: "copy user agent", event: #{ copy: if user.user_agent == () { "" } else { user.user_agent } } },
         #{ label: "copy id", event: #{ copy: user.id } },
     ];
     menu

@@ -295,6 +295,17 @@ impl Model {
         }
     }
 
+    /// Write a message in the log the status bar shows the latest of, without a toast over
+    /// the window: for what the bar already says, so it is not said twice.
+    pub(crate) fn log_message(&mut self, kind: ToastKind, text: impl Into<String>) {
+        self.messages.record(
+            kind,
+            text.into(),
+            crate::native::messages::now_unix(),
+            web_time::Instant::now(),
+        );
+    }
+
     pub(crate) fn toast(&mut self, kind: ToastKind, text: impl Into<String>) {
         let text = text.into();
         // Written down before anything else, and every time it is posted: the toast below

@@ -163,6 +163,19 @@ pub(crate) enum CommandAction {
     /// browser's window has to offer: it is the browser.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,
+    /// This window's server reached from another device through a Cloudflare quick tunnel -
+    /// see `crate::native::tunnel`. With one already running, its QR code is put back up.
+    #[cfg(not(target_arch = "wasm32"))]
+    StartCloudflareTunnel,
+    /// The tunnel stopped.
+    #[cfg(not(target_arch = "wasm32"))]
+    StopCloudflareTunnel,
+    /// The window with the tunnel's address and QR code, put back up.
+    #[cfg(not(target_arch = "wasm32"))]
+    ViewCloudflareTunnelLink,
+    /// The tunnel's address opened in this machine's browser, logged in.
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenCloudflareTunnelInBrowser,
     /// A new pass key to this window's server, on the clipboard - see
     /// `crate::native::pass_key`. A browser's window is let in already, and has no server of
     /// its own to make one for.

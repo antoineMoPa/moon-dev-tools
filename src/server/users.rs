@@ -119,8 +119,13 @@ pub(crate) struct UserList {
 pub(crate) struct User {
     pub(crate) id: UserId,
     pub(crate) kind: UserKind,
-    /// Where the last request came from.
+    /// Where the last request came from: the address of whoever is on the far end of a tunnel
+    /// when the request came through one - see `auth::client_ip`.
     pub(crate) ip: IpAddr,
+    /// What the last request said it was made by, when it said: a browser's name and version,
+    /// `curl`, the window's HTTP client. Said by the client, so a hint at who is who and no
+    /// proof of it.
+    pub(crate) user_agent: Option<String>,
     /// Unix seconds.
     pub(crate) first_seen: u64,
     pub(crate) last_seen: u64,
@@ -131,9 +136,10 @@ pub(crate) struct User {
 }
 
 /// What the server has seen of one user.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Seen {
     ip: IpAddr,
+    user_agent: Option<String>,
     first_seen: u64,
     last_seen: u64,
     requests: u64,
@@ -191,9 +197,15 @@ impl Users {
         self.lock().keys.clone()
     }
 
-    /// A request from `user` at `ip` came in with a key or session the secret admits: whether
-    /// it goes on. Seen either way, so a kicked key still knocking shows as such.
-    pub(crate) fn let_in(&self, user: &UserId, ip: IpAddr) -> Admission {
+    /// A request from `user` at `ip`, saying it is made by `user_agent`, came in with a key or
+    /// session the secret admits: whether it goes on. Seen either way, so a kicked key still
+    /// knocking shows as such.
+    pub(crate) fn let_in(
+        &self,
+        user: &UserId,
+        ip: IpAddr,
+        user_agent: Option<String>,
+    ) -> Admission {
         let now = unix_seconds_now();
         let mut shared = self.lock();
         shared
@@ -201,11 +213,13 @@ impl Users {
             .entry(user.clone())
             .and_modify(|seen| {
                 seen.ip = ip;
+                seen.user_agent.clone_from(&user_agent);
                 seen.last_seen = now;
                 seen.requests += 1;
             })
             .or_insert(Seen {
                 ip,
+                user_agent,
                 first_seen: now,
                 last_seen: now,
                 requests: 1,
@@ -230,6 +244,7 @@ impl Users {
                 id: id.clone(),
                 kind: id.kind(),
                 ip: seen.ip,
+                user_agent: seen.user_agent.clone(),
                 first_seen: seen.first_seen,
                 last_seen: seen.last_seen,
                 requests: seen.requests,
@@ -389,7 +404,7 @@ mod tests {
 
     fn seen_key(users: &Users, id: &str) -> UserId {
         let user = UserId::PassKey(id.to_string());
-        assert_eq!(users.let_in(&user, LOCALHOST), Admission::In);
+        assert_eq!(users.let_in(&user, LOCALHOST, None), Admission::In);
         user
     }
 
@@ -414,11 +429,14 @@ mod tests {
 
         users.kick(&kicked).expect("expected the kick");
 
-        assert_eq!(users.let_in(&kicked, LOCALHOST), Admission::Kicked);
-        assert_eq!(users.let_in(&kept, LOCALHOST), Admission::In);
+        assert_eq!(users.let_in(&kicked, LOCALHOST, None), Admission::Kicked);
+        assert_eq!(users.let_in(&kept, LOCALHOST, None), Admission::In);
         let restarted = Users::kept_at(&secret).expect("expected users again");
-        assert_eq!(restarted.let_in(&kicked, LOCALHOST), Admission::Kicked);
-        assert_eq!(restarted.let_in(&kept, LOCALHOST), Admission::In);
+        assert_eq!(
+            restarted.let_in(&kicked, LOCALHOST, None),
+            Admission::Kicked
+        );
+        assert_eq!(restarted.let_in(&kept, LOCALHOST, None), Admission::In);
     }
 
     #[test]

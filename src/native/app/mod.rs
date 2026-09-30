@@ -120,6 +120,9 @@ pub(crate) struct App {
     /// close, one at a time.
     pub(crate) pending_close_of_others: Option<PaneId>,
     pending_tab_action: Option<TabAction>,
+    /// The quick tunnel to another device, while there is one - see [`crate::native::tunnel`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tunnel: Option<crate::native::tunnel::Tunnel>,
     /// The chord that raises each tab within cmd+1..cmd+9's reach - the active frame's tabs -
     /// worked out before the strips are drawn and worn at the right of their titles.
     pub(crate) tab_shortcuts: HashMap<PaneId, String>,
@@ -365,6 +368,8 @@ impl App {
             pending_close: None,
             pending_close_of_others: None,
             pending_tab_action: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tunnel: None,
             tab_shortcuts: HashMap::new(),
             keyboard_pane: None,
             front_pane: None,

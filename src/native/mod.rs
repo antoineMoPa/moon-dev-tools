@@ -40,6 +40,8 @@ pub(crate) mod open_from_shell;
 #[cfg(not(target_arch = "wasm32"))]
 mod open_in_web;
 #[cfg(not(target_arch = "wasm32"))]
+mod tunnel;
+#[cfg(not(target_arch = "wasm32"))]
 mod pass_key;
 pub(crate) mod palette;
 pub(crate) mod places;

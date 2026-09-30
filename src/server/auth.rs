@@ -121,16 +121,43 @@ pub(super) async fn require_pass_key(
             UserId::BrowserSession(id)
         }
     };
-    let ip = request
+    let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .expect("the server is started with `into_make_service_with_connect_info`")
         .ip();
-    if users.let_in(&user, ip) == Admission::Kicked {
+    let ip = client_ip(peer, request.headers());
+    let user_agent = request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    if users.let_in(&user, ip, user_agent) == Admission::Kicked {
         return (StatusCode::UNAUTHORIZED, KICKED).into_response();
     }
     request.extensions_mut().insert(user);
     next.run(request).await
+}
+
+/// Who a request is from, for the users list.
+///
+/// A request that came through a tunnel - see `crate::native::tunnel` - is made by `cloudflared`
+/// on this machine, so its peer is always this machine. The address of whoever is on the far
+/// end is what Cloudflare says in `CF-Connecting-IP`, or in the first of `X-Forwarded-For`. Only
+/// believed of a peer on this machine: from any other, either header is whatever the sender
+/// wrote. Believed of this machine too, since a program here that writes one has a shell on it
+/// already - and the address only labels a row of the list; nothing is admitted by it.
+fn client_ip(peer: std::net::IpAddr, headers: &HeaderMap) -> std::net::IpAddr {
+    if !peer.is_loopback() {
+        return peer;
+    }
+    let said = headers
+        .get("cf-connecting-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .and_then(|first| first.trim().parse().ok());
+    said.unwrap_or(peer)
 }
 
 /// The pass key in the request's cookie, whether or not it is a valid one.

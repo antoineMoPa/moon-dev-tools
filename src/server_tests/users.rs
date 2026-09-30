@@ -252,3 +252,29 @@ fn kicking_everyone_is_a_new_secret_that_refuses_every_old_key_and_admits_new_on
     assert_eq!(knock_with_key(&served, &renewed), StatusCode::NO_CONTENT);
     let _ = std::fs::remove_file(&secret);
 }
+
+#[test]
+fn a_request_through_a_tunnel_is_listed_by_who_is_on_the_far_end_and_what_they_use() {
+    let served = serve("users-tunnel");
+    let key = of_this_test_run().generate();
+    let answered = bare_client()
+        .get(format!("{}{CHECK}", served.base_url))
+        .header(AUTHORIZATION, format!("Bearer {key}"))
+        // What cloudflared hands on: this machine is the peer, the visitor is in the headers.
+        .header("cf-connecting-ip", "203.0.113.9")
+        .header("user-agent", "Mozilla/5.0 (iPhone) Mobile Safari")
+        .send()
+        .expect("failed to ask")
+        .status();
+    assert_eq!(answered, StatusCode::NO_CONTENT);
+
+    let visitor = users_of(&served)
+        .into_iter()
+        .find(|user| user.ip.to_string() == "203.0.113.9")
+        .expect("the visitor is listed by the address the tunnel said");
+
+    assert_eq!(
+        visitor.user_agent.as_deref(),
+        Some("Mozilla/5.0 (iPhone) Mobile Safari")
+    );
+}

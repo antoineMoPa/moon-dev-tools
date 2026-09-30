@@ -461,6 +461,14 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::OpenInWeb => self.open_in_web(),
             #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::StartCloudflareTunnel => self.start_tunnel(),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::StopCloudflareTunnel => self.stop_tunnel(),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::ViewCloudflareTunnelLink => self.view_tunnel_link(),
+            #[cfg(not(target_arch = "wasm32"))]
+            CommandAction::OpenCloudflareTunnelInBrowser => self.open_tunnel_in_browser(),
+            #[cfg(not(target_arch = "wasm32"))]
             CommandAction::GeneratePassKey => self.generate_pass_key(ctx),
             CommandAction::ApplyCodeAction(index) => {
                 crate::native::code_actions::apply(self, index)
