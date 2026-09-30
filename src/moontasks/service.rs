@@ -5,6 +5,8 @@
 
 mod columns;
 mod resources;
+mod shared_places;
+mod stray_cards;
 #[cfg(test)]
 mod tests;
 
@@ -45,7 +47,7 @@ pub(super) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
 /// shells have exited, including shells lost with a previous run of the server.
 pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskView>> {
     let repo_path = repo_of(state, session_id)?;
-    let mut tasks = Vec::new();
+    let mut read = Vec::new();
 
     for task_id in store::list_task_ids(&repo_path)? {
         let Ok(mut metadata) = store::read_task(&repo_path, &task_id) else {
@@ -56,11 +58,31 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
         if reconcile(state, &mut metadata) {
             store::write_task(&repo_path, &task_id, &metadata)?;
         }
-        tasks.push((
-            place_of(&metadata),
-            view_of(state, &repo_path, &task_id, &metadata),
-        ));
+        read.push((task_id, metadata));
     }
+
+    // Cards carried in from another project's board may name a column this one lacks, or take
+    // a position another card here already has.
+    let board = store::read_board(&repo_path);
+    let mut changed = stray_cards::gather_strays(&board, &mut read);
+    changed.extend(shared_places::renumber_tied_columns(&mut read));
+    changed.sort();
+    changed.dedup();
+    for task_id in changed {
+        if let Some((_, metadata)) = read.iter().find(|(id, _)| *id == task_id) {
+            store::write_task(&repo_path, &task_id, metadata)?;
+        }
+    }
+
+    let mut tasks: Vec<_> = read
+        .iter()
+        .map(|(task_id, metadata)| {
+            (
+                place_of(metadata),
+                view_of(state, &repo_path, task_id, metadata),
+            )
+        })
+        .collect();
 
     // One order for the whole board, which each column reads its own cards out of.
     tasks.sort_by_key(|(place, _)| *place);
