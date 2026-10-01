@@ -111,9 +111,15 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
         let Ok(dir) = store::task_dir(repo_path, &task_id) else {
             continue;
         };
-        let Ok(contents) = std::fs::read_to_string(dir.join(REVIEW_REQUEST_FILE_NAME)) else {
+        let file = dir.join(REVIEW_REQUEST_FILE_NAME);
+        let Ok(contents) = std::fs::read_to_string(&file) else {
             continue;
         };
+        let written_at_unix = std::fs::metadata(&file)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_secs());
         // Only for a task that asked for something: most tasks have no file, and reading their
         // metadata to find out where a list they do not have sits would be a read each per tick.
         // A task whose metadata cannot be read is somewhere unknown, which is not the finished
@@ -126,7 +132,15 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
                 .into_iter()
                 .enumerate()
                 .map(|(index, request)| {
-                    view_of(repo_path, &task_id, index, finished, request, &mut reviewed)
+                    view_of(
+                        repo_path,
+                        &task_id,
+                        index,
+                        finished,
+                        written_at_unix,
+                        request,
+                        &mut reviewed,
+                    )
                 }),
         );
     }
@@ -192,6 +206,7 @@ fn view_of(
     task_id: &str,
     index: usize,
     task_finished: bool,
+    written_at_unix: u64,
     request: ReviewRequest,
     reviewed: &mut HashMap<(String, Option<String>), Reviewed>,
 ) -> ReviewRequestView {
@@ -211,6 +226,7 @@ fn view_of(
         changed_files,
         done: request.done,
         task_finished,
+        written_at_unix,
         repo_path: path.display().to_string(),
         name,
         branch: request.branch,
@@ -879,6 +895,7 @@ mod tests {
             changed_files: 1,
             done: false,
             task_finished: false,
+            written_at_unix: 0,
         };
         let mut views = vec![view("a", 0), view("a", 1), view("a", 2), view("b", 0)];
 

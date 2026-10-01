@@ -108,6 +108,36 @@ pub(crate) fn arrangement_for(
 }
 
 impl App {
+    /// Move the window when an empty part of a tab strip along the top of the window is
+    /// dragged: the window has no title bar to take hold of - see
+    /// [`crate::native::window_drag`].
+    #[cfg(target_os = "macos")]
+    pub(crate) fn drag_window_by_strip(&mut self, ctx: &egui::Context) {
+        let strip_height = self.frames.style().tab_strip_height();
+        let strip = self
+            .model
+            .layout
+            .frame_ids()
+            .into_iter()
+            .filter_map(|frame| self.frames.frame_rect(frame))
+            .find(|rect| rect.min.y < strip_height)
+            .map(|rect| {
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.min.x, 0.0),
+                    egui::vec2(rect.width(), rect.min.y + strip_height),
+                )
+            });
+        let busy = self.frames.dragged_pane().is_some() || ctx.dragged_id().is_some();
+        let tabs: Vec<egui::Rect> = self
+            .model
+            .layout
+            .panes()
+            .filter_map(|(pane, _)| self.frames.tab_rect(pane))
+            .collect();
+        self.window_drag
+            .follow(ctx, strip, busy, |at| tabs.iter().any(|tab| tab.contains(at)));
+    }
+
     /// One frame of the arrangement: drawn, dragged, and whatever the user asked of it done.
     pub(crate) fn draw_workspace(&mut self, ui: &mut Ui) {
         // An empty frame is a leftover - whatever emptied it should have taken it with it - and
@@ -129,7 +159,16 @@ impl App {
             style.close_size = 20.0;
         }
 
-        ui.add_space(WORKSPACE_TOP_INSET);
+        // None under the traffic lights: the window has no title bar, so the strip's tabs are
+        // lined up with them from the very top rather than hung a breath below.
+        #[cfg(not(target_arch = "wasm32"))]
+        let top_inset = match cfg!(target_os = "macos") {
+            true => 0.0,
+            false => WORKSPACE_TOP_INSET,
+        };
+        #[cfg(target_arch = "wasm32")]
+        let top_inset = WORKSPACE_TOP_INSET;
+        ui.add_space(top_inset);
         self.model.columns_fit = holds_two_columns(ui.available_width());
 
         // The workspace draws moonreview's own panes, so the view it needs is this app: both it

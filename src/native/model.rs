@@ -54,6 +54,32 @@ pub(crate) enum Stage {
     Ready,
 }
 
+/// A tab that was closed: how to open it again, and where it was.
+pub(crate) struct ClosedTab {
+    pub(crate) request: crate::native::panes::OpenPaneRequest,
+    pub(crate) place: ClosedPlace,
+}
+
+/// Where a closed tab sat in the arrangement.
+#[derive(Clone)]
+pub(crate) struct ClosedPlace {
+    pub(crate) frame: egui_frames::FrameId,
+    /// The tab that followed it, which it goes back before.
+    pub(crate) before: Option<egui_frames::PaneId>,
+    /// Another tab of its frame, for finding the frame again if the frame's name is gone.
+    pub(crate) mate: Option<egui_frames::PaneId>,
+    /// For a tab that was alone in its frame: the frame next to it, and the side it was on.
+    pub(crate) beside: Option<(egui_frames::FrameId, egui_frames::DropSide)>,
+}
+
+/// A reopened tab whose place is yet to be restored.
+pub(crate) struct PlacingReopened {
+    pub(crate) place: ClosedPlace,
+    /// The tabs there were when it was asked for, so the new one is the one that is not here.
+    pub(crate) panes_before: std::collections::HashSet<egui_frames::PaneId>,
+    pub(crate) since: web_time::Instant,
+}
+
 pub(crate) struct Model {
     pub(crate) stage: Stage,
     pub(crate) theme: ThemeMode,
@@ -90,6 +116,15 @@ pub(crate) struct Model {
     /// [`crate::moontasks::TaskView`] because the commit pane reads it too, and it has to be
     /// there whether or not a board is open.
     pub(crate) review_requests: Vec<ReviewRequestView>,
+    /// How to open again the tabs that were closed, the last one closed at the end - what ⌘⇧T
+    /// pops. See [`crate::native::panes::Pane::reopening`].
+    /// The command being typed into the status bar, while the line is up - see
+    /// [`crate::native::command_launcher`].
+    pub(crate) command_launcher: Option<crate::native::command_launcher::CommandLauncher>,
+    pub(crate) recently_closed: Vec<ClosedTab>,
+    /// The tab ⌘⇧T has asked to have opened again, waiting to be moved to where it was - see
+    /// [`App::place_reopened_tab`](crate::native::app::App::place_reopened_tab).
+    pub(crate) placing_reopened: Option<PlacingReopened>,
     /// How many times the rows above have been changed from the board - a line dismissed or
     /// crossed off - since the window opened. The change is made to the rows at once and to
     /// the server's file behind them, and a read of the files that started before the change

@@ -487,6 +487,9 @@ impl App {
         if let Some(action) = self.pending_action.take() {
             self.run_action(ctx, action);
         }
+        self.place_reopened_tab();
+        #[cfg(target_os = "macos")]
+        self.drag_window_by_strip(ctx);
         // After the action: a name picked in the palette this frame is already waiting to be
         // renamed, rather than read as the palette having been put away.
         crate::native::renaming::follow(self, ctx);

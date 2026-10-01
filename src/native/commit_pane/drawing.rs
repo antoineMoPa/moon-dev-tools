@@ -23,7 +23,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
     app.refresh_commit_state(session_id);
     app.poll_commit_run(session_id);
     app.fill_in_the_requested_commit(session_id);
-    app.auto_ask_for_commit_message(session_id);
+    app.forget_suggestion_of_nothing_staged(session_id);
 
     // While git is going, the keyboard belongs to the pty: that is where pinentry asks for
     // the passphrase. At rest it belongs to the message.
@@ -145,6 +145,24 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     .is_some_and(|state| !state.staged_files.is_empty());
 
             ui.horizontal(|ui| {
+                // To the left of everything, and only ever pressed: the agent is asked for a
+                // message when someone wants one, not whenever something gets staged.
+                let can_ask = !running
+                    && !writing_message
+                    && state.as_ref().is_some_and(|state| {
+                        !state.staged_files.is_empty() && state.opencode_installed
+                    });
+                let use_ai =
+                    widgets::clickable(ui.add_enabled(can_ask, egui::Button::new("Use AI")));
+                if use_ai.clicked() {
+                    app.ask_for_commit_message(session_id);
+                }
+                if !can_ask && !running && !writing_message {
+                    use_ai.on_disabled_hover_text(
+                        "needs a staged change and opencode installed to write a message",
+                    );
+                }
+
                 // Staging a hunk at a time is the review's job next door; this is the sweep
                 // for when the whole working tree is what the commit is.
                 let unstaged = state.as_ref().map_or(0, |state| state.unstaged_count);

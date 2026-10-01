@@ -1,5 +1,5 @@
 //! The message a commit goes out with: the one a review request wrote for this branch, or one
-//! asked of the agent.
+//! asked of the agent by `[Use AI]`.
 
 use crate::{moontasks::ReviewRequestView, native::app::App};
 
@@ -11,7 +11,7 @@ impl App {
     }
 
     /// Ask the agent for a message for what is staged.
-    fn ask_for_commit_message(&mut self, session_id: &str) {
+    pub(super) fn ask_for_commit_message(&mut self, session_id: &str) {
         let key = Self::suggestion_key(session_id);
         if self.tasks.is_busy(&key) {
             return;
@@ -56,7 +56,7 @@ impl App {
     /// copy when the branches they name are checked out nowhere - so the repo alone does not
     /// pick one. The branch the repo is actually on does: that is the work sitting in the pane,
     /// and the line that named that branch is the one that wrote the commit for it. Only when
-    /// no line named it does the first line for the repo stand, which is the single-line case
+    /// no line named it does the newest line for the repo stand, which is the single-line case
     /// and the one where there is nothing better to offer.
     ///
     /// A line on a task that has been finished is not among them at all, not even for the
@@ -69,19 +69,28 @@ impl App {
             .payload
             .as_ref()?
             .repo_path;
-        let mut for_this_repo = self
+        let for_this_repo: Vec<&ReviewRequestView> = self
             .model
             .review_requests
             .iter()
-            .filter(|request| &request.repo_path == repo_path && !request.task_finished);
-        let first = for_this_repo.next()?;
+            .filter(|request| &request.repo_path == repo_path && !request.task_finished)
+            .collect();
+        // The newest file first: tasks that named the same repo on no branch are told apart by
+        // which one wrote its line last, and an older task's line - work committed already -
+        // must not be the one standing for the work in the pane.
+        let newest = for_this_repo
+            .iter()
+            .copied()
+            .max_by_key(|request| request.written_at_unix)?;
         let Some(branch) = self.branch_of_commit_pane(session_id) else {
-            return Some(first);
+            return Some(newest);
         };
-        std::iter::once(first)
-            .chain(for_this_repo)
-            .find(|request| request.branch.as_deref() == Some(branch))
-            .or(Some(first))
+        for_this_repo
+            .iter()
+            .copied()
+            .filter(|request| request.branch.as_deref() == Some(branch))
+            .max_by_key(|request| request.written_at_unix)
+            .or(Some(newest))
     }
 
     /// The line whose commit this pane is about to make, which is the one whose message goes in
@@ -156,30 +165,21 @@ impl App {
         pane.requested_commit_put_in = Some(written);
     }
 
-    /// The one time the pane asks on its own: something is staged, nothing has been written in
-    /// the box, and no message has been asked for since there was last nothing to commit.
-    pub(super) fn auto_ask_for_commit_message(&mut self, session_id: &str) {
+    /// Drop the message written for what was staged once nothing is staged any more: nothing
+    /// staged is a different commit from whatever was staged before it, so the message written
+    /// for that one goes with it.
+    ///
+    /// The pane never asks the agent on its own: an agent run costs money and time, and is
+    /// started by `[Use AI]` beside the commit button.
+    pub(super) fn forget_suggestion_of_nothing_staged(&mut self, session_id: &str) {
         let pane = self.commit_pane(session_id);
         let Some(state) = &pane.state else {
             return;
         };
         if state.staged_files.is_empty() {
-            // Nothing staged is a different commit from whatever was staged before it, so the
-            // message written for that one goes with it.
             pane.suggestion = None;
             pane.suggestion_error = None;
             pane.suggestion_asked = false;
-            return;
         }
-        if pane.suggestion_asked || !pane.message.trim().is_empty() || pane.is_running() {
-            return;
-        }
-
-        // Writing one from the diff is an agent run. A test stages a fixture, so under test that
-        // would start a real agent on it - there the pane asks only when pressed.
-        if cfg!(test) || !state.opencode_installed {
-            return;
-        }
-        self.ask_for_commit_message(session_id);
     }
 }

@@ -233,6 +233,68 @@ impl Pane {
         matches!(self, Self::Commit { session_id: open } if open == session_id)
     }
 
+    /// What opens this pane again once it is closed, for the tabs that can be had back.
+    ///
+    /// A shell comes back as a fresh one rather than as the process that was closed - closing
+    /// a shell's tab ended it - except a task's, which outlives its tab and is attached again.
+    /// A pane that is only ever opened as a side effect of something else - a half-written
+    /// task, an agent's visualization, another program's window - is not offered.
+    pub(crate) fn reopening(&self) -> Option<OpenPaneRequest> {
+        match self {
+            Self::Review { session_id, title } => Some(OpenPaneRequest::Review {
+                session_id: session_id.clone(),
+                title: title.clone(),
+            }),
+            Self::Terminal {
+                terminal_id,
+                command,
+                task_id: Some(task_id),
+            } => Some(OpenPaneRequest::AttachTerminal {
+                terminal_id: terminal_id.clone(),
+                command: *command,
+                task_id: Some(task_id.clone()),
+            }),
+            Self::Terminal { .. } => Some(OpenPaneRequest::Terminal { command: None }),
+            Self::File {
+                session_id,
+                file_path,
+                revision: None,
+                ..
+            } => Some(OpenPaneRequest::File {
+                session_id: session_id.clone(),
+                file_path: file_path.clone(),
+                at: None,
+            }),
+            Self::File {
+                session_id,
+                file_path,
+                revision: Some(revision),
+                ..
+            } => Some(OpenPaneRequest::FileAt {
+                session_id: session_id.clone(),
+                file_path: file_path.clone(),
+                revision: revision.clone(),
+                line: 1,
+            }),
+            Self::Tasks => Some(OpenPaneRequest::Tasks),
+            Self::Start { task_id, title } => Some(OpenPaneRequest::TaskStart {
+                task_id: task_id.clone(),
+                title: title.clone(),
+            }),
+            Self::Commit { session_id } => Some(OpenPaneRequest::Commit {
+                session_id: session_id.clone(),
+            }),
+            Self::Submodules => Some(OpenPaneRequest::Submodules),
+            Self::Project => Some(OpenPaneRequest::Project),
+            Self::Messages => Some(OpenPaneRequest::Messages),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Extension { name } => Some(OpenPaneRequest::Extension { name: name.clone() }),
+            Self::Agents | Self::NewTask { .. } | Self::Visualization { .. } => None,
+            #[cfg(target_os = "linux")]
+            Self::Application { .. } => None,
+        }
+    }
+
     /// Whether this pane is the one of a particular extension.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn runs_extension(&self, name: &str) -> bool {
@@ -555,6 +617,17 @@ impl PaneView<Pane> for App {
             egui::FontId::proportional(theme::UI_SIZE),
             palette.muted,
         );
+    }
+
+    /// Room at the left of the app header for the window's traffic lights, which float over it
+    /// now that the window has no title bar of its own.
+    fn tab_strip_start(&mut self, ui: &mut Ui, _frame: FrameId, primary: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if primary {
+            ui.add_space(crate::native::desktop::traffic_lights_inset(ui.ctx()));
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = (ui, primary);
     }
 
     /// The light/dark switch, on the tab strip that doubles as the app header.

@@ -21,6 +21,11 @@ pub(crate) enum Action {
     OpenPalette,
     NewShellTab,
     CloseTab,
+    /// Open again the tab that was closed last, the way a browser's ⌘⇧T does.
+    ReopenTab,
+    /// Turn the status bar into a line a command is typed on and started from - see
+    /// [`crate::native::command_launcher`].
+    OpenCommandLauncher,
     /// Bring the active frame's nth tab to the front, counted from zero.
     SelectTab(usize),
     /// Another window of this same program, on the same repo. A browser's window is a page,
@@ -121,6 +126,22 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         action: Action::NewShellTab,
         chord: &[press(Modifiers::COMMAND, Key::T)],
+        reach: Reach::Anywhere,
+    },
+    // `!` is shift+1: which of the two a keyboard reports depends on the layout, so both fire.
+    Binding {
+        action: Action::OpenCommandLauncher,
+        chord: &[press(COMMAND_SHIFT, Key::Exclamationmark)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::OpenCommandLauncher,
+        chord: &[press(COMMAND_SHIFT, Key::Num1)],
+        reach: Reach::Anywhere,
+    },
+    Binding {
+        action: Action::ReopenTab,
+        chord: &[press(COMMAND_SHIFT, Key::T)],
         reach: Reach::Anywhere,
     },
     #[cfg(not(target_arch = "wasm32"))]
@@ -592,6 +613,20 @@ mod tests {
 
         assert_eq!(fired, vec![Action::NewShellTab]);
         assert!(left.is_empty(), "the pane below must not see it too");
+    }
+
+    #[test]
+    fn shift_makes_cmd_t_reopen_a_tab_and_cmd_exclamation_open_the_launcher() {
+        let mut keymap = Keymap::default();
+        let (fired, _) = run(&mut keymap, false, vec![key_event(COMMAND_SHIFT, Key::T)]);
+        assert_eq!(fired, vec![Action::ReopenTab]);
+
+        let (fired, _) = run(
+            &mut keymap,
+            false,
+            vec![key_event(COMMAND_SHIFT, Key::Exclamationmark)],
+        );
+        assert_eq!(fired, vec![Action::OpenCommandLauncher]);
     }
 
     #[test]

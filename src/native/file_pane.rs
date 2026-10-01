@@ -14,6 +14,7 @@
 //! [`on_disk`]'s.
 
 mod drawing;
+mod json_tree;
 #[cfg(test)]
 mod for_tests;
 mod on_disk;
@@ -44,6 +45,9 @@ pub(crate) struct FileEditor {
     /// Whether the pane is showing the markdown rendered rather than the text of it. Only
     /// ever true for a markdown file, which is also the only kind offered the toggle.
     preview: bool,
+    /// Whether the pane is showing a JSON file as a tree that folds rather than as text.
+    /// Off when the file opens, and only ever turned on for a JSON file.
+    tree: bool,
     /// Set when a close was asked for while there were unsaved edits: the second press goes
     /// through, the way discarding a hunk does.
     pub(crate) close_confirmed: bool,
@@ -138,6 +142,7 @@ impl FileEditor {
             saving: false,
             outside_the_repo: false,
             preview,
+            tree: false,
             close_confirmed: false,
             reveal: None,
             looking_up: None,
@@ -330,6 +335,7 @@ mod tests {
             saving: false,
             outside_the_repo: false,
             preview: false,
+            tree: false,
             close_confirmed: false,
             reveal: None,
             looking_up: None,

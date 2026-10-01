@@ -221,6 +221,17 @@ impl App {
         ));
     }
 
+    /// Whether a commit, push or pull request is going in this review's commit pane, or has
+    /// been asked for and not answered yet.
+    pub(crate) fn commit_pane_is_busy(&self, session_id: &str) -> bool {
+        self.tasks.is_busy(&format!("commit-run:{session_id}"))
+            || self
+                .model
+                .commit_panes
+                .get(session_id)
+                .is_some_and(CommitPane::is_running)
+    }
+
     fn commit_pane(&mut self, session_id: &str) -> &mut CommitPane {
         self.model
             .commit_panes

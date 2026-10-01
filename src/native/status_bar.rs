@@ -32,6 +32,7 @@ use crate::{
     api::LspWork,
     native::{
         app::App,
+        command_launcher::Asked,
         panes::{OpenPaneRequest, Pane},
         theme::{Palette, SMALL_SIZE},
     },
@@ -87,6 +88,12 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(10, 3)),
             )
             .show(ui, |ui| {
+                // While a command is being typed the strip is that line, and nothing else.
+                if let Some(launcher) = &mut self.model.command_launcher {
+                    return StripPress::Command(crate::native::command_launcher::draw_line(
+                        ui, launcher, &palette,
+                    ));
+                }
                 draw_line(ui, line.as_ref(), &palette, |ui| {
                     crate::native::space_selector::draw(self, ui, &palette)
                 })
@@ -103,6 +110,13 @@ impl App {
                 ));
             }
             StripPress::Dismiss => self.model.messages.dismiss_latest(),
+            StripPress::Command(Asked::Nothing) => {}
+            StripPress::Command(asked) => {
+                let launcher = self.model.command_launcher.take();
+                if let (Asked::Start, Some(launcher)) = (asked, launcher) {
+                    self.start_launched_command(&launcher.text);
+                }
+            }
         }
     }
 
@@ -246,6 +260,8 @@ enum StripPress {
     Strip,
     /// The cross beside a message, which puts the message away.
     Dismiss,
+    /// The line a command is typed on, which asked for something.
+    Command(Asked),
 }
 
 /// Draw the strip and answer what was pressed on it. A `line` of `None` is a strip with
@@ -325,10 +341,22 @@ fn draw_said(ui: &mut Ui, text: &str, failed: bool, at_unix: u64, palette: &Pale
             .color(palette.muted),
     );
     ui.add(
-        egui::Label::new(RichText::new(text).size(SMALL_SIZE).color(ink))
-            .selectable(false)
-            .truncate(),
+        // One line, cut to the strip's width: a command's output is many lines, and the bar is
+        // one high. The first line is the command, so the output follows it after a `#`, and
+        // the rest of the lines run on after it with spaces. The whole is in the log.
+        egui::Label::new(RichText::new(on_one_line(text)).size(SMALL_SIZE).color(ink))
+        .selectable(false)
+        .truncate(),
     );
+}
+
+/// A message's lines run together for a strip one line high: `$ pwd` and `/home` become
+/// `$ pwd # /home`.
+fn on_one_line(text: &str) -> String {
+    match text.split_once('\n') {
+        Some((first, rest)) => format!("{first} # {}", rest.replace('\n', " ")),
+        None => text.to_string(),
+    }
 }
 
 /// A server at work: what it is doing, and how far through where it says.
@@ -378,4 +406,15 @@ fn draw_working(ui: &mut Ui, work: &LspWork, others: usize, palette: &Palette) {
         ui.painter()
             .rect_filled(filled, CornerRadius::same(2), palette.accent);
     });
+}
+
+#[cfg(test)]
+mod one_line_tests {
+    use super::on_one_line;
+
+    #[test]
+    fn the_output_of_a_command_follows_it_after_a_hash() {
+        assert_eq!(on_one_line("$ ls\na\nb"), "$ ls # a b");
+        assert_eq!(on_one_line("staged"), "staged");
+    }
 }

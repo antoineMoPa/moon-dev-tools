@@ -12,7 +12,7 @@ use crate::native::{
     widgets,
 };
 
-use super::is_markdown;
+use super::{is_markdown, json_tree};
 
 /// Between the pane's border and what it is showing.
 const PANE_PADDING: i8 = 10;
@@ -79,6 +79,8 @@ impl App {
             .as_ref()
             .is_some_and(|find| find.pane_id == pane_id);
         let previewing = markdown && editor.preview && !find_is_here;
+        let json = json_tree::is_json(file_path);
+        let treeing = json && editor.tree && !find_is_here;
 
         // The pane's own margin: a frame body runs to the edge of the border, and a file name
         // or a line of code hard against it reads as a mistake.
@@ -124,6 +126,7 @@ impl App {
                         if loaded
                             && !outside_the_repo
                             && !previewing
+                            && !treeing
                             && widgets::quiet_button(
                                 ui,
                                 if blaming { "[hide blame]" } else { "[blame]" },
@@ -152,6 +155,19 @@ impl App {
                             && let Some(editor) = self.model.file_editors.get_mut(&pane_id)
                         {
                             editor.preview = !previewing;
+                        }
+                        if json
+                            && loaded
+                            && widgets::quiet_button(ui, if treeing { "[edit]" } else { "[tree]" })
+                                .on_hover_text(if treeing {
+                                    "Edit the file as text"
+                                } else {
+                                    "Show the JSON as a tree whose parts fold"
+                                })
+                                .clicked()
+                            && let Some(editor) = self.model.file_editors.get_mut(&pane_id)
+                        {
+                            editor.tree = !treeing;
                         }
                         // What the pane is, said where the save would otherwise be: a jump
                         // into a dependency opens a file this window has no business writing,
@@ -240,6 +256,8 @@ impl App {
 
                 if previewing {
                     draw_preview(self, ui, pane_id);
+                } else if treeing {
+                    json_tree::draw_tree(self, ui, pane_id);
                 } else {
                     draw_editor(self, ui, pane_id, session_id, &palette);
                 }

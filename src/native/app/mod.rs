@@ -120,6 +120,9 @@ pub(crate) struct App {
     /// close, one at a time.
     pub(crate) pending_close_of_others: Option<PaneId>,
     pending_tab_action: Option<TabAction>,
+    /// Moving the window by an empty part of the tab strip - see [`crate::native::window_drag`].
+    #[cfg(target_os = "macos")]
+    pub(crate) window_drag: crate::native::window_drag::WindowDrag,
     /// The quick tunnel to another device, while there is one - see [`crate::native::tunnel`].
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) tunnel: Option<crate::native::tunnel::Tunnel>,
@@ -310,6 +313,9 @@ impl App {
                 project_shell: None,
                 submodule_filter: String::new(),
                 review_requests: Vec::new(),
+                recently_closed: Vec::new(),
+                placing_reopened: None,
+                command_launcher: None,
                                 review_request_amendments: 0,
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
@@ -377,6 +383,8 @@ impl App {
             pending_action: None,
             pending_close: None,
             pending_close_of_others: None,
+            #[cfg(target_os = "macos")]
+            window_drag: Default::default(),
             pending_tab_action: None,
             #[cfg(not(target_arch = "wasm32"))]
             tunnel: None,

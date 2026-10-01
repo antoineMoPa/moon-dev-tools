@@ -720,6 +720,21 @@ impl App {
             Action::OpenPalette => self.model.palette.show(),
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
+            // Deferred like every pane opened from a chord, and nothing at all when no tab
+            // has been closed yet.
+            Action::ReopenTab => {
+                if self.pending_action.is_none()
+                    && let Some(closed) = self.model.recently_closed.pop()
+                {
+                    self.model.placing_reopened = Some(crate::native::model::PlacingReopened {
+                        place: closed.place,
+                        panes_before: self.model.layout.panes().map(|(id, _)| id).collect(),
+                        since: web_time::Instant::now(),
+                    });
+                    self.pending_action = Some(CommandAction::OpenPane(closed.request));
+                }
+            }
+            Action::OpenCommandLauncher => self.open_command_launcher(),
             Action::SelectTab(index) => self.select_tab(index),
             // Deferred into the same slot the menu bar's item uses: on macOS the chord can
             // arrive as both, and two windows is not what one ⌘N asked for.

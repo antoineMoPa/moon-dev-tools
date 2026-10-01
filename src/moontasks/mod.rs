@@ -124,6 +124,12 @@ pub(crate) struct ReviewRequestView {
     /// without crossing a single line off, so this is read off where the card sits rather than
     /// off the file, and a card dragged back out asks again.
     pub(crate) task_finished: bool,
+    /// When the task's file was last written, in seconds since the epoch. Several tasks can
+    /// name the same repo, and the one that wrote its file last is the one whose work is in
+    /// the repo now - the older lines are for work already committed, whose messages must not
+    /// land in a box that is for something else.
+    #[serde(default)]
+    pub(crate) written_at_unix: u64,
 }
 
 /// What starting a task's resource asked for.

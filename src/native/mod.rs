@@ -6,6 +6,7 @@ pub(crate) mod bindings;
 pub(crate) mod blame;
 pub(crate) mod board;
 pub(crate) mod code_actions;
+pub(crate) mod command_launcher;
 pub(crate) mod commit_pane;
 #[cfg(test)]
 mod commit_pane_request_tests;
@@ -14,7 +15,7 @@ mod commit_pane_tests;
 pub(crate) mod completing;
 pub(crate) mod definition;
 #[cfg(not(target_arch = "wasm32"))]
-mod desktop;
+pub(crate) mod desktop;
 pub(crate) mod diagnostics;
 // An extension's script runs programs and reads folders on the project's machine, which a
 // browser's window is never on.
@@ -69,6 +70,8 @@ pub(crate) mod visualizations;
 #[cfg(target_os = "linux")]
 pub(crate) mod application_pane;
 pub(crate) mod webview_pane;
+#[cfg(target_os = "macos")]
+pub(crate) mod window_drag;
 pub(crate) mod widgets;
 pub(crate) mod work_log;
 pub(crate) mod workspace;

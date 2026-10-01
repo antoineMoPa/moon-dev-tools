@@ -9,10 +9,25 @@ use crate::native::{
     panes::{Pane, PaneKind},
 };
 
+/// How many closed tabs ⌘⇧T can still bring back.
+const RECENTLY_CLOSED_KEPT: usize = 20;
+
+/// How long a reopened tab is waited for before it is left where it opened.
+const REOPENED_TAB_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl App {
     pub(crate) fn close_pane(&mut self, pane_id: PaneId) {
         let was_editing = self.model.file_editors.remove(&pane_id);
+        let place = self.place_of_tab(pane_id);
         let closed = self.model.layout.close_pane(pane_id);
+        if let (Some(request), Some(place)) = (closed.as_ref().and_then(Pane::reopening), place) {
+            self.model
+                .recently_closed
+                .push(crate::native::model::ClosedTab { request, place });
+            if self.model.recently_closed.len() > RECENTLY_CLOSED_KEPT {
+                self.model.recently_closed.remove(0);
+            }
+        }
 
         // The language server hears the file close, if this tab was the last one on it - the
         // editor is out of the map already, so what is left in it is the tabs still showing
@@ -20,6 +35,18 @@ impl App {
         if let (Some(editing), Some(Pane::File { session_id, .. })) = (&was_editing, &closed) {
             let session_id = session_id.clone();
             self.close_document(editing, &session_id);
+        }
+
+        // A review's commit pane goes with it, unless git is going in it: the pane was opened
+        // to commit what the review shows, and a run in its shell is not ours to end.
+        if let Some(Pane::Review { session_id, .. }) = &closed
+            && !self.commit_pane_is_busy(session_id)
+            && let Some((commit_pane, _)) = self
+                .model
+                .layout
+                .find_pane(|pane| pane.commits(session_id))
+        {
+            self.close_pane(commit_pane);
         }
 
         // A task's pane takes its boxes with it, writing whatever was typed into the notes and
@@ -79,6 +106,75 @@ impl App {
                 move |backend| backend.close_terminal(&session_id, &terminal_id),
                 |model, result| model.report(result, "could not close the shell"),
             );
+        }
+    }
+
+    /// Where a tab sits, so that opening it again can put it back: its frame, the tab that
+    /// follows it, another tab of its frame, and - for a frame that closing it empties - the
+    /// frame next to it and which side of that one it was on.
+    fn place_of_tab(&self, pane_id: PaneId) -> Option<crate::native::model::ClosedPlace> {
+        let layout = &self.model.layout;
+        let frame = layout.frame_of(pane_id)?;
+        let tabs = layout.frame(frame)?.panes();
+        let at = tabs.iter().position(|open| *open == pane_id)?;
+        let mate = tabs.iter().copied().find(|open| *open != pane_id);
+        let beside = match mate {
+            Some(_) => None,
+            None => {
+                let frames = layout.frame_ids();
+                let at = frames.iter().position(|open| *open == frame)?;
+                match at.checked_sub(1).and_then(|before| frames.get(before)) {
+                    Some(previous) => Some((*previous, egui_frames::DropSide::Right)),
+                    None => frames
+                        .get(at + 1)
+                        .map(|next| (*next, egui_frames::DropSide::Left)),
+                }
+            }
+        };
+        Some(crate::native::model::ClosedPlace {
+            frame,
+            before: tabs.get(at + 1).copied(),
+            mate,
+            beside,
+        })
+    }
+
+    /// Put a tab that was opened again where it was closed from, once it exists: its old frame,
+    /// else the frame of a tab that shared it, else a new frame on the side of the neighbour it
+    /// had. Looked for over a few seconds because a shell arrives a moment after it is asked
+    /// for. A tab that cannot be placed is left where opening it put it.
+    pub(crate) fn place_reopened_tab(&mut self) {
+        let Some(placing) = &self.model.placing_reopened else {
+            return;
+        };
+        if placing.since.elapsed() > REOPENED_TAB_WAIT {
+            self.model.placing_reopened = None;
+            return;
+        }
+        let Some(pane) = self
+            .model
+            .layout
+            .panes()
+            .map(|(id, _)| id)
+            .find(|id| !placing.panes_before.contains(id))
+        else {
+            return;
+        };
+        let place = placing.place.clone();
+        self.model.placing_reopened = None;
+
+        let layout = &mut self.model.layout;
+        let before = place
+            .before
+            .filter(|before| layout.frame_of(*before) == Some(place.frame));
+        if layout.frame(place.frame).is_some() {
+            layout.move_pane_to_frame(pane, place.frame, egui_frames::DropSide::Tabs, before);
+        } else if let Some(frame) = place.mate.and_then(|mate| layout.frame_of(mate)) {
+            layout.move_pane_to_frame(pane, frame, egui_frames::DropSide::Tabs, None);
+        } else if let Some((neighbour, side)) = place.beside
+            && layout.frame(neighbour).is_some()
+        {
+            layout.move_pane_to_frame(pane, neighbour, side, None);
         }
     }
 

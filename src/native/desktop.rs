@@ -94,6 +94,18 @@ pub(crate) fn run_desktop(launch: Launch) -> Result<()> {
     run_window(launch, true)
 }
 
+/// How much of the left of the header the window's traffic lights cover: they sit over the
+/// content now, and tabs must start after them. Nothing in fullscreen, where macOS hides them,
+/// and nothing off macOS.
+pub(crate) fn traffic_lights_inset(ctx: &egui::Context) -> f32 {
+    const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
+    let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
+    match cfg!(target_os = "macos") && !fullscreen {
+        true => TRAFFIC_LIGHTS_WIDTH,
+        false => 0.0,
+    }
+}
+
 pub(crate) fn run(launch: Launch) -> Result<()> {
     run_window(launch, false)
 }
@@ -108,6 +120,12 @@ fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([720.0, 420.0])
             .with_app_id("moonreview")
+            // No title bar of its own on macOS: the content runs to the top of the window and
+            // the tab strip is the header, with the traffic lights floating over its left end -
+            // see [`traffic_lights_inset`].
+            .with_fullsize_content_view(cfg!(target_os = "macos"))
+            .with_titlebar_shown(!cfg!(target_os = "macos"))
+            .with_title_shown(!cfg!(target_os = "macos"))
             // The desktop of a session is the session's whole screen. Elsewhere the size above
             // is what the window opens at.
             .with_fullscreen(manages_the_session)
@@ -133,7 +151,10 @@ fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
             app.listen_for_shell_asks(&creation.egui_ctx);
             // Dictation and the emoji picker type without a key press, which winit drops.
             #[cfg(target_os = "macos")]
-            text_without_a_key::install(&creation.egui_ctx);
+            {
+                text_without_a_key::install(&creation.egui_ctx);
+                super::window_drag::install();
+            }
             app.restore_layout_from(creation.storage);
             Ok(Box::new(app))
         }),
