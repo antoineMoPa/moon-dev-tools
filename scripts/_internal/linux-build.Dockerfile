@@ -2,7 +2,8 @@ ARG BASE_IMAGE=debian:bookworm
 
 FROM ${BASE_IMAGE}
 
-ARG LINUX_TARGET_TRIPLE=x86_64-unknown-linux-gnu
+# Space-separated; every Linux triple is built by the one container.
+ARG LINUX_TARGET_TRIPLES="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"
 ARG RUST_TOOLCHAIN=1.95.0
 # The native window's terminal is libghostty-vt, built from Ghostty's Zig source.
 ARG ZIG_VERSION=0.15.2
@@ -47,5 +48,6 @@ RUN set -eux; \
 
 # wasm32 as well: build.rs builds the window for the browser, which each executable embeds.
 RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" --target "${LINUX_TARGET_TRIPLE}" --target wasm32-unknown-unknown \
+        | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" --target wasm32-unknown-unknown \
+    && rustup target add ${LINUX_TARGET_TRIPLES} \
     && chmod -R a+rX /opt/rust

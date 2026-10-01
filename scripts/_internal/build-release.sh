@@ -117,13 +117,31 @@ build_macos_arm64() {
     package_binaries "$MACOS_TARGET_TRIPLE" "$ROOT_DIR/target/release"
 }
 
+LINUX_ZIG_GLOBAL_CACHE_DIR="$ROOT_DIR/target/docker-zig-global-cache"
+
+# Zig's HTTP client drops Ghostty's package downloads inside the containers (ReadFailed,
+# HttpConnectionClosing), while the macOS build fetches them fine. Packages sit under their
+# content hash in `p/` and are the same on every platform, so the containers start from the
+# ones the macOS build fetched and only download what Linux alone needs.
+seed_linux_zig_packages() {
+    host_zig_global_cache_dir="$(zig env | sed -n 's/^ *\.global_cache_dir = "\(.*\)",$/\1/p')"
+    if [ ! -d "$host_zig_global_cache_dir/p" ]; then
+        echo "the macOS build left no Zig packages in $host_zig_global_cache_dir/p" >&2
+        exit 1
+    fi
+    mkdir -p "$LINUX_ZIG_GLOBAL_CACHE_DIR/p"
+    rsync -a --ignore-existing "$host_zig_global_cache_dir/p/" "$LINUX_ZIG_GLOBAL_CACHE_DIR/p/"
+}
+
+# Both triples in one cargo and one target directory: the host half of the build - build scripts,
+# proc macros, and the browser build moon's build.rs compiles into `<target dir>/web-build` - is
+# the same for both, and is compiled once instead of once per triple.
 build_linux() {
-    target_triple="$1"
-    target_dir="/work/target/docker-linux-${target_triple}"
-    builder_image="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE:-$LINUX_DOCKER_BUILDER_IMAGE_PREFIX:$RUST_TOOLCHAIN-$target_triple}"
+    target_dir="/work/target/docker-linux"
+    builder_image="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE:-$LINUX_DOCKER_BUILDER_IMAGE_PREFIX:$RUST_TOOLCHAIN}"
 
     if ! command -v docker >/dev/null 2>&1; then
-        echo "Docker is required to build $target_triple." >&2
+        echo "Docker is required to build ${LINUX_TARGET_TRIPLES[*]}." >&2
         exit 1
     fi
 
@@ -136,22 +154,23 @@ build_linux() {
     docker build \
         "${platform_args[@]}" \
         --build-arg BASE_IMAGE="$LINUX_DOCKER_BASE_IMAGE" \
-        --build-arg LINUX_TARGET_TRIPLE="$target_triple" \
+        --build-arg LINUX_TARGET_TRIPLES="${LINUX_TARGET_TRIPLES[*]}" \
         --build-arg RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
         -t "$builder_image" \
         -f scripts/_internal/linux-build.Dockerfile \
         scripts
 
-    echo "Building moon dev tools $TAG for $target_triple with Docker..."
+    echo "Building moon dev tools $TAG for ${LINUX_TARGET_TRIPLES[*]} with Docker..."
     docker run --rm \
         "${platform_args[@]}" \
         -e DEBIAN_FRONTEND=noninteractive \
         -e CARGO_HOME=/work/target/docker-cargo-home \
+        -e ZIG_GLOBAL_CACHE_DIR=/work/target/docker-zig-global-cache \
         -e RUSTUP_HOME=/opt/rust/rustup \
         -e CARGO_TARGET_DIR="$target_dir" \
         -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
         -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
-        -e LINUX_TARGET_TRIPLE="$target_triple" \
+        -e LINUX_TARGET_TRIPLES="${LINUX_TARGET_TRIPLES[*]}" \
         -e HOST_UID="$(id -u)" \
         -e HOST_GID="$(id -g)" \
         -v "$ROOT_DIR:/work" \
@@ -162,11 +181,17 @@ build_linux() {
             # libghostty-vt-sys clones Ghostty into the bind-mounted target dir, whose owner
             # does not match the container user, so git refuses to touch it without this.
             git config --global --add safe.directory "*"
-            cargo build --release --locked --target "$LINUX_TARGET_TRIPLE"
-            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home 2>/dev/null || true
+            target_args=()
+            for target_triple in $LINUX_TARGET_TRIPLES; do
+                target_args+=(--target "$target_triple")
+            done
+            cargo build --release --locked "${target_args[@]}"
+            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home "$ZIG_GLOBAL_CACHE_DIR" 2>/dev/null || true
         '
 
-    package_binaries "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release"
+    for target_triple in "${LINUX_TARGET_TRIPLES[@]}"; do
+        package_binaries "$target_triple" "$ROOT_DIR/target/docker-linux/$target_triple/release"
+    done
 }
 
 require_zig
@@ -179,9 +204,8 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "Created release artifacts:"
 build_macos_arm64
-for target_triple in "${LINUX_TARGET_TRIPLES[@]}"; do
-    build_linux "$target_triple"
-done
+seed_linux_zig_packages
+build_linux
 
 cat <<EOF
 Next step:
