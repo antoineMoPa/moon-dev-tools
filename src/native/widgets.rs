@@ -112,6 +112,13 @@ pub(crate) fn quiet_button(ui: &mut Ui, text: &str) -> Response {
     clickable(ui.add(egui::Button::new(text).frame(false)))
 }
 
+/// A [`quiet_button`] that keeps to the width left on its row: a name too long for it is cut
+/// short with an ellipsis, where [`quiet_button`] would draw it whole and push the row - and
+/// whatever holds the row - wider. The whole name belongs on the hover.
+pub(crate) fn quiet_button_cut_to_row(ui: &mut Ui, text: &str) -> Response {
+    clickable(ui.add(egui::Button::new(text).frame(false).truncate()))
+}
+
 /// A framed button in [`SMALL_SIZE`] text: the action rows of an extension pane and of the
 /// task pane are made of these, so an action reads the same on either.
 pub(crate) fn small_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {

@@ -697,3 +697,69 @@ fn a_markdown_attachment_opens_in_a_tab() {
         "opening it said something went wrong"
     );
 }
+
+/// A document's name is cut to its row: a card is as wide as its column, and a name longer
+/// than that used to be drawn whole, pushing the card out over the column beside it.
+#[test]
+fn a_long_attachment_name_stays_inside_its_card() {
+    use egui_kittest::kittest::Queryable as _;
+
+    const TASK: &str = "write-the-parser-1111";
+    const DOCUMENT: &str =
+        "the-quarterly-figures-as-they-stood-before-the-second-round-of-corrections-final-v3.pdf";
+    let fixture = seeded_fixture("board-long-attachment-name");
+    fixture.write(
+        &format!(".moontasks/{TASK}/metadata.json"),
+        "{\n  \"title\": \"Write the parser\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        &format!(".moontasks/{TASK}/file_attachments.txt"),
+        &format!("{DOCUMENT}\n"),
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_in_ui = Arc::clone(&ready);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 800.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            ready_in_ui.store(
+                app.model.board.loaded
+                    && app
+                        .model
+                        .board
+                        .tasks
+                        .iter()
+                        .any(|task| !task.attachments.is_empty()),
+                Ordering::Relaxed,
+            );
+        });
+
+    assert!(
+        settle(&mut harness, || ready.load(Ordering::Relaxed)),
+        "the board never read the task's attachment"
+    );
+    harness.run_steps(3);
+
+    let name = harness.get_by_label(DOCUMENT).rect();
+    assert!(
+        name.width() < crate::native::board::COLUMN_WIDTH,
+        "the name is {} wide, in a column of {}",
+        name.width(),
+        crate::native::board::COLUMN_WIDTH
+    );
+}

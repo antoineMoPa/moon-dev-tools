@@ -43,7 +43,7 @@ use crate::{
 
 /// How wide one column of the board is. Cards are titles and a handful of small buttons, so
 /// this is about what a title needs rather than what the window has.
-const COLUMN_WIDTH: f32 = 286.0;
+pub(crate) const COLUMN_WIDTH: f32 = 286.0;
 
 pub(super) use crate::native::widgets::CLOSE_MARK_SIZE;
 

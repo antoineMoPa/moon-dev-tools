@@ -60,7 +60,9 @@ pub(crate) fn draw_list(
         let mut name_pressed = false;
         resources::draw_in_row(ui, row.rect, |ui| {
             marks::attachment_dot(ui, palette);
-            let name = widgets::quiet_button(ui, listed).on_hover_text(format!("Open {}", path.display()));
+            // Cut to the row: a card is as wide as its column, whatever the document is called.
+            let name = widgets::quiet_button_cut_to_row(ui, listed)
+                .on_hover_text(format!("Open {}", path.display()));
             name_pressed = card.pressed(&name);
         });
         if row_pressed || name_pressed {
