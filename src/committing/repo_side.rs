@@ -43,6 +43,10 @@ const SHELL_WENT_AWAY: i32 = -1;
 /// pane must not offer to commit changes the review beside it does not show.
 pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Result<CommitState> {
     let branch_name = git::current_branch_name(repo_path)?;
+    let on_default_branch = match &branch_name {
+        Some(branch) => git::is_default_branch(repo_path, branch)?,
+        None => false,
+    };
     let upstream_ref = git::current_branch_upstream_ref(repo_path)?;
     let push_ref = git::current_branch_push_ref(repo_path)?;
     let (ahead, behind) = match &upstream_ref {
@@ -53,6 +57,7 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
     let (staged_files, unstaged_count) = read_status(repo_path, pathspec)?;
     Ok(CommitState {
         branch_name,
+        on_default_branch,
         upstream_ref,
         push_ref,
         ahead,
@@ -122,6 +127,9 @@ fn push_step(state: &CommitState) -> Result<String> {
 fn open_pr_step(state: &CommitState) -> Result<String> {
     if !state.gh_installed {
         bail!("gh is not installed, so there is nothing to open a pull request with");
+    }
+    if state.on_default_branch {
+        bail!("this is the default branch, so there is nothing to open a pull request from");
     }
     Ok("gh pr create -w".to_string())
 }
@@ -359,6 +367,7 @@ mod tests {
         };
         CommitState {
             branch_name: branch.map(ToOwned::to_owned),
+            on_default_branch: false,
             upstream_ref: upstream.map(ToOwned::to_owned),
             push_ref,
             ahead: 0,
@@ -520,6 +529,22 @@ mod tests {
         .expect("expected a command");
 
         assert_eq!(command, "gh pr create -w");
+    }
+
+    #[test]
+    fn a_pull_request_is_refused_from_the_default_branch() {
+        let mut state = state_with(Some("origin/main"), Some("main"), 0);
+        state.on_default_branch = true;
+
+        let refused = command_for(
+            &CommitAction::OpenPr {
+                message: None,
+                pushes_first: false,
+            },
+            &state,
+        );
+
+        assert!(refused.is_err(), "main is the default branch");
     }
 
     #[test]

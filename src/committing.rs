@@ -28,6 +28,9 @@ pub(crate) struct StagedFile {
 pub(crate) struct CommitState {
     /// `None` on a detached HEAD, which is the one state neither action works from.
     pub(crate) branch_name: Option<String>,
+    /// Whether that branch is the repo's default one, which a pull request is opened *from*
+    /// never: it would have nothing to compare against.
+    pub(crate) on_default_branch: bool,
     /// The branch this one tracks, e.g. `origin/main`, once it has one.
     pub(crate) upstream_ref: Option<String>,
     /// Where a plain `git push` would send this branch, when git can tell from its config:

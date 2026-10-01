@@ -367,6 +367,20 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Whether `branch` is the one origin calls its default. Where origin's HEAD was never fetched
+/// there is nothing to ask, and `main` and `master` are what a default branch is called.
+pub(crate) fn is_default_branch(repo_path: &Path, branch: &str) -> Result<bool> {
+    let origin_head = run_git_allow_status(
+        repo_path,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        &[0, 128],
+    )?;
+    match origin_head.trim().strip_prefix("origin/") {
+        Some(default_branch) => Ok(default_branch == branch),
+        None => Ok(branch == "main" || branch == "master"),
+    }
+}
+
 /// Where a branch of this repo is checked out, when that is a worktree beside it rather than
 /// the repo itself - the way an agent works on a branch without moving anyone's HEAD.
 ///

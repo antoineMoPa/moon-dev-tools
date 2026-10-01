@@ -204,8 +204,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 let commit_message = can_commit.then(|| message.clone());
 
                 let can_push = !running && (can_commit || has_commits_to_push);
-                let push = widgets::clickable(ui.add_enabled(can_push, egui::Button::new("push")))
-                    .on_hover_text("commit what is staged with this message, then git push");
+                // Each button's label is its whole chain, so what a press does is never a surprise:
+                // the commit is in it exactly when one will be made.
+                let push_label = if can_commit { "commit & push" } else { "push" };
+                let push =
+                    widgets::clickable(ui.add_enabled(can_push, egui::Button::new(push_label)))
+                        .on_hover_text("commit what is staged with this message, then git push");
                 if push.clicked() {
                     app.start_commit_run(
                         session_id,
@@ -218,16 +222,27 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     push.on_disabled_hover_text("nothing to commit or push");
                 }
 
-                // Without `gh` there is no pull request to open.
+                // Without `gh` there is no pull request to open, and from the default branch
+                // there is no branch to open it from.
                 let gh_installed = state.as_ref().is_some_and(|state| state.gh_installed);
+                let on_default_branch = state.as_ref().is_some_and(|state| state.on_default_branch);
                 let can_open_pr = !running
                     && gh_installed
+                    && !on_default_branch
                     && (can_commit || has_commits_to_push || pushed_it_all);
-                let open_pr =
-                    widgets::clickable(ui.add_enabled(can_open_pr, egui::Button::new("open PR")))
-                        .on_hover_text(
-                            "commit, push, then gh pr create -w - fills the form in the browser",
-                        );
+                let open_pr_label = if can_commit {
+                    "commit & push & open PR"
+                } else if has_commits_to_push {
+                    "push & open PR"
+                } else {
+                    "open PR"
+                };
+                let open_pr = widgets::clickable(
+                    ui.add_enabled(can_open_pr, egui::Button::new(open_pr_label)),
+                )
+                .on_hover_text(
+                    "commit, push, then gh pr create -w - fills the form in the browser",
+                );
                 if open_pr.clicked() {
                     app.start_commit_run(
                         session_id,
@@ -238,10 +253,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     );
                 }
                 if !can_open_pr && !running {
-                    open_pr.on_disabled_hover_text(if gh_installed {
-                        "nothing to commit or push"
-                    } else {
+                    open_pr.on_disabled_hover_text(if !gh_installed {
                         "needs gh installed"
+                    } else if on_default_branch {
+                        "this is the default branch - a pull request needs another one"
+                    } else {
+                        "nothing to commit or push"
                     });
                 }
 
