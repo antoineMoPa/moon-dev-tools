@@ -111,8 +111,8 @@ fn words_for(kind: RunKind) -> RunWords {
 fn kind_of(action: &CommitAction) -> RunKind {
     match action {
         CommitAction::Commit { .. } => RunKind::Commit,
-        CommitAction::Push => RunKind::Push,
-        CommitAction::OpenPr => RunKind::OpenPr,
+        CommitAction::Push { .. } => RunKind::Push,
+        CommitAction::OpenPr { .. } => RunKind::OpenPr,
     }
 }
 
@@ -194,6 +194,9 @@ impl CommitPane {
 struct CommitRun {
     terminal_id: String,
     kind: RunKind,
+    /// Whether the run made a commit on the way - a push or pull request started from a
+    /// message still in the box does - which is what empties the box when it worked.
+    commits: bool,
     /// `None` while the command is going, the status it ended on once it is over.
     exit_code: Option<i32>,
     /// When the pane last asked how it went - see [`OUTCOME_ASK_INTERVAL`].

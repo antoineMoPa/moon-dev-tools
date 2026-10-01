@@ -70,35 +70,60 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
 /// when the command is done, with the output above it, for whoever wants to carry on in the
 /// repo from where the run left off.
 pub(crate) fn command_for(action: &CommitAction, state: &CommitState) -> Result<String> {
+    let mut steps = Vec::new();
+    if let Some(message) = action.commit_message() {
+        steps.push(commit_step(message, state)?);
+    }
     match action {
-        CommitAction::Commit { .. } if state.staged_files.is_empty() => {
-            bail!("nothing is staged to commit")
-        }
-        CommitAction::Commit { message } if message.trim().is_empty() => {
-            bail!("a commit needs a message")
-        }
-        // The message goes in a file rather than on the line: it is the one thing a person
-        // writes here, it runs to several lines, and a shell would have to be told to leave
-        // every character of it alone.
-        CommitAction::Commit { .. } => Ok(format!("git commit -F \"${MESSAGE_VARIABLE}\"")),
-        // A branch git cannot push as it stands - no upstream, or one named differently, which
-        // `push.default=simple` refuses - is sent to origin under its own name and left
-        // tracking that. `HEAD` rather than the branch name keeps the name, which git lets
-        // hold `$` and quotes, off a line a shell reads.
-        CommitAction::Push => match (&state.branch_name, &state.push_ref) {
-            (None, _) => bail!("HEAD is detached, so there is no branch to push"),
-            (Some(_), Some(_)) => Ok("git push".to_string()),
-            (Some(_), None) => Ok("git push -u origin HEAD".to_string()),
-        },
-        // `-w` hands the filled-in form to the browser rather than asking for a title and a
-        // body in the pty: the description is written where the pull request is read.
-        CommitAction::OpenPr => {
-            if !state.gh_installed {
-                bail!("gh is not installed, so there is nothing to open a pull request with");
+        CommitAction::Commit { .. } => {}
+        CommitAction::Push { .. } => steps.push(push_step(state)?),
+        CommitAction::OpenPr {
+            message,
+            pushes_first,
+        } => {
+            if message.is_some() || *pushes_first {
+                steps.push(push_step(state)?);
             }
-            Ok("gh pr create -w".to_string())
+            steps.push(open_pr_step(state)?);
         }
     }
+    // `&&` so a commit that fails is not followed by a push of whatever was there before it,
+    // and the status the run writes down is the one of the step that stopped it.
+    Ok(steps.join(" && "))
+}
+
+fn commit_step(message: &str, state: &CommitState) -> Result<String> {
+    if state.staged_files.is_empty() {
+        bail!("nothing is staged to commit");
+    }
+    if message.trim().is_empty() {
+        bail!("a commit needs a message");
+    }
+    // The message goes in a file rather than on the line: it is the one thing a person
+    // writes here, it runs to several lines, and a shell would have to be told to leave
+    // every character of it alone.
+    Ok(format!("git commit -F \"${MESSAGE_VARIABLE}\""))
+}
+
+// A branch git cannot push as it stands - no upstream, or one named differently, which
+// `push.default=simple` refuses - is sent to origin under its own name and left
+// tracking that. `HEAD` rather than the branch name keeps the name, which git lets
+// hold `$` and quotes, off a line a shell reads.
+fn push_step(state: &CommitState) -> Result<String> {
+    match (&state.branch_name, &state.push_ref) {
+        (None, _) => bail!("HEAD is detached, so there is no branch to push"),
+        (Some(_), Some(_)) => Ok("git push".to_string()),
+        (Some(_), None) => Ok("git push -u origin HEAD".to_string()),
+    }
+}
+
+// `-w` hands the filled-in form to the browser rather than asking for a title and a
+// body in the pty: the description is written where the pull request is read.
+fn open_pr_step(state: &CommitState) -> Result<String> {
+    if !state.gh_installed {
+        bail!("gh is not installed, so there is nothing to open a pull request with");
+    }
+    Ok("gh pr create -w".to_string())
 }
 
 /// The script the run's shell is started with, rather than typed into.
@@ -254,10 +279,10 @@ pub(crate) fn start_commit_run(
     let message_path = run_message_path(session_id);
     let status_path = run_status_path(session_id);
     let _ = std::fs::remove_file(&status_path);
-    match action {
-        CommitAction::Commit { message } => std::fs::write(&message_path, message)
+    match action.commit_message() {
+        Some(message) => std::fs::write(&message_path, message)
             .with_context(|| format!("failed to write the commit message to {message_path:?}"))?,
-        _ => {
+        None => {
             let _ = std::fs::remove_file(&message_path);
         }
     }
@@ -391,7 +416,7 @@ mod tests {
     #[test]
     fn a_branch_that_tracks_one_is_pushed_as_it_stands() {
         let command = command_for(
-            &CommitAction::Push,
+            &CommitAction::Push { message: None },
             &state_with(Some("origin/main"), Some("main"), 0),
         )
         .expect("expected a command");
@@ -401,8 +426,11 @@ mod tests {
 
     #[test]
     fn a_branch_with_no_upstream_gets_one_from_the_push() {
-        let command = command_for(&CommitAction::Push, &state_with(None, Some("work"), 0))
-            .expect("expected a command");
+        let command = command_for(
+            &CommitAction::Push { message: None },
+            &state_with(None, Some("work"), 0),
+        )
+        .expect("expected a command");
 
         assert_eq!(command, "git push -u origin HEAD");
     }
@@ -415,14 +443,67 @@ mod tests {
         let state = state_with(Some("origin/dev"), Some("feature"), 0);
         assert_eq!(state.push_ref, None, "git has nowhere to send a plain push");
 
-        let command = command_for(&CommitAction::Push, &state).expect("expected a command");
+        let command =
+            command_for(&CommitAction::Push { message: None }, &state).expect("expected a command");
 
         assert_eq!(command, "git push -u origin HEAD");
     }
 
     #[test]
+    fn a_push_with_a_message_commits_first_in_the_same_line() {
+        let command = command_for(
+            &CommitAction::Push {
+                message: Some("fix: x".to_string()),
+            },
+            &state_with(Some("origin/work"), Some("work"), 1),
+        )
+        .expect("expected a command");
+
+        assert_eq!(
+            command,
+            format!("git commit -F \"${MESSAGE_VARIABLE}\" && git push")
+        );
+    }
+
+    #[test]
+    fn a_pull_request_with_a_message_commits_and_pushes_first() {
+        let mut state = state_with(None, Some("work"), 1);
+        state.gh_installed = true;
+        let command = command_for(
+            &CommitAction::OpenPr {
+                message: Some("fix: x".to_string()),
+                pushes_first: false,
+            },
+            &state,
+        )
+        .expect("expected a command");
+
+        assert_eq!(
+            command,
+            format!(
+                "git commit -F \"${MESSAGE_VARIABLE}\" && git push -u origin HEAD && gh pr create -w"
+            )
+        );
+    }
+
+    #[test]
+    fn a_push_with_a_message_and_nothing_staged_is_refused() {
+        let refused = command_for(
+            &CommitAction::Push {
+                message: Some("fix: x".to_string()),
+            },
+            &state_with(Some("origin/work"), Some("work"), 0),
+        );
+
+        assert!(refused.is_err(), "nothing was staged");
+    }
+
+    #[test]
     fn a_detached_head_has_nothing_to_push() {
-        let refused = command_for(&CommitAction::Push, &state_with(None, None, 0));
+        let refused = command_for(
+            &CommitAction::Push { message: None },
+            &state_with(None, None, 0),
+        );
 
         assert!(refused.is_err(), "there was no branch");
     }
@@ -430,7 +511,10 @@ mod tests {
     #[test]
     fn the_pull_request_is_opened_in_the_browser_by_gh() {
         let command = command_for(
-            &CommitAction::OpenPr,
+            &CommitAction::OpenPr {
+                message: None,
+                pushes_first: false,
+            },
             &state_with(Some("origin/work"), Some("work"), 0),
         )
         .expect("expected a command");
@@ -443,7 +527,13 @@ mod tests {
         let mut state = state_with(Some("origin/work"), Some("work"), 0);
         state.gh_installed = false;
 
-        let refused = command_for(&CommitAction::OpenPr, &state);
+        let refused = command_for(
+            &CommitAction::OpenPr {
+                message: None,
+                pushes_first: false,
+            },
+            &state,
+        );
 
         assert!(refused.is_err(), "gh was not installed");
     }

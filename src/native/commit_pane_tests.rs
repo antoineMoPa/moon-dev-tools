@@ -31,16 +31,13 @@ fn the_commit_button_opens_a_pane_beside_the_review() {
     harness.get_by_label("[commit]").click();
     harness.run_steps(5);
 
-    // The commit button is the pane's own, and unlike push it is there from the first frame:
-    // push waits for something to have been committed.
-    assert!(
-        harness.query_by_label("commit").is_some(),
-        "the commit pane should have opened"
-    );
-    assert!(
-        harness.query_by_label("push").is_none(),
-        "nothing has been committed, so there is nothing to push yet"
-    );
+    // All three buttons are there from the first frame, with nothing to act on or not.
+    for button in ["commit", "push", "open PR"] {
+        assert!(
+            harness.query_by_label(button).is_some(),
+            "the commit pane should have opened with its {button} button"
+        );
+    }
 }
 
 /// The whole of it: what the review staged, committed with a message written in the pane, by
@@ -302,7 +299,7 @@ fn pushing_a_branch_that_tracks_nothing_sets_its_upstream() {
     );
 
     let terminal_id = backend
-        .start_commit_run(&opened.session_id, &CommitAction::Push)
+        .start_commit_run(&opened.session_id, &CommitAction::Push { message: None })
         .expect("expected the push to start");
 
     let deadline = Instant::now() + GIT_DEADLINE;
@@ -388,7 +385,7 @@ fn pushing_a_branch_that_tracks_another_name_sends_it_under_its_own() {
     assert_eq!(before.ahead, 1, "the one commit since origin/main");
 
     let terminal_id = backend
-        .start_commit_run(&opened.session_id, &CommitAction::Push)
+        .start_commit_run(&opened.session_id, &CommitAction::Push { message: None })
         .expect("expected the push to start");
 
     let deadline = Instant::now() + GIT_DEADLINE;

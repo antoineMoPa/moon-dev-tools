@@ -14,6 +14,7 @@ impl App {
     /// Start one action's program, and attach the pane to the pty it runs in.
     pub(super) fn start_commit_run(&mut self, session_id: &str, action: CommitAction) {
         let kind = kind_of(&action);
+        let commits = action.commit_message().is_some();
         // The run before this one has had its say; its pty goes with its pane's next run.
         if let Some(previous) = self.commit_pane(session_id).run.take() {
             self.commit_terminals.remove(&previous.terminal_id);
@@ -40,6 +41,7 @@ impl App {
                         pane.run = Some(CommitRun {
                             terminal_id: terminal_id.clone(),
                             kind,
+                            commits,
                             exit_code: None,
                             last_ask: None,
                         });
@@ -106,7 +108,7 @@ impl App {
 
                 // A run that worked says so beside the buttons, and the staged listing
                 // emptying says it louder; a toast on top of both would be a third telling.
-                if run.worked() && run.kind == RunKind::Commit {
+                if run.worked() && run.commits {
                     pane.message.clear();
                     // The message it wrote is in the commit that was just made; whatever is
                     // staged next is a different commit, and gets a message of its own.
@@ -120,8 +122,9 @@ impl App {
                     pane.reached = match run.kind {
                         RunKind::Commit => Reached::Committed,
                         RunKind::Push => Reached::Pushed,
-                        // The pull request was opened on what the push sent; nothing moved.
-                        RunKind::OpenPr => pane.reached,
+                        // A pull request is only opened on a branch that was pushed, whether
+                        // by this run or by an earlier one.
+                        RunKind::OpenPr => Reached::Pushed,
                     };
                 }
                 // Either way the repo has moved on: a refused commit may still have run a

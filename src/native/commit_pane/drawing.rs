@@ -191,36 +191,58 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                     commit.on_disabled_hover_text("a commit takes a staged change and a message");
                 }
 
-                // Each button waits for the thing it acts on to exist: something committed
-                // to push, something pushed to open a pull request on. A branch that arrived
-                // with commits its upstream has not got is already past the first of those.
+                // All three are always there. Push and open PR start from whatever is ready:
+                // a message and a staged change are committed first, in the same shell, and
+                // without them the commits the branch already has are what gets sent.
                 let ahead = state.as_ref().map_or(0, |state| state.ahead);
-                if ahead > 0 || reached != Reached::Nothing {
-                    // A push that worked took everything there was; `ahead` alone cannot say
-                    // so, because the reading it came from may predate the push. The next
-                    // commit - or a reading that finds commits from elsewhere - turns it back on.
-                    let pushed_it_all = reached == Reached::Pushed;
-                    let push = widgets::clickable(
-                        ui.add_enabled(!running && !pushed_it_all, egui::Button::new("push")),
+                // A push that worked took everything there was; `ahead` alone cannot say so,
+                // because the reading it came from may predate the push. The next commit - or
+                // a reading that finds commits from elsewhere - turns it back on.
+                let pushed_it_all = reached == Reached::Pushed;
+                let has_commits_to_push =
+                    !pushed_it_all && (ahead > 0 || reached == Reached::Committed);
+                let commit_message = can_commit.then(|| message.clone());
+
+                let can_push = !running && (can_commit || has_commits_to_push);
+                let push = widgets::clickable(ui.add_enabled(can_push, egui::Button::new("push")))
+                    .on_hover_text("commit what is staged with this message, then git push");
+                if push.clicked() {
+                    app.start_commit_run(
+                        session_id,
+                        CommitAction::Push {
+                            message: commit_message.clone(),
+                        },
                     );
-                    if push.clicked() {
-                        app.start_commit_run(session_id, CommitAction::Push);
-                    }
-                    if pushed_it_all && !running {
-                        push.on_disabled_hover_text("everything is pushed already");
-                    }
+                }
+                if !can_push && !running {
+                    push.on_disabled_hover_text("nothing to commit or push");
                 }
 
-                // And only where `gh` is installed: without it there is no pull request to
-                // open, and a button that could never work is worse than no button.
+                // Without `gh` there is no pull request to open.
                 let gh_installed = state.as_ref().is_some_and(|state| state.gh_installed);
-                if gh_installed
-                    && reached == Reached::Pushed
-                    && widgets::clickable(ui.add_enabled(!running, egui::Button::new("open PR")))
-                        .on_hover_text("gh pr create -w - fills the form in the browser")
-                        .clicked()
-                {
-                    app.start_commit_run(session_id, CommitAction::OpenPr);
+                let can_open_pr = !running
+                    && gh_installed
+                    && (can_commit || has_commits_to_push || pushed_it_all);
+                let open_pr =
+                    widgets::clickable(ui.add_enabled(can_open_pr, egui::Button::new("open PR")))
+                        .on_hover_text(
+                            "commit, push, then gh pr create -w - fills the form in the browser",
+                        );
+                if open_pr.clicked() {
+                    app.start_commit_run(
+                        session_id,
+                        CommitAction::OpenPr {
+                            message: commit_message,
+                            pushes_first: has_commits_to_push,
+                        },
+                    );
+                }
+                if !can_open_pr && !running {
+                    open_pr.on_disabled_hover_text(if gh_installed {
+                        "nothing to commit or push"
+                    } else {
+                        "needs gh installed"
+                    });
                 }
 
                 // Once the branch is sent the pane has done what it is for, and the review it

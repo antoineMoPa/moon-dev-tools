@@ -57,7 +57,28 @@ pub(crate) enum CommitAction {
     Commit {
         message: String,
     },
-    Push,
-    /// Open the pull request for the pushed branch, in the browser, through `gh`.
-    OpenPr,
+    /// Push the branch. With a message, what is staged is committed with it first, in the
+    /// same shell, and nothing is pushed if the commit fails.
+    Push {
+        message: Option<String>,
+    },
+    /// Open the pull request for the branch, in the browser, through `gh`. With a message, what
+    /// is staged is committed and pushed first; without one, `pushes_first` says whether the
+    /// branch has commits that still need pushing.
+    OpenPr {
+        message: Option<String>,
+        pushes_first: bool,
+    },
+}
+
+impl CommitAction {
+    /// The message of the commit this action makes, when it makes one.
+    pub(crate) fn commit_message(&self) -> Option<&str> {
+        match self {
+            CommitAction::Commit { message } => Some(message),
+            CommitAction::Push { message } | CommitAction::OpenPr { message, .. } => {
+                message.as_deref()
+            }
+        }
+    }
 }
