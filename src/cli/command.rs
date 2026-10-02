@@ -526,7 +526,7 @@ const USAGE_LINE_OF_FRAME: &[(Frame, &str)] = &[
 ];
 
 /// `moon --help`: every command there is, with what each window opens on.
-fn help_text() -> String {
+pub(crate) fn help_text() -> String {
     let windows: Vec<String> = FRAMES
         .iter()
         .map(|frame| {

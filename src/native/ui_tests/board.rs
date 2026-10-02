@@ -22,23 +22,89 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     let fixture = seeded_fixture("board");
     // Written by hand rather than through the service: the ids a real one generates carry a
     // uuid, and the point here is a picture that is the same on every run.
-    for (task_id, title, status) in [
-        ("write-the-parser-1111", "Write the parser", "todo"),
+    // A board as it looks after a few days of use rather than a first minute: tags on most
+    // cards, a DONE column of finished work whose agent runs have all ended, and one card in
+    // progress with an agent run, a shell and a repo waiting on review.
+    for (task_id, title, status, tags, agent_run) in [
+        (
+            "write-the-parser-1111",
+            "Write the parser",
+            "todo",
+            &["parser", "rust"][..],
+            None,
+        ),
+        (
+            "add-dark-mode-to-settings-5555",
+            "Add dark mode to settings",
+            "todo",
+            &["ui"][..],
+            None,
+        ),
         (
             "fix-the-login-page-2222",
             "Fix the login page",
             "in_progress",
+            &["bug", "auth"][..],
+            Some("fix the login page claude"),
         ),
-        ("drop-the-old-api-3333", "Drop the old API", "done"),
+        (
+            "drop-the-old-api-3333",
+            "Drop the old API",
+            "done",
+            &["cleanup"][..],
+            Some("drop the old api claude"),
+        ),
+        (
+            "speed-up-the-diff-view-6666",
+            "Speed up the diff view",
+            "done",
+            &["perf", "ui"][..],
+            Some("speed up the diff view codex"),
+        ),
+        (
+            "fix-flaky-sync-test-7777",
+            "Fix the flaky sync test",
+            "done",
+            &["bug", "tests"][..],
+            Some("fix the flaky sync test claude"),
+        ),
+        (
+            "upgrade-to-rust-1-90-8888",
+            "Upgrade to Rust 1.90",
+            "done",
+            &["rust", "cleanup"][..],
+            Some("upgrade to rust 1 90 claude"),
+        ),
     ] {
+        let tags = tags
+            .iter()
+            .map(|tag| format!("\"{tag}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let resources = match agent_run {
+            Some(name) => format!(
+                "[\n    {{\n      \"id\": \"run-{task_id}\",\n      \"kind\": \"agent\",\n      \
+                 \"agent\": \"{agent}\",\n      \"name\": \"{name}\",\n      \
+                 \"started_at_unix\": 1700000100\n    }}\n  ]",
+                agent = if name.ends_with("codex") { "codex" } else { "claude" },
+            ),
+            None => "[]".to_string(),
+        };
         fixture.write(
             &format!(".moontasks/{task_id}/metadata.json"),
             &format!(
                 "{{\n  \"title\": \"{title}\",\n  \"status\": \"{status}\",\n  \
-                 \"created_at_unix\": 1700000000,\n  \"resources\": []\n}}\n"
+                 \"created_at_unix\": 1700000000,\n  \"tags\": [{tags}],\n  \
+                 \"resources\": {resources}\n}}\n"
             ),
         );
     }
+    // The in-progress task has handed work over: the fixture repo has uncommitted changes, so
+    // this reads as a pending review.
+    fixture.write(
+        ".moontasks/fix-the-login-page-2222/request_for_review.txt",
+        ". // fix(login): keep the session after a redirect\n",
+    );
 
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     app.set_theme(ThemeMode::Dark);
@@ -94,30 +160,41 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
             if open_shell_in_ui.load(Ordering::Relaxed)
                 && !shell_requested_in_ui.swap(true, Ordering::Relaxed)
             {
-                app.open_pane(crate::native::panes::OpenPaneRequest::Terminal { command: None });
-            }
-            // The shell is started as a plain one - a task's is started by the server, which
-            // would be a second shell to wait on - and then put on the task it stands for, so
-            // the picture is the one the window really draws: an agent working in a task, and
-            // that task's card marked on the board beside it.
-            if let Some((pane, _)) = app
-                .model
-                .layout
-                .find_pane(|pane| pane.kind() == crate::native::panes::PaneKind::Terminal)
-                .map(|(pane, view)| (pane, view.task_id().is_none()))
-                .filter(|(_, unclaimed)| *unclaimed)
-                && let Some(Pane::Terminal { task_id, .. }) = app.model.layout.pane_mut(pane)
-            {
-                *task_id = Some("write-the-parser-1111".to_string());
-                app.model.layout.focus_pane(pane);
+                // Started the way the card's `[start]` menu starts it, so the server owns the
+                // shell and the card lists it: an agent working in a task, and that task's
+                // card marked on the board beside it.
+                crate::native::board::actions::apply(
+                    &mut app,
+                    crate::native::board::BoardAction::Start(
+                        "fix-the-login-page-2222".to_string(),
+                        crate::moontasks::StartResourceRequest {
+                            kind: crate::moontasks::store::TaskResourceKind::Shell,
+                            agent: crate::api::AgentKind::None,
+                            opens_in: crate::moontasks::StartFolder::Repo,
+                        },
+                    ),
+                );
             }
             app.draw(ui);
             if open_shell_in_ui.load(Ordering::Relaxed)
                 && !shell_command_sent_in_ui.load(Ordering::Relaxed)
                 && let Some(terminal) = app.terminals.values().next()
             {
+                // What bare `moon` prints, from the source rather than an installed binary
+                // that may be older. Passed through a file so the shell's own quoting stays
+                // out of it.
+                let help = std::env::temp_dir().join("moon-docs-screenshot-help.txt");
+                std::fs::write(&help, crate::cli::moon_help_text())
+                    .expect("expected to write the help text for the shell to print");
                 terminal
-                    .send(b"clear; printf '\\033]0;terminal\\007Moon tools workspace\\n\\nTasks on the board, agents and shells at 'hand'.\\n$ '; sleep 30\n")
+                    .send(
+                        format!(
+                            "clear; printf '\\033]0;terminal\\007'; PS1='$ '; \
+                             echo '$ moon'; cat {}; printf '\\n$ '; sleep 30\n",
+                            help.display()
+                        )
+                        .as_bytes(),
+                    )
                     .expect("expected to write the screenshot text to the shell");
                 shell_command_sent_in_ui.store(true, Ordering::Relaxed);
             }
@@ -126,7 +203,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 shell_ready_in_ui.store(
                     terminal
                         .visible_text()
-                        .is_ok_and(|screen| screen.contains("agents and shells at hand")),
+                        .is_ok_and(|screen| screen.contains("moon --help")),
                     Ordering::Relaxed,
                 );
             }
@@ -138,7 +215,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                 .review_ref(&app.model.root_session_id)
                 .is_some_and(|review| review.payload.is_some());
             ready_in_ui.store(
-                app.model.board.loaded && app.model.board.tasks.len() == 3 && review_answered,
+                app.model.board.loaded && app.model.board.tasks.len() == 7 && review_answered,
                 Ordering::Relaxed,
             );
         });
@@ -153,7 +230,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     }
     assert!(
         ready.load(Ordering::Relaxed),
-        "the board never read the three tasks out of .moontasks"
+        "the board never read the seven tasks out of .moontasks"
     );
 
     harness.run_steps(3);
@@ -473,7 +550,7 @@ fn several_marked_cards_are_handed_to_one_new_task() {
             }
             app.draw(ui);
             ready_in_ui.store(
-                app.model.board.loaded && app.model.board.tasks.len() == 3,
+                app.model.board.loaded && app.model.board.tasks.len() == 7,
                 Ordering::Relaxed,
             );
             let new_task = app
@@ -503,7 +580,7 @@ fn several_marked_cards_are_handed_to_one_new_task() {
     };
 
     step_until(&mut harness, &|| ready.load(Ordering::Relaxed));
-    assert!(ready.load(Ordering::Relaxed), "the board never read the three tasks");
+    assert!(ready.load(Ordering::Relaxed), "the board never read the seven tasks");
     harness.run_steps(3);
     assert!(
         harness.query_by_label("Work on these tasks").is_none(),

@@ -26,6 +26,11 @@ figcaption, footer { font-size: 13px; color: #555; }
 figure { margin: 20px 0 0; }
 #workflow figure { margin-top: 0; }
 figure img { display: block; width: 100%; height: auto; border: 1px solid #999; }
+/* On a desktop the first screenshot runs 10% past the text column on each side; narrower
+   windows have no room to spare, so it stays in the column there. */
+@media (min-width: 1000px) {
+  .intro figure img { width: 120%; max-width: none; margin-left: -10%; }
+}
 figcaption { margin-top: 6px; }
 ul, ol { padding-left: 24px; margin: 12px 0 18px; }
 li { margin-bottom: 8px; }

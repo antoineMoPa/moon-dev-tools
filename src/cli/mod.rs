@@ -15,6 +15,9 @@ mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use command::run;
+/// What bare `moon` prints, which the docs screenshot of a shell shows.
+#[cfg(test)]
+pub(crate) use command::help_text as moon_help_text;
 #[cfg(not(target_arch = "wasm32"))]
 use command::{MoonCommand, help_text_for};
 pub(crate) use frame::FRAMES;
