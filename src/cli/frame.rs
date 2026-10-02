@@ -15,7 +15,7 @@ pub enum Frame {
 }
 
 /// Every frame, in the order they are named in help and given launchers.
-pub(crate) const FRAMES: &[Frame] = &[Frame::Review, Frame::Tasks, Frame::Shell];
+pub(crate) const FRAMES: &[Frame] = &[Frame::Tasks, Frame::Review, Frame::Shell];
 
 /// The same three in the order a window offers to open another one, which is not the order
 /// they are written about in: the board comes first, because a new window is usually a new

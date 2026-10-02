@@ -39,7 +39,7 @@ pub(super) enum MoonCommand {
     },
     /// Write the desktop launcher of each frame, so the OS offers them too.
     InstallLaunchers,
-    /// A pass key for this machine's server, printed alone so it can be piped - see
+    /// A pass key for this machine's server so it can be piped - see
     /// [`crate::pass_keys`].
     GeneratePassKey,
     /// One file, in the window already open on its project - and in the window last in
@@ -517,6 +517,14 @@ fn print_version() {
     println!("{PROGRAM} {}", env!("CARGO_PKG_VERSION"));
 }
 
+/// What `moon --help` says next to each window's command. Shorter than [`Frame::opens`],
+/// which the window's own help and the launchers still use.
+const USAGE_LINE_OF_FRAME: &[(Frame, &str)] = &[
+    (Frame::Tasks, "show task board"),
+    (Frame::Review, "start a review"),
+    (Frame::Shell, "start a shell"),
+];
+
 /// `moon --help`: every command there is, with what each window opens on.
 fn help_text() -> String {
     let windows: Vec<String> = FRAMES
@@ -525,7 +533,11 @@ fn help_text() -> String {
             format!(
                 "  {command:<30} {opens}",
                 command = format!("{} [<target>]", frame.command()),
-                opens = frame.opens()
+                opens = USAGE_LINE_OF_FRAME
+                    .iter()
+                    .find(|(listed, _)| *listed == *frame)
+                    .expect("every frame has a usage line")
+                    .1
             )
         })
         .collect();
@@ -537,16 +549,15 @@ Tiny local dev tools: a task board, a code review and a shell, one window each.
 
 Usage:
 {windows}
-  {PROGRAM} tasks new <title>         a card on this repo's board, with no window opened
-  {PROGRAM} open <path>[:<line>]      a file, in the window on its project or the one last in front
-  {PROGRAM} list                      which windows are open, and what they are on
-  {PROGRAM} serve [--logs]            the review server, for a window on another machine or a
-                                 browser; it prints a link that logs a browser in, once
-  {PROGRAM} desktop [<folder>]        the window as the desktop of this X11 session: full
-                                 screen, with every program started from it in a frame
-  {PROGRAM} install-launchers         entries the OS offers for the three windows
-  {PROGRAM} generate-pass-key         a pass key for this machine's server, printed alone
-  {PROGRAM} licenses                  moon's license, and those of what it is built from
+  {PROGRAM} tasks new <title>
+  {PROGRAM} edit <path>[:<line>]      Open a file for edition
+  {PROGRAM} open <path>[:<line>]      same as `{PROGRAM} edit`
+  {PROGRAM} list                      show open windows
+  {PROGRAM} serve [--logs]
+  {PROGRAM} desktop [<folder>]        start as x11 desktop env
+  {PROGRAM} install-launchers         add mac os launchers
+  {PROGRAM} generate-pass-key
+  {PROGRAM} licenses                  show licenses
   {PROGRAM} --version
   {PROGRAM} --help
 
@@ -556,30 +567,7 @@ Examples:
   {PROGRAM} review src/main.rs
   {PROGRAM} shell
   {PROGRAM} shell .
-  {PROGRAM} open src/main.rs:42
-
-Open a window inside any git repository you want to work in. The board and the shell run just
-as well in a folder that is no repository: the review is the part that needs one.
-
-`{PROGRAM} <window> --help` says what that window can be opened on; `--pick` opens it on its
-launch screen instead, and `--remote <host>` opens it against a `serve` on another machine.
-`{PROGRAM} open --help` says how a file is named. `{PROGRAM} shell <folder>` is a tab the same
-way: a shell in that folder, in the window already open on its project. Every command answers
-`--help` with its help and does nothing else.
-
-Desktop launchers:
-  `install-launchers` gives each window an entry the OS offers - an application bundle on
-  macOS, a desktop entry on Linux - so they open from Spotlight, Launchpad or an application
-  menu as well as from a shell. The window has the same thing in its menu.
-  A window opened that way starts outside any repo, so it opens on the project the last one
-  did - and the review, which has nothing to show without a repo, asks which one instead.
-
-Moontasks:
-  The moontasks board is a sprint board over the `.moontasks` folder of the repo, with an
-  agent running behind each card. `{PROGRAM} tasks` opens on it; the other two windows reach
-  it from the command palette.
-  The columns are the board's own - rename them, reorder them, add and remove them - and a
-  finished agent is reflected on its card the next time the board reads the folder.",
+  {PROGRAM} open src/main.rs:42",
         windows = windows.join("\n")
     )
 }
