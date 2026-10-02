@@ -545,7 +545,7 @@ fn help_text() -> String {
     format!(
         "{PROGRAM}
 
-Tiny local dev tools.
+lunar local dev tools.
 
 Usage:
 {windows}
