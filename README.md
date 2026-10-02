@@ -23,7 +23,7 @@ columns as work progresses.
 
 **Moonreview** is the review frame. It shows git hunks and lets you comment, stage or unstage
 them individually, then commit and push what you staged from a pane beside the review. Send
-comments to your local Claude, Codex or OpenCode.
+comments to your local Claude, Codex, OpenCode or Pi coding agent.
 
 ## Quick install
 

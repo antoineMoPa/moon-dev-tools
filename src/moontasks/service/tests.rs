@@ -62,6 +62,10 @@ fn an_attached_session_is_opened_by_its_own_id() {
             &["-c", "developer_instructions=the brief", "resume", session],
         ),
         (AgentKind::OpenCode, &["--session", session]),
+        (
+            AgentKind::Pi,
+            &["--session", session, "--append-system-prompt", "the brief"],
+        ),
     ];
 
     for (kind, args) in expected {
@@ -75,6 +79,26 @@ fn an_attached_session_is_opened_by_its_own_id() {
             "{kind:?} did not open the picked session"
         );
     }
+}
+
+#[test]
+fn pi_starts_with_a_task_session_and_brief() {
+    let launch = agent_launch(AgentKind::Pi).expect("Pi is launchable");
+    assert_eq!(
+        fillings()
+            .with_session(Some("task-session"))
+            .fill_all(launch.start.iter()),
+        [
+            "--session-id",
+            "task-session",
+            "--append-system-prompt",
+            "the brief"
+        ]
+    );
+    assert_eq!(
+        fillings().fill_all(launch.resume.iter()),
+        ["--continue", "--append-system-prompt", "the brief"]
+    );
 }
 
 #[test]

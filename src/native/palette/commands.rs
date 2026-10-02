@@ -24,6 +24,7 @@ const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
     ),
     (AgentKind::Claude, "claude", "Open Claude in a terminal"),
     (AgentKind::Codex, "codex", "Open Codex in a terminal"),
+    (AgentKind::Pi, "pi", "Open Pi in a terminal"),
 ];
 
 /// The sides the palette can split the active frame against, and the shell each split opens
@@ -96,8 +97,9 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
         title: "start cloudflare tunnel".to_string(),
-        description: "Reach this window's server from another device: a tunnel, its address and a QR code"
-            .to_string(),
+        description:
+            "Reach this window's server from another device: a tunnel, its address and a QR code"
+                .to_string(),
         action: CommandAction::StartCloudflareTunnel,
         shortcut: None,
     });

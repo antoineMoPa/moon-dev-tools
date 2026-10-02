@@ -219,6 +219,8 @@ pub(crate) struct AgentAvailability {
     pub(crate) claude: bool,
     pub(crate) codex: bool,
     pub(crate) opencode: bool,
+    #[serde(default)]
+    pub(crate) pi: bool,
 }
 
 pub(crate) fn stable_id<T: Hash>(value: &T) -> String {

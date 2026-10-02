@@ -179,6 +179,7 @@ impl Pane {
                 Some(AgentKind::Claude) => "claude".to_string(),
                 Some(AgentKind::Codex) => "codex".to_string(),
                 Some(AgentKind::OpenCode) => "opencode".to_string(),
+                Some(AgentKind::Pi) => "pi".to_string(),
                 _ => "terminal".to_string(),
             },
             // The name alone: the path is on the pane's own header and on the tab's hover. A
@@ -665,7 +666,12 @@ impl PaneView<Pane> for App {
 }
 
 /// The light/dark switch: a moon in light mode, a sun in dark mode.
-fn theme_switch(ui: &mut Ui, theme: ThemeMode, palette: &Palette, phone_height: Option<f32>) -> Response {
+fn theme_switch(
+    ui: &mut Ui,
+    theme: ThemeMode,
+    palette: &Palette,
+    phone_height: Option<f32>,
+) -> Response {
     // Drawn larger, in a square the height of the strip, where a thumb is to hit it.
     let scale = phone_height.map_or(1.0, |height| height / 18.0);
     let size = match phone_height {
@@ -692,7 +698,10 @@ fn theme_switch(ui: &mut Ui, theme: ThemeMode, palette: &Palette, phone_height: 
                 let angle = std::f32::consts::TAU * step as f32 / 8.0;
                 let direction = vec2(angle.cos(), angle.sin());
                 ui.painter().line_segment(
-                    [center + direction * 5.0 * scale, center + direction * 7.0 * scale],
+                    [
+                        center + direction * 5.0 * scale,
+                        center + direction * 7.0 * scale,
+                    ],
                     Stroke::new(scale.max(1.0), ink),
                 );
             }

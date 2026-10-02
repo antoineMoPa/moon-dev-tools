@@ -53,6 +53,23 @@ pub(crate) struct AgentLaunch {
 
 pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
     AgentLaunch {
+        kind: AgentKind::Pi,
+        start: &[
+            "--session-id",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+        ],
+        resume: &["--continue", "--append-system-prompt", "{brief}"],
+        attach: &[
+            "--session",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+        ],
+        env: &[],
+    },
+    AgentLaunch {
         kind: AgentKind::Claude,
         // The brief and no prompt: it knows the task from the moment it starts, and waits at
         // its prompt for the person who created the task to explain the work.

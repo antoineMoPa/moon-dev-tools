@@ -31,6 +31,7 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
         AgentKind::Claude => run_claude(prompt, job),
         AgentKind::Codex => run_codex(prompt, job),
         AgentKind::OpenCode => run_opencode(prompt, job),
+        AgentKind::Pi => run_pi(prompt, job),
     }
 }
 
@@ -143,6 +144,24 @@ fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
         )?;
 
     summarize_agent_output("OpenCode", output)
+}
+
+fn run_pi(prompt: String, job: &DispatchJob) -> Result<String> {
+    let mut command = Command::new("pi");
+    command.current_dir(&job.repo_path).arg("--print");
+    configure_agent_command(&mut command);
+    let output = command
+        .spawn()
+        .context("failed to start Pi")?
+        .wait_with_streamed_output_from_stdin(
+            prompt.as_bytes(),
+            "failed to write prompt to Pi",
+            "[moonreview] Pi stdout: ",
+            "[moonreview] Pi stderr: ",
+            Arc::clone(&job.cancel_token),
+            Arc::clone(&job.log),
+        )?;
+    summarize_agent_output("Pi", output)
 }
 
 fn configure_agent_command(command: &mut Command) {
@@ -337,6 +356,7 @@ pub(crate) fn detect_agent_availability() -> crate::api::AgentAvailability {
         claude: command_exists("claude"),
         codex: command_exists("codex"),
         opencode: command_exists("opencode"),
+        pi: command_exists("pi"),
     }
 }
 
@@ -349,6 +369,7 @@ pub(crate) fn agent_is_available(
         crate::api::AgentKind::Claude => availability.claude,
         crate::api::AgentKind::Codex => availability.codex,
         crate::api::AgentKind::OpenCode => availability.opencode,
+        crate::api::AgentKind::Pi => availability.pi,
     }
 }
 
@@ -360,6 +381,7 @@ pub(crate) fn agent_options(
         (crate::api::AgentKind::Claude, "Claude"),
         (crate::api::AgentKind::Codex, "Codex"),
         (crate::api::AgentKind::OpenCode, "OpenCode"),
+        (crate::api::AgentKind::Pi, "Pi"),
     ]
     .into_iter()
     .map(|(kind, label)| crate::api::AgentOption {
@@ -374,6 +396,29 @@ pub(crate) fn agent_options(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn pi_selection_tracks_availability_and_serializes() {
+        let availability = crate::api::AgentAvailability {
+            pi: true,
+            ..Default::default()
+        };
+        let option = agent_options(availability)
+            .into_iter()
+            .find(|option| option.kind == AgentKind::Pi)
+            .unwrap();
+        assert_eq!(option.label, "Pi");
+        assert!(option.available);
+        assert!(!agent_is_available(Default::default(), AgentKind::Pi));
+        assert_eq!(serde_json::to_string(&AgentKind::Pi).unwrap(), "\"pi\"");
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"pi\"").unwrap(),
+            AgentKind::Pi
+        );
+        let old: crate::api::AgentAvailability =
+            serde_json::from_str(r#"{"claude":true,"codex":false,"opencode":false}"#).unwrap();
+        assert!(!old.pi);
+    }
 
     #[test]
     fn wait_with_streamed_output_from_stdin_captures_stdout_and_stderr() {

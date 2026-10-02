@@ -39,6 +39,7 @@ impl TerminalRegistry {
             TerminalProgram::Agent(AgentKind::Claude) => CommandBuilder::new("claude"),
             TerminalProgram::Agent(AgentKind::Codex) => CommandBuilder::new("codex"),
             TerminalProgram::Agent(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
+            TerminalProgram::Agent(AgentKind::Pi) => CommandBuilder::new("pi"),
         };
         // Every agent moon starts is told to say through the terminal when it wants a
         // person, the way it would tell iTerm2 or Ghostty - which is what the window reads
@@ -191,7 +192,11 @@ impl TerminalRegistry {
                 Some(notice) if registry.is_live(&reaped_id) => {
                     session.child_ended.store(true, Ordering::Relaxed);
                     // Moon's own words, which ask nothing.
-                    session.scrollback.lock().unwrap().push(notice.as_bytes(), true);
+                    session
+                        .scrollback
+                        .lock()
+                        .unwrap()
+                        .push(notice.as_bytes(), true);
                     let _ = output.send(notice.into_bytes());
                 }
                 _ => {
