@@ -226,6 +226,16 @@ impl App {
         else {
             return;
         };
+        // The board task is a task with no card, so its tab has none to mark either.
+        let is_the_home = self
+            .model
+            .board
+            .board_task
+            .as_ref()
+            .is_some_and(|board_task| board_task.id == task_id);
+        if is_the_home {
+            return;
+        }
         crate::native::board::selection::mark_only(&mut self.model.board, task_id);
     }
 

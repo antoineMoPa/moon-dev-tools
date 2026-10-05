@@ -28,8 +28,8 @@ use crate::{
     commit_suggestion::CommitSuggestion,
     committing::{CommitAction, CommitState},
     moontasks::{
-        AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, ReviewRequestView,
-        StartResourceRequest, TaskView, explainer::ExplainRequest, review_request::Amend,
+        AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
+        ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
     settings::{Settings, SettingsChange},
@@ -152,6 +152,10 @@ pub(crate) trait Backend: Send + Sync + 'static {
 
     /// The moontasks board of the repo this session reviews, and what running it.
     fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskView>>;
+    /// The board task - the task on no column that the agents and shells started from the
+    /// board itself are runs of - and what it has running. Made if the board has none yet.
+    /// Its id is a task's id to every call here that starts, resumes, stops or removes a run.
+    fn board_task(&self, session_id: &str) -> Result<BoardTaskView>;
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
     /// Put tasks in a column, at a place among the cards already there, which is what a
     /// drag on the board does, and the only way a card moves. More than one is a card
@@ -170,14 +174,6 @@ pub(crate) trait Backend: Send + Sync + 'static {
         session_id: &str,
         task_id: &str,
         request: StartResourceRequest,
-    ) -> Result<String>;
-    /// Start an agent explaining the repo's changes for this task, headless, in a shell of the
-    /// task - see [`crate::moontasks::explainer`]. Answers with that shell.
-    fn explain_task_changes(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        request: ExplainRequest,
     ) -> Result<String>;
     fn resume_task_resource(
         &self,

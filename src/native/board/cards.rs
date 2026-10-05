@@ -563,7 +563,15 @@ fn draw_card_body(
             draw_notes_box(ui, task, &mut card, palette, showing, actions);
             ui.add_space(3.0);
 
-            resources::draw_list(app, ui, task, &mut card, palette, actions);
+            resources::draw_list(
+                app,
+                ui,
+                task.runs(),
+                &mut card,
+                palette,
+                actions,
+                resources::Rows::Down,
+            );
             if !task.resources.is_empty() {
                 ui.add_space(3.0);
             }
@@ -846,7 +854,7 @@ fn draw_card_actions(
     ui.allocate_ui_with_layout(row, UiLayout::right_to_left(Align::Center), |ui| {
         // Multiplied rather than set, so the ghost of a card being dragged stays a ghost.
         ui.multiply_opacity(showing);
-        let start_up = start::draw_button(app, ui, task, card, actions);
+        let start_up = start::draw_button(app, ui, task.runs(), card, actions);
         let tags_up = tags::draw_button(app, ui, task, card);
         // Told to the card, which keeps its offers out for as long as the menu or the tag box
         // is up.

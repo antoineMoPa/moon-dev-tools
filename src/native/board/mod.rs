@@ -16,6 +16,7 @@ pub(crate) mod days_work;
 pub(crate) mod filter;
 pub(crate) mod gesture;
 pub(crate) mod header;
+mod board_task;
 pub(crate) mod marks;
 pub(crate) mod motion;
 pub(crate) mod resources;
@@ -269,6 +270,8 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     // Over the columns rather than inside one: the query is asked of the whole board, and
     // every column answers it.
     filter::draw(app, ui, palette, actions);
+    // And what is the board's own rather than a card's, before the cards.
+    board_task::draw(app, ui, palette, actions);
 
     // A press beside the columns is a press on the board too. Claimed after the columns have
     // drawn, at the foot of this function, so a card or a column has first refusal.

@@ -12,7 +12,7 @@ mod board_columns;
 mod board_day_lines;
 mod board_days_work;
 mod board_drag;
-mod board_explain;
+mod board_task;
 mod board_new_task_pane;
 mod board_pending_card;
 mod board_selection;
@@ -20,6 +20,7 @@ mod board_tags;
 mod board_touch;
 mod board_task_pane;
 mod board_task_pane_boxes;
+mod command_launcher;
 mod diff_comments;
 mod diff_definition;
 mod diff_selection;
@@ -521,6 +522,22 @@ fn marked_task(app: &crate::native::app::App) -> Option<String> {
         "expected one card marked, got {marked:?}"
     );
     marked.pop()
+}
+
+/// The `[start]` of the board's first card. The board task has one of its own, over the
+/// columns - see [`crate::native::board::board_task`] - so a card's is the first one under that.
+fn start_of_the_first_card<'harness>(
+    harness: &'harness Harness<'_>,
+) -> egui_kittest::Node<'harness> {
+    use egui_kittest::kittest::Queryable as _;
+    let mut starts: Vec<_> = harness.get_all_by_label("[start]").collect();
+    starts.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    assert!(
+        starts.len() >= 2,
+        "expected the board task's [start] and a card's, got {}",
+        starts.len()
+    );
+    starts.swap_remove(1)
 }
 
 /// One finger's worth of a gesture, the way a browser reports it: the touch itself, and the

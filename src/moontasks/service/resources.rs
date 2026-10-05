@@ -68,15 +68,17 @@ pub(crate) fn start_resource(
     // An agent comes up with the card's title already written in its box, waiting on the
     // Enter that sends it. It is still the person who starts the work - the title is a card's
     // name and rarely the whole of what is wanted - but the common case, where it is, is one
-    // keystroke away. A task's plain shell gets nothing typed at it.
-    let type_ahead = (request.kind == TaskResourceKind::Agent).then(|| metadata.title.clone());
+    // keystroke away. A task's plain shell gets nothing typed at it, and neither does an
+    // agent of the board task: it has no card, so no title that could be what is wanted.
+    let type_ahead = (request.kind == TaskResourceKind::Agent && metadata.status.is_some())
+        .then(|| metadata.title.clone());
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd,
         program,
         args,
         env,
-        owner: Some(task_id.to_string()),
+        owner: Some(store::run_owner(&repo_path, task_id)),
         name: Some(name.clone()),
         type_ahead,
     })?;
@@ -125,6 +127,12 @@ pub(crate) fn resume_resource(
     {
         return Ok(terminal_id.clone());
     }
+    // Starting it again here would be a second process on the one session.
+    if let Some(pid) =
+        super::going_elsewhere_in(&resource, &crate::agent_sessions::OpenSessions::read())
+    {
+        bail!("that run is already going, in process {pid}");
+    }
     let Some(launch) = agent_launch(resource.agent) else {
         bail!("a shell cannot be resumed - open a new one");
     };
@@ -153,7 +161,7 @@ pub(crate) fn resume_resource(
         program,
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
-        owner: Some(task_id.to_string()),
+        owner: Some(store::run_owner(&repo_path, task_id)),
         name: Some(name.clone()),
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
@@ -203,7 +211,7 @@ pub(crate) fn attach_resource(
         program,
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
-        owner: Some(task_id.to_string()),
+        owner: Some(store::run_owner(&repo_path, task_id)),
         name: Some(name.clone()),
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
@@ -252,10 +260,10 @@ pub(crate) fn record_run_name(
 ///
 /// A shell goes by its terminal id, because the registry is the only place it is listed.
 /// Ending it is all there is to do with it, so `stop` and `delete` both come through here.
-fn close_shell(state: &AppState, task_id: &str, resource_id: &str) -> bool {
+fn close_shell(state: &AppState, repo_path: &Path, task_id: &str, resource_id: &str) -> bool {
     let owned = state
         .terminals
-        .owned_shells(task_id)
+        .owned_shells(&store::run_owner(repo_path, task_id))
         .into_iter()
         .any(|shell| shell.terminal_id == resource_id);
     if owned {
@@ -273,10 +281,10 @@ pub(crate) fn delete_resource(
     task_id: &str,
     resource_id: &str,
 ) -> Result<()> {
-    if close_shell(state, task_id, resource_id) {
+    let repo_path = repo_of(state, session_id)?;
+    if close_shell(state, &repo_path, task_id, resource_id) {
         return Ok(());
     }
-    let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let Some(at) = metadata
@@ -299,10 +307,10 @@ pub(crate) fn stop_resource(
     task_id: &str,
     resource_id: &str,
 ) -> Result<()> {
-    if close_shell(state, task_id, resource_id) {
+    let repo_path = repo_of(state, session_id)?;
+    if close_shell(state, &repo_path, task_id, resource_id) {
         return Ok(());
     }
-    let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let Some(resource) = metadata
@@ -387,11 +395,7 @@ impl Fillings {
 }
 
 /// What every process started for a task is told about itself.
-pub(in crate::moontasks) fn task_env(
-    session_id: &str,
-    task_id: &str,
-    repo_path: &Path,
-) -> Vec<(String, String)> {
+fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, String)> {
     vec![
         (
             crate::moontasks::TASK_ID_ENV_VAR.to_string(),
@@ -423,7 +427,13 @@ pub(in crate::moontasks) fn task_env(
 fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) -> Result<Fillings> {
     let dir = store::task_dir(repo_path, task_id)?;
 
-    let brief = crate::moontasks::brief_for(&metadata.title, &dir.display().to_string());
+    let brief = match metadata.status {
+        Some(_) => crate::moontasks::brief_for(&metadata.title, &dir.display().to_string()),
+        None => crate::moontasks::board_task_brief_for(
+            &store::tasks_root(repo_path).display().to_string(),
+            &dir.display().to_string(),
+        ),
+    };
     let brief_path = dir.join(crate::moontasks::BRIEF_FILE_NAME);
     std::fs::write(&brief_path, format!("{brief}\n"))
         .with_context(|| format!("failed to write {}", brief_path.display()))?;

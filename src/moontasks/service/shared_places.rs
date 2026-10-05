@@ -22,7 +22,7 @@ pub(super) fn renumber_tied_columns(tasks: &mut [(String, TaskMetadata)]) -> Vec
     let mut columns: HashMap<ColumnId, Vec<usize>> = HashMap::new();
     for (index, (_, metadata)) in tasks.iter().enumerate() {
         columns
-            .entry(metadata.status.clone())
+            .entry(metadata.column().clone())
             .or_default()
             .push(index);
     }
@@ -65,7 +65,7 @@ mod tests {
     ) -> (String, TaskMetadata) {
         let metadata = TaskMetadata {
             title: title.to_string(),
-            status: ColumnId::new(status),
+            status: Some(ColumnId::new(status)),
             created_at_unix,
             entered_column_at_unix: None,
             position,

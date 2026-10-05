@@ -88,10 +88,11 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                     board::resources::draw_list(
                                         app,
                                         ui,
-                                        &task,
+                                        task.runs(),
                                         &mut board::gesture::Controls::elsewhere(),
                                         &palette,
                                         &mut actions,
+                                        board::resources::Rows::Down,
                                     );
                                 }
                                 ui.add_space(LINE_GAP);
@@ -106,7 +107,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                     );
                                     ui.add_space(LINE_GAP);
                                 }
-                                board::start::draw_list(app, ui, &task, &mut actions);
+                                board::start::draw_list(app, ui, task.runs(), &mut actions);
                                 ui.add_space(LINE_GAP);
                                 draw_tags(app, ui, &task, &palette, &mut actions);
                             });

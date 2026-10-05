@@ -191,7 +191,7 @@ pub(crate) fn delete_column(
     let holding = store::list_task_ids(&repo_path)?
         .iter()
         .filter_map(|task_id| store::read_task(&repo_path, task_id).ok())
-        .filter(|metadata| metadata.status == *column_id)
+        .filter(|metadata| metadata.status.as_ref() == Some(column_id))
         .count();
     if holding > 0 {
         bail!(

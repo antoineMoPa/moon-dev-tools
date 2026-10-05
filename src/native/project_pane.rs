@@ -16,7 +16,7 @@ use crate::{
         widgets,
         workspace_color::{self, WorkspaceColor},
     },
-    project::ProjectCommand,
+    project::{ProjectCommand, TimeOfDay},
 };
 
 /// What each box is for, in the order the menu has them. The pane is two of the same row, so
@@ -68,6 +68,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
             draw_commands(app, ui, &palette);
             ui.add_space(16.0);
             draw_indent(app, ui);
+            ui.add_space(16.0);
+            draw_day_end(app, ui);
             ui.add_space(16.0);
             draw_workspace_color(app, ui, &palette);
         });
@@ -144,6 +146,42 @@ fn draw_indent(app: &mut App, ui: &mut Ui) {
     // `App::save_project`.
     if let Some(indent) = picked {
         editor.indent = indent;
+        app.model.project_unsaved = true;
+    }
+}
+
+/// When a day of work on this project ends: an hour and a minute to drag or type.
+///
+/// Written to the repo's file by the same save as the rest: a project worked on in the
+/// evenings ends later than the day job, whoever opens it. The board reads it for the lines
+/// its queue is split into days by - see [`crate::native::board::days_work`].
+fn draw_day_end(app: &mut App, ui: &mut Ui) {
+    // Nothing to set until the file is back - the message about that is `draw_commands`'.
+    let Some(editor) = &mut app.model.project_editor else {
+        return;
+    };
+
+    ui.label(RichText::new("the day ends at").size(SMALL_SIZE).strong());
+    ui.add_space(4.0);
+    let (mut hour, mut minute) = (editor.day_ends_at.hour(), editor.day_ends_at.minute());
+    let mut edited = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        edited |= ui
+            .add(egui::DragValue::new(&mut hour).range(TimeOfDay::HOURS))
+            .changed();
+        ui.label(":");
+        edited |= ui
+            .add(
+                egui::DragValue::new(&mut minute)
+                    .range(TimeOfDay::MINUTES)
+                    .custom_formatter(|minute, _| format!("{minute:02}")),
+            )
+            .changed();
+    });
+
+    if edited {
+        editor.day_ends_at = TimeOfDay::new(hour, minute);
         app.model.project_unsaved = true;
     }
 }

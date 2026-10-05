@@ -11,7 +11,7 @@ use egui::{
 use crate::{
     api::AgentKind,
     moontasks::{
-        ReviewRequestView, TaskResourceKind, TaskResourceView, TaskView, review_request::Amend,
+        ReviewRequestView, RunsOf, TaskResourceKind, TaskResourceView, review_request::Amend,
     },
     native::{
         app::App,
@@ -26,21 +26,45 @@ use crate::{
     },
 };
 
+/// How a task's rows are laid out.
+#[derive(Clone, Copy)]
+pub(crate) enum Rows {
+    /// One under the other, each as wide as what they are listed in: a card, or a task's pane.
+    Down,
+    /// Side by side, each this wide, in a `Ui` that wraps: the board task, over the columns.
+    Across { width: f32 },
+}
+
+impl Rows {
+    /// Give one row its place, and draw it there.
+    fn place(self, ui: &mut Ui, row: impl FnOnce(&mut Ui)) {
+        match self {
+            Rows::Down => row(ui),
+            Rows::Across { width } => {
+                ui.allocate_ui(vec2(width, ui.spacing().interact_size.y), row);
+            }
+        }
+    }
+}
+
 /// Every run and file the task has, each on its row.
 pub(crate) fn draw_list(
     app: &App,
     ui: &mut Ui,
-    task: &TaskView,
+    task: RunsOf<'_>,
     card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
+    rows: Rows,
 ) {
     // Read once for the whole list: the mark that takes a run off the task asks first, and the
     // row that asked is the one drawn holding the question.
     let removing = app.model.board.pending_resource_delete.clone();
-    for resource in &task.resources {
+    for resource in task.resources {
         let pending = removing.as_deref() == Some(resource.id.as_str());
-        draw_resource(ui, task, resource, card, pending, palette, actions);
+        rows.place(ui, |ui| {
+            draw_resource(ui, task, resource, card, pending, palette, actions)
+        });
     }
 
     // Under the runs and the files, because a review is asked for once the rest has happened -
@@ -51,7 +75,9 @@ pub(crate) fn draw_list(
         .iter()
         .filter(|request| request.task_id == task.id)
     {
-        draw_review_request(ui, request, card, palette, actions);
+        rows.place(ui, |ui| {
+            draw_review_request(ui, request, card, palette, actions)
+        });
     }
 }
 
@@ -232,6 +258,11 @@ const AGENT_QUIET_AFTER_SECS: u64 = 10;
 /// anything else; only an agent run reads as quiet, and only once it has been so for
 /// [`AGENT_QUIET_AFTER_SECS`].
 fn activity_of(resource: &TaskResourceView) -> Activity {
+    // Going in a process that is no shell of this moon: that it is going is all there is to
+    // say of it from here.
+    if resource.going_elsewhere_in.is_some() {
+        return Activity::Running;
+    }
     if !resource.running {
         return Activity::Ended;
     }
@@ -257,7 +288,7 @@ fn quiet_text(secs: u64) -> String {
 /// the way back to it.
 fn draw_resource(
     ui: &mut Ui,
-    task: &TaskView,
+    task: RunsOf<'_>,
     resource: &TaskResourceView,
     card: &mut Controls,
     pending_delete: bool,
@@ -301,16 +332,23 @@ fn draw_resource(
                     actions.push(BoardAction::OpenShell {
                         terminal_id: terminal_id.clone(),
                         command: (resource.agent != AgentKind::None).then_some(resource.agent),
-                        task_id: task.id.clone(),
+                        task_id: task.id.to_string(),
                     });
                 }
             }
             _ => {
-                ui.label(
+                let name = ui.label(
                     RichText::new(&resource.label)
                         .size(SMALL_SIZE)
                         .color(palette.muted),
                 );
+                if let Some(pid) = resource.going_elsewhere_in {
+                    name.on_hover_text(format!(
+                        "Going in process {pid}, which is no shell of this window: another \
+                         moon has it, or its agent was started outside one. It is opened \
+                         where it was started"
+                    ));
+                }
             }
         }
 
@@ -326,14 +364,16 @@ fn draw_resource(
                     ui,
                     palette,
                     "[really close]",
-                    if is_shell {
-                        "this ends the shell, and its scrollback goes with it"
-                    } else {
-                        "this ends the run and takes it off the task for good"
+                    match (is_shell, resource.going_elsewhere_in) {
+                        (true, _) => "this ends the shell, and its scrollback goes with it",
+                        (false, None) => "this ends the run and takes it off the task for good",
+                        (false, Some(_)) => {
+                            "this takes the run off the task, and leaves it going where it is"
+                        }
                     },
                 ) {
                     widgets::Confirmed::Yes => actions.push(BoardAction::DeleteResource(
-                        task.id.clone(),
+                        task.id.to_string(),
                         resource.id.clone(),
                     )),
                     widgets::Confirmed::No => actions.push(BoardAction::CancelResourceDelete),
@@ -341,12 +381,14 @@ fn draw_resource(
                 }
                 return;
             }
-            let close =
-                close_button(ui, palette).on_hover_text(match (is_shell, resource.running) {
-                    (true, _) => "Close this shell",
-                    (false, true) => "End this run and take it off the task",
-                    (false, false) => "Take this run off the task",
-                });
+            let close = close_button(ui, palette).on_hover_text(
+                match (is_shell, resource.running, resource.going_elsewhere_in) {
+                    (true, ..) => "Close this shell",
+                    (false, _, Some(_)) => "Take this run off the task, where it goes on going",
+                    (false, true, None) => "End this run and take it off the task",
+                    (false, false, None) => "Take this run off the task",
+                },
+            );
             if card.pressed(&close) {
                 actions.push(BoardAction::ArmResourceDelete(resource.id.clone()));
             }
@@ -354,13 +396,16 @@ fn draw_resource(
                 let stop = widgets::quiet_button_colored(ui, "stop", palette.muted)
                     .on_hover_text("End this shell, keeping the run to come back to");
                 if card.pressed(&stop) {
-                    actions.push(BoardAction::Stop(task.id.clone(), resource.id.clone()));
+                    actions.push(BoardAction::Stop(task.id.to_string(), resource.id.clone()));
                 }
             } else if resource.resumable {
                 let resume = widgets::quiet_button_colored(ui, "resume", palette.accent)
                     .on_hover_text("Start this agent again where it left off");
                 if card.pressed(&resume) {
-                    actions.push(BoardAction::Resume(task.id.clone(), resource.id.clone()));
+                    actions.push(BoardAction::Resume(
+                        task.id.to_string(),
+                        resource.id.clone(),
+                    ));
                 }
             }
         });
@@ -423,7 +468,7 @@ pub(super) fn draw_in_row(ui: &mut Ui, rect: Rect, contents: impl FnOnce(&mut Ui
 /// card loses nothing - the file stays where it is - so unlike a run it goes without asking.
 fn draw_file_resource(
     ui: &mut Ui,
-    task: &TaskView,
+    task: RunsOf<'_>,
     resource: &TaskResourceView,
     card: &mut Controls,
     palette: &Palette,
@@ -441,7 +486,7 @@ fn draw_file_resource(
             .on_hover_text(format!("Open {file_path} in a pane"));
         if card.pressed(&path) || row_pressed {
             actions.push(BoardAction::OpenFile {
-                task_id: task.id.clone(),
+                task_id: task.id.to_string(),
                 file_path: file_path.to_string(),
             });
         }
@@ -450,7 +495,7 @@ fn draw_file_resource(
             let unlink = close_button(ui, palette).on_hover_text("Take this file off the task");
             if card.pressed(&unlink) {
                 actions.push(BoardAction::DeleteResource(
-                    task.id.clone(),
+                    task.id.to_string(),
                     resource.id.clone(),
                 ));
             }
@@ -465,7 +510,7 @@ fn draw_file_resource(
 /// the task's folder. An agent still running that rewrites it puts it back.
 fn draw_visualization_resource(
     ui: &mut Ui,
-    task: &TaskView,
+    task: RunsOf<'_>,
     resource: &TaskResourceView,
     card: &mut Controls,
     palette: &Palette,
@@ -495,7 +540,7 @@ fn draw_visualization_resource(
                 close_button(ui, palette).on_hover_text("Take this visualization off the task");
             if card.pressed(&unlink) {
                 actions.push(BoardAction::DeleteResource(
-                    task.id.clone(),
+                    task.id.to_string(),
                     resource.id.clone(),
                 ));
             }
@@ -516,6 +561,7 @@ mod tests {
             file_path: None,
             terminal_id: running.then(|| "terminal-1".to_string()),
             running,
+            going_elsewhere_in: None,
             quiet_for_secs,
             attention: None,
             resumable: true,
@@ -553,5 +599,18 @@ mod tests {
         assert_eq!(quiet_text(45), "45s");
         assert_eq!(quiet_text(125), "2m 05s");
         assert_eq!(quiet_text(3900), "1h 05m");
+    }
+
+    /// A run going in another moon, or in an agent started outside one, has no shell here
+    /// and is going all the same: its dot says so, rather than reading as a run that ended.
+    #[test]
+    fn a_run_going_in_another_process_reads_as_running() {
+        let elsewhere = TaskResourceView {
+            going_elsewhere_in: Some(4242),
+            ..run(false, None)
+        };
+
+        assert_eq!(activity_of(&elsewhere), Activity::Running);
+        assert_eq!(activity_of(&run(false, None)), Activity::Ended);
     }
 }

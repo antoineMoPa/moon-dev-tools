@@ -564,3 +564,41 @@ fn a_build_with_no_room_for_a_column_takes_a_tab() {
         "the build's shell should have joined the tabs of a frame that was already there"
     );
 }
+
+/// The pane shows when the project's day ends, as its file has it.
+#[test]
+fn the_project_pane_shows_when_the_day_ends() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = seeded_fixture("project-pane-day-end");
+    fixture.write(".moonreview.json", "{ \"day_ends_at\": \"21:05\" }\n");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut opened = false;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened && matches!(app.model.stage, crate::native::model::Stage::Ready) {
+                app.open_pane(OpenPaneRequest::Project);
+                opened = true;
+            }
+            app.draw(ui);
+        });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while harness.query_by_label("the day ends at").is_none()
+        && std::time::Instant::now() < deadline
+    {
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label("the day ends at").is_some());
+    assert!(harness.query_by_value("21").is_some(), "the hour");
+    assert!(
+        harness.query_by_value("05").is_some(),
+        "the minute, two figures wide"
+    );
+}

@@ -4,7 +4,6 @@
 //! do to it.
 
 pub(crate) mod column_sort;
-pub(crate) mod explainer;
 pub(crate) mod review_request;
 // The board's folder is read and written by the server - see `store`.
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,6 +52,52 @@ pub(crate) struct TaskView {
     pub(crate) resources: Vec<TaskResourceView>,
 }
 
+/// The board task, as the board draws it above its columns: the one task that is on no
+/// column, and so has no card - see `create_board_task` in the store. It is what the agents
+/// and shells started from the board itself are runs of.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct BoardTaskView {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    /// The repo the board task's agents work in, which is the repo the board belongs to.
+    pub(crate) repo_path: String,
+    pub(crate) resources: Vec<TaskResourceView>,
+}
+
+/// What a list of runs and a `[start]` menu are drawn for: a task's card, or the board task.
+/// The two are started in, listed and stopped the same way, so they are drawn by the same
+/// code, from this.
+#[derive(Clone, Copy)]
+pub(crate) struct RunsOf<'holder> {
+    /// The id of the task the runs are recorded on.
+    pub(crate) id: &'holder str,
+    pub(crate) title: &'holder str,
+    pub(crate) repo_path: &'holder str,
+    pub(crate) resources: &'holder [TaskResourceView],
+}
+
+impl TaskView {
+    pub(crate) fn runs(&self) -> RunsOf<'_> {
+        RunsOf {
+            id: &self.id,
+            title: &self.title,
+            repo_path: &self.repo_path,
+            resources: &self.resources,
+        }
+    }
+}
+
+impl BoardTaskView {
+    pub(crate) fn runs(&self) -> RunsOf<'_> {
+        RunsOf {
+            id: &self.id,
+            title: &self.title,
+            repo_path: &self.repo_path,
+            resources: &self.resources,
+        }
+    }
+}
+
 /// A shell, an agent run or a linked file belonging to a task.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskResourceView {
@@ -64,6 +109,12 @@ pub(crate) struct TaskResourceView {
     /// visualization: its copy in the task's folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_path: Option<String>,
+    /// The process a run is going in when that is not a shell of this moon: another moon's -
+    /// the window beside a `moon serve` - or the agent's own, started outside any moon and put
+    /// on the task afterwards. It is going, and it is not this moon's to open, stop or
+    /// resume. `None` for a run that is going here, or not going.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) going_elsewhere_in: Option<u32>,
     /// The shell it is attached to, while it is still running.
     pub(crate) terminal_id: Option<String>,
     pub(crate) running: bool,

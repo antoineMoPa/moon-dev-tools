@@ -10,10 +10,10 @@ use axum::{
 use crate::{
     api::{AppError, AppState},
     moontasks::{
-        self, AttachResourceRequest, ColumnLabelRequest, ColumnPlacementRequest, CreateTaskRequest,
-        LinkFileRequest, NewColumnRequest, ReviewRequestView, StartResourceRequest,
-        TaskNotesPayload, TaskPlacementRequest, TaskTagsRequest, TaskTitleRequest, TaskView,
-        TerminalOpened, WorkLogPayload,
+        self, AttachResourceRequest, BoardTaskView, ColumnLabelRequest, ColumnPlacementRequest,
+        CreateTaskRequest, LinkFileRequest, NewColumnRequest, ReviewRequestView,
+        StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskTagsRequest,
+        TaskTitleRequest, TaskView, TerminalOpened, WorkLogPayload,
         review_request::Amend,
         store::{BoardColumn, ColumnId},
     },
@@ -30,6 +30,14 @@ pub(super) async fn list_tasks(
         tokio::task::spawn_blocking(move || moontasks::service::list_tasks(&state, &session_id))
             .await??;
     Ok(Json(tasks))
+}
+
+pub(super) async fn board_task(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<BoardTaskView>, AppError> {
+    mark_activity(&state);
+    Ok(Json(moontasks::service::board_task(&state, &session_id)?))
 }
 
 pub(super) async fn create_task(
@@ -247,22 +255,6 @@ pub(super) async fn start_task_resource(
     mark_activity(&state);
     Ok(Json(TerminalOpened {
         terminal_id: moontasks::service::start_resource(&state, &session_id, &task_id, request)?,
-    }))
-}
-
-pub(super) async fn explain_task_changes(
-    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
-    State(state): State<AppState>,
-    Json(request): Json<moontasks::explainer::ExplainRequest>,
-) -> Result<Json<TerminalOpened>, AppError> {
-    mark_activity(&state);
-    Ok(Json(TerminalOpened {
-        terminal_id: moontasks::explainer::start_explanation(
-            &state,
-            &session_id,
-            &task_id,
-            request,
-        )?,
     }))
 }
 

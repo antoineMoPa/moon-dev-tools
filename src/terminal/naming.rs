@@ -36,17 +36,7 @@ pub(crate) fn numbered_name(
     program: &TerminalProgram,
     in_use: impl IntoIterator<Item = String>,
 ) -> String {
-    numbered_name_called(task_title, &program.label(), in_use)
-}
-
-/// The same, for a shell named after what it does rather than what runs in it - `write the
-/// parser explain - 1` for a login shell an explanation of the change runs in.
-pub(crate) fn numbered_name_called(
-    task_title: Option<&str>,
-    label: &str,
-    in_use: impl IntoIterator<Item = String>,
-) -> String {
-    let prefix = name_prefix(task_title, label);
+    let prefix = name_prefix(task_title, &program.label());
     let highest = in_use
         .into_iter()
         .filter_map(|name| name.strip_prefix(&prefix)?.parse::<u64>().ok())
@@ -70,18 +60,6 @@ pub(crate) fn name_for_new_shell(
     Ok(numbered_name(task_title, program, in_use))
 }
 
-/// The same, for a shell named after what it does - see [`numbered_name_called`].
-pub(crate) fn name_for_new_shell_called(
-    state: &AppState,
-    repo_path: &std::path::Path,
-    task_title: Option<&str>,
-    label: &str,
-) -> anyhow::Result<String> {
-    let mut in_use = state.terminals.live_names();
-    in_use.extend(crate::moontasks::store::recorded_run_names(repo_path)?);
-    Ok(numbered_name_called(task_title, label, in_use))
-}
-
 /// Call a shell something else. A task's run is renamed on the task as well, so the name is
 /// still there once the shell is gone and a resumed run takes it back.
 pub(crate) fn rename(
@@ -91,7 +69,12 @@ pub(crate) fn rename(
     name: &str,
 ) -> anyhow::Result<()> {
     state.terminals.rename(terminal_id, name)?;
-    if let Some(task_id) = state.terminals.owner(terminal_id) {
+    let Some(owner) = state.terminals.owner(terminal_id) else {
+        return Ok(());
+    };
+    let repo_path =
+        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    if let Some(task_id) = crate::moontasks::store::task_owning(&repo_path, &owner) {
         crate::moontasks::service::record_run_name(state, session_id, &task_id, terminal_id, name)?;
     }
     Ok(())

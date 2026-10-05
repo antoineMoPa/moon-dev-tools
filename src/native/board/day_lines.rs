@@ -120,6 +120,29 @@ impl LocalDay {
     }
 }
 
+/// How many minutes into its day a moment is, on this machine's clock: 990 at half past four
+/// in the afternoon. From the OS for the reason [`LocalDay::of`] is.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn minutes_into_local_day(unix: u64) -> u32 {
+    let time = unix as libc::time_t;
+    // SAFETY: as in `LocalDay::of` - zeroes are a valid `libc::tm`.
+    let mut written: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: as in `LocalDay::of` - both pointers are to locals that outlive the call.
+    let placed = unsafe { libc::localtime_r(&time, &mut written) };
+    assert!(
+        !placed.is_null(),
+        "localtime_r could not place {unix} in this machine's zone"
+    );
+    (written.tm_hour * 60 + written.tm_min) as u32
+}
+
+/// The same in a browser, on the clock of the machine it runs on.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn minutes_into_local_day(unix: u64) -> u32 {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(unix as f64 * 1000.0));
+    date.get_hours() * 60 + date.get_minutes()
+}
+
 /// The walk down a column: which cards get a line above them, and what it says.
 pub(super) struct DayLines {
     today: LocalDay,

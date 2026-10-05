@@ -208,6 +208,18 @@ fn the_brief_names_the_task_and_its_folder() {
     assert!(brief.contains("/repo/.moontasks/task"));
 }
 
+/// An agent started from the board itself has no card to be told about: it is told where the
+/// board is and where its own folder is.
+#[test]
+fn the_board_tasks_brief_names_the_board_and_no_task() {
+    let brief =
+        crate::moontasks::board_task_brief_for("/repo/.moontasks", "/repo/.moontasks/board-1234");
+
+    assert!(brief.contains("Board folder: /repo/.moontasks\n"));
+    assert!(brief.contains("/repo/.moontasks/board-1234"));
+    assert!(!brief.contains("Task:"), "got {brief}");
+}
+
 /// The brief only points at the attachments format, so an agent that attaches nothing does not
 /// carry it.
 #[test]
@@ -222,7 +234,7 @@ fn the_brief_points_at_the_attachments_format_without_spelling_it_out() {
 fn a_finished_agent_is_cleared_without_moving_its_task() {
     let mut metadata = TaskMetadata {
         title: "Fix the login page".to_string(),
-        status: ColumnId::new("in_progress"),
+        status: Some(ColumnId::new("in_progress")),
         created_at_unix: 0,
         entered_column_at_unix: None,
         position: 0,
@@ -246,7 +258,7 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
 
     assert!(reconcile(&state, &mut metadata));
 
-    assert_eq!(metadata.status, ColumnId::new("in_progress"));
+    assert_eq!(metadata.status, Some(ColumnId::new("in_progress")));
     assert_eq!(metadata.resources[0].terminal_id, None);
     assert!(
         !reconcile(&state, &mut metadata),
@@ -258,7 +270,7 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
 fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
     let mut metadata = TaskMetadata {
         title: "Fix the login page".to_string(),
-        status: ColumnId::new("done"),
+        status: Some(ColumnId::new("done")),
         created_at_unix: 0,
         entered_column_at_unix: None,
         position: 0,
@@ -284,7 +296,7 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
         "the shell is still recorded"
     );
 
-    assert_eq!(metadata.status, ColumnId::new("done"));
+    assert_eq!(metadata.status, Some(ColumnId::new("done")));
 }
 
 /// A run on this board whose shell another moon holds - the window beside a `moon serve` - is
@@ -294,7 +306,7 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
 fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
     let run_owned_by = |owner: u32| TaskMetadata {
         title: "Fix the login page".to_string(),
-        status: ColumnId::new("in_progress"),
+        status: Some(ColumnId::new("in_progress")),
         created_at_unix: 0,
         entered_column_at_unix: None,
         position: 0,
@@ -332,4 +344,101 @@ fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
     assert!(reconcile(&state, &mut orphaned));
     assert_eq!(orphaned.resources[0].terminal_id, None);
     assert_eq!(orphaned.resources[0].terminal_owner, None);
+}
+
+/// A run recorded with its session and no shell: put on the task by hand, or by its own agent.
+fn run_of_session(session_id: &str) -> TaskMetadata {
+    TaskMetadata {
+        title: "Fix the login page".to_string(),
+        status: Some(ColumnId::new("in_progress")),
+        created_at_unix: 0,
+        entered_column_at_unix: None,
+        position: 0,
+        tags: Vec::new(),
+        resources: vec![TaskResource {
+            id: "resource".to_string(),
+            kind: TaskResourceKind::Agent,
+            agent: AgentKind::Claude,
+            file_path: None,
+            terminal_id: None,
+            terminal_owner: None,
+            agent_session_id: Some(session_id.to_string()),
+            name: None,
+            started_at_unix: 0,
+        }],
+    }
+}
+
+/// A process that has exited, by the id it had.
+fn exited_process() -> u32 {
+    let mut exited = std::process::Command::new("true")
+        .spawn()
+        .expect("expected to start `true`");
+    let gone = exited.id();
+    exited.wait().expect("expected `true` to exit");
+    gone
+}
+
+/// A run whose shell another running moon holds is going, and is not offered to be resumed:
+/// resuming it here would start a second agent on the one session.
+#[test]
+fn a_run_another_moon_holds_is_going_and_not_offered_to_be_resumed() {
+    let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
+        std::time::Instant::now(),
+    )));
+    let mut held = run_of_session("a-session");
+    held.resources[0].terminal_id = Some("terminal-elsewhere-1".to_string());
+    // The process that started this test is running, and is not this one.
+    let another_moon = std::os::unix::process::parent_id();
+    held.resources[0].terminal_owner = Some(another_moon);
+
+    let runs = resources_of(
+        &state,
+        Path::new("/repo"),
+        "task",
+        &held,
+        &OpenSessions::default(),
+    );
+
+    assert_eq!(runs[0].going_elsewhere_in, Some(another_moon));
+    assert!(!runs[0].running, "it is not going in a shell of this moon");
+    assert!(!runs[0].resumable);
+}
+
+/// A session its agent says it has open is going, whatever put it on the task - and one the
+/// agent only said it had open before it exited is a run that ended, to be resumed.
+#[test]
+fn a_session_its_agent_has_open_is_going_and_not_offered_to_be_resumed() {
+    let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
+        std::time::Instant::now(),
+    )));
+    let on_the_task = run_of_session("a-session");
+    let agent = std::os::unix::process::parent_id();
+    let view = |open: &OpenSessions| {
+        resources_of(&state, Path::new("/repo"), "task", &on_the_task, open).remove(0)
+    };
+
+    let open = view(&OpenSessions::said_open(&[(
+        AgentKind::Claude,
+        "a-session",
+        agent,
+    )]));
+    assert_eq!(open.going_elsewhere_in, Some(agent));
+    assert!(!open.resumable);
+
+    let another_session = view(&OpenSessions::said_open(&[(
+        AgentKind::Claude,
+        "another",
+        agent,
+    )]));
+    assert_eq!(another_session.going_elsewhere_in, None);
+    assert!(another_session.resumable);
+
+    let exited = view(&OpenSessions::said_open(&[(
+        AgentKind::Claude,
+        "a-session",
+        exited_process(),
+    )]));
+    assert_eq!(exited.going_elsewhere_in, None);
+    assert!(exited.resumable);
 }

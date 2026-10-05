@@ -14,6 +14,9 @@ use crate::api::AgentKind;
 #[derive(Default)]
 pub(crate) struct BoardState {
     pub(crate) tasks: Vec<crate::moontasks::TaskView>,
+    /// The board task: the task on no column, whose runs are listed over the columns - see
+    /// [`crate::native::board::board_task`]. It arrives with the tasks, so `None` until they have.
+    pub(crate) board_task: Option<crate::moontasks::BoardTaskView>,
     /// The board's columns, left to right, as the last read had them. Empty until the first
     /// answer arrives, which is what `loaded` says.
     pub(crate) columns: Vec<crate::moontasks::BoardColumn>,

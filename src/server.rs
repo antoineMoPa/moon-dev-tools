@@ -9,8 +9,8 @@ mod web_page;
 
 use board_routes::{
     amend_review_request, change_settings, list_review_requests, settings,
-    add_column, attach_task_resource, create_task, delete_column, delete_task,
-    delete_task_resource, explain_task_changes, link_task_file, list_agent_sessions, list_columns,
+    add_column, attach_task_resource, board_task, create_task, delete_column, delete_task,
+    delete_task_resource, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_work_log, place_column, place_tasks, project_commands,
     rename_column, rename_task, resume_task_resource, run_project_command, set_column_arrivals,
     set_column_marks_a_days_work, set_column_sort, set_project_config, set_task_tags, start_task_resource, stop_task_resource,
@@ -246,6 +246,7 @@ fn protected_routes() -> Router<Served> {
             "/api/session/{session_id}/columns",
             get(list_columns).post(add_column),
         )
+        .route("/api/session/{session_id}/board-task", get(board_task))
         .route("/api/settings", get(settings).post(change_settings))
         .route(
             "/api/session/{session_id}/review-requests",
@@ -294,10 +295,6 @@ fn protected_routes() -> Router<Served> {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/resources",
             post(start_task_resource),
-        )
-        .route(
-            "/api/session/{session_id}/tasks/{task_id}/explanation",
-            post(explain_task_changes),
         )
         .route(
             "/api/session/{session_id}/agent-sessions",

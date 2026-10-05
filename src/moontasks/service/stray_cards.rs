@@ -23,7 +23,7 @@ pub(super) fn gather_strays(
         .clone();
 
     let mut strays: Vec<usize> = (0..tasks.len())
-        .filter(|index| !board.has(&tasks[*index].1.status))
+        .filter(|index| !board.has(tasks[*index].1.column()))
         .collect();
     if strays.is_empty() {
         return Vec::new();
@@ -38,14 +38,14 @@ pub(super) fn gather_strays(
     let mut changed = Vec::new();
     // Making room keeps the order the column's own cards were in among themselves.
     for (id, metadata) in tasks.iter_mut() {
-        if metadata.status == first {
+        if *metadata.column() == first {
             metadata.position += strays.len() as u32;
             changed.push(id.clone());
         }
     }
     for (position, index) in strays.into_iter().enumerate() {
         let (id, metadata) = &mut tasks[index];
-        metadata.status = first.clone();
+        metadata.status = Some(first.clone());
         metadata.position = position as u32;
         changed.push(id.clone());
     }
@@ -60,7 +60,7 @@ mod tests {
     fn card(title: &str, status: &str, position: u32) -> (String, TaskMetadata) {
         let metadata = TaskMetadata {
             title: title.to_string(),
-            status: ColumnId::new(status),
+            status: Some(ColumnId::new(status)),
             created_at_unix: 0,
             entered_column_at_unix: None,
             position,
@@ -78,7 +78,7 @@ mod tests {
             (
                 "here".to_string(),
                 TaskMetadata {
-                    status: first.clone(),
+                    status: Some(first.clone()),
                     ..card("here", "", 3).1
                 },
             ),
@@ -88,7 +88,7 @@ mod tests {
         let moved = gather_strays(&board, &mut tasks);
 
         assert_eq!(moved, ["here", "stray"]);
-        assert_eq!(tasks[1].1.status, first);
+        assert_eq!(tasks[1].1.status, Some(first));
         assert_eq!(tasks[1].1.position, 0);
         assert_eq!(tasks[0].1.position, 4);
     }

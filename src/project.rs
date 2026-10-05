@@ -81,6 +81,68 @@ impl std::str::FromStr for ProjectCommand {
     }
 }
 
+/// A time of day to the minute, as the repo's file writes it: `"16:30"`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(crate) struct TimeOfDay {
+    hour: u8,
+    minute: u8,
+}
+
+impl TimeOfDay {
+    pub(crate) const HOURS: std::ops::RangeInclusive<u8> = 0..=23;
+    pub(crate) const MINUTES: std::ops::RangeInclusive<u8> = 0..=59;
+
+    pub(crate) const fn new(hour: u8, minute: u8) -> Self {
+        assert!(hour <= 23 && minute <= 59, "not a time of day");
+        Self { hour, minute }
+    }
+
+    pub(crate) fn hour(self) -> u8 {
+        self.hour
+    }
+
+    pub(crate) fn minute(self) -> u8 {
+        self.minute
+    }
+
+    /// How far into the day it is, which is what a clock is compared by.
+    pub(crate) fn minutes_into_day(self) -> u32 {
+        u32::from(self.hour) * 60 + u32::from(self.minute)
+    }
+}
+
+impl std::fmt::Display for TimeOfDay {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}:{:02}", self.hour, self.minute)
+    }
+}
+
+impl From<TimeOfDay> for String {
+    fn from(time: TimeOfDay) -> Self {
+        time.to_string()
+    }
+}
+
+impl TryFrom<String> for TimeOfDay {
+    type Error = anyhow::Error;
+
+    fn try_from(text: String) -> Result<Self> {
+        let parsed = text.split_once(':').and_then(|(hour, minute)| {
+            let (hour, minute) = (hour.parse::<u8>().ok()?, minute.parse::<u8>().ok()?);
+            (Self::HOURS.contains(&hour) && Self::MINUTES.contains(&minute))
+                .then_some(Self { hour, minute })
+        });
+        match parsed {
+            Some(time) => Ok(time),
+            None => bail!("{text} is not a time of day: write it as 16:30"),
+        }
+    }
+}
+
+/// When a day of work ends in a project that has not said: half past four.
+pub(crate) const DAY_ENDS_AT: TimeOfDay = TimeOfDay::new(16, 30);
+
 /// What the repo's file says about it.
 ///
 /// A command that is not set is one the Project menu does not offer: there is no sensible
@@ -98,6 +160,11 @@ pub(crate) struct ProjectConfig {
     /// through [`ProjectConfig::indent`].
     #[serde(default)]
     pub(crate) indent: Option<egui_moon_editor::Indent>,
+    /// When a day of work on this project ends, which is when the board stops counting any of
+    /// its queue as today's - see [`ProjectConfig::day_ends_at`]. A fact about the project
+    /// rather than the person: one worked on in the evenings ends later than the day job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) day_ends_at: Option<TimeOfDay>,
 }
 
 impl ProjectConfig {
@@ -135,6 +202,12 @@ impl ProjectConfig {
         self.indent.unwrap_or_default()
     }
 
+    /// When a day of work on this project ends, which is [`DAY_ENDS_AT`] until the file says
+    /// otherwise.
+    pub(crate) fn day_ends_at(&self) -> TimeOfDay {
+        self.day_ends_at.unwrap_or(DAY_ENDS_AT)
+    }
+
     /// What the configuration pane is holding, as a file to write. This is the one place a
     /// blank box becomes an unset command - so a file written by the native pane and one
     /// written through the web say the same thing about a command nobody filled in.
@@ -143,6 +216,15 @@ impl ProjectConfig {
             build: typed_command(build),
             run: typed_command(run),
             indent: Some(indent),
+            day_ends_at: None,
+        }
+    }
+
+    /// The same project, with its day of work ending at this time.
+    pub(crate) fn with_day_ending_at(self, day_ends_at: TimeOfDay) -> Self {
+        Self {
+            day_ends_at: Some(day_ends_at),
+            ..self
         }
     }
 }

@@ -252,13 +252,14 @@ pub(crate) struct Model {
 /// The commands are text rather than commands because a box someone has emptied is still a
 /// box: it becomes a command that is not set only when the pane saves - see
 /// [`ProjectConfig::typed`].
-#[derive(Default)]
 pub(crate) struct ProjectEditor {
     pub(crate) build: String,
     pub(crate) run: String,
     /// What a Tab press puts into this repo's files. Not a box, so a click on the row picks
     /// it outright and the pane saves the moment it is picked.
     pub(crate) indent: egui_moon_editor::Indent,
+    /// When a day of work on this project ends - see [`ProjectConfig::day_ends_at`].
+    pub(crate) day_ends_at: crate::project::TimeOfDay,
 }
 
 impl ProjectEditor {
@@ -278,6 +279,7 @@ impl ProjectEditor {
             build: config.build.clone().unwrap_or_default(),
             run: config.run.clone().unwrap_or_default(),
             indent: config.indent(),
+            day_ends_at: config.day_ends_at(),
         }
     }
 }

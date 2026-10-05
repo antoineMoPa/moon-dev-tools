@@ -125,7 +125,8 @@ pub(crate) fn list_for_repo(repo_path: &Path) -> Vec<ReviewRequestView> {
         // A task whose metadata cannot be read is somewhere unknown, which is not the finished
         // column - the same way an unreadable line reads as still wanting a look.
         let finished = finished_column.as_ref().is_some_and(|column| {
-            store::read_task(repo_path, &task_id).is_ok_and(|metadata| &metadata.status == column)
+            store::read_task(repo_path, &task_id)
+                .is_ok_and(|metadata| metadata.status.as_ref() == Some(column))
         });
         requests.extend(
             parse(&contents)

@@ -650,7 +650,7 @@ fn renaming_a_tasks_run_writes_the_name_on_the_task() {
     let fixture = crate::native::ui_tests::seeded_fixture("run-rename");
     let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
     let registry = Arc::clone(&state.terminals);
-    let backend = crate::backend::local::LocalBackend::new(state);
+    let backend = crate::backend::local::LocalBackend::new(state.clone());
     let opened = backend
         .open_session(crate::api::OpenSessionRequest {
             repo_path: fixture.root.display().to_string(),
@@ -658,6 +658,11 @@ fn renaming_a_tasks_run_writes_the_name_on_the_task() {
             active_commit: None,
         })
         .expect("expected the session to open");
+    // The repo as the session has it, which is what the board keeps a task's shells under.
+    let repo_path = crate::api::with_session(&state, &opened.session_id, |session| {
+        Ok(session.repo_path.clone())
+    })
+    .expect("expected the session's repo");
 
     let path = fake_claude("#!/bin/sh\nsleep 30\n");
     let terminal_id = registry
@@ -666,7 +671,7 @@ fn renaming_a_tasks_run_writes_the_name_on_the_task() {
             program: TerminalProgram::Agent(AgentKind::Claude),
             args: Vec::new(),
             env: vec![("PATH".to_string(), path.display().to_string())],
-            owner: Some(TASK.to_string()),
+            owner: Some(crate::moontasks::store::run_owner(&repo_path, TASK)),
             name: Some("claude - 1".to_string()),
             type_ahead: None,
         })

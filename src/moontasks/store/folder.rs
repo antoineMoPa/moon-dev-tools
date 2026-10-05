@@ -144,8 +144,10 @@ pub(crate) struct TaskResource {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TaskMetadata {
     pub(crate) title: String,
-    /// The column the card is in, by the id the board's file gives it.
-    pub(crate) status: ColumnId,
+    /// The column the card is in, by the id the board's file gives it. `None` for the one task
+    /// that is on no column: the board task - see [`create_board_task`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) status: Option<ColumnId>,
     pub(crate) created_at_unix: u64,
     /// When the card arrived in the column it is in: made there, or moved in from another.
     /// Shuffling a card about inside its column leaves it alone. For a card in DONE this is
@@ -171,6 +173,16 @@ pub(crate) struct TaskMetadata {
     pub(crate) tags: Vec<String>,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
+}
+
+impl TaskMetadata {
+    /// The column a card is in, for the code that has only cards in hand. The board task
+    /// is on none and is never listed among the cards, so it is never asked.
+    pub(crate) fn column(&self) -> &ColumnId {
+        self.status
+            .as_ref()
+            .unwrap_or_else(|| panic!("`{}` is on no column, so it is not a card", self.title))
+    }
 }
 
 /// The part of a task id that reads as its title: lower case words joined by dashes.
@@ -377,13 +389,66 @@ pub(crate) fn create_task(
         created_at_unix: now,
         entered_column_at_unix: Some(now),
         position,
-        status: status.clone(),
+        status: Some(status.clone()),
         tags: Vec::new(),
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
     ensure_notes_file(repo_path, &task_id)?;
     Ok(task_id)
+}
+
+/// The board task's id, which is its folder's name in `.moontasks`. A card's id ends in a
+/// uuid, so no card can have it.
+pub(crate) const BOARD_TASK_ID: &str = "board-task";
+
+/// What the board task is called: the title its runs are named after - `board claude - 1`.
+pub(crate) const BOARD_TASK_TITLE: &str = "board";
+
+/// Make the board task: `.moontasks/board-task`, with a record and notes like any task's.
+///
+/// The board task is the board's own task: on no column, so on no card, and listed above the
+/// columns instead. It is what an agent or a shell started from the board itself, rather than
+/// from one of its cards, is a run of - to work on the board, or on something no card is
+/// about. Being a task is what lets it be started, resumed, stopped and listed by everything
+/// that does those for a card: it has a folder, and in it a record of its runs.
+pub(crate) fn create_board_task(repo_path: &Path) -> Result<()> {
+    let metadata = TaskMetadata {
+        title: BOARD_TASK_TITLE.to_string(),
+        status: None,
+        created_at_unix: now_unix(),
+        entered_column_at_unix: None,
+        position: 0,
+        tags: Vec::new(),
+        resources: Vec::new(),
+    };
+    write_task(repo_path, BOARD_TASK_ID, &metadata)?;
+    ensure_notes_file(repo_path, BOARD_TASK_ID)
+}
+
+/// What the server's shells of a task are kept under: the task's folder. Not its id alone -
+/// a server holds the shells of every repo it has a window on, and every one of those boards
+/// has a task called [`BOARD_TASK_ID`].
+pub(crate) fn run_owner(repo_path: &Path, task_id: &str) -> String {
+    tasks_root(repo_path).join(task_id).display().to_string()
+}
+
+/// The task of this repo's board that a shell kept under `owner` belongs to. `None` for the
+/// shell of another repo's task, and for one that is no task's at all - a commit's.
+pub(crate) fn task_owning(repo_path: &Path, owner: &str) -> Option<String> {
+    let within = Path::new(owner).strip_prefix(tasks_root(repo_path)).ok()?;
+    let mut parts = within.components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(task_id)), None) => Some(task_id.to_str()?.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether a folder of this id holds a task's record, readable or not.
+pub(crate) fn has_task_record(repo_path: &Path, task_id: &str) -> Result<bool> {
+    Ok(task_dir(repo_path, task_id)?
+        .join(METADATA_FILE_NAME)
+        .is_file())
 }
 
 /// The whole of a task's notes file. A task without one has nothing written yet, which reads
@@ -457,7 +522,7 @@ fn position_under_the_column(repo_path: &Path, status: &ColumnId) -> u32 {
         .unwrap_or_default()
         .iter()
         .filter_map(|task_id| read_task(repo_path, task_id).ok())
-        .filter(|metadata| metadata.status == *status)
+        .filter(|metadata| metadata.status.as_ref() == Some(status))
         .map(|metadata| metadata.position + 1)
         .max()
         .unwrap_or_default()
@@ -473,7 +538,7 @@ fn make_room_at_the_top(repo_path: &Path, status: &ColumnId) -> Result<()> {
             // place in the column to give up.
             continue;
         };
-        if metadata.status != *status {
+        if metadata.status.as_ref() != Some(status) {
             continue;
         }
         metadata.position += 1;

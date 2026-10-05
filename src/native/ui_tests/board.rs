@@ -260,11 +260,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
     // of the repo, a shell in the task, and an agent - the ones this machine has.
     use egui_kittest::kittest::Queryable as _;
 
-    harness
-        .get_all_by_label("[start]")
-        .next()
-        .expect("expected the first card to offer [start]")
-        .click();
+    super::start_of_the_first_card(&harness).click();
     harness.run_steps(3);
     // The pointer moved down into the menu, which hangs below the card: the card holds its
     // offers out for as long as its menu is up, rather than fading away under the hand
@@ -550,7 +546,7 @@ fn several_marked_cards_are_handed_to_one_new_task() {
             }
             app.draw(ui);
             ready_in_ui.store(
-                app.model.board.loaded && app.model.board.tasks.len() == 7,
+                app.model.board.loaded && app.model.board.tasks.len() == 3,
                 Ordering::Relaxed,
             );
             let new_task = app
@@ -580,7 +576,7 @@ fn several_marked_cards_are_handed_to_one_new_task() {
     };
 
     step_until(&mut harness, &|| ready.load(Ordering::Relaxed));
-    assert!(ready.load(Ordering::Relaxed), "the board never read the seven tasks");
+    assert!(ready.load(Ordering::Relaxed), "the board never read the three tasks");
     harness.run_steps(3);
     assert!(
         harness.query_by_label("Work on these tasks").is_none(),

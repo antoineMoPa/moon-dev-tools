@@ -2,6 +2,7 @@
 //! which a change made only against the in-process backend would otherwise break unnoticed.
 
 mod auth;
+mod board_task;
 mod columns;
 mod users;
 

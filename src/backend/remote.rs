@@ -36,10 +36,10 @@ use crate::{
     },
     backend::{Backend, SearchListener},
     moontasks::{
-        AttachResourceRequest, BoardColumn, ColumnId, ColumnLabelRequest, ColumnPlacementRequest,
-        CreateTaskRequest, LinkFileRequest, NewColumnRequest, ReviewRequestView,
-        StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView, TerminalOpened,
-        WorkLogPayload, explainer::ExplainRequest, review_request::Amend,
+        AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, ColumnLabelRequest,
+        ColumnPlacementRequest, CreateTaskRequest, LinkFileRequest, NewColumnRequest,
+        ReviewRequestView, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
+        TerminalOpened, WorkLogPayload, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
     settings::{Settings, SettingsChange},
@@ -288,6 +288,10 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/session/{session_id}/tasks"))
     }
 
+    fn board_task(&self, session_id: &str) -> Result<BoardTaskView> {
+        self.get(&format!("/api/session/{session_id}/board-task"))
+    }
+
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView> {
         self.post_json(&format!("/api/session/{session_id}/tasks"), request)
     }
@@ -432,19 +436,6 @@ impl Backend for RemoteBackend {
     ) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
             &format!("/api/session/{session_id}/tasks/{task_id}/resources"),
-            &request,
-        )?;
-        Ok(opened.terminal_id)
-    }
-
-    fn explain_task_changes(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        request: ExplainRequest,
-    ) -> Result<String> {
-        let opened: TerminalOpened = self.post_json(
-            &format!("/api/session/{session_id}/tasks/{task_id}/explanation"),
             &request,
         )?;
         Ok(opened.terminal_id)

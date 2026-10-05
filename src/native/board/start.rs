@@ -1,6 +1,9 @@
 //! Everything one task can start, and the two ways it is offered: the `[start]` menu at the
 //! foot of a card, and a list of buttons on the task's own pane.
 //!
+//! The board task is a task too - the one on no column, see [`super::board_task`] - and its
+//! `[start]` over the columns is the same menu.
+//!
 //! Both draw the one list from [`offers`], so what a card can start and what its pane can
 //! start cannot drift apart. The card gets a menu because a card has one row to spare; the
 //! pane has a column to itself, so it lays every offer out where it can be pressed at once.
@@ -9,7 +12,7 @@ use egui::Ui;
 
 use crate::{
     api::AgentKind,
-    moontasks::{StartFolder, StartResourceRequest, TaskResourceKind, TaskView},
+    moontasks::{RunsOf, StartFolder, StartResourceRequest, TaskResourceKind},
     native::{
         app::App,
         board::{BoardAction, agent_label, available_agents, gesture::Controls},
@@ -29,13 +32,11 @@ struct StartOffer {
 
 /// What this task can start, in the order it is offered: a review of the repo, a shell in the
 /// task and a file of the repo linked to the card; then an agent, one per kind the review
-/// knows; then an explanation of the repo's changes, written by the agent the review's
-/// selector is set to; then a session one of those agents already has. The last three are not
-/// offered when there are no agents, since a session is an agent's and an explanation is
-/// written by one.
+/// knows; then a session one of those agents already has. The last two are not offered when
+/// there are no agents, since a session is an agent's.
 ///
 /// Answered in groups, which the menu separates with a rule and the list with a gap.
-fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
+fn offers(app: &App, task: RunsOf<'_>) -> Vec<Vec<StartOffer>> {
     let agents: Vec<AgentKind> = available_agents(app)
         .into_iter()
         .filter(|agent| *agent != AgentKind::None)
@@ -45,13 +46,13 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
         StartOffer {
             label: "review".to_string(),
             hover: Some("Open the review of this repo in a tab"),
-            action: BoardAction::OpenReview(task.repo_path.clone(), task.title.clone()),
+            action: BoardAction::OpenReview(task.repo_path.to_string(), task.title.to_string()),
         },
         StartOffer {
             label: "shell".to_string(),
             hover: Some("Open a shell in this task"),
             action: BoardAction::Start(
-                task.id.clone(),
+                task.id.to_string(),
                 StartResourceRequest {
                     kind: TaskResourceKind::Shell,
                     agent: AgentKind::None,
@@ -62,7 +63,7 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
         StartOffer {
             label: "file…".to_string(),
             hover: Some("Pick a file of the repo to put on this card, and open it"),
-            action: BoardAction::PickFile(task.id.clone()),
+            action: BoardAction::PickFile(task.id.to_string()),
         },
     ]];
 
@@ -76,7 +77,7 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
                 label: agent_label(agent),
                 hover: None,
                 action: BoardAction::Start(
-                    task.id.clone(),
+                    task.id.to_string(),
                     StartResourceRequest {
                         kind: TaskResourceKind::Agent,
                         agent,
@@ -86,23 +87,14 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
             })
             .collect(),
     );
-    groups.push(vec![StartOffer {
-        label: "explain".to_string(),
-        hover: Some(
-            "Have the agent picked in the review write a short PDF about everything \
-             uncommitted in the repo and its submodules, and open it - in a shell of \
-             this task, which is where to watch it",
-        ),
-        action: BoardAction::Explain(task.id.clone()),
-    }]);
     // The way back when a run's recorded session id stopped pointing anywhere: pick one
     // straight off the agents' own records instead.
     groups.push(vec![StartOffer {
         label: "attach a session…".to_string(),
         hover: Some("Pick a past session of one of the agents and put it on this task"),
         action: BoardAction::OpenAttachPicker {
-            task_id: task.id.clone(),
-            task_title: task.title.clone(),
+            task_id: task.id.to_string(),
+            task_title: task.title.to_string(),
         },
     }]);
     groups
@@ -117,7 +109,7 @@ fn offers(app: &App, task: &TaskView) -> Vec<Vec<StartOffer>> {
 pub(crate) fn draw_button(
     app: &App,
     ui: &mut Ui,
-    task: &TaskView,
+    task: RunsOf<'_>,
     card: &mut Controls,
     actions: &mut Vec<BoardAction>,
 ) -> bool {
@@ -151,7 +143,7 @@ pub(crate) fn draw_button(
 /// The same [`offers`] as a list of buttons, one to a line, for the task's pane: every one
 /// of them in sight, in the buttons an extension pane's action row is made of. A group after
 /// the first stands a gap below the last.
-pub(crate) fn draw_list(app: &App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
+pub(crate) fn draw_list(app: &App, ui: &mut Ui, task: RunsOf<'_>, actions: &mut Vec<BoardAction>) {
     ui.vertical(|ui| {
         for (index, group) in offers(app, task).into_iter().enumerate() {
             if index > 0 {

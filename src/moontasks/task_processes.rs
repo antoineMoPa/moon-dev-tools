@@ -147,6 +147,31 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
     )
 }
 
+/// What an agent started from the board itself is told - see `create_board_task` in the store.
+///
+/// It has no card to be about, so it is told where the board is and how it is laid out on
+/// disk instead: the board is what it is most likely to be asked to work on, and a board is
+/// changed by changing those files. The person who opened the shell says the rest.
+pub(crate) fn board_task_brief_for(board_dir: &str, home_dir: &str) -> String {
+    format!(
+        "You were started from moonreview's moontasks board itself, not from one of its cards: \
+         for work on the board, or for work no card is about.\n\
+         \n\
+         Board folder: {board_dir}\n\
+         board.json lists the columns, left to right. A card is a folder beside it: its \
+         metadata.json holds the title, the column it is in (`status`, a column's `id`) and \
+         its place there (`position`, lowest at the top), and its {NOTES_FILE_NAME} is the \
+         card's description. The board reads those files again every second or two.\n\
+         \n\
+         New card on this board: `{program} tasks new \"<title>\"`, which prints its folder.\n\
+         \n\
+         Your own folder, for whatever you want kept: {home_dir}\n\
+         \n\
+         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME} in it",
+        program = crate::cli::PROGRAM
+    )
+}
+
 /// The file the brief is also written to, so it can be read by a person or by an agent that
 /// had no way to be handed it.
 pub(crate) const BRIEF_FILE_NAME: &str = "brief.md";

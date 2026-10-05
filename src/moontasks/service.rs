@@ -14,7 +14,6 @@ pub(crate) use columns::{
     add_column, delete_column, list_columns, place_column, rename_column, set_column_arrivals,
     set_column_marks_a_days_work, set_column_sort,
 };
-pub(super) use resources::task_env;
 pub(crate) use resources::{
     attach_resource, delete_resource, record_run_name, resume_resource, start_resource,
     stop_resource,
@@ -25,10 +24,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::{
+    agent_sessions::OpenSessions,
     api::{AgentKind, AppState},
     moontasks::{
-        CreateTaskRequest, ReviewRequestView, TaskResourceView, TaskView, agent_launch,
-        column_sort,
+        BoardTaskView, CreateTaskRequest, ReviewRequestView, TaskResourceView, TaskView,
+        agent_launch, column_sort,
         review_request::{self, Amend},
         store::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
@@ -55,6 +55,10 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
             // rest of the board is still worth showing.
             continue;
         };
+        // The board task is on no column, so it is no card: it is read by [`board_task`].
+        if metadata.status.is_none() {
+            continue;
+        }
         if reconcile(state, &mut metadata) {
             store::write_task(&repo_path, &task_id, &metadata)?;
         }
@@ -74,12 +78,14 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
         }
     }
 
+    // Read once for the whole board rather than once a run.
+    let open = OpenSessions::read();
     let mut tasks: Vec<_> = read
         .iter()
         .map(|(task_id, metadata)| {
             (
                 place_of(metadata),
-                view_of(state, &repo_path, task_id, metadata),
+                view_of(state, &repo_path, task_id, metadata, &open),
             )
         })
         .collect();
@@ -124,10 +130,13 @@ pub(crate) fn place_tasks(
     let mut arriving = false;
     for task_id in task_ids {
         let mut metadata = store::read_task(&repo_path, task_id)?;
-        release_a_finished_task(state, &board, task_id, &mut metadata, &status);
-        if metadata.status != status {
+        if metadata.status.is_none() {
+            bail!("{task_id} is the board task, which is on no column");
+        }
+        release_a_finished_task(state, &repo_path, &board, task_id, &mut metadata, &status);
+        if *metadata.column() != status {
             arriving = true;
-            metadata.status = status.clone();
+            metadata.status = Some(status.clone());
             metadata.entered_column_at_unix = Some(store::now_unix());
         }
         moving.push((task_id.clone(), metadata));
@@ -142,7 +151,7 @@ pub(crate) fn place_tasks(
         .filter(|other| !task_ids.contains(other))
         .filter_map(|other| {
             let metadata = store::read_task(&repo_path, &other).ok()?;
-            (metadata.status == status).then_some((other, metadata))
+            (metadata.status.as_ref() == Some(&status)).then_some((other, metadata))
         })
         .collect();
     column.sort_by_key(|(_, metadata)| place_of(metadata));
@@ -188,10 +197,7 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
         if state.terminals.is_live(&terminal_id) {
             continue;
         }
-        let held_elsewhere = resource
-            .terminal_owner
-            .is_some_and(|owner| owner != std::process::id() && process_is_running(owner));
-        if held_elsewhere {
+        if moon_holding(resource).is_some() {
             continue;
         }
         resource.terminal_id = None;
@@ -199,6 +205,28 @@ fn reconcile(state: &AppState, metadata: &mut TaskMetadata) -> bool {
         changed = true;
     }
     changed
+}
+
+/// The other moon whose shell a run is going in, by its process: one that is still running,
+/// and is not this one.
+fn moon_holding(resource: &TaskResource) -> Option<u32> {
+    resource.terminal_id.as_ref()?;
+    resource
+        .terminal_owner
+        .filter(|owner| *owner != std::process::id() && process_is_running(*owner))
+}
+
+/// The process a run is going in when no shell of this moon has it - see
+/// [`TaskResourceView::going_elsewhere_in`]. Asked of a run this moon has no live shell for.
+///
+/// Another moon's shell is the record's own word. An agent's own process is the agent's
+/// word, for a session that was put on the task from outside a moon.
+pub(super) fn going_elsewhere_in(resource: &TaskResource, open: &OpenSessions) -> Option<u32> {
+    moon_holding(resource).or_else(|| {
+        let session_id = resource.agent_session_id.as_deref()?;
+        open.process_of(resource.agent, session_id)
+            .filter(|pid| process_is_running(*pid))
+    })
 }
 
 /// Whether a process of this id is running. `kill` with no signal only asks: it answers
@@ -212,7 +240,48 @@ fn process_is_running(pid: u32) -> bool {
     asked == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMetadata) -> TaskView {
+/// The board task with what it has running right now, made if this board has none yet -
+/// see [`store::create_board_task`].
+///
+/// One whose record cannot be read, or has been put in a column, is an error rather than a
+/// record written over: the runs written on it would be lost.
+pub(crate) fn board_task(state: &AppState, session_id: &str) -> Result<BoardTaskView> {
+    let repo_path = repo_of(state, session_id)?;
+    if !store::has_task_record(&repo_path, store::BOARD_TASK_ID)? {
+        store::create_board_task(&repo_path)?;
+    }
+    let mut metadata = store::read_task(&repo_path, store::BOARD_TASK_ID)?;
+    if let Some(column) = &metadata.status {
+        bail!(
+            "{} is the board task and says it is in the {column} column: it is on none",
+            store::BOARD_TASK_ID
+        );
+    }
+    if reconcile(state, &mut metadata) {
+        store::write_task(&repo_path, store::BOARD_TASK_ID, &metadata)?;
+    }
+    Ok(BoardTaskView {
+        resources: resources_of(
+            state,
+            &repo_path,
+            store::BOARD_TASK_ID,
+            &metadata,
+            &OpenSessions::read(),
+        ),
+        id: store::BOARD_TASK_ID.to_string(),
+        title: metadata.title,
+        repo_path: repo_path.display().to_string(),
+    })
+}
+
+/// What a task has on it: the runs and files its record lists, and the shells it has open.
+fn resources_of(
+    state: &AppState,
+    repo_path: &Path,
+    task_id: &str,
+    metadata: &TaskMetadata,
+    open: &OpenSessions,
+) -> Vec<TaskResourceView> {
     // Agent runs and linked files are the task's record and outlive the process; its shells
     // are only ever the ones open right now, so the two are listed from different places and
     // merged by age.
@@ -233,6 +302,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     label: resource.name.clone().unwrap_or_else(|| file_path.clone()),
                     file_path: Some(file_path),
                     running: false,
+                    going_elsewhere_in: None,
                     quiet_for_secs: None,
                     attention: None,
                     terminal_id: None,
@@ -240,45 +310,56 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                     started_at_unix: resource.started_at_unix,
                 }
             }
-            TaskResourceKind::Shell | TaskResourceKind::Agent => TaskResourceView {
-                id: resource.id.clone(),
-                kind: resource.kind,
-                agent: resource.agent,
-                // What the run's shell is called - `write the parser claude - 2`, or whatever
-                // it was renamed to - which the run keeps once the shell is gone. The name in
-                // full, so the row on the card reads as the tab the run is open in. The agent
-                // alone for a run written down before runs had names.
-                label: resource
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| resource.agent.label().to_lowercase()),
-                file_path: None,
-                running: resource
+            TaskResourceKind::Shell | TaskResourceKind::Agent => {
+                let running = resource
                     .terminal_id
                     .as_ref()
-                    .is_some_and(|terminal_id| state.terminals.is_live(terminal_id)),
-                // Only a run's: a plain shell sits at its prompt printing nothing, and that
-                // is not a shell to look at.
-                quiet_for_secs: resource
-                    .terminal_id
-                    .as_ref()
-                    .filter(|_| resource.kind == TaskResourceKind::Agent)
-                    .and_then(|terminal_id| state.terminals.quiet_for(terminal_id))
-                    .map(|quiet| quiet.as_secs()),
-                attention: resource
-                    .terminal_id
-                    .as_ref()
-                    .and_then(|terminal_id| state.terminals.attention(terminal_id)),
-                terminal_id: resource.terminal_id.clone(),
-                resumable: agent_launch(resource.agent).is_some(),
-                started_at_unix: resource.started_at_unix,
-            },
+                    .is_some_and(|terminal_id| state.terminals.is_live(terminal_id));
+                // Only asked of a run with no shell here: one that has is going here.
+                let going_elsewhere_in = match running {
+                    true => None,
+                    false => going_elsewhere_in(resource, open),
+                };
+                TaskResourceView {
+                    id: resource.id.clone(),
+                    kind: resource.kind,
+                    agent: resource.agent,
+                    // What the run's shell is called - `write the parser claude - 2`, or whatever
+                    // it was renamed to - which the run keeps once the shell is gone. The name in
+                    // full, so the row on the card reads as the tab the run is open in. The agent
+                    // alone for a run written down before runs had names.
+                    label: resource
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| resource.agent.label().to_lowercase()),
+                    file_path: None,
+                    running,
+                    going_elsewhere_in,
+                    // Only a run's: a plain shell sits at its prompt printing nothing, and that
+                    // is not a shell to look at.
+                    quiet_for_secs: resource
+                        .terminal_id
+                        .as_ref()
+                        .filter(|_| resource.kind == TaskResourceKind::Agent)
+                        .and_then(|terminal_id| state.terminals.quiet_for(terminal_id))
+                        .map(|quiet| quiet.as_secs()),
+                    attention: resource
+                        .terminal_id
+                        .as_ref()
+                        .and_then(|terminal_id| state.terminals.attention(terminal_id)),
+                    terminal_id: resource.terminal_id.clone(),
+                    // A run going somewhere else is not there to be started again.
+                    resumable: agent_launch(resource.agent).is_some()
+                        && going_elsewhere_in.is_none(),
+                    started_at_unix: resource.started_at_unix,
+                }
+            }
         })
         .collect();
     resources.extend(
         state
             .terminals
-            .owned_shells(task_id)
+            .owned_shells(&store::run_owner(repo_path, task_id))
             .into_iter()
             .map(|shell| TaskResourceView {
                 // A shell is its terminal, so that is the name the board takes it off the task by.
@@ -288,6 +369,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
                 label: shell.name.unwrap_or_else(|| "shell".to_string()),
                 file_path: None,
                 running: true,
+                going_elsewhere_in: None,
                 quiet_for_secs: None,
                 attention: state.terminals.attention(&shell.terminal_id),
                 terminal_id: Some(shell.terminal_id),
@@ -296,11 +378,20 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
             }),
     );
     resources.sort_by_key(|resource| resource.started_at_unix);
+    resources
+}
 
+fn view_of(
+    state: &AppState,
+    repo_path: &Path,
+    task_id: &str,
+    metadata: &TaskMetadata,
+    open: &OpenSessions,
+) -> TaskView {
     TaskView {
         id: task_id.to_string(),
         title: metadata.title.clone(),
-        status: metadata.status.clone(),
+        status: metadata.column().clone(),
         created_at_unix: metadata.created_at_unix,
         entered_column_at_unix: metadata.entered_column_at_unix,
         dir_path: store::tasks_root(repo_path)
@@ -311,7 +402,7 @@ fn view_of(state: &AppState, repo_path: &Path, task_id: &str, metadata: &TaskMet
         tags: metadata.tags.clone(),
         notes: store::read_notes(repo_path, task_id),
         attachments: store::read_attachments(repo_path, task_id),
-        resources,
+        resources: resources_of(state, repo_path, task_id, metadata, open),
     }
 }
 
@@ -403,13 +494,20 @@ pub(crate) fn create_task(
     let repo_path = repo_of(state, session_id)?;
     let task_id = store::create_task(&repo_path, &request.title, &request.status, request.joins)?;
     let metadata = store::read_task(&repo_path, &task_id)?;
-    Ok(view_of(state, &repo_path, &task_id, &metadata))
+    Ok(view_of(
+        state,
+        &repo_path,
+        &task_id,
+        &metadata,
+        &OpenSessions::read(),
+    ))
 }
 
 /// A finished task lets go of its shells. Until then they keep running with no tab open,
 /// which is what makes closing an agent's tab safe.
 fn release_a_finished_task(
     state: &AppState,
+    repo_path: &Path,
     board: &BoardConfig,
     task_id: &str,
     metadata: &mut TaskMetadata,
@@ -418,7 +516,9 @@ fn release_a_finished_task(
     if board.role(store::RELEASES_SHELLS_IN).as_ref() != Some(status) {
         return;
     }
-    state.terminals.remove_owned_by(task_id);
+    state
+        .terminals
+        .remove_owned_by(&store::run_owner(repo_path, task_id));
     for resource in &mut metadata.resources {
         resource.terminal_id = None;
         resource.terminal_owner = None;
@@ -447,7 +547,9 @@ pub(crate) fn amend_review_request(
 
 pub(crate) fn delete_task(state: &AppState, session_id: &str, task_id: &str) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
-    state.terminals.remove_owned_by(task_id);
+    state
+        .terminals
+        .remove_owned_by(&store::run_owner(&repo_path, task_id));
     store::delete_task(&repo_path, task_id)
 }
 

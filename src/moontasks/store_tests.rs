@@ -87,7 +87,7 @@ fn a_created_task_reads_back_and_lists() {
 
     let metadata = read_task(&repo, &task_id).expect("expected metadata");
     assert_eq!(metadata.title, "Fix the login page");
-    assert_eq!(metadata.status, ColumnId::new("todo"));
+    assert_eq!(metadata.status, Some(ColumnId::new("todo")));
     assert_eq!(list_task_ids(&repo).expect("expected a listing"), [task_id]);
 
     fs::remove_dir_all(repo).expect("failed to remove the test repo");
@@ -420,4 +420,66 @@ fn a_new_task_is_stamped_with_when_it_joined_its_column() {
         .expect("expected the arrival to be written down");
     assert!(stamped >= before && stamped <= now_unix(), "{stamped}");
     assert_eq!(stamped, metadata.created_at_unix);
+}
+
+/// The board task is a task like any other on disk - a folder, a record, notes - on no
+/// column, in a folder every board calls the same.
+#[test]
+fn the_board_task_is_a_task_on_no_column_in_a_folder_of_its_own() {
+    let repo = temp_repo("board-task");
+    let card = create_task(
+        &repo,
+        "Fix the login page",
+        &ColumnId::new("todo"),
+        ColumnEnd::Top,
+    )
+    .expect("expected a task");
+
+    create_board_task(&repo).expect("expected a board task");
+
+    let dir = tasks_root(&repo).join("board-task");
+    assert!(dir.join("metadata.json").is_file());
+    assert!(dir.join(crate::moontasks::NOTES_FILE_NAME).is_file());
+    let record = read_task(&repo, BOARD_TASK_ID).expect("expected the board task's record");
+    assert_eq!(record.title, BOARD_TASK_TITLE);
+    assert_eq!(record.status, None);
+    // Nothing about the board's file or its cards changed for it.
+    assert_eq!(read_board(&repo), BoardConfig::default());
+    assert_eq!(
+        read_task(&repo, &card).expect("expected the card").status,
+        Some(ColumnId::new("todo"))
+    );
+
+    fs::remove_dir_all(repo).expect("failed to remove the test repo");
+}
+
+/// A card put at the top of a column pushes the column's cards down, and the board task, which
+/// is in no column, is not one of them.
+#[test]
+fn a_new_card_makes_no_room_for_itself_in_the_board_task() {
+    let repo = temp_repo("board-task-places");
+    create_board_task(&repo).expect("expected a board task");
+
+    create_task(&repo, "one", &ColumnId::new("todo"), ColumnEnd::Top).expect("expected a task");
+    create_task(&repo, "two", &ColumnId::new("todo"), ColumnEnd::Top).expect("expected a task");
+
+    let record = read_task(&repo, BOARD_TASK_ID).expect("expected the board task's record");
+    assert_eq!(record.position, 0);
+    assert_eq!(record.status, None);
+
+    fs::remove_dir_all(repo).expect("failed to remove the test repo");
+}
+
+/// A server has the shells of every repo it has a window on, and every board has a board
+/// task: a shell is kept under its task's folder, which tells one repo's from another's.
+#[test]
+fn a_tasks_shells_are_kept_under_its_folder_and_found_by_its_own_repo_only() {
+    let here = Path::new("/repos/here");
+    let owner = run_owner(here, BOARD_TASK_ID);
+
+    assert_eq!(owner, "/repos/here/.moontasks/board-task");
+    assert_eq!(task_owning(here, &owner), Some(BOARD_TASK_ID.to_string()));
+    assert_eq!(task_owning(Path::new("/repos/there"), &owner), None);
+    assert_eq!(task_owning(here, "commit:a-session"), None);
+    assert_eq!(task_owning(here, "/repos/here/.moontasks"), None);
 }

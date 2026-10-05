@@ -195,15 +195,17 @@ impl App {
             move |backend| {
                 let columns = backend.list_columns(&session_id)?;
                 let tasks = backend.list_tasks(&session_id)?;
-                Ok((columns, tasks))
+                let board_task = backend.board_task(&session_id)?;
+                Ok((columns, tasks, board_task))
             },
             |model, result| {
                 model.board.loaded = true;
                 match result {
-                    Ok((columns, tasks)) => {
+                    Ok((columns, tasks, board_task)) => {
                         model.board.error = None;
                         board::columns::accept_columns(model, columns);
                         board::cards::accept_board(model, tasks);
+                        model.board.board_task = Some(board_task);
                     }
                     Err(error) => model.board.error = Some(format!("{error}")),
                 }
@@ -401,7 +403,8 @@ impl App {
             return;
         };
         self.model.project_unsaved = false;
-        let commands = ProjectConfig::typed(&editor.build, &editor.run, editor.indent);
+        let commands = ProjectConfig::typed(&editor.build, &editor.run, editor.indent)
+            .with_day_ending_at(editor.day_ends_at);
         let session_id = self.model.root_session_id.clone();
         let written = commands.clone();
         self.tasks.spawn_keyed(
@@ -830,7 +833,7 @@ impl App {
     }
 
     /// The OS folder picker, opened where the last project was found so the next one is
-    /// usually a sibling, or on the home directory. What it comes back with is what opens.
+    /// usually a sibling, or on the board task directory. What it comes back with is what opens.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn pick_repo_folder(&mut self, ctx: &egui::Context) -> Option<String> {
         let mut dialog = rfd::FileDialog::new().set_title("Choose a repo");

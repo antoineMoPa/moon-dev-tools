@@ -87,6 +87,9 @@ pub(crate) struct Palette {
     /// [`crate::native::board::days_work`]. A yellow let through at under half its strength:
     /// the line is an estimate standing among cards, and reads after every one of them.
     pub(crate) days_work: Color32,
+    /// The line over the cards of each day after today in the same queue: a blue at the same
+    /// strength, so a queue that starts at tomorrow does not read as one that starts at today.
+    pub(crate) days_work_ahead: Color32,
     /// The inks code is read in, wherever it is shown: the editor's page, and the lines of a
     /// diff. Not a surface, so a workspace color leaves it exactly where it is - see
     /// [`Palette::of_workspace`].
@@ -217,6 +220,7 @@ fn light() -> Palette {
         snoozed: rgb(0x2b5fad),
         unpushed: rgb(0xb08a0e),
         days_work: rgba(0xa67f00, 115),
+        days_work_ahead: rgba(0x1f6fd0, 115),
         syntax: SyntaxInks {
             keyword: rgb(0xa03a1f),
             kind: rgb(0x1f5f54),
@@ -283,6 +287,7 @@ fn dark() -> Palette {
         snoozed: rgb(0x88aef1),
         unpushed: rgb(0xf2cc4a),
         days_work: rgba(0xf5d33d, 105),
+        days_work_ahead: rgba(0x5aa9ff, 105),
         syntax: SyntaxInks {
             keyword: rgb(0xf2937a),
             kind: rgb(0x7ed0c2),

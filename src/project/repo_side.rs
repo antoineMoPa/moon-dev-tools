@@ -103,6 +103,42 @@ mod tests {
         assert_eq!(commands, ProjectConfig::default());
     }
 
+    /// When the day ends is written as a clock reads - `"21:05"` - and a project that has
+    /// not said ends its day at half past four.
+    #[test]
+    fn when_the_day_ends_is_written_as_a_time_and_read_back() {
+        use crate::project::{DAY_ENDS_AT, TimeOfDay};
+
+        let repo = scratch_repo("day-end");
+        assert_eq!(read_project(&repo).day_ends_at(), DAY_ENDS_AT);
+        assert_eq!(DAY_ENDS_AT.to_string(), "16:30");
+
+        let config = ProjectConfig::typed("cargo build", "", Indent::default())
+            .with_day_ending_at(TimeOfDay::new(21, 5));
+        write_project(&repo, &config).expect("failed to write the configuration");
+
+        let written = std::fs::read_to_string(repo.join(".moonreview.json"))
+            .expect("expected the project file");
+        assert!(written.contains(r#""day_ends_at": "21:05""#), "got {written}");
+        assert_eq!(read_project(&repo).day_ends_at(), TimeOfDay::new(21, 5));
+    }
+
+    #[test]
+    fn a_time_that_no_clock_reads_is_refused() {
+        use crate::project::TimeOfDay;
+
+        for text in ["24:00", "12:60", "noon", "12", "-1:00", ""] {
+            assert!(
+                TimeOfDay::try_from(text.to_string()).is_err(),
+                "{text:?} should not have been read as a time of day"
+            );
+        }
+        assert_eq!(
+            TimeOfDay::try_from("9:05".to_string()).expect("expected a time"),
+            TimeOfDay::new(9, 5)
+        );
+    }
+
     #[test]
     fn what_is_written_is_what_is_read_back() {
         let repo = scratch_repo("round-trip");

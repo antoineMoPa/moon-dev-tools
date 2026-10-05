@@ -448,7 +448,7 @@ fn a_linked_file_opens_from_its_card_and_start_links_another() {
 
     // `[start]` -> `file…` is the file finder, picking for this card: the pick is linked and
     // then opened.
-    harness.get_by_label("[start]").click();
+    super::start_of_the_first_card(&harness).click();
     harness.run_steps(3);
     harness.get_by_label("file…").click();
     harness.run_steps(3);

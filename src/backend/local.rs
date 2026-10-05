@@ -14,8 +14,8 @@ use crate::{
     },
     backend::Backend,
     moontasks::{
-        self, AttachResourceRequest, BoardColumn, ColumnId, CreateTaskRequest, ReviewRequestView,
-        StartResourceRequest, TaskView, explainer::ExplainRequest, review_request::Amend,
+        self, AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
+        ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
     search::SearchListener,
@@ -218,6 +218,10 @@ impl Backend for LocalBackend {
         moontasks::service::list_tasks(&self.state, session_id)
     }
 
+    fn board_task(&self, session_id: &str) -> Result<BoardTaskView> {
+        moontasks::service::board_task(&self.state, session_id)
+    }
+
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView> {
         moontasks::service::create_task(&self.state, session_id, request)
     }
@@ -329,15 +333,6 @@ impl Backend for LocalBackend {
         request: StartResourceRequest,
     ) -> Result<String> {
         moontasks::service::start_resource(&self.state, session_id, task_id, request)
-    }
-
-    fn explain_task_changes(
-        &self,
-        session_id: &str,
-        task_id: &str,
-        request: ExplainRequest,
-    ) -> Result<String> {
-        moontasks::explainer::start_explanation(&self.state, session_id, task_id, request)
     }
 
     fn resume_task_resource(

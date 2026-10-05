@@ -4,7 +4,7 @@ mod registry;
 mod routes;
 mod spawning;
 
-pub(crate) use naming::{name_for_new_shell, name_for_new_shell_called, rename};
+pub(crate) use naming::{name_for_new_shell, rename};
 pub(crate) use routes::{
     close_terminal, create_terminal, list_terminals, rename_terminal, run_in_shell,
     start_workspace_shell, start_workspace_shell_in_folder, start_workspace_shell_running,
@@ -146,8 +146,9 @@ pub(crate) struct TerminalSpec {
     pub(crate) program: TerminalProgram,
     pub(crate) args: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
-    /// The task this shell belongs to, if any. An owned shell is the task's to list and to
-    /// close, so it stays out of the workspace's own shells.
+    /// What this shell belongs to, if anything: a task, by the name its board gives its shells
+    /// - see `run_owner` in the board's store - or a commit. An owned shell is its owner's to
+    /// list and to close, so it stays out of the workspace's own shells.
     pub(crate) owner: Option<String>,
     /// What the shell is called - see [`TerminalSession::name`]. A shell being started is
     /// given its name by [`name_for_new_shell`], or the name its run already had when it is

@@ -34,13 +34,12 @@ pub(super) fn draw_column(
     // The dated lines a column of finished work draws between its days - see `day_lines`.
     let mut lines_between_days =
         day_lines::drawn_in(column).then(day_lines::DayLines::starting_now);
-    // How many cards down a queue's yellow line stands - see `days_work`.
-    let days_work = (column.marks_a_days_work == Some(true))
-        .then(|| days_work::cards_a_day_finishes(&app.model.board.tasks))
+    // The days a queue's lines split it into - see `days_work`.
+    let days = (column.marks_a_days_work == Some(true))
+        .then(|| {
+            days_work::Days::reckoned_now(&app.model.board.tasks, app.model.project.day_ends_at())
+        })
         .flatten();
-    // How many cards the column holds, which the filter may be showing fewer of and a drag may
-    // be holding more over.
-    let cards_held = cards::column_size(&app.model.board.tasks, &status).max(tasks.len());
 
     // A column stacks its cards, whatever layout the row of columns is in.
     ui.allocate_ui_with_layout(
@@ -129,8 +128,10 @@ pub(super) fn draw_column(
                             ui.add_space(CARD_SPACING);
                         }
                         for (cards_above, task) in tasks.iter().enumerate() {
-                            if days_work == Some(cards_above) {
-                                days_work::draw(ui, palette, cards_above, cards_above);
+                            if let Some(days) = days
+                                && let Some(day) = days.starting_at(cards_above)
+                            {
+                                days_work::draw(ui, palette, days, day);
                                 ui.add_space(CARD_SPACING);
                             }
                             if let Some(lines) = &mut lines_between_days
@@ -156,15 +157,6 @@ pub(super) fn draw_column(
                                 }
                                 None => cards.push(card.translate(vec2(0.0, -slot))),
                             }
-                            ui.add_space(CARD_SPACING);
-                        }
-                        // A queue of no more than a day's work has the line under its last
-                        // card, where it says how many more cards the day has room for.
-                        if let Some(cards_a_day) = days_work
-                            && !tasks.is_empty()
-                            && cards_held <= cards_a_day
-                        {
-                            days_work::draw(ui, palette, cards_a_day, cards_held);
                             ui.add_space(CARD_SPACING);
                         }
                         if pending == Some(ColumnEnd::Bottom) {

@@ -9,9 +9,13 @@
 // they hold.
 #[cfg(not(target_arch = "wasm32"))]
 mod on_disk;
+#[cfg(not(target_arch = "wasm32"))]
+mod open_now;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use on_disk::list_for_session;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use open_now::OpenSessions;
 
 use serde::{Deserialize, Serialize};
 

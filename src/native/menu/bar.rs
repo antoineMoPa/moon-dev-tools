@@ -299,6 +299,7 @@ mod tests {
             build: Some("cargo build".to_string()),
             run: None,
             indent: None,
+            day_ends_at: None,
         });
         harness.run();
 

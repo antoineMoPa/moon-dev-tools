@@ -9,6 +9,7 @@ on it in the repo.
 | --- | --- |
 | the box over the columns | filter the board: every column shows the cards whose title, tags or notes hold what you typed, and hides the rest |
 | `⌘F` on the board | put the keyboard in that box; Escape empties it |
+| `board … [start]` over the columns | start an agent or a shell that is the board's own rather than a card's - to work on the board itself, or on something no card is about. What it started is listed before it the way a card lists its runs: click one to bring its tab back, `stop` and `resume` an agent, the mark at the end closes it. Closing the tab leaves it running |
 | drag a card | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
 | `cmd+click` a card | mark it, or take the mark off - anywhere on the card, buttons and all |
 | `shift+click` a card | mark the run of cards between it and the last one clicked |
@@ -20,7 +21,7 @@ on it in the repo.
 | `+` on a column's heading | write a new task, for the top of that column; `[create]` on that pane makes the card |
 | `+` under a column's last card | the same, for the bottom of it |
 | `+` at the right-hand end | add a column |
-| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, `explain` for a PDF about what is changed, or `file…` to put a file of the repo on the card |
+| `[start]` at the foot of a card | everything a card starts, on the one menu: a review of the repo in a tab, a shell inside the task, an agent, or `file…` to put a file of the repo on the card |
 | `[tags]` beside it | the box the card's tags are edited in: a pill apiece with the mark that takes it off, a place to type the next one, and the rest of the board's tags under it to be pressed on. Backspace with nothing typed takes the last pill off. A tag is a pill at the foot of the card, in a color its own letters settle on, so `bug` is the same color on every card |
 | `right click` a card | the card's own menu: the task folder's path onto the clipboard, and a shell standing in that folder - which is where its notes and brief are, and where `[start]`'s shell is not, since that one comes up in the repo where the work is done |
 | a running resource | click its name to bring its terminal back on screen |
@@ -92,32 +93,6 @@ time - a card is a way back to a file, and one pointing at nothing is worse than
 mark at the end of the row takes the file off the card without asking, because nothing is lost
 by it: the file stays exactly where it is, and linking it again is one menu away.
 
-## A change, explained
-
-`explain` on the `[start]` menu is for the moment before a review: it has an agent write a short
-PDF about the task and what is changed for it, and open it. The agent is the one the review's
-selector is set to - the one you last picked to hand work to - so the menu does not ask again;
-with none picked it says so and starts nothing.
-
-The agent runs the way a review comment is handed to one: headless, with nobody to ask and a
-prompt that is the whole of the job - a few sentences, naming the repo and the task's folder,
-where the agent stands, and asking for a Typst file about the task and the diff, compiled and
-opened with `open`, in bullet points for a busy engineer, with code samples of the important
-changes. The repo is named because an agent told only where it stands runs `git diff` in the
-task folder. Nothing but the agent runs any
-of it, and the agent names the files. It runs on a fast model rather than the agent's default
-- Sonnet for Claude, GPT-5.6 Terra for Codex and OpenCode - because a page of bullets does not
-need the slow one. `typst` has to be installed, and a window on another machine gets the PDF
-on the server's screen, since that is where the agent runs.
-
-It runs in a shell of the task, the way a commit does, so it is a run on the card like any
-other: `write the parser explain - 1`, with the running dot, and clicking it brings up the
-shell the agent is printing into - which is where to watch it, and where what went wrong is
-read. The shell outlives the agent, with its output still on screen. `stop` ends it. `resume`
-opens the agent on the run it made, which is the way to tell it what the explanation got
-wrong. The prompt is `change_explanation.prompt.md` in the task's folder, to read or to run
-again by hand.
-
 ## The columns
 
 A board starts with TODO, IN PROGRESS and DONE, and they are yours from there: rename them,
@@ -175,17 +150,36 @@ The day is the one the card was moved in on, written on the card as `entered_col
 a card moved before the board kept that gets no line of its own. A DONE column you sort by
 title or by age keeps its cards but not the lines.
 
-TODO draws a yellow line, `about a day's work`, under as many of its cards as a day usually
-finishes: the median of how many cards arrived in DONE on each of the last fourteen days that
-finished any, today left out because it is not over. Those days have to hold ten cards
-between them, or there is no line. A TODO holding fewer has the line under
-its last card, saying `a day has room for 3 more`. `mark a day's work` on a heading's
-right-click menu turns it on or off for any column. A board made before the line existed is
-given it when it is next read: every column called TODO that was never told either way.
+TODO draws lines that split it into days: `today` over its first card, `tomorrow` over
+the first card today has no room for, then `in 2 days`, `in 3 days` and so on, a day's work
+apart. A day's work is the median of how many cards arrived in DONE on each of the last
+fourteen days that finished any, today left out because it is not over. Those days have to
+hold ten cards between them, or there are no lines. The days after tomorrow are counted
+rather than named, because a day here is a day that is worked.
+
+Today is not a whole day, and has room for less as it goes by: the share of a day's work that
+fits in the hours left, a day being eight hours long and ending at half past four - and never
+more than a day's work less what today has finished already. Once the day has ended there is
+no `today` line, and the column starts at `tomorrow`. When the day ends is the project's to
+say, under `the day ends at` in its settings: it is written to `.moonreview.json` as
+`"day_ends_at": "21:00"`, so a project worked on in the evenings ends later than the day job.
+
+Today's line is yellow and the line of every day after it is blue, so a column that starts at
+tomorrow does not read as one that starts at today. A TODO that does not fill a day says nothing about the room
+left in it. `mark a day's work` on a heading's right-click menu turns the lines on or off for
+any column. A board made before they existed is given them when it is
+next read: every column called TODO that was never told either way.
 
 Closing an agent's tab does not end it. A task's shells belong to the task and keep running
 with nothing attached until the card reaches DONE, so you can close a noisy agent and come
 back to it. `stop` ends one on purpose, and `resume` starts it again where it left off.
+
+A run can be going with no shell of this window behind it: another moon on the machine has its
+shell - the window beside a `moon serve` - or its agent was started in a terminal of yours and
+put itself on the task. Its row says it is going and offers neither `stop` nor `resume`, since
+it is opened and ended where it was started; resting the pointer on it names the process. An
+agent started outside a moon is known to be going by its own record of the sessions it has
+open, which Claude keeps and the others do not.
 
 The board is a folder in the repo, which is the whole of its state:
 
@@ -193,13 +187,14 @@ The board is a folder in the repo, which is the whole of its state:
 .moontasks/
   .gitignore          # ignores the whole board, written when the board is created
   board.json          # the columns, once you have changed them
+  board-task/         # the board's own task, on no column: what `board [start]` over the columns starts is a run of it
+    metadata.json     # its agent runs
   fix-the-login-page-6f9c1e2a-…/
     metadata.json     # title, column, place in the column, tags, the agent runs and the linked files
     brief.md          # what the agents working here have been told
     notes.md          # the task's description and shared notes, shown on the card
     request_review.md        # how to write the file below, for an agent about to
     request_for_review.txt   # the repos this work touched, in deploy order, once there are any
-    change_explanation.prompt.md  # what the last `explain` asked its agent for; its PDF is beside it
     …                 # anything you or an agent puts here
 ```
 

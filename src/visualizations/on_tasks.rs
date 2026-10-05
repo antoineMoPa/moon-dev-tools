@@ -44,11 +44,15 @@ fn keep_on_task(
     repo_path: &Path,
     view: VisualizationView,
 ) -> Result<VisualizationView> {
-    let Some(task_id) = state.terminals.owner(&view.terminal_id) else {
-        return Ok(view);
-    };
     // A server holds the shells of every repo it reviews; a task of another one is kept when
     // that repo's window asks.
+    let Some(task_id) = state
+        .terminals
+        .owner(&view.terminal_id)
+        .and_then(|owner| store::task_owning(repo_path, &owner))
+    else {
+        return Ok(view);
+    };
     if !store::task_dir(repo_path, &task_id)?.is_dir() {
         return Ok(view);
     }
