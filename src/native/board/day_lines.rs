@@ -6,7 +6,7 @@
 //! its cards in the order they were put: a column sorted by title has its days scattered, and
 //! a line at every change of day would be noise rather than a record.
 
-use egui::{FontId, Label, Rect, RichText, Sense, Stroke, Ui, vec2};
+use egui::{Color32, FontId, Label, Rect, Response, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
     moontasks::{BoardColumn, ColumnId, store},
@@ -107,7 +107,7 @@ impl LocalDay {
     /// Days from 1970-01-01, which is what makes "the day before" a subtraction. The civil
     /// calendar arithmetic is Howard Hinnant's, with March as the first month of the year so
     /// that the leap day falls at the end.
-    fn days_since_epoch(self) -> i64 {
+    pub(super) fn days_since_epoch(self) -> i64 {
         let year = i64::from(self.year) - i64::from(self.month <= 2);
         let era = year.div_euclid(400);
         let year_of_era = year - era * 400;
@@ -154,14 +154,20 @@ impl DayLines {
 
 /// The line itself: a rule across the column with the day in the middle of it.
 pub(super) fn draw(ui: &mut Ui, palette: &Palette, label: &str) {
+    draw_rule(ui, label, palette.line, palette.muted);
+}
+
+/// A rule across the column with a few words in the middle of it, which is every line a column
+/// draws between its cards. Answers with the words, for a line that has more to say on hover.
+pub(super) fn draw_rule(ui: &mut Ui, label: &str, rule: Color32, ink: Color32) -> Response {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_HEIGHT), Sense::hover());
     let font = FontId::proportional(SMALL_SIZE - 1.0);
     let text_size = ui
         .painter()
-        .layout_no_wrap(label.to_string(), font.clone(), palette.muted)
+        .layout_no_wrap(label.to_string(), font.clone(), ink)
         .size();
     let text_left = rect.center().x - text_size.x / 2.0;
-    let rule = Stroke::new(1.0, palette.line);
+    let rule = Stroke::new(1.0, rule);
     ui.painter().hline(
         rect.min.x + RULE_INSET..=text_left - TEXT_GAP,
         rect.center().y,
@@ -175,8 +181,8 @@ pub(super) fn draw(ui: &mut Ui, palette: &Palette, label: &str) {
     // A label rather than a painted galley, so the day reads out the way a card's title does.
     ui.put(
         Rect::from_center_size(rect.center(), text_size),
-        Label::new(RichText::new(label).font(font).color(palette.muted)).selectable(false),
-    );
+        Label::new(RichText::new(label).font(font).color(ink)).selectable(false),
+    )
 }
 
 #[cfg(test)]

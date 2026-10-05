@@ -5,15 +5,45 @@ use anyhow::{Result, bail};
 
 use crate::{
     api::AppState,
-    moontasks::store::{self, BoardColumn, ColumnEnd, ColumnId, ColumnSort},
+    moontasks::store::{self, BoardColumn, BoardConfig, ColumnEnd, ColumnId, ColumnSort},
 };
 
 use super::repo_of;
 
 /// The board's columns, left to right.
+///
+/// Reading them is also when a board written before the day's-work line existed is given it -
+/// see [`mark_a_days_work_where_never_said`] - the same way reading the cards is when they
+/// catch up with what is running.
 pub(crate) fn list_columns(state: &AppState, session_id: &str) -> Result<Vec<BoardColumn>> {
     let repo_path = repo_of(state, session_id)?;
-    Ok(store::read_board(&repo_path).columns)
+    let mut board = store::read_board(&repo_path);
+    if mark_a_days_work_where_never_said(&mut board) {
+        store::write_board(&repo_path, &board)?;
+    }
+    Ok(board.columns)
+}
+
+/// Turn the day's-work line on in every column called [`store::MARKS_A_DAYS_WORK_WHEN_NAMED`]
+/// that has never been told whether to draw it, and say whether any column changed - which is
+/// whether the board's file is to be written.
+///
+/// A column that was told is left as it was told, so the line taken off a TODO from its
+/// heading's menu stays off. A board that has never had its columns changed has no file and
+/// nothing to change: the TODO it starts with already draws the line.
+fn mark_a_days_work_where_never_said(board: &mut BoardConfig) -> bool {
+    let mut changed = false;
+    for column in &mut board.columns {
+        if column.marks_a_days_work.is_none()
+            && column
+                .label
+                .eq_ignore_ascii_case(store::MARKS_A_DAYS_WORK_WHEN_NAMED)
+        {
+            column.marks_a_days_work = Some(true);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Add a column, `at` columns from the left - or at the right-hand end when nothing says.
@@ -49,6 +79,7 @@ pub(crate) fn add_column(
         label: label.to_string(),
         arrivals: None,
         sort: None,
+        marks_a_days_work: None,
     };
     let at = at.unwrap_or(board.columns.len()).min(board.columns.len());
     board.columns.insert(at, column.clone());
@@ -103,6 +134,19 @@ pub(crate) fn set_column_sort(
     sort: Option<ColumnSort>,
 ) -> Result<()> {
     change_column(state, session_id, column_id, |column| column.sort = sort)
+}
+
+/// Whether a column draws a line under a day's work of its cards - see
+/// [`store::BoardColumn::marks_a_days_work`].
+pub(crate) fn set_column_marks_a_days_work(
+    state: &AppState,
+    session_id: &str,
+    column_id: &ColumnId,
+    marks_a_days_work: bool,
+) -> Result<()> {
+    change_column(state, session_id, column_id, |column| {
+        column.marks_a_days_work = Some(marks_a_days_work)
+    })
 }
 
 /// Change one of a column's settings in the board's file.

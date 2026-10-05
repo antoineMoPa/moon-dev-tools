@@ -238,6 +238,13 @@ pub(crate) trait Backend: Send + Sync + 'static {
         column_id: &ColumnId,
         sort: Option<crate::moontasks::ColumnSort>,
     ) -> Result<()>;
+    /// Whether a column draws a line under as many of its cards as a day usually finishes.
+    fn set_column_marks_a_days_work(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        marks_a_days_work: bool,
+    ) -> Result<()>;
     /// Take an empty column off the board. One still holding cards is refused rather than
     /// taking them with it.
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()>;

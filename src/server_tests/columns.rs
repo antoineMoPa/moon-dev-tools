@@ -510,3 +510,117 @@ fn the_columns_are_the_boards_to_change() {
         "the card should still be in the column that moved"
     );
 }
+
+/// A column can be told to mark a day's work, and told to stop. TODO does out of the box, since
+/// it is the queue a day is picked from; the setting is the column's own, so it moves to
+/// whichever column a board reads as its queue.
+#[test]
+fn a_column_can_say_it_marks_a_days_work() {
+    let served = serve("column-days-work");
+    let session_id = served.open_session();
+    let columns_url = format!("{}/api/session/{session_id}/columns", served.base_url);
+
+    let marking = || -> Vec<String> {
+        let columns: serde_json::Value = served
+            .client
+            .get(&columns_url)
+            .send()
+            .expect("failed to read the columns")
+            .json()
+            .expect("failed to decode the columns");
+        columns
+            .as_array()
+            .expect("expected an array of columns")
+            .iter()
+            .filter(|column| column["marks_a_days_work"] == true)
+            .map(|column| column["id"].as_str().expect("expected an id").to_string())
+            .collect()
+    };
+    let mark = |column_id: &str, marks_a_days_work: bool| {
+        served
+            .client
+            .post(format!("{columns_url}/{column_id}/days-work"))
+            .json(&serde_json::json!({ "marks_a_days_work": marks_a_days_work }))
+            .send()
+            .expect("failed to change the column")
+            .error_for_status()
+            .expect("the server refused to change the column");
+    };
+
+    assert_eq!(marking(), ["todo"]);
+
+    mark("todo", false);
+    assert!(marking().is_empty());
+
+    mark("in_progress", true);
+    assert_eq!(marking(), ["in_progress"]);
+}
+
+/// A board written before the day's-work line existed is given it the next time its columns
+/// are read: every column called TODO that has never been told either way, whatever its id,
+/// and written down so it is given once. One told to stop is left stopped.
+#[test]
+fn a_column_named_todo_is_given_the_days_work_line_when_the_board_is_read() {
+    let served = serve("column-days-work-backfill");
+    let session_id = served.open_session();
+    let columns_url = format!("{}/api/session/{session_id}/columns", served.base_url);
+    let board_file = served.root.join(".moontasks").join("board.json");
+    std::fs::create_dir_all(board_file.parent().expect("a folder"))
+        .expect("failed to make the board's folder");
+    std::fs::write(
+        &board_file,
+        r#"{
+  "columns": [
+    { "id": "big", "label": "TODO" },
+    { "id": "later", "label": "Todo" },
+    { "id": "stopped", "label": "TODO", "marks_a_days_work": false },
+    { "id": "in_progress", "label": "IN PROGRESS" },
+    { "id": "done", "label": "DONE", "arrivals": "top" }
+  ]
+}
+"#,
+    )
+    .expect("failed to write the board");
+
+    let marking = || -> Vec<String> {
+        let columns: serde_json::Value = served
+            .client
+            .get(&columns_url)
+            .send()
+            .expect("failed to read the columns")
+            .json()
+            .expect("failed to decode the columns");
+        columns
+            .as_array()
+            .expect("expected an array of columns")
+            .iter()
+            .filter(|column| column["marks_a_days_work"] == true)
+            .map(|column| column["id"].as_str().expect("expected an id").to_string())
+            .collect()
+    };
+    let written = || -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(&board_file).expect("expected a board"))
+            .expect("expected the board to be json")
+    };
+
+    assert_eq!(marking(), ["big", "later"]);
+    let board = written();
+    assert_eq!(board["columns"][0]["marks_a_days_work"], true);
+    assert_eq!(board["columns"][2]["marks_a_days_work"], false);
+    assert!(
+        board["columns"][3].get("marks_a_days_work").is_none(),
+        "a column called anything else has still never been told"
+    );
+
+    // Taken off by hand, it stays off however often the board is read.
+    served
+        .client
+        .post(format!("{columns_url}/big/days-work"))
+        .json(&serde_json::json!({ "marks_a_days_work": false }))
+        .send()
+        .expect("failed to change the column")
+        .error_for_status()
+        .expect("the server refused to change the column");
+    assert_eq!(marking(), ["later"]);
+    assert_eq!(marking(), ["later"]);
+}

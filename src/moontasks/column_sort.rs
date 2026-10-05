@@ -265,12 +265,14 @@ mod tests {
                 label: "TODO".to_string(),
                 arrivals: None,
                 sort: Some(ColumnSort::Alphabetical),
+                marks_a_days_work: None,
             },
             BoardColumn {
                 id: ColumnId::new("done"),
                 label: "DONE".to_string(),
                 arrivals: None,
                 sort: None,
+                marks_a_days_work: None,
             },
         ];
         let mut tasks = vec![

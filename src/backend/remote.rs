@@ -360,6 +360,18 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn set_column_marks_a_days_work(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        marks_a_days_work: bool,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/columns/{column_id}/days-work"),
+            &crate::moontasks::ColumnDaysWorkRequest { marks_a_days_work },
+        )
+    }
+
     fn list_review_requests(&self, session_id: &str) -> Result<Vec<ReviewRequestView>> {
         self.get(&format!("/api/session/{session_id}/review-requests"))
     }

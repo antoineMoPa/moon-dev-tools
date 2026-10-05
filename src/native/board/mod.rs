@@ -12,6 +12,7 @@ pub(crate) mod cards;
 pub(crate) mod column;
 pub(crate) mod columns;
 pub(crate) mod day_lines;
+pub(crate) mod days_work;
 pub(crate) mod filter;
 pub(crate) mod gesture;
 pub(crate) mod header;

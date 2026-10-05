@@ -266,6 +266,20 @@ impl Backend for LocalBackend {
         moontasks::service::set_column_sort(&self.state, session_id, column_id, sort)
     }
 
+    fn set_column_marks_a_days_work(
+        &self,
+        session_id: &str,
+        column_id: &ColumnId,
+        marks_a_days_work: bool,
+    ) -> Result<()> {
+        moontasks::service::set_column_marks_a_days_work(
+            &self.state,
+            session_id,
+            column_id,
+            marks_a_days_work,
+        )
+    }
+
     fn delete_column(&self, session_id: &str, column_id: &ColumnId) -> Result<()> {
         moontasks::service::delete_column(&self.state, session_id, column_id)
     }

@@ -175,6 +175,14 @@ The day is the one the card was moved in on, written on the card as `entered_col
 a card moved before the board kept that gets no line of its own. A DONE column you sort by
 title or by age keeps its cards but not the lines.
 
+TODO draws a yellow line, `about a day's work`, under as many of its cards as a day usually
+finishes: the median of how many cards arrived in DONE on each of the last fourteen days that
+finished any, today left out because it is not over. Those days have to hold ten cards
+between them, or there is no line. A TODO holding fewer has the line under
+its last card, saying `a day has room for 3 more`. `mark a day's work` on a heading's
+right-click menu turns it on or off for any column. A board made before the line existed is
+given it when it is next read: every column called TODO that was never told either way.
+
 Closing an agent's tab does not end it. A task's shells belong to the task and keep running
 with nothing attached until the card reaches DONE, so you can close a noisy agent and come
 back to it. `stop` ends one on purpose, and `resume` starts it again where it left off.

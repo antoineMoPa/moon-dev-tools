@@ -44,6 +44,8 @@ pub(crate) enum BoardAction {
     /// Which order a column keeps its cards in by itself, or `None` for the order they are
     /// dragged into.
     SetColumnSort(ColumnId, Option<crate::moontasks::ColumnSort>),
+    /// Whether a column draws a line under a day's work of its cards.
+    SetColumnMarksADaysWork(ColumnId, bool),
     CancelColumnRename,
     DeleteColumn(ColumnId),
     CloseColumnComposer,
@@ -541,6 +543,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         BoardAction::SetColumnSort(column_id, sort) => {
             act(app, "could not sort the column", move |backend| {
                 backend.set_column_sort(&session_id, &column_id, sort)
+            });
+        }
+        BoardAction::SetColumnMarksADaysWork(column_id, marks_a_days_work) => {
+            act(app, "could not change the column", move |backend| {
+                backend.set_column_marks_a_days_work(&session_id, &column_id, marks_a_days_work)
             });
         }
         BoardAction::CancelColumnRename => app.model.board.renaming_column = None,

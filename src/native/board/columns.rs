@@ -14,7 +14,7 @@ use crate::{
         board::{
             BoardAction,
             cards::DRAGGED_CARD_OPACITY,
-            close_button, close_mark,
+            close_button, close_mark, days_work,
             marks::plus_button,
             motion::{Axis, slide_into_place, stamp_place},
         },
@@ -317,6 +317,19 @@ fn draw_heading_menu(
                     actions.push(BoardAction::OpenColumnComposer { at: Some(place) });
                     ui.close();
                 }
+            }
+            ui.separator();
+
+            let marks_a_days_work = column.marks_a_days_work == Some(true);
+            if widgets::clickable(ui.selectable_label(marks_a_days_work, days_work::MENU_LABEL))
+                .on_hover_text(days_work::MENU_HOVER)
+                .clicked()
+            {
+                actions.push(BoardAction::SetColumnMarksADaysWork(
+                    column.id.clone(),
+                    !marks_a_days_work,
+                ));
+                ui.close();
             }
             ui.separator();
 

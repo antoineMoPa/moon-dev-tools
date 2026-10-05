@@ -184,6 +184,21 @@ pub(super) async fn set_column_sort(
     Ok("ok")
 }
 
+pub(super) async fn set_column_marks_a_days_work(
+    AxumPath((session_id, column_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::ColumnDaysWorkRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_column_marks_a_days_work(
+        &state,
+        &session_id,
+        &ColumnId::new(column_id),
+        request.marks_a_days_work,
+    )?;
+    Ok("ok")
+}
+
 pub(super) async fn delete_column(
     AxumPath((session_id, column_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,

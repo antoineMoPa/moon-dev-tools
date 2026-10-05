@@ -13,7 +13,7 @@ use board_routes::{
     delete_task_resource, explain_task_changes, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_work_log, place_column, place_tasks, project_commands,
     rename_column, rename_task, resume_task_resource, run_project_command, set_column_arrivals,
-    set_column_sort, set_project_config, set_task_tags, start_task_resource, stop_task_resource,
+    set_column_marks_a_days_work, set_column_sort, set_project_config, set_task_tags, start_task_resource, stop_task_resource,
 };
 use review_routes::{
     agent_dispatch_log_request, blame_session_file, cancel_comment_dispatch_request,
@@ -282,6 +282,10 @@ fn protected_routes() -> Router<Served> {
         .route(
             "/api/session/{session_id}/columns/{column_id}/sort",
             post(set_column_sort),
+        )
+        .route(
+            "/api/session/{session_id}/columns/{column_id}/days-work",
+            post(set_column_marks_a_days_work),
         )
         .route(
             "/api/session/{session_id}/columns/{column_id}/placement",

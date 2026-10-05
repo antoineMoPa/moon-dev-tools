@@ -12,7 +12,7 @@ mod tests;
 
 pub(crate) use columns::{
     add_column, delete_column, list_columns, place_column, rename_column, set_column_arrivals,
-    set_column_sort,
+    set_column_marks_a_days_work, set_column_sort,
 };
 pub(super) use resources::task_env;
 pub(crate) use resources::{

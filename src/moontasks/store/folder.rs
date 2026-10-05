@@ -17,14 +17,38 @@ pub(crate) const TASKS_DIR_NAME: &str = ".moontasks";
 /// never be read as a task id - see [`task_dir`].
 pub(crate) const DELETED_TASKS_DIR_NAME: &str = ".deleted";
 
-/// The columns a board starts with, left to right, and which end of each one a card moved in
-/// from another column goes to.
-pub(crate) const DEFAULT_COLUMNS: &[(&str, &str, Option<ColumnEnd>)] = &[
-    ("todo", "TODO", None),
-    ("in_progress", "IN PROGRESS", None),
+/// One of the columns a board starts with.
+pub(crate) struct DefaultColumn {
+    id: &'static str,
+    label: &'static str,
+    /// Which end a card moved in from another column goes to.
+    arrivals: Option<ColumnEnd>,
+    marks_a_days_work: Option<bool>,
+}
+
+/// The columns a board starts with, left to right.
+pub(crate) const DEFAULT_COLUMNS: &[DefaultColumn] = &[
+    // The queue the day is picked from, so it is the one that says how far a day reaches.
+    DefaultColumn {
+        id: "todo",
+        label: "TODO",
+        arrivals: None,
+        marks_a_days_work: Some(true),
+    },
+    DefaultColumn {
+        id: "in_progress",
+        label: "IN PROGRESS",
+        arrivals: None,
+        marks_a_days_work: None,
+    },
     // What was finished last is what one wants to see, so DONE reads newest first however far
     // down the column a card was dropped.
-    ("done", "DONE", Some(ColumnEnd::Top)),
+    DefaultColumn {
+        id: "done",
+        label: "DONE",
+        arrivals: Some(ColumnEnd::Top),
+        marks_a_days_work: None,
+    },
 ];
 
 /// The board's columns, left to right. This is the whole order: a card naming a column that is
@@ -39,11 +63,12 @@ impl Default for BoardConfig {
         Self {
             columns: DEFAULT_COLUMNS
                 .iter()
-                .map(|(id, label, arrivals)| BoardColumn {
-                    id: ColumnId::new(*id),
-                    label: (*label).to_string(),
-                    arrivals: *arrivals,
+                .map(|column| BoardColumn {
+                    id: ColumnId::new(column.id),
+                    label: column.label.to_string(),
+                    arrivals: column.arrivals,
                     sort: None,
+                    marks_a_days_work: column.marks_a_days_work,
                 })
                 .collect(),
         }

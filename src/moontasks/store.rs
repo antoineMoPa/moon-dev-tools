@@ -60,6 +60,16 @@ pub(crate) struct BoardColumn {
     /// puts every card back where it was put.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sort: Option<ColumnSort>,
+    /// Whether this column draws a line under as many of its cards as a day usually finishes -
+    /// see [`crate::native::board::days_work`]. For a column worked from the top down, which
+    /// is what TODO is.
+    ///
+    /// Absent on a column that has never been told either way, which is every column of a
+    /// board written before the line existed. That is told apart from `false` so that a column
+    /// named [`MARKS_A_DAYS_WORK_WHEN_NAMED`] can be given the line once, the next time the
+    /// board is read, without giving it back to one it was taken off by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) marks_a_days_work: Option<bool>,
 }
 
 /// An order a column keeps its cards in by itself.
@@ -122,6 +132,19 @@ pub(crate) const MENU_FINISHES_IN: &str = "done";
 /// changes, by the same reckoning: a column that is a record rather than a queue, where "when
 /// was this finished" is the question. See [`crate::native::board::day_lines`].
 pub(crate) const DATES_ARRIVALS_IN: &str = "done";
+
+/// The column whose arrivals are counted as work finished, by the same reckoning: how many
+/// cards a day usually ends with in here is how many a day's work is taken to be. See
+/// [`crate::native::board::days_work`].
+pub(crate) const COUNTS_A_DAYS_WORK_IN: &str = "done";
+
+/// What a column is called for it to be given the day's-work line without being asked - see
+/// [`BoardColumn::marks_a_days_work`]. By what it is called rather than by its id, unlike the
+/// rules above: a board whose queue was made by hand has it under an id of its own - `big` -
+/// and what says it is the queue is that it is called TODO. Read without regard to case.
+// The server's to keep, since it is the server that writes the board's file.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MARKS_A_DAYS_WORK_WHEN_NAMED: &str = "TODO";
 
 /// What a resource on a card is: a plain shell, an agent working on the task, or a file of
 /// the repo the task is about.

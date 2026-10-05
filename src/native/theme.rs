@@ -83,6 +83,10 @@ pub(crate) struct Palette {
     /// The border and note of a repo whose commits have not reached its remote yet, on the
     /// submodule hub.
     pub(crate) unpushed: Color32,
+    /// The line a column draws under a day's work of its cards, and what the line says - see
+    /// [`crate::native::board::days_work`]. A yellow let through at under half its strength:
+    /// the line is an estimate standing among cards, and reads after every one of them.
+    pub(crate) days_work: Color32,
     /// The inks code is read in, wherever it is shown: the editor's page, and the lines of a
     /// diff. Not a surface, so a workspace color leaves it exactly where it is - see
     /// [`Palette::of_workspace`].
@@ -212,6 +216,7 @@ fn light() -> Palette {
         partial: rgb(0x9a6c12),
         snoozed: rgb(0x2b5fad),
         unpushed: rgb(0xb08a0e),
+        days_work: rgba(0xa67f00, 115),
         syntax: SyntaxInks {
             keyword: rgb(0xa03a1f),
             kind: rgb(0x1f5f54),
@@ -277,6 +282,7 @@ fn dark() -> Palette {
         partial: rgb(0xe7bd58),
         snoozed: rgb(0x88aef1),
         unpushed: rgb(0xf2cc4a),
+        days_work: rgba(0xf5d33d, 105),
         syntax: SyntaxInks {
             keyword: rgb(0xf2937a),
             kind: rgb(0x7ed0c2),

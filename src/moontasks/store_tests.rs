@@ -348,12 +348,14 @@ fn the_columns_survive_a_round_trip_through_the_board_file() {
                 label: "BACKLOG".to_string(),
                 arrivals: None,
                 sort: Some(ColumnSort::Alphabetical),
+                marks_a_days_work: Some(true),
             },
             BoardColumn {
                 id: ColumnId::new("shipped"),
                 label: "SHIPPED".to_string(),
                 arrivals: Some(ColumnEnd::Top),
                 sort: None,
+                marks_a_days_work: None,
             },
         ],
     };

@@ -259,6 +259,12 @@ pub(crate) struct ColumnSortRequest {
     pub(crate) sort: Option<ColumnSort>,
 }
 
+/// Whether a column draws a line under a day's work of its cards.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ColumnDaysWorkRequest {
+    pub(crate) marks_a_days_work: bool,
+}
+
 /// Where a dragged column was let go of: how many of the other columns are to its left.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ColumnPlacementRequest {
