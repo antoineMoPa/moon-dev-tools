@@ -440,6 +440,10 @@ impl Backend for LocalBackend {
         self.state.terminals.tell(terminal_id, line)
     }
 
+    fn terminal_shown(&self, terminal_id: &str, wanted: crate::terminal::Shown) -> Result<String> {
+        self.state.terminals.shown(terminal_id, wanted)
+    }
+
     fn list_terminals(&self, _session_id: &str) -> Result<Vec<String>> {
         Ok(self.state.terminals.terminal_ids())
     }

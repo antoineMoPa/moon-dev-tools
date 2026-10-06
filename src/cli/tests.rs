@@ -708,3 +708,163 @@ fn the_wire_answers_help_with_its_own_rules() {
     assert!(help_text().contains("moon wire post <one line>"));
     assert!(help_text().contains("moon wire post \"rewriting src/cli\""));
 }
+
+/// `moon agent start|view|tell`: the task is the first word after the command, with or
+/// without the `@` the wire writes a handle with.
+#[test]
+fn what_is_asked_of_an_agent_is_read_with_the_task_in_front() {
+    use super::agent::AgentCommand;
+    use crate::{api::AgentKind, terminal::Shown};
+
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+    let task = "fix-the-races".to_string();
+
+    assert_eq!(
+        parse(&["agent", "list"]),
+        MoonCommand::Agent(AgentCommand::List)
+    );
+    assert_eq!(
+        parse(&["agent", "start", "fix-the-races", "claude"]),
+        MoonCommand::Agent(AgentCommand::Start {
+            task: task.clone(),
+            agent: AgentKind::Claude,
+        })
+    );
+    assert_eq!(
+        parse(&["agent", "start", "@fix-the-races", "opencode"]),
+        MoonCommand::Agent(AgentCommand::Start {
+            task: task.clone(),
+            agent: AgentKind::OpenCode,
+        })
+    );
+    assert_eq!(
+        parse(&["agent", "view", "fix-the-races"]),
+        MoonCommand::Agent(AgentCommand::View {
+            task: task.clone(),
+            wanted: Shown::Screen,
+        })
+    );
+    for lines in [
+        &["agent", "view", "fix-the-races", "--lines", "40"][..],
+        &["agent", "view", "fix-the-races", "--lines=40"],
+    ] {
+        assert_eq!(
+            parse(lines),
+            MoonCommand::Agent(AgentCommand::View {
+                task: task.clone(),
+                wanted: Shown::LastRows(40),
+            }),
+            "{lines:?}"
+        );
+    }
+    // The line is the rest, quoted or not.
+    for line in [
+        &["agent", "tell", "fix-the-races", "start with the tests"][..],
+        &[
+            "agent",
+            "tell",
+            "@fix-the-races",
+            "start",
+            "with",
+            "the tests",
+        ],
+    ] {
+        assert_eq!(
+            parse(line),
+            MoonCommand::Agent(AgentCommand::Tell {
+                task: task.clone(),
+                line: "start with the tests".to_string(),
+            }),
+            "{line:?}"
+        );
+    }
+}
+
+#[test]
+fn what_is_asked_of_an_agent_with_a_part_missing_is_refused() {
+    let refused = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect_err("expected it to be refused")
+            .to_string()
+    };
+
+    assert!(refused(&["agent", "list", "fix-the-races"]).contains("so it takes nothing"));
+    assert!(refused(&["agent", "start"]).contains("takes the task and the agent"));
+    assert!(refused(&["agent", "start", "fix-the-races"]).contains("takes the task and the agent"));
+    assert!(
+        refused(&["agent", "start", "fix-the-races", "gemini"])
+            .contains("gemini is no agent moon starts: it starts pi, claude, codex, opencode")
+    );
+    assert!(refused(&["agent", "view"]).contains("`moon agent view` takes the task"));
+    // The task comes first, so an option in its place is not one.
+    assert!(
+        refused(&["agent", "view", "--lines", "40"]).contains("`moon agent view` takes the task")
+    );
+    assert!(refused(&["agent", "view", "--lines"]).contains("names no task"));
+    assert!(
+        refused(&["agent", "view", "fix-the-races", "--tail", "40"])
+            .contains("`moon agent view` takes the task")
+    );
+    for not_a_count in ["0", "-3", "many"] {
+        assert!(
+            refused(&["agent", "view", "fix-the-races", "--lines", not_a_count])
+                .contains("is not a count"),
+            "{not_a_count}"
+        );
+    }
+    assert!(refused(&["agent", "tell"]).contains("takes the task and the line"));
+    assert!(refused(&["agent", "tell", "fix-the-races"]).contains("takes the task and the line"));
+    assert!(
+        refused(&["agent", "tell", "fix-the-races", " "]).contains("takes the task and the line")
+    );
+    assert!(refused(&["agent", "tell", "@", "hello"]).contains("names no task"));
+    assert!(
+        refused(&["agent", "stop", "fix-the-races"]).contains("`moon agent stop` is not a command")
+    );
+}
+
+/// The commands are written up in their own help, which is what every way of asking gets -
+/// and `moon --help` says they are there.
+#[test]
+fn the_agents_answer_help_with_their_own_commands() {
+    use super::agent::AgentCommand;
+
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+
+    for asked in [
+        &["agent"][..],
+        &["agent", "--help"],
+        &["agent", "-h"],
+        &["agent", "start", "--help"],
+        &["agent", "tell", "fix-the-races", "hello", "-h"],
+    ] {
+        assert_eq!(
+            parse(asked),
+            MoonCommand::Agent(AgentCommand::Help),
+            "{asked:?}"
+        );
+    }
+
+    let help = super::agent::help_text();
+    for said in [
+        "moon agent list",
+        "moon agent start <task> <pi|claude|codex|opencode>",
+        "moon agent view <task> [--lines <n>]",
+        "moon agent tell <task> <one line>",
+        "presses Enter",
+        "no running agent",
+        "nothing written in its box",
+    ] {
+        assert!(
+            help.contains(said),
+            "the agents' help should say {said:?}:\n{help}"
+        );
+    }
+    assert!(help_text().contains("moon agent <command>"));
+}

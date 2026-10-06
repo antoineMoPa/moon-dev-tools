@@ -70,7 +70,9 @@ pub(crate) fn start_resource(
     // name and rarely the whole of what is wanted - but the common case, where it is, is one
     // keystroke away. A task's plain shell gets nothing typed at it, and neither does an
     // agent of the board task: it has no card, so no title that could be what is wanted.
-    let type_ahead = (request.kind == TaskResourceKind::Agent && metadata.status.is_some())
+    let type_ahead = (request.kind == TaskResourceKind::Agent
+        && metadata.status.is_some()
+        && !request.unattended)
         .then(|| metadata.title.clone());
 
     let terminal_id = state.terminals.spawn(TerminalSpec {
@@ -82,6 +84,10 @@ pub(crate) fn start_resource(
         name: Some(name.clone()),
         type_ahead,
     })?;
+    // Before the shell's id is written down or answered with, so nothing is told to it first.
+    if request.unattended {
+        state.terminals.trust_its_folder(&terminal_id)?;
+    }
 
     // A shell is not written down: nothing survives its pty, so a record of one from a run of
     // moonreview that has ended is a card entry with nowhere to go. The registry lists the

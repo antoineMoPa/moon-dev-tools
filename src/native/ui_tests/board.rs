@@ -171,6 +171,7 @@ fn the_moontasks_board_draws_what_is_in_the_repo() {
                             kind: crate::moontasks::store::TaskResourceKind::Shell,
                             agent: crate::api::AgentKind::None,
                             opens_in: crate::moontasks::StartFolder::Repo,
+                            unattended: false,
                         },
                     ),
                 );

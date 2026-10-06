@@ -2,6 +2,10 @@
 //! socket a shell reaches it on, and the files, folders and lines that have come in over it
 //! waiting for the next frame to open them or type them.
 //!
+//! `moon agent start`, `tell` and `view` come in over it too and wait for no frame: each is
+//! answered with what came of it, by whoever the window [said](ShellAsks::agents_answered_by)
+//! answers about agents - see [`AgentAsks`].
+//!
 //! Only a real window listens. Every other caller of the app is a ui test, and a test must
 //! not put itself in the way of a `moon open` typed in the window the developer running it
 //! has open - see [`crate::native::app::App::listen_for_shell_asks`].
@@ -19,6 +23,27 @@ use std::{
 use anyhow::{Context, Result};
 
 use super::{Answer, Ask, Instance, remove_records, socket_path, write_record};
+use crate::{api::AgentKind, terminal::Shown};
+
+/// What a window does about the agents of its board for a shell that asked: `moon agent
+/// start`, `tell` and `view`.
+///
+/// These are answered on the thread the socket is read on, with what came of them, where a
+/// file to open is left for the window's next frame. Whoever asked is a command waiting to
+/// print the answer - the name of the run, the text of the screen - and a window nobody is
+/// looking at may draw no frame for a long while. Nothing here needs one: an agent is started
+/// by the window's moon and listed by the board as it reads the task again.
+pub(crate) trait AgentAsks: Send + Sync {
+    /// Start an agent on a task of the board in this repo, and say what its run is called.
+    fn start(&self, repo_path: &str, task_id: &str, agent: AgentKind) -> Result<String>;
+    /// Type a line into a shell and send it, once nothing there is in the way.
+    fn tell(&self, terminal_id: &str, line: &str) -> Result<()>;
+    /// What a shell is showing, one line per row.
+    fn shown(&self, terminal_id: &str, wanted: Shown) -> Result<String>;
+}
+
+/// Who answers about agents, once the window has said - see [`ShellAsks::agents_answered_by`].
+type AnswersAboutAgents = Arc<Mutex<Option<Arc<dyn AgentAsks>>>>;
 
 /// A file a shell asked this window to open.
 pub(crate) struct OpenFileAsked {
@@ -64,6 +89,9 @@ pub(crate) struct ShellAsks {
     /// as the ask arrives, so a shell asking straight after is told the file is still open
     /// even though no frame has opened its tab yet.
     waited_on: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Who answers `moon agent start`, `tell` and `view`. Nobody until the window says, which
+    /// is what a window in a test never does.
+    agents: AnswersAboutAgents,
     /// What this window is called on the command line, which is what `moon list` prints
     /// beside the project.
     program: String,
@@ -97,6 +125,7 @@ impl ShellAsks {
             arrived_shells: Arc::new(Mutex::new(Vec::new())),
             arrived_wired: Arc::new(Mutex::new(Vec::new())),
             waited_on: Arc::new(Mutex::new(HashSet::new())),
+            agents: Arc::new(Mutex::new(None)),
             program,
             focused_at_unix: Arc::new(Mutex::new(0)),
         };
@@ -107,6 +136,7 @@ impl ShellAsks {
             wired: asks.arrived_wired.clone(),
             waited_on: asks.waited_on.clone(),
         };
+        let agents = asks.agents.clone();
         thread::Builder::new()
             .name("moon-shell-asks".to_string())
             .spawn(move || {
@@ -114,7 +144,9 @@ impl ShellAsks {
                     // One ask per connection, and each is answered before the next is read:
                     // a shell waits for its answer, so nothing is gained by doing several at
                     // once, and the window is only ever asked as fast as somebody types.
-                    if let Err(error) = answer(stream, reads_this_machine, &project, &arrived) {
+                    if let Err(error) =
+                        answer(stream, reads_this_machine, &project, &arrived, &agents)
+                    {
                         eprintln!("[moonreview] could not answer a `moon` ask: {error}");
                         continue;
                     }
@@ -126,6 +158,12 @@ impl ShellAsks {
             .context("failed to start the thread answering shells")?;
 
         Ok(asks)
+    }
+
+    /// Say who answers `moon agent start`, `tell` and `view` asked of this window. Until it
+    /// is said they are refused.
+    pub(crate) fn agents_answered_by(&self, agents: Arc<dyn AgentAsks>) {
+        *self.agents.lock().expect("the agents lock") = Some(agents);
     }
 
     /// Say which project this window is on, so a shell asking about a file of it finds this
@@ -220,11 +258,17 @@ impl Drop for ShellAsks {
 /// on another machine, whose shells are that machine's, and when it is not the one line of
 /// text a shell can be told - what arrives here is checked rather than trusted, since the
 /// window answers for it before it is typed.
+///
+/// What is asked about an agent is answered here and now - see [`AgentAsks`] - and a failure
+/// is the window's refusal, in the words of whatever failed. An agent is started only by a
+/// window open on the board's own repo: the run is listed on the board in that window, and
+/// its shell is one only that window can open.
 fn answer(
     stream: UnixStream,
     reads_this_machine: bool,
     project: &Arc<Mutex<Option<String>>>,
     arrived: &Arrived,
+    agents: &AnswersAboutAgents,
 ) -> Result<()> {
     let mut asked = String::new();
     BufReader::new(&stream)
@@ -287,6 +331,28 @@ fn answer(
                 Answer::Wired
             }
         },
+        Ask::StartAgent {
+            repo_path,
+            task_id,
+            agent,
+        } => match start_refusal(reads_this_machine, project, &repo_path) {
+            Some(refused) => refused,
+            None => answer_about_agents(agents, |agents| {
+                let run = agents.start(&repo_path, &task_id, agent)?;
+                Ok(Answer::Started { run })
+            }),
+        },
+        Ask::Tell { terminal_id, line } => answer_about_agents(agents, |agents| {
+            agents.tell(&terminal_id, &line)?;
+            Ok(Answer::Told)
+        }),
+        Ask::Shown {
+            terminal_id,
+            wanted,
+        } => answer_about_agents(agents, |agents| {
+            let text = agents.shown(&terminal_id, wanted)?;
+            Ok(Answer::Shown { text })
+        }),
         Ask::StillOpen { path } => {
             if arrived
                 .waited_on
@@ -317,6 +383,38 @@ fn refusal(reads_this_machine: bool, project: &Arc<Mutex<Option<String>>>) -> Op
             reason: "this window has no project open yet".to_string(),
         }),
     }
+}
+
+/// Why this window will not start an agent on a task of the board in `repo_path`, or `None`
+/// when it will: it is open on that repo, on this machine.
+fn start_refusal(
+    reads_this_machine: bool,
+    project: &Arc<Mutex<Option<String>>>,
+    repo_path: &str,
+) -> Option<Answer> {
+    if let Some(refused) = refusal(reads_this_machine, project) {
+        return Some(refused);
+    }
+    let project = project.lock().expect("the project lock").clone()?;
+    (project != repo_path).then(|| Answer::Refused {
+        reason: format!("this window is open on {project}, not on {repo_path}"),
+    })
+}
+
+/// Answer something asked about an agent with what came of it, and with a refusal that says
+/// what went wrong when it failed - or that nobody here answers about agents.
+fn answer_about_agents(
+    agents: &AnswersAboutAgents,
+    ask: impl FnOnce(&dyn AgentAsks) -> Result<Answer>,
+) -> Answer {
+    let Some(agents) = agents.lock().expect("the agents lock").clone() else {
+        return Answer::Refused {
+            reason: "this window answers nothing about agents".to_string(),
+        };
+    };
+    ask(agents.as_ref()).unwrap_or_else(|error| Answer::Refused {
+        reason: format!("{error:#}"),
+    })
 }
 
 /// Why this window will not type a line of the wire into a shell, or `None` when it will.

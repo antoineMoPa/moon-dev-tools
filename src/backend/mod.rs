@@ -302,6 +302,11 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// of; a backend whose shells are on another machine is never asked, and refuses.
     #[cfg(not(target_arch = "wasm32"))]
     fn tell_terminal(&self, terminal_id: &str, line: &str) -> Result<()>;
+    /// What one of this moon's shells is showing, read as text - see `shown` in
+    /// [`crate::terminal`]. Asked over the window's own socket, as [`Backend::tell_terminal`]
+    /// is, and refused the same way by a backend whose shells are on another machine.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn terminal_shown(&self, terminal_id: &str, wanted: crate::terminal::Shown) -> Result<String>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     /// The shells with something running in them right now, as opposed to the ones sitting at
     /// a prompt. This is what quitting would interrupt, and so what the window warns about.

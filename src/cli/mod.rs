@@ -4,6 +4,8 @@
 //! `crate::web` - rather than by a command.
 
 #[cfg(not(target_arch = "wasm32"))]
+mod agent;
+#[cfg(not(target_arch = "wasm32"))]
 mod args;
 #[cfg(not(target_arch = "wasm32"))]
 mod command;

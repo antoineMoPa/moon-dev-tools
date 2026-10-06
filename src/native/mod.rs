@@ -35,6 +35,9 @@ pub(crate) mod lsp_document;
 pub(crate) mod menu;
 pub(crate) mod messages;
 pub(crate) mod model;
+// `moon agent` reaches a window through a socket on this machine, which a browser has none of.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod agent_asks;
 // `moon open` reaches a window through a socket on this machine, which a browser has none of.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod open_from_shell;

@@ -580,6 +580,16 @@ impl Backend for RemoteBackend {
         )
     }
 
+    /// The far server's too, and read the same way a line is typed: by the window whose own
+    /// moon holds the shell.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn terminal_shown(&self, terminal_id: &str, _wanted: crate::terminal::Shown) -> Result<String> {
+        anyhow::bail!(
+            "{terminal_id} is a shell of {}, which this window cannot read the screen of",
+            self.base_url
+        )
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
         let opened: TerminalOpened = self.post_json(

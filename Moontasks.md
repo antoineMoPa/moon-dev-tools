@@ -226,6 +226,21 @@ moon wire post "@fix-the-races are you still in src/cli?"   # to one, typed into
 The first kind is kept in `.moontasks/messageboard.txt`, which `Tools › Wire` opens read-only;
 the second is in the window's Messages. The rules are in `moon wire --help`.
 
+## Agents from the command line
+
+The board's agents can be listed, and a task's agent started, read and told something,
+without the window, from the repo:
+
+```bash
+moon agent list                                       # every agent running on this board
+moon agent start fix-the-races claude                 # in the window open on this repo
+moon agent tell fix-the-races "start with the tests"  # typed into its box, and Enter
+moon agent view fix-the-races                         # its screen
+moon agent view fix-the-races --lines 80              # the last 80 rows it printed
+```
+
+The task is named by its handle, as on the wire. The rest is in `moon agent --help`.
+
 ## What the agents are told
 
 An agent started on a task does not have to be asked twice. It is given a brief — the same

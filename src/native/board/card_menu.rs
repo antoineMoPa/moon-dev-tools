@@ -102,6 +102,7 @@ fn items(ui: &mut egui::Ui, task_id: &str, dir_path: &str, actions: &mut Vec<Boa
                 kind: TaskResourceKind::Shell,
                 agent: AgentKind::None,
                 opens_in: StartFolder::TaskFolder,
+                unattended: false,
             },
         ));
         ui.close();

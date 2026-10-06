@@ -2,8 +2,10 @@ mod answered_queries;
 mod naming;
 mod registry;
 mod routes;
+mod shown;
 mod spawning;
 mod told;
+mod trust;
 
 pub(crate) use naming::{name_for_new_shell, rename};
 pub(crate) use routes::{
@@ -11,6 +13,7 @@ pub(crate) use routes::{
     start_workspace_shell, start_workspace_shell_in_folder, start_workspace_shell_running,
     terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
 };
+pub(crate) use shown::Shown;
 
 use std::{
     collections::HashMap,
@@ -209,6 +212,9 @@ pub(crate) struct TerminalSession {
     /// two shells opened together tie, so the order is what actually sorts them.
     started_at_unix: u64,
     order: u64,
+    /// When it was started, on the clock waits are measured on: how long an agent has had to
+    /// draw its interface - see [`TerminalSession::is_still_coming_up`].
+    started: Instant,
     /// What the shell is called on its tab and on the board, if it has been named. A shell is
     /// named as it starts - `write the parser claude - 1`, `shell - 2` - so the task it
     /// belongs to and two runs of the same agent can be told apart. It can be renamed from
@@ -239,6 +245,10 @@ pub(crate) struct TerminalSession {
     last_typed_into: Mutex<Option<Instant>>,
     /// The lines this shell has been told and not yet had typed into it - see [`told`].
     told: Mutex<told::Told>,
+    /// Whether this shell's screen is still to be looked at for the question its agent asks
+    /// of a folder it has not been run in - see [`trust`]. A line it is told waits until it
+    /// has been, since the Enter after the line would be the answer.
+    trust_unanswered: std::sync::atomic::AtomicBool,
     /// The ask for a person the shell last made and nobody has answered - see
     /// [`crate::attention`]. Typing into the shell is the answer, and takes it off.
     attention: Mutex<Option<Attention>>,

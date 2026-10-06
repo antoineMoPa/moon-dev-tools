@@ -2840,6 +2840,7 @@ dependencies = [
  "image",
  "js-sys",
  "libc",
+ "libghostty-vt",
  "moon_launcher",
  "moon_lsp",
  "muda",

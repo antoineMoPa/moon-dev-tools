@@ -57,6 +57,7 @@ fn offers(app: &App, task: RunsOf<'_>) -> Vec<Vec<StartOffer>> {
                     kind: TaskResourceKind::Shell,
                     agent: AgentKind::None,
                     opens_in: StartFolder::Repo,
+                    unattended: false,
                 },
             ),
         },
@@ -82,6 +83,7 @@ fn offers(app: &App, task: RunsOf<'_>) -> Vec<Vec<StartOffer>> {
                         kind: TaskResourceKind::Agent,
                         agent,
                         opens_in: StartFolder::Repo,
+                        unattended: false,
                     },
                 ),
             })

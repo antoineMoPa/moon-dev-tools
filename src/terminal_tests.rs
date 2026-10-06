@@ -919,6 +919,7 @@ fn opencode_is_started_with_a_config_naming_this_task_s_brief() {
                 kind: TaskResourceKind::Agent,
                 agent: crate::api::AgentKind::OpenCode,
                 opens_in: StartFolder::Repo,
+                unattended: false,
             },
         )
         .expect("expected OpenCode to start");

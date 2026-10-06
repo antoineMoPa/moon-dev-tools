@@ -512,3 +512,165 @@ fn temporary_project(name: &str) -> PathBuf {
         .canonicalize()
         .expect("expected the project to resolve")
 }
+
+/// A window's answers about agents that does what it is asked, and fails a start of Codex
+/// the way a machine without one would.
+struct AnswersAboutAgents;
+
+impl super::window::AgentAsks for AnswersAboutAgents {
+    fn start(
+        &self,
+        _repo_path: &str,
+        task_id: &str,
+        agent: crate::api::AgentKind,
+    ) -> anyhow::Result<String> {
+        if agent == crate::api::AgentKind::Codex {
+            anyhow::bail!("Codex is not installed here");
+        }
+        Ok(format!("{task_id} claude - 1"))
+    }
+
+    fn tell(&self, terminal_id: &str, _line: &str) -> anyhow::Result<()> {
+        if terminal_id == "terminal-nobody" {
+            anyhow::bail!("unknown terminal {terminal_id}");
+        }
+        Ok(())
+    }
+
+    fn shown(&self, terminal_id: &str, _wanted: crate::terminal::Shown) -> anyhow::Result<String> {
+        Ok(format!("the screen of {terminal_id}\n"))
+    }
+}
+
+fn start_ask(repo_path: &Path, agent: crate::api::AgentKind) -> Ask {
+    Ask::StartAgent {
+        repo_path: repo_path.display().to_string(),
+        task_id: "fix-the-races".to_string(),
+        agent,
+    }
+}
+
+/// `moon agent start`, `tell` and `view`: each is answered with what came of it, there and
+/// then, and leaves nothing waiting for the window's next frame.
+#[test]
+fn what_is_asked_about_an_agent_is_answered_with_what_came_of_it() {
+    let project = temporary_project("agents");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    asks.agents_answered_by(std::sync::Arc::new(AnswersAboutAgents));
+    let window = window_of(std::process::id()).expect("expected the window to be written down");
+
+    assert_eq!(
+        super::start_agent(&window, "fix-the-races", crate::api::AgentKind::Claude)
+            .expect("expected a start"),
+        "fix-the-races claude - 1"
+    );
+    super::tell(&window, "terminal-a", "hello").expect("expected the line to be taken");
+    assert_eq!(
+        super::shown(&window, "terminal-a", crate::terminal::Shown::Screen)
+            .expect("expected the screen"),
+        "the screen of terminal-a\n"
+    );
+
+    assert!(asks.drain().is_empty());
+    assert!(asks.drain_shells().is_empty());
+    assert!(asks.drain_wired().is_empty());
+}
+
+/// What the window could not do is its refusal, in the words of whatever failed - which is
+/// what the command that asked prints.
+#[test]
+fn what_a_window_could_not_do_about_an_agent_is_refused_with_the_reason() {
+    let project = temporary_project("agents-failing");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    asks.agents_answered_by(std::sync::Arc::new(AnswersAboutAgents));
+    let window = window_of(std::process::id()).expect("expected the window to be written down");
+
+    let error = super::start_agent(&window, "fix-the-races", crate::api::AgentKind::Codex)
+        .expect_err("expected a refusal");
+    assert!(
+        error
+            .to_string()
+            .contains("refused: Codex is not installed here"),
+        "{error}"
+    );
+    let error = super::tell(&window, "terminal-nobody", "hello").expect_err("expected a refusal");
+    assert!(
+        error
+            .to_string()
+            .contains("refused: unknown terminal terminal-nobody"),
+        "{error}"
+    );
+}
+
+/// An agent is started by a window open on the board's own repo, on this machine: the run
+/// is listed on the board in that window, and its shell is one only that window opens.
+#[test]
+fn an_agent_is_started_only_by_a_window_open_on_the_boards_repo() {
+    let project = temporary_project("agents-here");
+    let elsewhere = temporary_project("agents-elsewhere");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.agents_answered_by(std::sync::Arc::new(AnswersAboutAgents));
+    let window = this_process(&project.display().to_string());
+    let claude = crate::api::AgentKind::Claude;
+
+    // Still on its launch screen.
+    let answer = window
+        .ask(&start_ask(&project, claude))
+        .expect("expected an answer");
+    assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    assert_eq!(
+        window
+            .ask(&start_ask(&elsewhere, claude))
+            .expect("expected an answer"),
+        Answer::Refused {
+            reason: format!(
+                "this window is open on {}, not on {}",
+                project.display(),
+                elsewhere.display()
+            ),
+        }
+    );
+    assert!(matches!(
+        window
+            .ask(&start_ask(&project, claude))
+            .expect("expected an answer"),
+        Answer::Started { .. }
+    ));
+}
+
+/// A window that has not said who answers about agents - a ui test's, which holds no real
+/// shells - refuses rather than answering as if nothing were asked.
+#[test]
+fn what_is_asked_about_an_agent_is_refused_by_a_window_that_answers_nothing_about_them() {
+    let project = temporary_project("agents-unanswered");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    let window = this_process(&project.display().to_string());
+
+    for ask in [
+        start_ask(&project, crate::api::AgentKind::Claude),
+        Ask::Tell {
+            terminal_id: "terminal-a".to_string(),
+            line: "hello".to_string(),
+        },
+        Ask::Shown {
+            terminal_id: "terminal-a".to_string(),
+            wanted: crate::terminal::Shown::Screen,
+        },
+    ] {
+        let answer = window.ask(&ask).expect("expected an answer");
+        assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+    }
+}

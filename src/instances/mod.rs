@@ -13,6 +13,11 @@
 //! `moon wire post @handle …` reaches one window and no other: the one holding the shell of
 //! the agent the line is for, which it asks to type the line in - see
 //! [`crate::moontasks::wire`].
+//!
+//! `moon agent start`, `tell` and `view` each reach one window too - the one open on the
+//! board an agent is started on, and the one holding the shell of the agent told or looked at
+//! - and are answered with what came of it rather than with a promise: see
+//! [`window::AgentAsks`].
 
 pub(crate) mod window;
 
@@ -28,6 +33,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+
+use crate::{api::AgentKind, terminal::Shown};
 
 const SETTINGS_DIR_NAME: &str = ".moonreview";
 const INSTANCES_DIR_NAME: &str = "instances";
@@ -87,6 +94,19 @@ pub(crate) enum Ask {
         recipient: String,
         message: String,
     },
+    /// Start an agent on a task of the board in this repo, in a shell this window holds:
+    /// `moon agent start`.
+    StartAgent {
+        /// The repo the board is in, which has to be the project this window is on.
+        repo_path: String,
+        task_id: String,
+        agent: AgentKind,
+    },
+    /// Type a line into one of this window's shells, exactly as it is written here, and send
+    /// it: `moon agent tell`.
+    Tell { terminal_id: String, line: String },
+    /// Say what one of this window's shells is showing: `moon agent view`.
+    Shown { terminal_id: String, wanted: Shown },
 }
 
 /// What the window answers.
@@ -105,6 +125,13 @@ pub(crate) enum Answer {
     /// The window has the line of the wire, and types it into the shell as soon as nothing
     /// there is in the way - see `told` in [`crate::terminal`].
     Wired,
+    /// The agent is started, in a run of this name.
+    Started { run: String },
+    /// The window's shell has the line, and it is typed as soon as nothing there is in the way
+    /// - the same wait a line of the wire makes.
+    Told,
+    /// What the shell is showing, one line per row.
+    Shown { text: String },
 }
 
 impl Instance {
@@ -370,6 +397,78 @@ pub(crate) fn wire(window: &Instance, line: &Ask) -> Result<()> {
             window.pid
         ),
         other => bail!("the window answered a line of the wire with {other:?}"),
+    }
+}
+
+/// Ask the one window that can answer something about an agent, and take its refusal as the
+/// answer rather than as a reason to try the next window: no other window is open on that
+/// board with a say in where its agents run, or holds that shell.
+///
+/// A window that says nothing is most often one started before this was something a window
+/// could be asked: it reads the ask as none it knows, and hangs up.
+fn ask_about_an_agent(window: &Instance, ask: &Ask) -> Result<Answer> {
+    let answer = window.ask(ask).with_context(|| {
+        format!(
+            "the moon window (process {}) did not answer - one started by an older moon does \
+             not know what was asked, and has to be restarted",
+            window.pid
+        )
+    })?;
+    match answer {
+        Answer::Refused { reason } => {
+            bail!("the moon window (process {}) refused: {reason}", window.pid)
+        }
+        answer => Ok(answer),
+    }
+}
+
+/// The window an agent of the board in this repo is started in: one open on that repo, the
+/// one this shell is in before any other and then the one most recently in front - see
+/// [`windows_for`]. `None` when no window is open on it.
+///
+/// A window on another project is not asked. The shell an agent runs in is held by the
+/// window that started it, and the board that shows the run is the one in that window.
+pub(crate) fn window_on_board(repo_path: &Path) -> Option<Instance> {
+    windows_for(repo_path, shell_window(), running())
+        .into_iter()
+        .find(|instance| Path::new(&instance.project_path) == repo_path)
+}
+
+/// Have a window start an agent on a task of the board it is open on, and say what the run
+/// is called.
+pub(crate) fn start_agent(window: &Instance, task_id: &str, agent: AgentKind) -> Result<String> {
+    let ask = Ask::StartAgent {
+        repo_path: window.project_path.clone(),
+        task_id: task_id.to_string(),
+        agent,
+    };
+    match ask_about_an_agent(window, &ask)? {
+        Answer::Started { run } => Ok(run),
+        other => bail!("the window answered a start with {other:?}"),
+    }
+}
+
+/// Have the window holding a shell type a line into it and send it.
+pub(crate) fn tell(window: &Instance, terminal_id: &str, line: &str) -> Result<()> {
+    let ask = Ask::Tell {
+        terminal_id: terminal_id.to_string(),
+        line: line.to_string(),
+    };
+    match ask_about_an_agent(window, &ask)? {
+        Answer::Told => Ok(()),
+        other => bail!("the window answered a line for a shell with {other:?}"),
+    }
+}
+
+/// What the window holding a shell says it is showing.
+pub(crate) fn shown(window: &Instance, terminal_id: &str, wanted: Shown) -> Result<String> {
+    let ask = Ask::Shown {
+        terminal_id: terminal_id.to_string(),
+        wanted,
+    };
+    match ask_about_an_agent(window, &ask)? {
+        Answer::Shown { text } => Ok(text),
+        other => bail!("the window answered a look at a shell with {other:?}"),
     }
 }
 

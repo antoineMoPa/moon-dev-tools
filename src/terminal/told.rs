@@ -3,9 +3,14 @@
 //!
 //! Nobody at the window typed a told line, so it goes round [`TerminalSession::write_input`]:
 //! it answers nothing the shell was asking, and it is not a person having typed. It is sent,
-//! though - an Enter follows it - and that is what makes when it is typed matter. Two things
-//! hold a line back:
+//! though - an Enter follows it - and that is what makes when it is typed matter. Three
+//! things hold a line back:
 //!
+//! - The shell's agent has only just been started. While it is still drawing its interface
+//!   it has no box to take a line, and keys written at it then are dropped - which is what a
+//!   line told to an agent the moment it was started, as `moon agent start` and then
+//!   `moon agent tell` do, would otherwise be. And started that way it may come up asking
+//!   whether it trusts the folder, which the Enter would answer - see [`super::trust`].
 //! - The shell is asking a person something - see [`crate::attention`]. An agent waiting on
 //!   a permission has a choice highlighted, and an Enter there takes it. An agent that has
 //!   only finished and is waiting at its box to be typed at is not held: a line is what it is
@@ -25,7 +30,7 @@ use std::{
     time::Duration,
 };
 
-use super::{TerminalRegistry, TerminalSession};
+use super::{TYPE_AHEAD_DEADLINE, TYPE_AHEAD_QUIET, TerminalRegistry, TerminalSession};
 use crate::attention::Asked;
 
 /// How long after the last keystroke in a shell a line it is told still waits. Long enough to
@@ -97,7 +102,7 @@ impl TerminalRegistry {
 impl TerminalSession {
     /// Whether the program is gone: the shell has exited, or it is an agent that fell over
     /// and is only kept for its error to be read.
-    fn has_ended(&self) -> bool {
+    pub(super) fn has_ended(&self) -> bool {
         self.has_exited() || self.child_ended.load(Ordering::Relaxed)
     }
 
@@ -122,8 +127,28 @@ impl TerminalSession {
         }
     }
 
+    /// Whether the agent in this shell may still be drawing its interface, and so have no box
+    /// to take a line. It is the wait the card's title makes before it is typed - see
+    /// `type_ahead` in [`super::spawning`]: over once the agent has printed something and gone
+    /// quiet, and over whatever it is printing once it has had as long as any of them takes.
+    /// Never, for a login shell: what is typed before its prompt is up is read once it is.
+    fn is_still_coming_up(&self) -> bool {
+        if self.program.agent().is_none() || self.started.elapsed() >= TYPE_AHEAD_DEADLINE {
+            return false;
+        }
+        let drawn_and_waiting = self
+            .last_output
+            .lock()
+            .unwrap()
+            .is_some_and(|last| last.elapsed() >= TYPE_AHEAD_QUIET);
+        !drawn_and_waiting
+    }
+
     /// Whether a line this shell is told has to wait - see the module's own words on why.
     fn holds_back_what_it_is_told(&self) -> bool {
+        if self.is_still_coming_up() || self.trust_unanswered.load(Ordering::Relaxed) {
+            return true;
+        }
         let asking = self
             .attention
             .lock()

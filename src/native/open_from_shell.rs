@@ -62,7 +62,12 @@ impl App {
     pub(crate) fn listen_for_shell_asks(&mut self, ctx: &egui::Context) {
         let reads_this_machine = self.backend().reads_this_machine();
         match ShellAsks::listen(self.frame().command(), reads_this_machine, ctx.clone()) {
-            Ok(asks) => self.shell_asks = Some(asks),
+            Ok(asks) => {
+                asks.agents_answered_by(Arc::new(crate::native::agent_asks::WindowAgents {
+                    backend: Arc::clone(self.backend()),
+                }));
+                self.shell_asks = Some(asks);
+            }
             // Not fatal: the window works, `moon open` just cannot reach this one.
             Err(error) => eprintln!("[moonreview] `moon open` cannot reach this window: {error}"),
         }

@@ -19,6 +19,12 @@ use crate::terminal::tests::spawn_fake_claude;
 const SAYS_BACK: &str =
     "#!/bin/sh\nwhile IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
+/// The same, having first spent a second drawing, the way an agent's interface does as it
+/// comes up, and then said it is ready.
+const DRAWS_THEN_SAYS_BACK: &str = "#!/bin/sh\nfor frame in 1 2 3 4 5 6 7 8 9 10; do printf 'drawing\\n'; sleep 0.1; done\n\
+     printf 'ready\\n'\n\
+     while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
+
 /// The same, having first asked for a person the way an agent waiting on a permission does.
 const ASKS_THEN_SAYS_BACK: &str = "#!/bin/sh\nprintf 'working\\033]9;Permission needs input\\007'\n\
      while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
@@ -69,6 +75,35 @@ fn a_told_line_is_typed_into_the_shell_and_sent() {
     );
     // Nobody at the window typed it.
     assert!(!session.has_been_typed_into());
+    registry.remove(&terminal_id);
+}
+
+/// An agent told something the moment it was started - `moon agent start`, then `moon agent
+/// tell` - has no box to take it yet. The line waits for it to have drawn its interface and
+/// gone quiet, rather than being typed into the drawing, where a real agent drops it.
+#[test]
+fn a_line_told_to_an_agent_that_is_still_coming_up_waits_until_it_has() {
+    let registry = registry();
+    let terminal_id = spawn_fake_claude(&registry, DRAWS_THEN_SAYS_BACK);
+    let session = registry.get(&terminal_id).expect("expected the shell");
+
+    registry
+        .tell(&terminal_id, "hello")
+        .expect("expected the shell to be told");
+
+    assert!(
+        prints(&session, "got[hello]", Duration::from_secs(10)),
+        "the line should have been typed and sent, printed {:?}",
+        printed(&session)
+    );
+    // The pty echoes a line as it is typed, so where it first shows is when it was typed.
+    let printed = printed(&session);
+    let typed_at = printed.find("hello").expect("the line was typed");
+    let ready_at = printed.find("ready").expect("the agent came up");
+    assert!(
+        typed_at > ready_at,
+        "the line should have waited for the agent to come up, printed {printed:?}"
+    );
     registry.remove(&terminal_id);
 }
 

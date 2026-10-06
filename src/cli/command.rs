@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use super::{
-    FRAME_ENV, FRAMES, Frame, PROGRAM,
+    FRAME_ENV, FRAMES, Frame, PROGRAM, agent,
     args::{
         CliCommand, ReviewSource, ReviewTarget, current_dir_pathspec, parse_cli_args,
         review_open_request,
@@ -71,6 +71,9 @@ pub(super) enum MoonCommand {
     /// A line from the task this shell belongs to, to the other agents of its board, and the
     /// wire's own help - see [`super::wire`].
     Wire(wire::WireCommand),
+    /// An agent of this repo's board started, looked at or told something, and the help for
+    /// doing so - see [`super::agent`].
+    Agent(agent::AgentCommand),
     /// The window as the desktop of the X11 session it was started in: full screen, and the
     /// window manager of every program started from it - see
     /// [`crate::native::application_pane`]. This is what the session file of `os/` runs.
@@ -125,6 +128,7 @@ pub(crate) fn run() -> Result<()> {
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
         MoonCommand::Wire(command) => wire::run(command),
+        MoonCommand::Agent(command) => agent::run(command),
         MoonCommand::Desktop { path } => open_desktop(path.as_deref()),
         MoonCommand::Window { frame, args } => open_window(frame, args),
     }
@@ -189,6 +193,8 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
         "open" | "edit" => open::parse_open(rest),
         // The wire answers for its own help, which is where its rules are written.
         "wire" => Ok(MoonCommand::Wire(wire::parse(&rest, asks_for_help)?)),
+        // So do the agents, for theirs.
+        "agent" => Ok(MoonCommand::Agent(agent::parse(&rest, asks_for_help)?)),
         "list" | "serve" | "licenses" | "install-launchers" | "generate-pass-key" | "desktop"
             if asks_for_help =>
         {
@@ -557,6 +563,7 @@ Usage:
 {windows}
   {PROGRAM} tasks new <title>
   {PROGRAM} wire post <one line>      tell the board's other agents
+  {PROGRAM} agent <command>           list, start, view or tell the board's agents
   {PROGRAM} edit <path>[:<line>]      Open a file for edition
   {PROGRAM} open <path>[:<line>]      same as `{PROGRAM} edit`
   {PROGRAM} list                      show open windows
@@ -572,6 +579,7 @@ Examples:
   {PROGRAM} tasks
   {PROGRAM} tasks new \"fix the races\"
   {PROGRAM} wire post \"rewriting src/cli\"
+  {PROGRAM} agent tell fix-the-races \"start with the tests\"
   {PROGRAM} review src/main.rs
   {PROGRAM} shell
   {PROGRAM} shell .
