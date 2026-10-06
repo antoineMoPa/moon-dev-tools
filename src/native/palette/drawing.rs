@@ -1,6 +1,10 @@
 //! Drawing the palette: the query box over the list, the scope it searches, and a row.
 
-use egui::{Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind, vec2};
+use egui::{
+    Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind,
+    text::{LayoutJob, TextWrapping},
+    vec2,
+};
 
 use crate::{
     api::SearchScope,
@@ -22,6 +26,26 @@ const ROWS_HEIGHT_OF_SCREEN: f32 = 0.55;
 
 /// The height of one row of the list.
 pub(super) const ROW_HEIGHT: f32 = 34.0;
+
+/// The gap between a row's edge and what is written in it.
+const ROW_PADDING: f32 = 9.0;
+
+/// Which end of a text is kept when it is wider than the room it has.
+#[derive(Clone, Copy)]
+enum Kept {
+    Start,
+    End,
+}
+
+/// Which end of a row's second line is kept. A sentence about a command is read from its
+/// start. A path is read from its end - the file, and the line in it - and its first folders
+/// are what a row can do without.
+fn description_kept(mode: PaletteMode) -> Kept {
+    match mode {
+        PaletteMode::Commands | PaletteMode::Rename | PaletteMode::CodeActions => Kept::Start,
+        PaletteMode::Files | PaletteMode::Contents | PaletteMode::Places => Kept::End,
+    }
+}
 
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if !app.model.palette.open {
@@ -45,6 +69,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     }
     let palette = app.palette_of();
     let matches = rows_for(app);
+    let description_kept = description_kept(app.model.palette.mode);
 
     let (dismiss, move_down, move_up, accept) = ctx.input_mut(|input| {
         (
@@ -144,7 +169,8 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                         .show(ui, |ui| {
                             for (index, command) in matches.iter().enumerate() {
                                 let highlighted = index == app.model.palette.highlighted;
-                                let row = draw_row(ui, command, highlighted, &palette);
+                                let row =
+                                    draw_row(ui, command, description_kept, highlighted, &palette);
                                 if highlighted && keep_highlight_in_view {
                                     row.scroll_to_me(None);
                                 }
@@ -226,9 +252,47 @@ fn pressed_outside(ctx: &egui::Context, drawn_at: Option<egui::Rect>) -> bool {
     })
 }
 
+/// `text` on one line no wider than `width`, with an ellipsis where the rest of it was.
+fn cut_to_width(
+    painter: &egui::Painter,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    width: f32,
+    kept: Kept,
+) -> std::sync::Arc<egui::Galley> {
+    let line = |text: String, wrap: TextWrapping| {
+        let mut job = LayoutJob::simple_singleline(text, font.clone(), color);
+        job.wrap = wrap;
+        painter.layout_job(job)
+    };
+    match kept {
+        Kept::Start => line(text.to_string(), TextWrapping::truncate_at_width(width)),
+        Kept::End => {
+            let whole = line(text.to_string(), TextWrapping::no_max_width());
+            if whole.size().x <= width {
+                return whole;
+            }
+            let ellipsis_width = line("…".to_string(), TextWrapping::no_max_width()).size().x;
+            // The first glyph that the rest of the line fits from, beside the ellipsis.
+            let glyphs = &whole.rows[0].glyphs;
+            let kept_from = glyphs
+                .iter()
+                .position(|glyph| whole.size().x - glyph.pos.x <= width - ellipsis_width)
+                .unwrap_or(glyphs.len());
+            let end: String = glyphs[kept_from..].iter().map(|glyph| glyph.chr).collect();
+            line(format!("…{end}"), TextWrapping::no_max_width())
+        }
+    }
+}
+
+/// A row of the list. Its two lines are cut to the row: a matching line of a file is as long
+/// as whoever wrote it liked, and the painter clips nothing, so a line left whole ran out of
+/// the palette's right edge and across the window behind it.
 fn draw_row(
     ui: &mut egui::Ui,
     command: &Command,
+    description_kept: Kept,
     highlighted: bool,
     palette: &Palette,
 ) -> egui::Response {
@@ -247,30 +311,43 @@ fn draw_row(
                 StrokeKind::Inside,
             );
         }
-        ui.painter().text(
-            rect.min + vec2(9.0, 5.0),
-            Align2::LEFT_TOP,
+        let small = egui::FontId::proportional(SMALL_SIZE - 1.0);
+        let mut text_width = rect.width() - 2.0 * ROW_PADDING;
+        // The keyboard's own way to the same command, against the right edge - and the two
+        // lines stop short of it.
+        if let Some(chord) = command.shortcut {
+            let shortcut = ui.painter().text(
+                egui::pos2(rect.max.x - ROW_PADDING, rect.center().y),
+                Align2::RIGHT_CENTER,
+                bindings::describe(chord),
+                small.clone(),
+                palette.muted,
+            );
+            text_width -= shortcut.width() + ROW_PADDING;
+        }
+        let title = cut_to_width(
+            ui.painter(),
             &command.title,
             egui::FontId::proportional(crate::native::theme::UI_SIZE),
             palette.ink,
+            text_width,
+            Kept::Start,
         );
-        ui.painter().text(
-            rect.min + vec2(9.0, 19.0),
-            Align2::LEFT_TOP,
+        ui.painter()
+            .galley(rect.min + vec2(ROW_PADDING, 5.0), title, palette.ink);
+        let description = cut_to_width(
+            ui.painter(),
             &command.description,
-            egui::FontId::proportional(SMALL_SIZE - 1.0),
+            small,
+            palette.muted,
+            text_width,
+            description_kept,
+        );
+        ui.painter().galley(
+            rect.min + vec2(ROW_PADDING, 19.0),
+            description,
             palette.muted,
         );
-        // The keyboard's own way to the same command, against the right edge.
-        if let Some(chord) = command.shortcut {
-            ui.painter().text(
-                egui::pos2(rect.max.x - 9.0, rect.center().y),
-                Align2::RIGHT_CENTER,
-                bindings::describe(chord),
-                egui::FontId::proportional(SMALL_SIZE - 1.0),
-                palette.muted,
-            );
-        }
     }
     response
 }

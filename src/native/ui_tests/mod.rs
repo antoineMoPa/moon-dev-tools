@@ -36,6 +36,7 @@ mod launch;
 mod layout;
 mod open_from_shell;
 mod palette;
+mod palette_long_rows;
 mod project;
 mod review_header;
 mod review_phone;
