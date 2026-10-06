@@ -129,10 +129,10 @@ pub(crate) struct App {
     /// The chord that raises each tab within cmd+1..cmd+9's reach - the active frame's tabs -
     /// worked out before the strips are drawn and worn at the right of their titles.
     pub(crate) tab_shortcuts: HashMap<PaneId, String>,
-    /// Every open tab, the one most recently in front first - what the browser's tab menu lists.
     /// A tab the hamburger asked to bring to the front, done once the workspace is drawn.
-    #[cfg(any(target_arch = "wasm32", test))]
+    #[cfg(target_arch = "wasm32")]
     pub(crate) pending_tab_focus: Option<PaneId>,
+    /// Every open tab, the one most recently in front first - what the hamburger lists.
     #[cfg(target_arch = "wasm32")]
     pub(crate) tabs_most_recent_first: Vec<PaneId>,
     /// The tabs as the hamburger in the strip of a phone's window lists them, worked out before
@@ -396,7 +396,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             tunnel: None,
             tab_shortcuts: HashMap::new(),
-            #[cfg(any(target_arch = "wasm32", test))]
+            #[cfg(target_arch = "wasm32")]
             pending_tab_focus: None,
             #[cfg(target_arch = "wasm32")]
             tabs_most_recent_first: Vec::new(),

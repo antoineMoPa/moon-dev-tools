@@ -647,7 +647,7 @@ impl PaneView<Pane> for App {
                 ui,
                 vec2(height, height),
                 &self.tab_entries_for_strip,
-                Some(&self.model.project),
+                &self.model.project,
                 &mut picked,
             );
             self.apply_menu_actions(picked);

@@ -1,4 +1,4 @@
-//! What the browser's hamburger at the top right lists: every tab of the window, the one most
+//! What the hamburger of a phone's tab strip lists: every tab of the window, the one most
 //! recently in front first, so the tab just left - the board, an agent's shell - is the first
 //! row to reach for.
 

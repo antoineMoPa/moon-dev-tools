@@ -26,12 +26,7 @@ const BAR_ID: &str = "moonreview-menu-bar";
 
 /// Draw the bar, and say what was picked from it this frame. `project` decides which of the
 /// project's commands are offered: only the ones it has set.
-pub(crate) fn draw(
-    ui: &mut Ui,
-    palette: &Palette,
-    project: &ProjectConfig,
-    tabs: &[TabEntry],
-) -> Vec<MenuAction> {
+pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> Vec<MenuAction> {
     let mut picked = Vec::new();
     egui::Panel::top(BAR_ID)
         .resizable(false)
@@ -44,9 +39,6 @@ pub(crate) fn draw(
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 menus(ui, project, &mut picked);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    hamburger(ui, egui::vec2(30.0, 20.0), tabs, None, &mut picked);
-                });
             });
         });
     picked
@@ -157,7 +149,8 @@ fn menus(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
     });
 }
 
-/// A tab as the hamburger at the right of the bar lists it.
+/// A tab as the hamburger lists it.
+#[cfg(target_arch = "wasm32")]
 pub(crate) struct TabEntry {
     pub(crate) pane_id: egui_frames::PaneId,
     pub(crate) title: String,
@@ -165,14 +158,15 @@ pub(crate) struct TabEntry {
     pub(crate) in_front: bool,
 }
 
-/// The hamburger: every open tab, in the order `tabs` has them - a window's frames show only
-/// a few at a time, and on a phone a strip of tabs is mostly out of reach. A window with no bar
-/// of its own passes its `project`, and the bar's menus follow the tabs in the list.
+/// The hamburger of a phone's tab strip, whose window has no room for the bar: every open tab,
+/// in the order `tabs` has them - a strip of tabs is mostly out of reach there - and then the
+/// bar's menus. A window wide enough for the bar has its tabs in its strips, and no hamburger.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn hamburger(
     ui: &mut Ui,
     size: egui::Vec2,
     tabs: &[TabEntry],
-    project: Option<&ProjectConfig>,
+    project: &ProjectConfig,
     picked: &mut Vec<MenuAction>,
 ) {
     // Painted rather than typed: no font is promised to have the glyph.
@@ -205,15 +199,13 @@ pub(crate) fn hamburger(
                 ui.close();
             }
         }
-        if let Some(project) = project {
-            // Said rather than left blank, so a window with one tab does not look as though
-            // the list failed to load.
-            if tabs.iter().all(|tab| tab.in_front) {
-                ui.weak("no other tabs");
-            }
-            ui.separator();
-            menus(ui, project, picked);
+        // Said rather than left blank, so a window with one tab does not look as though
+        // the list failed to load.
+        if tabs.iter().all(|tab| tab.in_front) {
+            ui.weak("no other tabs");
         }
+        ui.separator();
+        menus(ui, project, picked);
     });
 }
 
@@ -260,7 +252,7 @@ mod tests {
                 picked_in_ui
                     .lock()
                     .expect("the picks")
-                    .extend(draw(ui, &palette, &project, &[]));
+                    .extend(draw(ui, &palette, &project));
             });
         (harness, picked)
     }
