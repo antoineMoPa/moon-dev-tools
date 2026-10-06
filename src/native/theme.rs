@@ -85,7 +85,9 @@ pub(crate) struct Palette {
     pub(crate) unpushed: Color32,
     /// The line a column draws under a day's work of its cards, and what the line says - see
     /// [`crate::native::board::days_work`]. A yellow let through at under half its strength:
-    /// the line is an estimate standing among cards, and reads after every one of them.
+    /// the line is an estimate standing among cards, and reads after every one of them. The
+    /// column of finished work draws yesterday's line in it too - see
+    /// [`crate::native::board::day_lines`].
     pub(crate) days_work: Color32,
     /// The line over the cards of each day after today in the same queue: a blue at the same
     /// strength, so a queue that starts at tomorrow does not read as one that starts at today.

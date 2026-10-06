@@ -146,12 +146,7 @@ impl Days {
     ) -> Option<Self> {
         let cards_a_day = cards_a_day_finished_before(tasks, today)?;
         let finished_in = ColumnId::new(store::COUNTS_A_DAYS_WORK_IN);
-        let finished_today = tasks
-            .iter()
-            .filter(|task| task.status == finished_in)
-            .filter_map(|task| task.entered_column_at_unix)
-            .filter(|arrived| LocalDay::of(*arrived) == today)
-            .count();
+        let finished_today = day_lines::cards_arrived_on(tasks, &finished_in, today);
         let minutes_left = day_ends_at
             .minutes_into_day()
             .saturating_sub(minutes_into_today);

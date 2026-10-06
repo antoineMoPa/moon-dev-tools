@@ -135,11 +135,11 @@ pub(super) fn draw_column(
                                 ui.add_space(CARD_SPACING);
                             }
                             if let Some(lines) = &mut lines_between_days
-                                && let Some(label) = lines.line_above(
+                                && let Some(line) = lines.line_above(
                                     task.entered_column_at_unix.map(day_lines::LocalDay::of),
                                 )
                             {
-                                day_lines::draw(ui, palette, &label);
+                                day_lines::draw(ui, palette, line);
                                 ui.add_space(CARD_SPACING);
                             }
                             let card = draw_card(app, ui, task, origin, palette, actions);

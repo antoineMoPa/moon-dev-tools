@@ -14,7 +14,7 @@ use crate::{
         board::{
             BoardAction,
             cards::DRAGGED_CARD_OPACITY,
-            close_button, close_mark, days_work,
+            close_button, close_mark, day_lines, days_work,
             marks::plus_button,
             motion::{Axis, slide_into_place, stamp_place},
         },
@@ -211,11 +211,17 @@ pub(super) fn draw_heading(
                     app.model.board.pending_column_delete = Some(column.id.clone());
                 }
 
+                // How many of them arrived today is one hover away: in DONE that is what today
+                // has finished, and in a queue what today has added to it.
+                let today = day_lines::LocalDay::of(crate::moontasks::store::now_unix());
+                let arrived_today =
+                    day_lines::cards_arrived_on(&app.model.board.tasks, &column.id, today);
                 ui.label(
                     RichText::new(cards.to_string())
                         .size(SMALL_SIZE - 1.0)
                         .color(palette.muted),
-                );
+                )
+                .on_hover_text(format!("{arrived_today} today"));
             }
         });
     });

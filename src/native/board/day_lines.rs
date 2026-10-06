@@ -9,7 +9,7 @@
 use egui::{Color32, FontId, Label, Rect, Response, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
-    moontasks::{BoardColumn, ColumnId, store},
+    moontasks::{BoardColumn, ColumnId, TaskView, store},
     native::theme::{Palette, SMALL_SIZE},
 };
 
@@ -93,7 +93,7 @@ impl LocalDay {
         if self == today {
             return "today".to_string();
         }
-        if self.days_since_epoch() + 1 == today.days_since_epoch() {
+        if self.is_the_day_before(today) {
             return "yesterday".to_string();
         }
         let month = MONTH_NAMES[(self.month - 1) as usize];
@@ -102,6 +102,10 @@ impl LocalDay {
         } else {
             format!("{month} {}, {}", self.day, self.year)
         }
+    }
+
+    fn is_the_day_before(self, today: LocalDay) -> bool {
+        self.days_since_epoch() + 1 == today.days_since_epoch()
     }
 
     /// Days from 1970-01-01, which is what makes "the day before" a subtraction. The civil
@@ -118,6 +122,17 @@ impl LocalDay {
         let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
         era * 146_097 + day_of_era - 719_468
     }
+}
+
+/// How many of a column's cards arrived in it on `day`: made there, or moved in from another
+/// column. A card moved in before the board wrote days down arrived on no day anyone can name.
+pub(super) fn cards_arrived_on(tasks: &[TaskView], column: &ColumnId, day: LocalDay) -> usize {
+    tasks
+        .iter()
+        .filter(|task| task.status == *column)
+        .filter_map(|task| task.entered_column_at_unix)
+        .filter(|arrived| LocalDay::of(*arrived) == day)
+        .count()
 }
 
 /// How many minutes into its day a moment is, on this machine's clock: 990 at half past four
@@ -165,19 +180,60 @@ impl DayLines {
     /// The line above the next card down, if its day is a change from the card before it. A
     /// card with no day - one moved in before the board wrote days down - gets no line and
     /// changes nothing: the cards under it read as the day above until one says otherwise.
-    pub(super) fn line_above(&mut self, day: Option<LocalDay>) -> Option<String> {
+    pub(super) fn line_above(&mut self, day: Option<LocalDay>) -> Option<DayLine> {
         let day = day?;
         if self.previous == Some(day) {
             return None;
         }
         self.previous = Some(day);
-        Some(day.label(self.today))
+        Some(DayLine {
+            day,
+            today: self.today,
+        })
+    }
+}
+
+/// One dated line: the day it stands over the cards of, and the day it is being read on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct DayLine {
+    day: LocalDay,
+    today: LocalDay,
+}
+
+/// What a line is drawn in: its rule, and the words in the middle of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct LineInks {
+    rule: Color32,
+    words: Color32,
+}
+
+impl DayLine {
+    fn label(self) -> String {
+        self.day.label(self.today)
+    }
+
+    /// Yesterday's line is the one that stands out, in the yellow a queue's `today` line is
+    /// drawn in - see [`super::days_work`]. It is the last day that is over, so the cards
+    /// under it are what a whole day finished, which is what the queue's days are counted in.
+    /// Every other day is drawn as quietly as the record it is.
+    fn inks(self, palette: &Palette) -> LineInks {
+        if self.day.is_the_day_before(self.today) {
+            return LineInks {
+                rule: palette.days_work,
+                words: palette.days_work,
+            };
+        }
+        LineInks {
+            rule: palette.line,
+            words: palette.muted,
+        }
     }
 }
 
 /// The line itself: a rule across the column with the day in the middle of it.
-pub(super) fn draw(ui: &mut Ui, palette: &Palette, label: &str) {
-    draw_rule(ui, label, palette.line, palette.muted);
+pub(super) fn draw(ui: &mut Ui, palette: &Palette, line: DayLine) {
+    let inks = line.inks(palette);
+    draw_rule(ui, &line.label(), inks.rule, inks.words);
 }
 
 /// A rule across the column with a few words in the middle of it, which is every line a column
@@ -250,7 +306,7 @@ mod tests {
 
         let above: Vec<Option<String>> = cards
             .into_iter()
-            .map(|card| lines.line_above(card))
+            .map(|card| lines.line_above(card).map(DayLine::label))
             .collect();
 
         assert_eq!(
@@ -264,6 +320,26 @@ mod tests {
                 Some("September 19".to_string()),
             ]
         );
+    }
+
+    /// Yesterday's line is the yellow one; today's and every earlier day's are the quiet ones.
+    #[test]
+    fn only_yesterdays_line_is_yellow() {
+        let palette = Palette::of(crate::native::theme::ThemeMode::Dark);
+        let today = day(2026, 9, 22);
+        let inks_of = |day: LocalDay| DayLine { day, today }.inks(&palette);
+        let yellow = LineInks {
+            rule: palette.days_work,
+            words: palette.days_work,
+        };
+        let quiet = LineInks {
+            rule: palette.line,
+            words: palette.muted,
+        };
+
+        assert_eq!(inks_of(day(2026, 9, 21)), yellow);
+        assert_eq!(inks_of(today), quiet);
+        assert_eq!(inks_of(day(2026, 9, 20)), quiet);
     }
 
     /// `localtime_r` against `date`, which reads the same zone.
