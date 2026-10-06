@@ -14,7 +14,7 @@ use super::{
         review_open_request,
     },
     frame::frame_named,
-    open,
+    open, wire,
 };
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
@@ -68,6 +68,9 @@ pub(super) enum MoonCommand {
     NewTask {
         title: String,
     },
+    /// A line from the task this shell belongs to, to the other agents of its board, and the
+    /// wire's own help - see [`super::wire`].
+    Wire(wire::WireCommand),
     /// The window as the desktop of the X11 session it was started in: full screen, and the
     /// window manager of every program started from it - see
     /// [`crate::native::application_pane`]. This is what the session file of `os/` runs.
@@ -121,6 +124,7 @@ pub(crate) fn run() -> Result<()> {
         MoonCommand::OpenShell { path } => open_shell(&path),
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
+        MoonCommand::Wire(command) => wire::run(command),
         MoonCommand::Desktop { path } => open_desktop(path.as_deref()),
         MoonCommand::Window { frame, args } => open_window(frame, args),
     }
@@ -183,6 +187,8 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
         // `edit` and `open` are one thing said two ways: the tab it lands in is one that
         // edits the file, and both are words a hand reaches for.
         "open" | "edit" => open::parse_open(rest),
+        // The wire answers for its own help, which is where its rules are written.
+        "wire" => Ok(MoonCommand::Wire(wire::parse(&rest, asks_for_help)?)),
         "list" | "serve" | "licenses" | "install-launchers" | "generate-pass-key" | "desktop"
             if asks_for_help =>
         {
@@ -550,6 +556,7 @@ lunar local dev tools.
 Usage:
 {windows}
   {PROGRAM} tasks new <title>
+  {PROGRAM} wire post <one line>      tell the board's other agents
   {PROGRAM} edit <path>[:<line>]      Open a file for edition
   {PROGRAM} open <path>[:<line>]      same as `{PROGRAM} edit`
   {PROGRAM} list                      show open windows
@@ -564,6 +571,7 @@ Usage:
 Examples:
   {PROGRAM} tasks
   {PROGRAM} tasks new \"fix the races\"
+  {PROGRAM} wire post \"rewriting src/cli\"
   {PROGRAM} review src/main.rs
   {PROGRAM} shell
   {PROGRAM} shell .

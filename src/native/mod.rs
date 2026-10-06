@@ -73,6 +73,7 @@ pub(crate) mod webview_pane;
 #[cfg(target_os = "macos")]
 pub(crate) mod window_drag;
 pub(crate) mod widgets;
+pub(crate) mod wire;
 pub(crate) mod work_log;
 pub(crate) mod workspace;
 pub(crate) mod workspace_edits;

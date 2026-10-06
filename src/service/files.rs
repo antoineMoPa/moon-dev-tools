@@ -30,6 +30,7 @@ pub(crate) fn session_file(
                 file_path: file_path.to_string(),
                 content: crate::git::read_file_named_outside_the_repo(&real_path)?,
                 outside_the_repo: true,
+                only_written_by: None,
                 committed: None,
             });
         }
@@ -37,6 +38,7 @@ pub(crate) fn session_file(
             file_path: file_path.to_string(),
             content: read_repo_file(&session.repo_path, file_path)?,
             outside_the_repo: false,
+            only_written_by: only_writer_of(file_path),
             committed: Some(crate::git::read_committed_file(
                 &session.repo_path,
                 file_path,
@@ -83,9 +85,16 @@ pub(crate) fn session_file_at(
             file_path: file_path.to_string(),
             content: crate::git::read_file_at(&session.repo_path, file_path, revision)?,
             outside_the_repo: false,
+            only_written_by: None,
             committed: None,
         })
     })
+}
+
+/// The command that is the only writer of a file of the repo, named as every file of it is -
+/// from its root - for the one file that has such a command: the wire's.
+fn only_writer_of(file_path: &str) -> Option<String> {
+    (file_path == crate::moontasks::wire_repo_path()).then(crate::moontasks::wire::post_command)
 }
 
 /// The files of the repo whose names match a search. Runs where the repo is, which is what

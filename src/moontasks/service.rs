@@ -231,7 +231,7 @@ pub(super) fn going_elsewhere_in(resource: &TaskResource, open: &OpenSessions) -
 
 /// Whether a process of this id is running. `kill` with no signal only asks: it answers
 /// `EPERM` for a process that is there but not this user's, which still counts as running.
-fn process_is_running(pid: u32) -> bool {
+pub(crate) fn process_is_running(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
@@ -425,6 +425,14 @@ pub(crate) fn open_work_log(state: &AppState, session_id: &str) -> Result<String
     let repo_path = repo_of(state, session_id)?;
     store::ensure_work_log_file(&repo_path)?;
     Ok(super::work_log_repo_path())
+}
+
+/// Where the wire's broadcasts are kept, the file made if nobody has posted yet - see
+/// [`crate::moontasks::wire`]. Made here for the reason the work log is.
+pub(crate) fn open_wire(state: &AppState, session_id: &str) -> Result<String> {
+    let repo_path = repo_of(state, session_id)?;
+    store::ensure_wire_file(&repo_path)?;
+    Ok(super::wire_repo_path())
 }
 
 /// Put a file of the repo on the task's card.

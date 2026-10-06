@@ -187,6 +187,7 @@ The board is a folder in the repo, which is the whole of its state:
 .moontasks/
   .gitignore          # ignores the whole board, written when the board is created
   board.json          # the columns, once you have changed them
+  messageboard.txt    # the wire: the latest lines the agents posted to each other
   board-task/         # the board's own task, on no column: what `board [start]` over the columns starts is a run of it
     metadata.json     # its agent runs
   fix-the-login-page-6f9c1e2a-…/
@@ -195,6 +196,7 @@ The board is a folder in the repo, which is the whole of its state:
     notes.md          # the task's description and shared notes, shown on the card
     request_review.md        # how to write the file below, for an agent about to
     request_for_review.txt   # the repos this work touched, in deploy order, once there are any
+    Coordination.md          # the two sentences an agent is told about the wire
     …                 # anything you or an agent puts here
 ```
 
@@ -211,6 +213,18 @@ delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 ```bash
 moon tasks new "fix the races"
 ```
+
+## The wire
+
+Agents on one board tell each other what they are touching, from their task's shell:
+
+```bash
+moon wire post "rewriting src/terminal.rs and its tests"    # to every agent
+moon wire post "@fix-the-races are you still in src/cli?"   # to one, typed into its shell
+```
+
+The first kind is kept in `.moontasks/messageboard.txt`, which `Tools › Wire` opens read-only;
+the second is in the window's Messages. The rules are in `moon wire --help`.
 
 ## What the agents are told
 

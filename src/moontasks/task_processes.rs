@@ -142,6 +142,8 @@ pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
          \n\
          To attach a document to this task (a PDF, a spreadsheet, etc.), check {ATTACHMENTS_BRIEF_FILE_NAME}\n\
          \n\
+         Before working, check {COORDINATION_BRIEF_FILE_NAME}\n\
+         \n\
          New card on this board: `{program} tasks new \"<title>\"`, which prints its folder.",
         program = crate::cli::PROGRAM
     )
@@ -167,7 +169,9 @@ pub(crate) fn board_task_brief_for(board_dir: &str, home_dir: &str) -> String {
          \n\
          Your own folder, for whatever you want kept: {home_dir}\n\
          \n\
-         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME} in it",
+         To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME} in it\n\
+         \n\
+         Before working, check {COORDINATION_BRIEF_FILE_NAME} in it",
         program = crate::cli::PROGRAM
     )
 }
@@ -208,6 +212,22 @@ The task's pane lists the files under `Files`, and a click opens one with the ma
 opener.
 ";
 
+/// What an agent is told about the other agents of the board, in the task's folder. The brief
+/// only points here, as it does for the review request, so the brief stays a few lines.
+pub(crate) const COORDINATION_BRIEF_FILE_NAME: &str = "Coordination.md";
+
+/// The whole of that file. What a line may be, how a handle is read and what is refused are
+/// kept out of it, in `moon wire --help`: an agent reads this on every task, and that only
+/// when a post goes wrong.
+pub(crate) fn coordination_brief() -> String {
+    format!(
+        "Before working, read {wire_file}, then post the areas you will touch: \
+         `{post} \"<one line>\"`. Start it with @handle to message one agent instead.\n",
+        wire_file = wire_repo_path(),
+        post = super::wire::post_command()
+    )
+}
+
 /// The notes file as the file pane addresses it: relative to the repo root.
 pub(crate) fn notes_repo_path(task_id: &str) -> String {
     format!("{}/{task_id}/{NOTES_FILE_NAME}", store::TASKS_DIR_NAME)
@@ -221,6 +241,17 @@ pub(crate) const WORK_LOG_FILE_NAME: &str = "work-log.org";
 /// The work log as the file pane addresses it: relative to the repo root.
 pub(crate) fn work_log_repo_path() -> String {
     format!("{}/{WORK_LOG_FILE_NAME}", store::TASKS_DIR_NAME)
+}
+
+/// The file the wire's broadcasts are kept in, in the board's folder beside the tasks - see
+/// [`crate::moontasks::wire`]. Only the file's name says `messageboard`: everywhere else it is
+/// the wire.
+pub(crate) const WIRE_FILE_NAME: &str = "messageboard.txt";
+
+/// That file as the file pane addresses it, and as an agent started in the repo reads it:
+/// relative to the repo root.
+pub(crate) fn wire_repo_path() -> String {
+    format!("{}/{WIRE_FILE_NAME}", store::TASKS_DIR_NAME)
 }
 
 pub(crate) fn agent_launch(agent: AgentKind) -> Option<&'static AgentLaunch> {

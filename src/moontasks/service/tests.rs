@@ -1,4 +1,4 @@
-use super::resources::Fillings;
+use super::resources::{Fillings, write_task_files};
 use super::*;
 
 /// A run's fillings, without the brief file a real one writes.
@@ -228,6 +228,123 @@ fn the_brief_points_at_the_attachments_format_without_spelling_it_out() {
 
     assert!(brief.contains(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME));
     assert!(!brief.contains(crate::moontasks::ATTACHMENTS_FILE_NAME));
+}
+
+/// The same for the wire: the brief says there is something to check before working and
+/// where, and the one sentence about it is in that file.
+#[test]
+fn the_brief_points_at_the_coordination_file_without_spelling_it_out() {
+    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+    let board_brief =
+        crate::moontasks::board_task_brief_for("/repo/.moontasks", "/repo/.moontasks/board-task");
+
+    assert!(brief.contains("\n\nBefore working, check Coordination.md\n\n"));
+    assert!(board_brief.ends_with("\n\nBefore working, check Coordination.md in it"));
+    for brief in [brief, board_brief] {
+        assert!(
+            !brief.contains(crate::moontasks::WIRE_FILE_NAME),
+            "got {brief}"
+        );
+        assert!(!brief.contains("wire"), "got {brief}");
+    }
+}
+
+/// The whole of what an agent is told about the wire as it starts. The rest is in
+/// `moon wire --help`.
+#[test]
+fn the_coordination_file_is_two_sentences() {
+    assert_eq!(
+        crate::moontasks::coordination_brief(),
+        "Before working, read .moontasks/messageboard.txt, then post the areas you will touch: \
+         `moon wire post \"<one line>\"`. Start it with @handle to message one agent instead.\n"
+    );
+}
+
+/// A repo with nothing in it but what the test puts there.
+fn temp_repo(name: &str) -> PathBuf {
+    let repo = std::env::temp_dir().join(format!(
+        "moonreview-task-files-{}-{name}-{}",
+        std::process::id(),
+        store::new_uuid()
+    ));
+    std::fs::create_dir_all(&repo).expect("failed to create the test repo");
+    repo
+}
+
+/// Every file the brief points at is in the task's folder by the time an agent is started
+/// there, and the file the wire's broadcasts are kept in is in the board's.
+#[test]
+fn a_task_started_in_is_given_the_files_its_brief_points_at() {
+    let repo = temp_repo("card");
+    let task_id = store::create_task(
+        &repo,
+        "Fix the login page",
+        &ColumnId::new("todo"),
+        ColumnEnd::Top,
+    )
+    .expect("expected the task to be made");
+    let metadata = store::read_task(&repo, &task_id).expect("expected the task");
+
+    write_task_files(&task_id, &repo, &metadata).expect("expected the files to be written");
+
+    let dir = store::task_dir(&repo, &task_id).expect("expected the task's folder");
+    let brief = std::fs::read_to_string(dir.join(crate::moontasks::BRIEF_FILE_NAME))
+        .expect("expected the brief");
+    for pointed_at in [
+        crate::moontasks::REVIEW_REQUEST_BRIEF_FILE_NAME,
+        crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME,
+        crate::moontasks::COORDINATION_BRIEF_FILE_NAME,
+    ] {
+        assert!(
+            brief.contains(pointed_at),
+            "the brief should name {pointed_at}"
+        );
+        assert!(
+            dir.join(pointed_at).is_file(),
+            "{pointed_at} should be there"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.join("Coordination.md")).expect("expected the file"),
+        crate::moontasks::coordination_brief()
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".moontasks/messageboard.txt"))
+            .expect("expected the wire's file"),
+        "",
+        "the wire's file is there to be read, with nothing posted yet"
+    );
+}
+
+/// The board task's folder is given the same files, and starting an agent leaves what has
+/// been posted to the wire as it is.
+#[test]
+fn the_board_task_is_given_the_same_files_and_the_wire_keeps_its_lines() {
+    let repo = temp_repo("board-task");
+    store::create_board_task(&repo).expect("expected the board task to be made");
+    let metadata = store::read_task(&repo, store::BOARD_TASK_ID).expect("expected the task");
+    let posted = "2026-10-06 09:14 @fix-the-login-page: in src/login\n";
+    std::fs::write(repo.join(".moontasks/messageboard.txt"), posted)
+        .expect("failed to write the wire's file");
+
+    write_task_files(store::BOARD_TASK_ID, &repo, &metadata)
+        .expect("expected the files to be written");
+
+    let dir = store::task_dir(&repo, store::BOARD_TASK_ID).expect("expected the folder");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("Coordination.md")).expect("expected the file"),
+        crate::moontasks::coordination_brief()
+    );
+    assert!(
+        std::fs::read_to_string(dir.join(crate::moontasks::BRIEF_FILE_NAME))
+            .expect("expected the brief")
+            .contains("check Coordination.md in it")
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".moontasks/messageboard.txt"))
+            .expect("expected the wire's file"),
+        posted
+    );
 }
 
 #[test]

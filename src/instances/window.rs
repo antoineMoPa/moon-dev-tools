@@ -1,6 +1,6 @@
-//! The window's end of `moon open` and `moon shell <folder>`: the socket a shell reaches it
-//! on, and the files and folders that have come in over it waiting for the next frame to
-//! open them.
+//! The window's end of `moon open`, `moon shell <folder>` and `moon wire post @handle`: the
+//! socket a shell reaches it on, and the files, folders and lines that have come in over it
+//! waiting for the next frame to open them or type them.
 //!
 //! Only a real window listens. Every other caller of the app is a ui test, and a test must
 //! not put itself in the way of a `moon open` typed in the window the developer running it
@@ -36,6 +36,16 @@ pub(crate) struct OpenShellAsked {
     pub(crate) folder: PathBuf,
 }
 
+/// A direct message of the wire a shell asked this window to type into one of the shells it
+/// holds: `moon wire post @handle …`.
+pub(crate) struct WiredLine {
+    pub(crate) terminal_id: String,
+    /// The handles of the task it was posted from and of the task it is for.
+    pub(crate) sender: String,
+    pub(crate) recipient: String,
+    pub(crate) message: String,
+}
+
 /// What a window keeps so shells can reach it: the project it is written down as being on,
 /// and the asks that have arrived since the last frame.
 pub(crate) struct ShellAsks {
@@ -46,6 +56,9 @@ pub(crate) struct ShellAsks {
     /// The folders `moon shell <folder>` asked for a shell in, kept apart from the files: a
     /// shell is started rather than opened in a tab, so it goes a different way.
     arrived_shells: Arc<Mutex<Vec<OpenShellAsked>>>,
+    /// The lines `moon wire post @handle` asked to have typed, in the order they were asked
+    /// for - which is the order the window types them in.
+    arrived_wired: Arc<Mutex<Vec<WiredLine>>>,
     /// The files a `moon edit --wait` is waiting on, from the moment the ask is taken until
     /// the window [releases](ShellAsks::release) them. Written into by the listening thread
     /// as the ask arrives, so a shell asking straight after is told the file is still open
@@ -82,6 +95,7 @@ impl ShellAsks {
             project: Arc::new(Mutex::new(None)),
             arrived: Arc::new(Mutex::new(Vec::new())),
             arrived_shells: Arc::new(Mutex::new(Vec::new())),
+            arrived_wired: Arc::new(Mutex::new(Vec::new())),
             waited_on: Arc::new(Mutex::new(HashSet::new())),
             program,
             focused_at_unix: Arc::new(Mutex::new(0)),
@@ -90,6 +104,7 @@ impl ShellAsks {
         let arrived = Arrived {
             files: asks.arrived.clone(),
             shells: asks.arrived_shells.clone(),
+            wired: asks.arrived_wired.clone(),
             waited_on: asks.waited_on.clone(),
         };
         thread::Builder::new()
@@ -167,12 +182,19 @@ impl ShellAsks {
     pub(crate) fn drain_shells(&self) -> Vec<OpenShellAsked> {
         std::mem::take(&mut *self.arrived_shells.lock().expect("the arrived shells lock"))
     }
+
+    /// The lines of the wire asked to be typed since the last time this was called, in the
+    /// order they were asked for.
+    pub(crate) fn drain_wired(&self) -> Vec<WiredLine> {
+        std::mem::take(&mut *self.arrived_wired.lock().expect("the arrived wired lock"))
+    }
 }
 
 /// Where the listening thread puts what arrives, for the window to drain on its next frame.
 struct Arrived {
     files: Arc<Mutex<Vec<OpenFileAsked>>>,
     shells: Arc<Mutex<Vec<OpenShellAsked>>>,
+    wired: Arc<Mutex<Vec<WiredLine>>>,
     waited_on: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
@@ -192,6 +214,12 @@ impl Drop for ShellAsks {
 /// What is refused is a window with nothing to open into: one still on its launch screen,
 /// and one whose repo is on another machine, where a path typed in a shell here names
 /// nothing at all.
+///
+/// A line of the wire is taken by any window that holds shells, on a project or not: the
+/// shell it names is one this window's moon started. It is refused by a window whose repo is
+/// on another machine, whose shells are that machine's, and when it is not the one line of
+/// text a shell can be told - what arrives here is checked rather than trusted, since the
+/// window answers for it before it is typed.
 fn answer(
     stream: UnixStream,
     reads_this_machine: bool,
@@ -238,6 +266,27 @@ fn answer(
                 Answer::Opened
             }
         },
+        Ask::Wire {
+            terminal_id,
+            sender,
+            recipient,
+            message,
+        } => match wire_refusal(reads_this_machine, &sender, &recipient, &message) {
+            Some(refused) => refused,
+            None => {
+                arrived
+                    .wired
+                    .lock()
+                    .expect("the arrived wired lock")
+                    .push(WiredLine {
+                        terminal_id,
+                        sender,
+                        recipient,
+                        message,
+                    });
+                Answer::Wired
+            }
+        },
         Ask::StillOpen { path } => {
             if arrived
                 .waited_on
@@ -268,4 +317,26 @@ fn refusal(reads_this_machine: bool, project: &Arc<Mutex<Option<String>>>) -> Op
             reason: "this window has no project open yet".to_string(),
         }),
     }
+}
+
+/// Why this window will not type a line of the wire into a shell, or `None` when it will.
+fn wire_refusal(
+    reads_this_machine: bool,
+    sender: &str,
+    recipient: &str,
+    message: &str,
+) -> Option<Answer> {
+    if !reads_this_machine {
+        return Some(Answer::Refused {
+            reason: "this window's shells run on another machine, so it holds none to type into"
+                .to_string(),
+        });
+    }
+    // Every part of what is typed and written down, held to a line of text.
+    [sender, recipient, message]
+        .into_iter()
+        .find_map(|part| crate::moontasks::wire::one_line(part).err())
+        .map(|error| Answer::Refused {
+            reason: error.to_string(),
+        })
 }

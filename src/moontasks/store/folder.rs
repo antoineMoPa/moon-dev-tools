@@ -513,6 +513,22 @@ pub(crate) fn ensure_work_log_file(repo_path: &Path) -> Result<()> {
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
+/// Make the file the wire's broadcasts are kept in if it is not there yet, with nothing in it
+/// - see [`crate::moontasks::wire::broadcasts`]. An agent is told to read it before it posts
+/// anything, and a file that is not there reads as something having gone wrong.
+pub(crate) fn ensure_wire_file(repo_path: &Path) -> Result<()> {
+    let root = ensure_tasks_root(repo_path)?;
+    let path = root.join(crate::moontasks::WIRE_FILE_NAME);
+    // Opened to be added to, and nothing added: a file that is there keeps what it holds, even
+    // one a post made between a look for it and this.
+    fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&path)
+        .map(|_| ())
+        .with_context(|| format!("failed to make {}", path.display()))
+}
+
 /// The position a card takes to sit under everything already in a column.
 ///
 /// A board that cannot be read is a board with nothing in that column as far as this is

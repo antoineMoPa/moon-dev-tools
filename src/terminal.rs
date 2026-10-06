@@ -3,6 +3,7 @@ mod naming;
 mod registry;
 mod routes;
 mod spawning;
+mod told;
 
 pub(crate) use naming::{name_for_new_shell, rename};
 pub(crate) use routes::{
@@ -231,9 +232,13 @@ pub(crate) struct TerminalSession {
     /// When the shell last printed anything, which is how the type-ahead tells a program that
     /// is still drawing its interface from one that has drawn it and is waiting.
     last_output: Mutex<Option<Instant>>,
-    /// Whether a person has typed into this shell. Once they have, the type-ahead is dropped:
-    /// text arriving after someone has started writing lands in the middle of their sentence.
-    typed_into: std::sync::atomic::AtomicBool,
+    /// When a person last typed into this shell, and `None` while nobody has. Once somebody
+    /// has, the type-ahead is dropped: text arriving after someone has started writing lands
+    /// in the middle of their sentence. A line the shell is told waits out a moment after the
+    /// last keystroke for the same reason - see [`told`].
+    last_typed_into: Mutex<Option<Instant>>,
+    /// The lines this shell has been told and not yet had typed into it - see [`told`].
+    told: Mutex<told::Told>,
     /// The ask for a person the shell last made and nobody has answered - see
     /// [`crate::attention`]. Typing into the shell is the answer, and takes it off.
     attention: Mutex<Option<Attention>>,
@@ -271,8 +276,13 @@ impl TerminalSession {
     /// Somebody typed into the shell: the type-ahead is off, and whatever the shell was
     /// asking for, it has been seen to.
     fn typed_into(&self) {
-        self.typed_into.store(true, Ordering::Relaxed);
+        *self.last_typed_into.lock().unwrap() = Some(Instant::now());
         *self.attention.lock().unwrap() = None;
+    }
+
+    /// Whether a person has typed into this shell at all.
+    fn has_been_typed_into(&self) -> bool {
+        self.last_typed_into.lock().unwrap().is_some()
     }
 
     /// The shell asked for a person. A bell after a notification is the same ask - Claude's

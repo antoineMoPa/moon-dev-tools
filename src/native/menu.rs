@@ -40,6 +40,9 @@ pub(crate) enum MenuAction {
     /// Open the project's work log at a new dated entry - the palette's `work log` command,
     /// as a menu item.
     OpenWorkLog,
+    /// Open what the board's agents have posted to each other - the palette's `wire` command,
+    /// as a menu item.
+    OpenWire,
     /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,
@@ -105,6 +108,7 @@ mod platform {
         open_review: MenuId,
         open_tasks: MenuId,
         open_work_log: MenuId,
+        open_wire: MenuId,
         open_in_web: MenuId,
         start_cloudflare_tunnel: MenuId,
         stop_cloudflare_tunnel: MenuId,
@@ -333,6 +337,8 @@ mod platform {
             let open_tasks = MenuItem::new("Tasks", true, None);
             // Unbound too: `wl` typed into the palette is the chord.
             let open_work_log = MenuItem::new("Work Log", true, None);
+            // Unbound as well: it is read now and then, not lived in.
+            let open_wire = MenuItem::new("Wire", true, None);
             let open_in_web = MenuItem::new("Open in Web", true, None);
             // Set to what a tunnel not running allows before the first frame.
             let start_cloudflare_tunnel = MenuItem::new("Start Tunnel", true, None);
@@ -357,6 +363,7 @@ mod platform {
                     &open_review,
                     &open_tasks,
                     &open_work_log,
+                    &open_wire,
                     &open_submodules,
                     &PredefinedMenuItem::separator(),
                     &open_in_web,
@@ -407,6 +414,7 @@ mod platform {
                 open_review: open_review.id().clone(),
                 open_tasks: open_tasks.id().clone(),
                 open_work_log: open_work_log.id().clone(),
+                open_wire: open_wire.id().clone(),
                 open_in_web: open_in_web.id().clone(),
                 start_cloudflare_tunnel: start_cloudflare_tunnel.id().clone(),
                 stop_cloudflare_tunnel: stop_cloudflare_tunnel.id().clone(),
@@ -475,6 +483,8 @@ mod platform {
                     MenuAction::OpenTasks
                 } else if event.id == self.open_work_log {
                     MenuAction::OpenWorkLog
+                } else if event.id == self.open_wire {
+                    MenuAction::OpenWire
                 } else if event.id == self.open_in_web {
                     MenuAction::OpenInWeb
                 } else if event.id == self.start_cloudflare_tunnel {

@@ -203,7 +203,7 @@ fn fake_claude(script: &str) -> std::path::PathBuf {
 }
 
 #[cfg(unix)]
-fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
+pub(super) fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) -> String {
     let path = fake_claude(script);
     registry
         .spawn(TerminalSpec {
@@ -447,7 +447,7 @@ fn a_shell_someone_has_typed_into_is_left_alone() {
     let session = registry.get(&terminal_id).expect("expected the shell");
 
     // Someone gets there first, before the shell has even finished coming up.
-    session.typed_into.store(true, Ordering::Relaxed);
+    *session.last_typed_into.lock().unwrap() = Some(Instant::now());
 
     std::thread::sleep(TYPE_AHEAD_DEADLINE + Duration::from_secs(1));
     let printed = String::from_utf8_lossy(&session.scrollback.lock().unwrap().replay())

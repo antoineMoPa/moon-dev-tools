@@ -13,6 +13,10 @@ pub(crate) mod store;
 // only ever asks it to do.
 #[cfg(not(target_arch = "wasm32"))]
 mod task_processes;
+// What the agents of a board tell each other, from their shells: posted by a command, and
+// kept and delivered by the server and its window.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod wire;
 
 use serde::{Deserialize, Serialize};
 
@@ -262,6 +266,13 @@ pub(crate) struct TaskNotesPayload {
 /// makes the file when the project has none yet.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct WorkLogPayload {
+    pub(crate) file_path: String,
+}
+
+/// Where the wire's broadcasts are kept, as the file pane addresses the file - the answer to
+/// opening it, which makes the file on a board nobody has posted to yet.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WirePayload {
     pub(crate) file_path: String,
 }
 

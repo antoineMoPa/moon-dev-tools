@@ -9,6 +9,10 @@
 //!
 //! `moon shell <folder>` reaches a window the same way, and asks it for a shell in that
 //! folder rather than a tab on a file.
+//!
+//! `moon wire post @handle …` reaches one window and no other: the one holding the shell of
+//! the agent the line is for, which it asks to type the line in - see
+//! [`crate::moontasks::wire`].
 
 pub(crate) mod window;
 
@@ -71,6 +75,18 @@ pub(crate) enum Ask {
     StillOpen { path: String },
     /// Open a shell in this folder, in a tab: `moon shell <folder>`.
     OpenShell { folder: String },
+    /// Type a direct message of the wire into one of this window's shells and send it:
+    /// `moon wire post @handle …`. It is carried in its parts rather than as the line to
+    /// type, because the window writes it down as well, and the two read differently - see
+    /// `typed_line` and `logged_line` in [`crate::moontasks::wire`].
+    Wire {
+        /// The shell of the agent it is for, by the id this window's moon knows it under.
+        terminal_id: String,
+        /// The handles of the task it was posted from and of the task it is for.
+        sender: String,
+        recipient: String,
+        message: String,
+    },
 }
 
 /// What the window answers.
@@ -86,6 +102,9 @@ pub(crate) enum Answer {
     StillOpen,
     /// Its tab has been closed, and the shell can stop waiting.
     Closed,
+    /// The window has the line of the wire, and types it into the shell as soon as nothing
+    /// there is in the way - see `told` in [`crate::terminal`].
+    Wired,
 }
 
 impl Instance {
@@ -325,6 +344,32 @@ fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
             "no window answered about {} - the ones that were open have closed",
             path.display()
         ),
+    }
+}
+
+/// The window of a moon, by its process - or `None` for a process with no window written
+/// down, which is what a `moon serve` is: it holds shells and listens on no socket.
+pub(crate) fn window_of(pid: u32) -> Option<Instance> {
+    running().into_iter().find(|instance| instance.pid == pid)
+}
+
+/// Hand a direct message of the wire to the window holding the shell it is for, to be typed
+/// in there. Only that window will do, so its refusal is the answer rather than a reason to
+/// try the next one.
+pub(crate) fn wire(window: &Instance, line: &Ask) -> Result<()> {
+    let answer = window.ask(line).with_context(|| {
+        format!(
+            "the moon window holding that shell (process {}) did not answer",
+            window.pid
+        )
+    })?;
+    match answer {
+        Answer::Wired => Ok(()),
+        Answer::Refused { reason } => bail!(
+            "the moon window holding that shell (process {}) refused the line: {reason}",
+            window.pid
+        ),
+        other => bail!("the window answered a line of the wire with {other:?}"),
     }
 }
 

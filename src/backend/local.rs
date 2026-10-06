@@ -389,6 +389,10 @@ impl Backend for LocalBackend {
         moontasks::service::open_work_log(&self.state, session_id)
     }
 
+    fn open_wire(&self, session_id: &str) -> Result<String> {
+        moontasks::service::open_wire(&self.state, session_id)
+    }
+
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {
         moontasks::service::link_file(&self.state, session_id, task_id, file_path)
     }
@@ -430,6 +434,10 @@ impl Backend for LocalBackend {
 
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
         crate::terminal::start_workspace_shell_running(&self.state, session_id, command)
+    }
+
+    fn tell_terminal(&self, terminal_id: &str, line: &str) -> Result<()> {
+        self.state.terminals.tell(terminal_id, line)
     }
 
     fn list_terminals(&self, _session_id: &str) -> Result<Vec<String>> {

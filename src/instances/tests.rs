@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     Answer, Ask, Instance, dir, home_instances_dir, running, socket_path, window::ShellAsks,
-    windows_for, write_record,
+    window_of, windows_for, wire, write_record,
 };
 
 fn instance(pid: u32, project_path: &str) -> Instance {
@@ -355,6 +355,112 @@ fn a_window_on_another_machines_repo_is_refused_with_the_reason() {
         }
     );
     assert!(asks.drain().is_empty());
+}
+
+fn wire_ask(terminal_id: &str, message: &str) -> Ask {
+    Ask::Wire {
+        terminal_id: terminal_id.to_string(),
+        sender: "fix-the-races".to_string(),
+        recipient: "bing-bong".to_string(),
+        message: message.to_string(),
+    }
+}
+
+/// `moon wire post @handle`: the line is taken, kept apart from the files and the folders,
+/// and waits for the window's next frame in the order it was asked for.
+#[test]
+fn a_line_of_the_wire_is_taken_and_waits_in_the_order_it_was_asked_for() {
+    let project = temporary_project("wired");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    let window = window_of(std::process::id()).expect("expected the window to be written down");
+
+    for message in ["one", "two", "three"] {
+        assert_eq!(
+            window
+                .ask(&wire_ask("terminal-a", message))
+                .expect("expected an answer"),
+            Answer::Wired
+        );
+    }
+    wire(&window, &wire_ask("terminal-b", "four")).expect("expected the line to be taken");
+
+    assert!(asks.drain().is_empty(), "a line is no file to open");
+    assert!(asks.drain_shells().is_empty(), "nor a folder for a shell");
+    let wired = asks.drain_wired();
+    assert_eq!(
+        wired
+            .iter()
+            .map(|line| (line.terminal_id.as_str(), line.message.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("terminal-a", "one"),
+            ("terminal-a", "two"),
+            ("terminal-a", "three"),
+            ("terminal-b", "four"),
+        ]
+    );
+    assert_eq!(wired[0].sender, "fix-the-races");
+    assert_eq!(wired[0].recipient, "bing-bong");
+    assert!(asks.drain_wired().is_empty(), "drained once");
+}
+
+/// The line is a shell's to be typed and sent, so what arrives is held to one line of text
+/// here, whoever sent it.
+#[test]
+fn a_line_of_the_wire_that_is_not_one_line_is_refused() {
+    let project = temporary_project("wired-two-lines");
+    let asks = ShellAsks::listen("moon tasks".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+    let window = this_process(&project.display().to_string());
+
+    for not_a_line in ["one\ntwo", "sent early\r", ""] {
+        let answer = window
+            .ask(&wire_ask("terminal-a", not_a_line))
+            .expect("expected an answer");
+        assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+    }
+    let error = wire(&window, &wire_ask("terminal-a", "one\ntwo")).expect_err("expected a refusal");
+    assert!(error.to_string().contains("refused the line"), "{error}");
+    assert!(asks.drain_wired().is_empty());
+}
+
+/// A window whose repo is on another machine holds none of the shells: they are that
+/// machine's, and its server is the moon that started them.
+#[test]
+fn a_line_of_the_wire_is_refused_by_a_window_on_another_machines_repo() {
+    let project = temporary_project("wired-remote");
+    let asks = ShellAsks::listen("moon tasks".to_string(), false, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+
+    let answer = this_process(&project.display().to_string())
+        .ask(&wire_ask("terminal-a", "hello"))
+        .expect("expected an answer");
+
+    assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+    assert!(asks.drain_wired().is_empty());
+}
+
+/// A moon with no window - a `moon serve` - has no record, and one that has gone leaves a
+/// record that is cleared: neither is a window a line can be handed to.
+#[test]
+fn only_a_running_window_that_wrote_itself_down_is_the_window_of_its_process() {
+    assert_eq!(window_of(std::process::id()), None);
+
+    write_record(&instance(PID_OF_NOTHING, "/repos/project")).expect("expected a record");
+    assert_eq!(window_of(PID_OF_NOTHING), None);
+
+    write_record(&this_process("/repos/project")).expect("expected a record");
+    assert_eq!(
+        window_of(std::process::id()),
+        Some(this_process("/repos/project"))
+    );
 }
 
 /// The window being looked at is where a file with no window on its project goes, so coming

@@ -26,10 +26,7 @@
 use anyhow::{Context, Result};
 use egui_frames::PaneId;
 
-use crate::native::{
-    app::App,
-    panes::{Pane, PaneKind},
-};
+use crate::native::app::App;
 
 /// The line the file ends on, which every new entry goes above. Looked for from the top: the
 /// first line holding it is the one.
@@ -162,34 +159,8 @@ impl App {
             move |backend| backend.open_work_log(&for_call),
             move |model, result| match result {
                 Ok(file_path) => {
-                    let found = model.layout.find_pane(|pane| {
-                        matches!(pane, Pane::File { session_id: of, file_path: open, revision: None, .. }
-                            if *of == session_id && *open == file_path)
-                    });
-                    let pane_id = match found {
-                        Some((pane_id, _)) => {
-                            model.layout.focus_pane(pane_id);
-                            pane_id
-                        }
-                        None => {
-                            let frame = model
-                                .layout
-                                .frame_holding(model.layout.active_frame(), |pane| {
-                                    pane.kind() == PaneKind::File
-                                })
-                                .unwrap_or_else(|| model.layout.primary_frame());
-                            model.layout.add_pane(
-                                frame,
-                                Pane::File {
-                                    session_id,
-                                    file_path,
-                                    task_id: None,
-                                    revision: None,
-                                },
-                                None,
-                            )
-                        }
-                    };
+                    let pane_id =
+                        crate::native::file_pane::tab_on_file(model, session_id, file_path);
                     model.work_log_entries_waiting.insert(pane_id, entry);
                 }
                 Err(error) => model.error(format!("could not open the work log: {error}")),

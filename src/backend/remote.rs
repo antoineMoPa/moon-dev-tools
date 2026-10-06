@@ -39,7 +39,7 @@ use crate::{
         AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, ColumnLabelRequest,
         ColumnPlacementRequest, CreateTaskRequest, LinkFileRequest, NewColumnRequest,
         ReviewRequestView, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
-        TerminalOpened, WorkLogPayload, review_request::Amend,
+        TerminalOpened, WirePayload, WorkLogPayload, review_request::Amend,
     },
     project::{ProjectCommand, ProjectConfig},
     settings::{Settings, SettingsChange},
@@ -520,6 +520,12 @@ impl Backend for RemoteBackend {
         Ok(work_log.file_path)
     }
 
+    fn open_wire(&self, session_id: &str) -> Result<String> {
+        let wire: WirePayload =
+            self.post_json(&format!("/api/session/{session_id}/wire/open"), &json!({}))?;
+        Ok(wire.file_path)
+    }
+
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/tasks/{task_id}/files"),
@@ -562,6 +568,16 @@ impl Backend for RemoteBackend {
             "/api/session/{session_id}/commit-run/{terminal_id}/outcome"
         ))?;
         Ok(outcome.exit_code)
+    }
+
+    /// The shells are the far server's, and a line reaches a shell through the socket of the
+    /// window whose own moon holds it: there is no asking another machine's.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tell_terminal(&self, terminal_id: &str, _line: &str) -> Result<()> {
+        anyhow::bail!(
+            "{terminal_id} is a shell of {}, which this window cannot type a line into",
+            self.base_url
+        )
     }
 
     #[cfg(not(target_arch = "wasm32"))]

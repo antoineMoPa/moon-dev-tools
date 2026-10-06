@@ -209,6 +209,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Where the project's work log is, as a path from the repo root, made if the project
     /// has none yet - see [`crate::native::work_log`].
     fn open_work_log(&self, session_id: &str) -> Result<String>;
+    /// Where the wire's broadcasts are kept, as a path from the repo root, the file made if
+    /// nobody has posted yet - see [`crate::moontasks::wire`].
+    fn open_wire(&self, session_id: &str) -> Result<String>;
     /// Put a file of the repo on the task's card, by its path relative to the repo root.
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()>;
 
@@ -293,6 +296,12 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// window has none of.
     #[cfg(not(target_arch = "wasm32"))]
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String>;
+    /// Type a line into one of this moon's shells and send it, once nothing there is in the
+    /// way - see `told` in [`crate::terminal`]. Answers once the line is waiting its turn. For
+    /// a line that arrived over the window's own socket, which a browser's window has none
+    /// of; a backend whose shells are on another machine is never asked, and refuses.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tell_terminal(&self, terminal_id: &str, line: &str) -> Result<()>;
     fn list_terminals(&self, session_id: &str) -> Result<Vec<String>>;
     /// The shells with something running in them right now, as opposed to the ones sitting at
     /// a prompt. This is what quitting would interrupt, and so what the window warns about.

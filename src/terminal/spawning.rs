@@ -128,7 +128,8 @@ impl TerminalRegistry {
             exited: exited.clone(),
             scrollback: Mutex::new(Scrollback::default()),
             last_output: Mutex::new(None),
-            typed_into: std::sync::atomic::AtomicBool::new(false),
+            last_typed_into: Mutex::new(None),
+            told: Mutex::new(Default::default()),
             attention: Mutex::new(None),
             attention_scanner: Mutex::new(Default::default()),
             child_ended: std::sync::atomic::AtomicBool::new(false),
@@ -247,7 +248,7 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     while Instant::now() < deadline {
         if *session.exited.borrow()
             || session.child_ended.load(Ordering::Relaxed)
-            || session.typed_into.load(Ordering::Relaxed)
+            || session.has_been_typed_into()
         {
             return;
         }
@@ -271,7 +272,7 @@ fn type_ahead(session: &TerminalSession, text: &str) {
     let mut writer = session.writer.lock().unwrap();
     if *session.exited.borrow()
         || session.child_ended.load(Ordering::Relaxed)
-        || session.typed_into.load(Ordering::Relaxed)
+        || session.has_been_typed_into()
     {
         return;
     }

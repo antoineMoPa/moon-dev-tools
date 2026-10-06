@@ -13,7 +13,7 @@ use crate::{
         self, AttachResourceRequest, BoardTaskView, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, LinkFileRequest, NewColumnRequest, ReviewRequestView,
         StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskTagsRequest,
-        TaskTitleRequest, TaskView, TerminalOpened, WorkLogPayload,
+        TaskTitleRequest, TaskView, TerminalOpened, WirePayload, WorkLogPayload,
         review_request::Amend,
         store::{BoardColumn, ColumnId},
     },
@@ -350,6 +350,16 @@ pub(super) async fn open_work_log(
     mark_activity(&state);
     Ok(Json(WorkLogPayload {
         file_path: moontasks::service::open_work_log(&state, &session_id)?,
+    }))
+}
+
+pub(super) async fn open_wire(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<WirePayload>, AppError> {
+    mark_activity(&state);
+    Ok(Json(WirePayload {
+        file_path: moontasks::service::open_wire(&state, &session_id)?,
     }))
 }
 

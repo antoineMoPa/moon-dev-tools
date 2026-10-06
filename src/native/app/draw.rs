@@ -275,6 +275,7 @@ impl App {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Tasks)
                 }
                 MenuAction::OpenWorkLog => CommandAction::OpenWorkLog,
+                MenuAction::OpenWire => CommandAction::OpenWire,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenInWeb => CommandAction::OpenInWeb,
                 #[cfg(not(target_arch = "wasm32"))]

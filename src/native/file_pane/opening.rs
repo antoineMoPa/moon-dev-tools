@@ -4,9 +4,44 @@
 use egui_frames::PaneId;
 use egui_moon_code_ide::LanguageSource;
 
-use crate::native::{app::App, language_source::SessionLanguages, panes::Pane};
+use crate::native::{
+    app::App,
+    language_source::SessionLanguages,
+    model::Model,
+    panes::{Pane, PaneKind},
+};
 
 use super::FileEditor;
+
+/// The tab on a file of the repo as it is now: the one already open on it, brought forward,
+/// or a new one in the frame the other file tabs are in. For a file opened by name rather
+/// than from a pane - the work log, the wire - once the repo's side has said where it is.
+pub(crate) fn tab_on_file(model: &mut Model, session_id: String, file_path: String) -> PaneId {
+    let found = model.layout.find_pane(|pane| {
+        matches!(pane, Pane::File { session_id: of, file_path: open, revision: None, .. }
+            if *of == session_id && *open == file_path)
+    });
+    if let Some((pane_id, _)) = found {
+        model.layout.focus_pane(pane_id);
+        return pane_id;
+    }
+    let frame = model
+        .layout
+        .frame_holding(model.layout.active_frame(), |pane| {
+            pane.kind() == PaneKind::File
+        })
+        .unwrap_or_else(|| model.layout.primary_frame());
+    model.layout.add_pane(
+        frame,
+        Pane::File {
+            session_id,
+            file_path,
+            task_id: None,
+            revision: None,
+        },
+        None,
+    )
+}
 
 impl App {
     /// Open a file in a tab of its own, or bring the tab already showing it forward.
@@ -59,8 +94,6 @@ impl App {
         file_path: String,
         task_id: String,
     ) {
-        use crate::native::panes::PaneKind;
-
         let pane_id = match self.model.layout.find_pane(|pane| {
             matches!(pane, Pane::File { file_path: open, revision: None, .. } if *open == file_path)
         }) {

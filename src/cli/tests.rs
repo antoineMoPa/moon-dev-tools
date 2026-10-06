@@ -593,3 +593,118 @@ fn every_command_answers_help_without_doing_anything() {
         }
     );
 }
+
+/// `moon wire post <line>`: the line is the rest of the command line, quoted or not, and the
+/// words starting with `@` in front of it are who it is for.
+#[test]
+fn a_line_for_the_wire_is_read_with_the_tags_in_front_of_it() {
+    use super::wire::WireCommand;
+
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+    let post = |tags: &[&str], message: &str| {
+        MoonCommand::Wire(WireCommand::Post {
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            message: message.to_string(),
+        })
+    };
+
+    assert_eq!(
+        parse(&["wire", "post", "rewriting src/cli - tests too"]),
+        post(&[], "rewriting src/cli - tests too")
+    );
+    assert_eq!(
+        parse(&["wire", "post", "rewriting", "src/cli"]),
+        post(&[], "rewriting src/cli")
+    );
+    // Quoted, the tags arrive inside the one word the line is.
+    assert_eq!(
+        parse(&["wire", "post", "@fix-the-races are you in src/cli?"]),
+        post(&["fix-the-races"], "are you in src/cli?")
+    );
+    assert_eq!(
+        parse(&[
+            "wire",
+            "post",
+            "@fix-the-races",
+            "@bing-bong-313",
+            "are",
+            "you there?"
+        ]),
+        post(&["fix-the-races", "bing-bong-313"], "are you there?")
+    );
+    // Only the words in front are tags: one further on is part of what is said.
+    assert_eq!(
+        parse(&["wire", "post", "ask @fix-the-races about src/cli"]),
+        post(&[], "ask @fix-the-races about src/cli")
+    );
+}
+
+#[test]
+fn a_line_for_the_wire_with_nothing_said_is_refused() {
+    let refused = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect_err("expected it to be refused")
+            .to_string()
+    };
+
+    assert!(refused(&["wire", "post"]).contains("needs the line to post"));
+    assert!(refused(&["wire", "post", "  "]).contains("needs the line to post"));
+    assert!(
+        refused(&["wire", "post", "@fix-the-races"]).contains("needs a message after the tags")
+    );
+    assert!(
+        refused(&["wire", "post", "@fix-the-races", "@bing-bong"])
+            .contains("needs a message after the tags")
+    );
+    assert!(refused(&["wire", "post", "@ hello"]).contains("tags nobody"));
+    assert!(refused(&["wire", "send", "hello"]).contains("`moon wire send` is not a command"));
+}
+
+/// The wire's rules are in its own help, which is what every way of asking gets - and
+/// `moon --help` says the command is there.
+#[test]
+fn the_wire_answers_help_with_its_own_rules() {
+    use super::wire::WireCommand;
+
+    let parse = |args: &[&str]| {
+        parse_command(None, args.iter().map(|arg| arg.to_string()).collect())
+            .expect("expected it to parse")
+    };
+
+    for asked in [
+        &["wire"][..],
+        &["wire", "--help"],
+        &["wire", "-h"],
+        &["wire", "post", "--help"],
+        &["wire", "post", "@fix-the-races", "hello", "-h"],
+    ] {
+        assert_eq!(
+            parse(asked),
+            MoonCommand::Wire(WireCommand::Help),
+            "{asked:?}"
+        );
+    }
+
+    let help = super::wire::help_text();
+    for said in [
+        "moon wire post <one line>",
+        "moon wire post @<handle> <one line>",
+        ".moontasks/messageboard.txt",
+        "latest 30 lines",
+        "its only writer",
+        "agent @<your handle> sent this message: <line>",
+        "MOONREVIEW_TASK_DIR",
+        "@board-task",
+        "no running agent",
+    ] {
+        assert!(
+            help.contains(said),
+            "the wire's help should say {said:?}:\n{help}"
+        );
+    }
+    assert!(help_text().contains("moon wire post <one line>"));
+    assert!(help_text().contains("moon wire post \"rewriting src/cli\""));
+}

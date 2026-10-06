@@ -130,6 +130,7 @@ fn menus(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
         );
         item(ui, "Tasks", None, MenuAction::OpenTasks, picked);
         item(ui, "Work Log", None, MenuAction::OpenWorkLog, picked);
+        item(ui, "Wire", None, MenuAction::OpenWire, picked);
         item(
             ui,
             "Submodule Status",

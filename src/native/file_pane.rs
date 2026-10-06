@@ -21,6 +21,8 @@ mod on_disk;
 mod opening;
 mod serving;
 
+pub(crate) use opening::tab_on_file;
+
 use egui_moon_code_ide::{Completing, LspPosition, Served};
 use egui_moon_editor::{Editor, Language};
 use web_time::Instant;
@@ -42,6 +44,12 @@ pub(crate) struct FileEditor {
     /// the header says so, and no save is offered on one. Known only once the text has
     /// arrived, because the read is what answers it - see [`crate::lsp`].
     outside_the_repo: bool,
+    /// The command that is the file's only writer, for a file that has one - the wire's
+    /// broadcasts, see [`crate::native::wire`]. Such a tab is there to be read: the header
+    /// names the command, no save is offered, and the tab shows the file as the command last
+    /// wrote it whatever is typed into it. Known once the text has arrived, as
+    /// `outside_the_repo` is, because the read is what answers it.
+    only_written_by: Option<String>,
     /// Whether the pane is showing the markdown rendered rather than the text of it. Only
     /// ever true for a markdown file, which is also the only kind offered the toggle.
     preview: bool,
@@ -141,6 +149,7 @@ impl FileEditor {
             error: None,
             saving: false,
             outside_the_repo: false,
+            only_written_by: None,
             preview,
             tree: false,
             close_confirmed: false,
@@ -263,10 +272,10 @@ impl FileEditor {
         self.revision.as_deref()
     }
 
-    /// Whether the text can only be read: a file outside the repo, or a file as an old
-    /// commit had it. Neither has anywhere for an edit to go.
+    /// Whether the text can only be read: a file outside the repo, a file as an old commit
+    /// had it, or a file only a command writes. None has anywhere for an edit to go.
     pub(super) fn is_read_only(&self) -> bool {
-        self.outside_the_repo || self.revision.is_some()
+        self.outside_the_repo || self.revision.is_some() || self.only_written_by.is_some()
     }
 
     /// Whether the server behind this file may be asked for edits to it - a rename, a format:
@@ -334,6 +343,7 @@ mod tests {
             error: None,
             saving: false,
             outside_the_repo: false,
+            only_written_by: None,
             preview: false,
             tree: false,
             close_confirmed: false,

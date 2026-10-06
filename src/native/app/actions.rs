@@ -461,6 +461,7 @@ impl App {
             CommandAction::CodeActions => crate::native::code_actions::start_in_front(self),
             CommandAction::ToggleBlame => crate::native::blame::toggle_in_front(self),
             CommandAction::OpenWorkLog => self.open_work_log(),
+            CommandAction::OpenWire => self.open_wire(),
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::OpenInWeb => self.open_in_web(),
             #[cfg(not(target_arch = "wasm32"))]

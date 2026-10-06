@@ -10,6 +10,8 @@ mod command;
 mod frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod open;
+#[cfg(not(target_arch = "wasm32"))]
+mod wire;
 #[cfg(test)]
 mod tests;
 

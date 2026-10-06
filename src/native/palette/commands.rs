@@ -87,6 +87,12 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         None,
     ));
     commands.extend(work_log_commands());
+    commands.push(Command {
+        title: "wire".to_string(),
+        description: "Open what the board's agents have posted to each other".to_string(),
+        action: CommandAction::OpenWire,
+        shortcut: None,
+    });
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
         title: "open in web".to_string(),

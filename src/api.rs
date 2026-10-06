@@ -234,6 +234,11 @@ pub(crate) struct FileContentPayload {
     /// library, landed on by a jump to a definition. Those are read-only: the pane offers no
     /// save on one, and a write to it is refused repo-side whatever the pane does.
     pub(crate) outside_the_repo: bool,
+    /// The command that is this file's only writer, for a file that has one: the wire's
+    /// broadcasts, which `moon wire post` keeps in order - see `crate::moontasks::wire`. A
+    /// tab on such a file offers no save, since a save would be a second writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) only_written_by: Option<String>,
     /// The file as HEAD has it, which the editor marks the new lines of the text against:
     /// empty for a file HEAD does not have, every line of which is new, and `None` for a file
     /// outside the repo, which has no history here to be new against.

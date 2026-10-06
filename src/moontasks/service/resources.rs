@@ -424,7 +424,11 @@ fn task_env(session_id: &str, task_id: &str, repo_path: &Path) -> Vec<(String, S
 ///
 /// The brief is rewritten on every start rather than once at creation, so a card that has been
 /// renamed starts its next agent on the name it has now.
-fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) -> Result<Fillings> {
+pub(super) fn write_task_files(
+    task_id: &str,
+    repo_path: &Path,
+    metadata: &TaskMetadata,
+) -> Result<Fillings> {
     let dir = store::task_dir(repo_path, task_id)?;
 
     let brief = match metadata.status {
@@ -455,6 +459,13 @@ fn write_task_files(task_id: &str, repo_path: &Path, metadata: &TaskMetadata) ->
     let path = dir.join(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME);
     std::fs::write(&path, crate::moontasks::ATTACHMENTS_BRIEF)
         .with_context(|| format!("failed to write {}", path.display()))?;
+
+    let path = dir.join(crate::moontasks::COORDINATION_BRIEF_FILE_NAME);
+    std::fs::write(&path, crate::moontasks::coordination_brief())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    // That file sends the agent to read the wire's, so by then it is there - empty, on a
+    // board nobody has posted to yet. Only made: what is in it is the agents'.
+    store::ensure_wire_file(repo_path)?;
 
     Ok(Fillings {
         values: vec![

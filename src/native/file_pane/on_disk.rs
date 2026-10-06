@@ -5,7 +5,8 @@
 //! with nothing typed into it shows the file as it now is, since nothing is lost by it. A tab
 //! with edits of its own keeps them and holds the other version back, the header saying the
 //! file changed on disk, until `[reload]` takes that version or `[save]` writes the edits over
-//! it.
+//! it. A tab on a file only a command writes - the wire's - has no edits that could be saved,
+//! so it always shows the file.
 
 use std::time::Duration;
 
@@ -29,6 +30,7 @@ impl FileEditor {
         self.code.set_base(payload.committed);
         self.error = None;
         self.outside_the_repo = payload.outside_the_repo;
+        self.only_written_by = payload.only_written_by;
         self.written_elsewhere = None;
         self.reload_confirmed = false;
     }
@@ -37,6 +39,14 @@ impl FileEditor {
     /// elsewhere is put on screen when there is nothing typed here to lose, and otherwise held
     /// until `[reload]` or `[save]` settles which of the two stays.
     fn disk_answered(&mut self, payload: FileContentPayload) {
+        // A file only a command writes has no edits of this tab's to keep, since they could
+        // never be saved: the tab shows the file, whatever has been typed into it.
+        if self.only_written_by.is_some() {
+            if self.code.text() != payload.content {
+                self.take_what_is_on_disk(payload);
+            }
+            return;
+        }
         if self.saved.as_ref() == Some(&payload.content) {
             // Also how a change made elsewhere and then undone there stops being announced.
             self.written_elsewhere = None;
@@ -137,6 +147,7 @@ mod tests {
             file_path: "src/lib.rs".to_string(),
             content: content.to_string(),
             outside_the_repo: false,
+            only_written_by: None,
             committed: Some(String::new()),
         }
     }
@@ -159,5 +170,28 @@ mod tests {
         edited.disk_answered(on_disk("one\n"));
         assert_eq!(edited.code.text(), "mine\n");
         assert!(edited.written_elsewhere.is_none());
+    }
+
+    /// A tab on a file only a command writes follows the file: what the command wrote is
+    /// shown, and so is the file again after something was typed into the tab.
+    #[test]
+    fn a_file_only_a_command_writes_is_always_shown_as_it_is_on_disk() {
+        let posted = |content: &str| FileContentPayload {
+            only_written_by: Some("moon wire post".to_string()),
+            ..on_disk(content)
+        };
+        let mut wire = editor_with("", "");
+        wire.take_what_is_on_disk(posted("one\n"));
+        assert!(wire.is_read_only());
+
+        wire.disk_answered(posted("one\ntwo\n"));
+        assert_eq!(wire.code.text(), "one\ntwo\n");
+
+        wire.code.set_text("typed over it\n".to_string());
+        assert!(wire.is_dirty());
+        wire.disk_answered(posted("one\ntwo\n"));
+        assert_eq!(wire.code.text(), "one\ntwo\n");
+        assert!(!wire.is_dirty());
+        assert!(wire.written_elsewhere.is_none());
     }
 }

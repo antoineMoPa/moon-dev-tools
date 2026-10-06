@@ -10,6 +10,9 @@
 //!
 //! A folder goes the way a submodule's shell does: the session on its project is opened as
 //! the shell is started - see [`App::open_shell_in_folder`] - so it needs no session kept.
+//!
+//! A line of the wire - `moon wire post @handle` - arrives the same way and opens nothing: it
+//! is typed into a shell, which is [`crate::native::wire`]'s.
 
 use std::{
     collections::HashMap,
@@ -77,6 +80,7 @@ impl App {
         // is open on goes, so coming forward is written down as it happens.
         let focused = ctx.input(|input| input.focused);
         let came_forward = focused && !std::mem::replace(&mut self.window_is_in_front, focused);
+        let mut wired = Vec::new();
         if let Some(asks) = &self.shell_asks {
             let arrived = asks.drain();
             if repo_root != self.project_asks_reach_this_window_on
@@ -92,7 +96,11 @@ impl App {
             }
             self.asked_files.extend(arrived);
             self.asked_shells.extend(asks.drain_shells());
+            wired = asks.drain_wired();
         }
+        // A line of the wire is for a shell this window's moon holds, whatever project the
+        // window is on by now, so it waits on nothing.
+        self.type_wired_lines(wired);
         self.release_closed_tabs();
 
         // A file is opened by its path inside a project, and a shell is started through the

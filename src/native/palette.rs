@@ -159,6 +159,8 @@ pub(crate) enum CommandAction {
     ApplyCodeAction(usize),
     /// Open the project's work log at a new dated entry - see [`crate::native::work_log`].
     OpenWorkLog,
+    /// Open what the board's agents have posted to each other - see [`crate::native::wire`].
+    OpenWire,
     /// This window's repo in a browser - see `crate::native::open_in_web`. Nothing a
     /// browser's window has to offer: it is the browser.
     #[cfg(not(target_arch = "wasm32"))]

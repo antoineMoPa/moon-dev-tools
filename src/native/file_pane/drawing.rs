@@ -65,6 +65,7 @@ impl App {
         let written_elsewhere = editor.written_elsewhere.is_some();
         let reload_confirmed = editor.reload_confirmed;
         let outside_the_repo = editor.outside_the_repo;
+        let only_written_by = editor.only_written_by.clone();
         let read_only = editor.is_read_only();
         let problems = crate::native::diagnostics::said_in_header(editor.diagnosed.found());
         let error = editor.error.clone();
@@ -182,6 +183,18 @@ impl App {
                             .on_hover_text(
                                 "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
                             );
+                        }
+                        // The same for a file only a command writes: which command, since
+                        // that is how a line gets into it.
+                        if let Some(command) = &only_written_by {
+                            ui.label(
+                                RichText::new(format!("written by `{command}` · read-only"))
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.muted),
+                            )
+                            .on_hover_text(format!(
+                                "`{command}` is the only writer of this file, so it can only be read here. The tab shows the file as it is on disk."
+                            ));
                         }
                         // The same for a tab on an old version of a file: which one, and
                         // that it is there to be read.

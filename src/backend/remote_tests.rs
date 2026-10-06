@@ -448,6 +448,42 @@ fn the_work_log_opens_over_http() {
     assert!(served.root.join(".moontasks/.gitignore").is_file());
 }
 
+/// Opening the wire over HTTP makes the file its broadcasts are kept in, empty, and the read
+/// of it says which command is its only writer - which is what makes its tab read-only.
+#[test]
+fn the_wire_opens_over_http_and_says_what_writes_it() {
+    let served = serve_a_repo("wire");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    let path = backend
+        .open_wire(&opened.session_id)
+        .expect("expected the wire to open");
+    assert_eq!(path, ".moontasks/messageboard.txt");
+
+    let content = backend
+        .file_content(&opened.session_id, &path)
+        .expect("expected the file pane's read to reach the wire's file");
+    assert_eq!(content.content, "");
+    assert_eq!(content.only_written_by.as_deref(), Some("moon wire post"));
+
+    // Every other file of the board is written from its tab, as it was.
+    let work_log = backend
+        .open_work_log(&opened.session_id)
+        .expect("expected the work log to open");
+    let content = backend
+        .file_content(&opened.session_id, &work_log)
+        .expect("expected the file pane's read to reach the work log");
+    assert_eq!(content.only_written_by, None);
+}
+
 /// A task's `request_for_review.txt` is on the server, beside the board, so a remote window is
 /// told its rows over HTTP and crosses them off there - not in a folder of its own machine.
 #[test]
