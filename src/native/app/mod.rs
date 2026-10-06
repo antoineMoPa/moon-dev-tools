@@ -176,6 +176,13 @@ pub(crate) struct App {
     /// What each hunk card measured the last time it was drawn, so the diff pane can skip the
     /// ones that are scrolled out of sight instead of laying them out again.
     pub(crate) hunk_heights: HashMap<String, f32>,
+    /// Where each hunk card's rows and comments were inside it the last time it was drawn,
+    /// which is what the minimap draws a card it cannot see from - see
+    /// [`crate::native::review::minimap`].
+    pub(crate) hunk_shapes: HashMap<String, crate::native::review::minimap::CardShape>,
+    /// Counted up every time a hunk's lines are built again or its card comes out a
+    /// different shape: what tells the minimap the picture it made is of something older.
+    pub(crate) hunks_drawn_differently: u64,
     /// Image diffs, decoded from the `data:` URIs they arrive as and keyed by a hash of the
     /// URI. `None` marks one that could not be read, so it is not retried every frame.
     pub(crate) decoded_images: HashMap<u64, Option<(&'static str, Arc<[u8]>)>>,
@@ -404,6 +411,8 @@ impl App {
             code_reading_until: Instant::now(),
             hunks_left_unread: false,
             hunk_heights: HashMap::new(),
+            hunk_shapes: HashMap::new(),
+            hunks_drawn_differently: 0,
             decoded_images: HashMap::new(),
             // Turned on by the window itself - see the field.
             asks_language_servers: false,
@@ -509,6 +518,14 @@ impl App {
             .max()
             .unwrap_or(0);
         let lines = Arc::new(lines);
+        // The same patch read again, as code this time, is the same lines in new inks.
+        if self
+            .diffs
+            .get(hunk_id)
+            .is_none_or(|cached| cached.patch_hash != patch_hash)
+        {
+            self.hunks_drawn_differently += 1;
+        }
         self.diffs.insert(
             hunk_id.to_string(),
             CachedDiff {
@@ -543,6 +560,15 @@ impl App {
             .widest_body_columns
     }
 
+    /// The lines [`diff_lines`](Self::diff_lines) last built for a hunk, for a reader that
+    /// wants what the pane drew rather than to have anything built. Nothing for a hunk whose
+    /// lines were never asked for - an image's, which has none.
+    pub(crate) fn built_diff_lines(&self, hunk_id: &str) -> Option<&[DiffLine]> {
+        self.diffs
+            .get(hunk_id)
+            .map(|cached| cached.lines.as_slice())
+    }
+
     /// Drop cached diffs for hunks the review no longer has, so switching commits in a big
     /// repo does not leave every previous diff in memory.
     fn prune_diff_cache(&mut self) {
@@ -558,6 +584,7 @@ impl App {
         self.diffs.retain(|hunk_id, _| live.contains(hunk_id));
         self.hunk_heights
             .retain(|hunk_id, _| live.contains(hunk_id));
+        self.hunk_shapes.retain(|hunk_id, _| live.contains(hunk_id));
     }
 }
 

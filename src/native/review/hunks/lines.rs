@@ -13,6 +13,7 @@ use crate::{
         app::App,
         model::{LINE_END, LineSelection, SelectionPoint, hash_of},
         review::diff::{DiffLine, LineKind, insertion_line},
+        review::minimap::CardBeingDrawn,
         review::search,
         theme::{CODE_SIZE, CodeFace, Palette, code_font, syntax_face},
     },
@@ -23,14 +24,15 @@ use super::actions::{
 };
 use super::comments::{bubble_rect, draw_comment_bubble, draw_composer, draw_inline_comment};
 use super::{
-    LINE_HEIGHT, body_text_x, code_rect, column_at, diff_line_id, gutter_width, shows_both_numbers,
-    sideways, word_bounds_at,
+    LINE_HEIGHT, body_text_x, code_rect, column_at, diff_line_id, gutter_width, row_pitch,
+    shows_both_numbers, sideways, word_bounds_at,
 };
 
 /// Draws the hunk's lines, and the comments and composers under them. `scroll_to_line` is
 /// the line the pane was asked to bring into view, if one - see
 /// [`crate::native::model::ScrollTo`]; answers whether that line was drawn and took the
-/// scroll, so the card can fall back to its own top when it was not.
+/// scroll, so the card can fall back to its own top when it was not. `card` is told where
+/// every row and every comment went, which is what the minimap draws the card from.
 #[allow(
     clippy::too_many_arguments,
     reason = "one call site; the alternative is a \
@@ -44,6 +46,7 @@ pub(super) fn draw_hunk_body(
     read_only: bool,
     preview_limit: usize,
     scroll_to_line: Option<usize>,
+    card: &mut CardBeingDrawn,
     palette: &Palette,
 ) -> bool {
     let mut line_scrolled = false;
@@ -116,6 +119,7 @@ pub(super) fn draw_hunk_body(
         }
         let scroll_here = scroll_to_line == Some(index);
         line_scrolled |= scroll_here;
+        card.line(index, ui.cursor().min.y, row_pitch(ui));
         draw_diff_line(
             app,
             ui,
@@ -130,16 +134,22 @@ pub(super) fn draw_hunk_body(
 
         for (_, comment_index) in comment_at.iter().filter(|(at, _)| *at == index) {
             if let Some(entry) = anchored.get(*comment_index) {
+                let top = ui.cursor().min.y;
                 draw_inline_comment(app, ui, session_id, hunk, *comment_index, entry, palette);
+                card.note(top, ui.min_rect().bottom());
             }
         }
         for (_, anchor) in draft_at.iter().filter(|(at, _)| *at == index) {
+            let top = ui.cursor().min.y;
             draw_composer(app, ui, session_id, hunk, anchor, read_only, palette);
+            card.note(top, ui.min_rect().bottom());
         }
     }
 
     for anchor in &unplaced {
+        let top = ui.cursor().min.y;
         draw_composer(app, ui, session_id, hunk, anchor, read_only, palette);
+        card.note(top, ui.min_rect().bottom());
     }
 
     if hunk.patch_line_count > preview_limit && full_patch.is_none() {

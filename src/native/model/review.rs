@@ -179,6 +179,9 @@ pub(crate) struct ReviewState {
     /// How far each hunk's code is scrolled sideways, in points, by hunk id. A hunk nobody
     /// has scrolled is not in here and sits at its left edge.
     pub(crate) code_scroll_x: HashMap<String, f32>,
+    /// Where the diff pane laid the review out on its last draw, and the strip beside it
+    /// that is drawn from that - see [`crate::native::review::minimap`].
+    pub(crate) minimap: crate::native::review::minimap::Minimap,
 }
 
 impl ReviewState {
@@ -206,6 +209,7 @@ impl ReviewState {
             pending_discard: None,
             asked_file_staging: HashMap::new(),
             code_scroll_x: HashMap::new(),
+            minimap: Default::default(),
         }
     }
 

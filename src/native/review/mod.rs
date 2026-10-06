@@ -6,6 +6,7 @@ pub(crate) mod files;
 pub(crate) mod header;
 pub(crate) mod hunks;
 pub(crate) mod image_diff;
+pub(crate) mod minimap;
 pub(crate) mod search;
 pub(crate) mod sidebar;
 
@@ -152,6 +153,29 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str) {
         )
         .show(ui, |ui| sidebar::draw(app, ui, session_id, &palette));
 
+    // The minimap has a panel of its own rather than a part of the diff's, so it runs the
+    // whole height of the pane and up against its edge, outside the margin the diff is
+    // drawn inside. Only beside a review that has something in it: with no hunks there is
+    // nothing to map. A press on it is taken before the diff is drawn and the map painted
+    // after, so neither is a frame behind the other.
+    let minimap_beside = minimap::fits_beside(ui.available_width())
+        && app
+            .model
+            .review_ref(session_id)
+            .is_some_and(|review| !review.hunks().is_empty());
+    let minimap = minimap_beside.then(|| {
+        // The map a file tab has, at the width and in the inks it has there.
+        let style = palette.editor_style();
+        let strip = egui::Panel::right(egui::Id::new(("review-minimap", session_id)))
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(style.minimap_width)
+            .frame(egui::Frame::new().fill(palette.bg))
+            .show(ui, |ui| minimap::take_press(app, ui, session_id))
+            .inner;
+        (strip, style)
+    });
+
     egui::CentralPanel::default()
         .frame(
             egui::Frame::new()
@@ -159,6 +183,10 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str) {
                 .inner_margin(egui::Margin::symmetric(8, 6)),
         )
         .show(ui, |ui| hunks::draw(app, ui, session_id, &palette));
+
+    if let Some((strip, style)) = minimap {
+        minimap::paint(app, ui, session_id, strip, &style, &palette);
+    }
 }
 
 /// How wide a review pane has to be to stand the sidebar beside the diff: the sidebar at its

@@ -26,6 +26,7 @@ use crate::{
         model::ScrollTo,
         review::diff::DiffLine,
         review::image_diff,
+        review::minimap::{CardBeingDrawn, Scrolled},
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
         widgets,
     },
@@ -43,6 +44,12 @@ const ONE_NUMBER_GUTTER_WIDTH: f32 = 38.0;
 /// not: two numbers there leave the code a third of the screen.
 const ROOM_FOR_TWO_NUMBERS: f32 = 480.0;
 pub(super) const LINE_HEIGHT: f32 = 15.0;
+
+/// From the top of one diff line's row to the top of the next: the row, and the gap the
+/// layout leaves under it.
+pub(crate) fn row_pitch(ui: &Ui) -> f32 {
+    LINE_HEIGHT + ui.spacing().item_spacing.y
+}
 
 /// One diff line's widget id. Derived from the hunk and the line rather than from the
 /// enclosing `Ui`, so it is the same wherever the line is drawn - which is also what lets the
@@ -167,13 +174,22 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     {
         ui.input_mut(|input| input.smooth_scroll_delta.x += input.pointer.delta().x);
     }
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+    let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+    // A press on the minimap, taken before this was drawn so the diff is there this frame -
+    // see [`crate::native::review::minimap`], which the layout below is reported to.
+    if let Some(offset) = app.model.review(session_id).minimap.asked.take() {
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+    }
+    let scrolled = scroll_area
         .scroll_source(egui::containers::scroll_area::ScrollSource {
             drag: egui::containers::scroll_area::DragScroll::OnTouch,
             ..Default::default()
         })
         .show(ui, |ui| {
+            app.model
+                .review(session_id)
+                .minimap
+                .start(ui.cursor().min.y);
             if read_only {
                 draw_section(
                     app,
@@ -215,6 +231,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                 );
             }
         });
+
+    app.model.review(session_id).minimap.scrolled = Scrolled {
+        offset: scrolled.state.offset.y,
+        content_height: scrolled.content_size.y,
+        view_height: scrolled.inner_rect.height(),
+    };
 
     finish_line_sweep(app, ui, session_id);
 }
@@ -404,6 +426,7 @@ fn draw_hunk_card(
         let skipped = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
         if !ui.is_rect_visible(skipped) {
             ui.allocate_exact_size(skipped.size(), Sense::hover());
+            app.model.review(session_id).minimap.card(&hunk.id, skipped);
             return;
         }
     }
@@ -429,6 +452,9 @@ fn draw_hunk_card(
 
     let scroll_to_line = scrolling_here.and_then(|target| target.line_index);
     let mut line_scrolled = false;
+    // Where the card's rows and comments land inside it, for the minimap - which has only
+    // this to go on once the card is scrolled out of sight and skipped.
+    let mut being_drawn = CardBeingDrawn::at(ui.cursor().min.y);
     let response = frame
         .show(ui, |ui| {
             draw_hunk_toolbar(app, ui, session_id, hunk, read_only, palette);
@@ -444,6 +470,7 @@ fn draw_hunk_card(
                 read_only,
                 preview_limit,
                 scroll_to_line,
+                &mut being_drawn,
                 palette,
             );
         })
@@ -481,4 +508,17 @@ fn draw_hunk_card(
     // What it measured this time is what the next frame skips it with.
     app.hunk_heights
         .insert(hunk.id.clone(), response.rect.height());
+    app.model
+        .review(session_id)
+        .minimap
+        .card(&hunk.id, response.rect);
+    let shape = being_drawn.shape();
+    if !app
+        .hunk_shapes
+        .get(&hunk.id)
+        .is_some_and(|known| known.reads_as(&shape))
+    {
+        app.hunk_shapes.insert(hunk.id.clone(), shape);
+        app.hunks_drawn_differently += 1;
+    }
 }

@@ -39,6 +39,7 @@ mod palette;
 mod palette_long_rows;
 mod project;
 mod review_header;
+mod review_minimap;
 mod review_phone;
 mod shell_input;
 mod shell_lifecycle;
