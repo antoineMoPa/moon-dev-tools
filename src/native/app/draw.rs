@@ -276,6 +276,8 @@ impl App {
                 }
                 MenuAction::OpenWorkLog => CommandAction::OpenWorkLog,
                 MenuAction::OpenWire => CommandAction::OpenWire,
+                #[cfg(target_arch = "wasm32")]
+                MenuAction::ShowPageQr => CommandAction::ShowPageQr,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenInWeb => CommandAction::OpenInWeb,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -471,6 +473,8 @@ impl App {
         self.draw_armed_prefix(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.draw_tunnel(ctx);
+        #[cfg(target_arch = "wasm32")]
+        self.draw_page_qr(ctx);
         self.draw_toasts(ctx, crate::native::status_bar::BAR_HEIGHT);
 
         // A place a language server named, gone to or listed now the tree is drawn.

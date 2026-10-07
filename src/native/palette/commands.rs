@@ -93,6 +93,14 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::OpenWire,
         shortcut: None,
     });
+    #[cfg(target_arch = "wasm32")]
+    commands.push(Command {
+        title: "show qr code".to_string(),
+        description: "Open this page on another device, logged in: a QR code of its address"
+            .to_string(),
+        action: CommandAction::ShowPageQr,
+        shortcut: None,
+    });
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
         title: "open in web".to_string(),

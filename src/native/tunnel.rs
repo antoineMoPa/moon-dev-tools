@@ -4,10 +4,8 @@
 //!
 //! The address alone lets nobody in: the server still asks for a login. The QR code carries
 //! the same address `Open in Web` opens, with a login ticket in its fragment - see
-//! [`crate::native::open_in_web`] - so a device that scans it is logged in. A ticket is good
-//! for [`OPEN_IN_WEB_TICKET_LIFETIME`], and a QR code sits on the screen for as long as it
-//! takes to find the device, so the code is made again from a new ticket before the old one
-//! runs out.
+//! [`crate::native::login_link`] - so a device that scans it is logged in, and the code is
+//! made again from a new ticket before the old one runs out.
 
 use std::{
     io::{BufRead, BufReader},
@@ -16,27 +14,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui::{Align2, Color32, RichText, Sense, vec2};
+use egui::{RichText, Sense};
 
-use crate::{
-    backend::remote::urlencode,
-    pass_keys::{OPEN_IN_WEB_TICKET_LIFETIME, SERVE_TICKET_LIFETIME},
-};
+use crate::pass_keys::{OPEN_IN_WEB_TICKET_LIFETIME, SERVE_TICKET_LIFETIME};
 
-use super::{app::App, model::ToastKind};
+use super::{app::App, login_link, model::ToastKind};
 
 const CLOUDFLARED: &str = "cloudflared";
 
 /// The address in front of every tunnel quick tunnels are given.
 const QUICK_TUNNEL_HOST_SUFFIX: &str = ".trycloudflare.com";
-
-/// A new ticket is minted this long before the one in the QR code runs out.
-const TICKET_REFRESH_MARGIN: Duration = Duration::from_secs(15);
-
-const QR_SIZE: f32 = 240.0;
-
-/// Modules of empty margin a QR code needs around it to be read.
-const QR_QUIET_ZONE: usize = 4;
 
 /// A `cloudflared` running, and what is known of the address it was given.
 pub(crate) struct Tunnel {
@@ -261,11 +248,12 @@ impl App {
         let (Some(public_url), true) = (tunnel.public_url.clone(), tunnel.showing_qr) else {
             return;
         };
-        let stale = tunnel.link.as_ref().is_none_or(|(_, minted)| {
-            minted.elapsed() + TICKET_REFRESH_MARGIN >= OPEN_IN_WEB_TICKET_LIFETIME
-        });
+        let stale = tunnel
+            .link
+            .as_ref()
+            .is_none_or(|(_, minted)| login_link::qr_ticket_wants_renewing(*minted));
         if stale {
-            let Some(address) = self.tunnel_address(&public_url, OPEN_IN_WEB_TICKET_LIFETIME)
+            let Some(address) = self.tunnel_address(&public_url, login_link::QR_TICKET_LIFETIME)
             else {
                 return;
             };
@@ -278,71 +266,38 @@ impl App {
         };
 
         let palette = self.palette_of();
-        let mut open = true;
         let mut stop = false;
         let mut open_in_browser = false;
         let mut copy_link = false;
-        egui::Window::new("remote access")
-            // Its own header rather than the window's: the close button of that one shows an
-            // arrow where everything else clickable shows a hand, and is framed where ours are
-            // not.
-            .title_bar(false)
-            // Above the board: it takes a press on anything at the middle layer or below for its
-            // own, which is how a press on this window's title would pick a card up.
-            .order(egui::Order::Foreground)
-            // Where it opens, and no more: an anchored window could not be dragged.
-            .pivot(Align2::CENTER_CENTER)
-            .default_pos(ctx.viewport_rect().center())
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("remote access").strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::native::widgets::close_button(ui, &palette).clicked() {
-                            open = false;
-                        }
-                    });
-                });
-                ui.separator();
-                ui.vertical_centered(|ui| {
-                    // The address a phone would scan, opened here: logged in, like the QR code.
-                    let link = crate::native::widgets::clickable(
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&public_url)
-                                    .monospace()
-                                    .color(palette.accent)
-                                    .underline(),
-                            )
-                            .sense(Sense::click()),
-                        ),
-                    );
-                    if link.clicked() {
-                        open_in_browser = true;
-                    }
-                    link.context_menu(|ui| {
-                        if crate::native::widgets::quiet_button(ui, "copy link").clicked() {
-                            copy_link = true;
-                            ui.close();
-                        }
-                    });
-                    ui.add_space(6.0);
-                    match qrcode::QrCode::new(address.as_bytes()) {
-                        Ok(code) => paint_qr(ui, &code),
-                        Err(error) => {
-                            ui.label(
-                                RichText::new(format!("could not make a QR code: {error}"))
-                                    .color(palette.warn),
-                            );
-                        }
-                    }
-                    ui.add_space(6.0);
-                    if crate::native::widgets::clickable(ui.button("stop tunnel")).clicked() {
-                        stop = true;
-                    }
-                });
+        let open = login_link::qr_window(ctx, &palette, "remote access", |ui| {
+            // The address a phone would scan, opened here: logged in, like the QR code.
+            let link = crate::native::widgets::clickable(
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&public_url)
+                            .monospace()
+                            .color(palette.accent)
+                            .underline(),
+                    )
+                    .sense(Sense::click()),
+                ),
+            );
+            if link.clicked() {
+                open_in_browser = true;
+            }
+            link.context_menu(|ui| {
+                if crate::native::widgets::quiet_button(ui, "copy link").clicked() {
+                    copy_link = true;
+                    ui.close();
+                }
             });
+            ui.add_space(6.0);
+            login_link::paint_qr(ui, &palette, &address);
+            ui.add_space(6.0);
+            if crate::native::widgets::clickable(ui.button("stop tunnel")).clicked() {
+                stop = true;
+            }
+        });
         // Closing the window only puts the code away: the tunnel is stopped from the menu or
         // its button.
         if let Some(tunnel) = &mut self.tunnel {
@@ -393,32 +348,7 @@ impl App {
                 return None;
             }
         };
-        Some(format!(
-            "{public_url}/moon/?repo={}&frame={}#ticket={ticket}",
-            urlencode(&repo.to_string_lossy()),
-            urlencode(self.frame().subcommand()),
-        ))
-    }
-}
-
-fn paint_qr(ui: &mut egui::Ui, code: &qrcode::QrCode) {
-    let modules = code.width();
-    let colors = code.to_colors();
-    let (rect, _) = ui.allocate_exact_size(vec2(QR_SIZE, QR_SIZE), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, Color32::WHITE);
-    let cell = QR_SIZE / (modules + 2 * QR_QUIET_ZONE) as f32;
-    for (index, color) in colors.iter().enumerate() {
-        if *color != qrcode::Color::Dark {
-            continue;
-        }
-        let x = (index % modules + QR_QUIET_ZONE) as f32 * cell;
-        let y = (index / modules + QR_QUIET_ZONE) as f32 * cell;
-        painter.rect_filled(
-            egui::Rect::from_min_size(rect.min + vec2(x, y), vec2(cell, cell)).expand(0.25),
-            0.0,
-            Color32::BLACK,
-        );
+        Some(login_link::address(public_url, &repo, self.frame(), &ticket))
     }
 }
 

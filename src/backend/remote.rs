@@ -75,7 +75,6 @@ impl Backend for RemoteBackend {
         Ok(minted.pass_key)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn mint_login_ticket(&self, lifetime: std::time::Duration) -> Result<String> {
         let minted: crate::api::LoginTicketMinted = self.post_json(
             "/api/login-ticket",

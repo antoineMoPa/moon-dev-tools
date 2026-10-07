@@ -7,9 +7,9 @@
 //! address goes through the arguments of whatever opens the browser, and into its session
 //! restore, where a ticket is soon worth nothing.
 
-use crate::{backend::remote::urlencode, pass_keys::OPEN_IN_WEB_TICKET_LIFETIME};
+use crate::pass_keys::OPEN_IN_WEB_TICKET_LIFETIME;
 
-use super::app::App;
+use super::{app::App, login_link};
 
 impl App {
     pub(crate) fn open_in_web(&mut self) {
@@ -33,11 +33,7 @@ impl App {
                 return;
             }
         };
-        let address = format!(
-            "{server}/moon/?repo={}&frame={}#ticket={ticket}",
-            urlencode(&repo.to_string_lossy()),
-            urlencode(self.frame().subcommand()),
-        );
+        let address = login_link::address(&server, &repo, self.frame(), &ticket);
         if let Err(error) = webbrowser::open(&address) {
             self.model.error(format!(
                 "could not open a browser on {server}/moon: {error}"

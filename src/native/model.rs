@@ -187,6 +187,10 @@ pub(crate) struct Model {
     /// tab's text is still on its way - see [`crate::native::work_log`]. The tab is opened
     /// by the answer to a call that makes the file, which has no editor to put it in yet.
     pub(crate) work_log_entries_waiting: HashMap<PaneId, crate::native::work_log::NewEntry>,
+    /// The QR code that opens this page on another device, while it is up - see
+    /// [`crate::native::login_link::page_qr`].
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) page_qr: crate::native::login_link::page_qr::PageQr,
     /// The extensions open in tabs, keyed by the pane each one draws.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) extension_panes: HashMap<PaneId, crate::native::extension_pane::ExtensionPane>,
@@ -288,7 +292,6 @@ impl Model {
     /// The repo the window was launched on, once its review has answered - which is the repo
     /// the board's folder is in. `None` until then, and on a window that is still asking which
     /// repo to open. Only asked by what reads that folder, which a browser's window never does.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn root_repo_path(&self) -> Option<std::path::PathBuf> {
         let payload = self.review_ref(&self.root_session_id)?.payload.as_ref()?;
         Some(std::path::PathBuf::from(&payload.repo_path))

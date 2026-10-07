@@ -43,6 +43,10 @@ pub(crate) enum MenuAction {
     /// Open what the board's agents have posted to each other - the palette's `wire` command,
     /// as a menu item.
     OpenWire,
+    /// The QR code that opens this page on another device - the palette's `show qr code`
+    /// command, as a menu item.
+    #[cfg(target_arch = "wasm32")]
+    ShowPageQr,
     /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,

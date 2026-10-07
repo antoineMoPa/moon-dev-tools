@@ -161,6 +161,11 @@ pub(crate) enum CommandAction {
     OpenWorkLog,
     /// Open what the board's agents have posted to each other - see [`crate::native::wire`].
     OpenWire,
+    /// The QR code that opens this page on another device, logged in - see
+    /// `crate::native::login_link::page_qr`. A window that is no page gets to another device
+    /// through a tunnel, whose window has the code.
+    #[cfg(target_arch = "wasm32")]
+    ShowPageQr,
     /// This window's repo in a browser - see `crate::native::open_in_web`. Nothing a
     /// browser's window has to offer: it is the browser.
     #[cfg(not(target_arch = "wasm32"))]

@@ -325,7 +325,6 @@ pub(crate) struct PassKeyMinted {
 }
 
 /// What `POST /api/login-ticket` is asked: how long the ticket is to be good for.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
 pub(crate) struct LoginTicketRequest {
     pub(crate) lifetime_seconds: u64,
@@ -333,7 +332,6 @@ pub(crate) struct LoginTicketRequest {
 
 /// A login ticket the server made for a window already let in, to open a browser with - see
 /// `POST /api/login-ticket`.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
 pub(crate) struct LoginTicketMinted {
     pub(crate) ticket: String,

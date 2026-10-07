@@ -4,7 +4,8 @@
 //! machine the window runs on - file pickers, new windows, restarting, launchers - which a
 //! page has no machine for. Drawn each frame rather than built once, so it can list only the
 //! project commands the project has set, the way the palette does, where the system bar has
-//! to carry all three and say no when one is picked.
+//! to carry all three and say no when one is picked. And one item more than that bar has:
+//! the QR code of the page's own address - see `crate::native::login_link::page_qr`.
 //!
 //! A chord written beside an item is the one its keyboard binding has, so the bar doubles as
 //! the place to learn them - the browser keeps a few for itself (⌘T, ⌘W, ⌘N), which is why
@@ -130,6 +131,13 @@ fn menus(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
             MenuAction::OpenSubmodules,
             picked,
         );
+        // The one item of the bar that is the page's alone: the code is of the address the
+        // page came from, which a window that is no page has none of.
+        #[cfg(target_arch = "wasm32")]
+        {
+            ui.separator();
+            item(ui, "Show QR Code", None, MenuAction::ShowPageQr, picked);
+        }
     });
     ui.menu_button("Window", |ui| {
         item(

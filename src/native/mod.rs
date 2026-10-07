@@ -30,6 +30,7 @@ pub(crate) mod language_source;
 // Launchers, and the programs a window starts, are this machine's: a browser's window is a page.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod launchers;
+pub(crate) mod login_link;
 pub(crate) mod logos;
 pub(crate) mod lsp_document;
 pub(crate) mod menu;

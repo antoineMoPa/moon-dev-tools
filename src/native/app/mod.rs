@@ -341,6 +341,8 @@ impl App {
                 commit_panes: HashMap::new(),
                 file_editors: HashMap::new(),
                 work_log_entries_waiting: HashMap::new(),
+                #[cfg(target_arch = "wasm32")]
+                page_qr: Default::default(),
                 #[cfg(not(target_arch = "wasm32"))]
                 extension_panes: HashMap::new(),
                 markdown_cache: Default::default(),
