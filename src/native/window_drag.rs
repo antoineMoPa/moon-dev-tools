@@ -1,4 +1,4 @@
-//! Moving the window by its tab strip, on a window that has no title bar.
+//! Window drag - moves the window by its tab strip, on a window that has no title bar.
 //!
 //! With the content running under the title bar, macOS moves the window on a press anywhere in
 //! the strip's height - which is where the tabs are, so dragging a tab dragged the whole window.

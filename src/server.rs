@@ -1,4 +1,4 @@
-//! The HTTP surface a remote window reviews through. Every route is a thin wrapper over
+//! HTTP server - the routes a remote window reviews through. Every route is a thin wrapper over
 //! [`crate::service`], which a window on this machine calls directly.
 
 mod auth;
@@ -61,6 +61,7 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         agent_availability: detect_agent_availability(),
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
+        display: Arc::default(),
         // The servers are told they are talking to this application rather than to the
         // client crate they are reached through: `clientInfo` is what a server writes into
         // its log, and a report about rust-analyzer under a review is only findable if the
@@ -172,6 +173,15 @@ fn protected_routes() -> Router<Served> {
         .route("/api/users/kick-all", post(users::kick_everyone))
         .route("/api/users/{id}/kick", post(users::kick))
         .route("/api/login-ticket", post(mint_login_ticket))
+        .route(
+            "/api/session/{session_id}/display/applications",
+            post(crate::display::start_application),
+        )
+        .route(
+            "/api/display",
+            get(crate::display::shown).delete(crate::display::end),
+        )
+        .route("/api/display/socket", get(crate::display::socket))
         .route(
             "/api/session/{session_id}/resolve/{hunk_id}/{comment_index}",
             get(resolve_comment),

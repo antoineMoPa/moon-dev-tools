@@ -1,5 +1,5 @@
-//! Review comments, as the anchored blocks a hunk's comment is written in, and what the server
-//! does with them: the agents a comment is sent to, and the export of all of them.
+//! Review comments - builds and parses the anchored blocks a hunk's comment is written in, and
+//! on the server sends a comment to agents and exports all of them.
 
 // The agents are the server's: the window in a browser only reads and writes the blocks.
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,5 +1,4 @@
-//! The X11 side: one connection, one thread, and the rules of being the session's window
-//! manager.
+//! X11 window manager - one connection and one thread that act as the session's window manager.
 //!
 //! What makes a client "the window manager" is `SubstructureRedirect` on the root window.
 

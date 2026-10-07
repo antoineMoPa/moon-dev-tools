@@ -1,4 +1,4 @@
-//! Desktop launchers: the entry the OS itself offers for each of the three windows.
+//! Desktop launchers - writes the entry the OS itself shows for each of the three windows.
 //!
 //! `cargo install` and the install script both leave one plain executable on `PATH`, which is
 //! all a shell needs. Spotlight, Launchpad and an application grid need more than that: on

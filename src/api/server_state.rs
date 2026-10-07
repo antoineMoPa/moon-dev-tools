@@ -24,6 +24,8 @@ pub(crate) struct AppState {
     pub(crate) agent_availability: AgentAvailability,
     pub(crate) last_activity: Arc<Mutex<Instant>>,
     pub(crate) terminals: Arc<crate::terminal::TerminalRegistry>,
+    /// The X display applications with windows are started on - see [`crate::display`].
+    pub(crate) display: Arc<crate::display::ServerDisplay>,
     /// The language servers running for these reviews. Repo-side like the shells beside it,
     /// because a server has to read the files it answers about - see [`crate::lsp`].
     pub(crate) lsp: Arc<moon_lsp::LspRegistry>,

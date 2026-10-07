@@ -1,6 +1,7 @@
-//! Tools › Start Cloudflare Tunnel: this window's server reached from another device, through a quick
-//! tunnel - `cloudflared tunnel --url`, which needs no Cloudflare account and hands out a
-//! random `https://….trycloudflare.com` address that forwards to the server.
+//! Cloudflare tunnel - Tools › Start Cloudflare Tunnel makes this window's server reachable
+//! from another device through a quick tunnel: `cloudflared tunnel --url`, which needs no
+//! Cloudflare account and gives a random `https://….trycloudflare.com` address that forwards to
+//! the server.
 //!
 //! The address alone lets nobody in: the server still asks for a login. The QR code carries
 //! the same address `Open in Web` opens, with a login ticket in its fragment - see

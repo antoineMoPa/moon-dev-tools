@@ -1,4 +1,5 @@
-//! moon window manager
+//! moon window manager - manages the windows other programs open in the X11 session moon runs
+//! in, and places each one inside moon's own window, over the pane it belongs to.
 
 mod wm;
 

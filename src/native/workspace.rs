@@ -1,4 +1,4 @@
-//! The workspace: which panes are open, where they go, and the shells behind them.
+//! Workspace - tracks which panes are open, where they go, and the shells behind them.
 //!
 //! `egui_frames` draws the arrangement and answers the pointer; `egui_tty` is what a shell pane
 //! holds. What is left here is everything only moonreview can decide: where a new pane belongs,

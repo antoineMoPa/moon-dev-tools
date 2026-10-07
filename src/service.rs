@@ -1,4 +1,4 @@
-//! Review operations, wherever they are asked for.
+//! Service - the review operations, called the same way by a local window and the HTTP routes.
 //!
 //! The window in [`crate::native`] calls these directly, and the axum routes in
 //! [`crate::server`] are the same calls for a window on another machine. Everything here is

@@ -1,4 +1,5 @@
-//! The start window: one task, in a tab of its own. This is what a click on a card opens.
+//! Start pane - the start window, which shows one task in a tab of its own. This is what a
+//! click on a card opens.
 //!
 //! Its title and its notes are edited here, in the pane rather than through a file opened
 //! beside it - a task you have just opened is one you are about to say something about - and

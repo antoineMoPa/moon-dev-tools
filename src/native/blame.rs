@@ -1,4 +1,4 @@
-//! Who last touched each line of a file tab, in a column beside the lines.
+//! Blame - shows who last changed each line of a file tab, in a column beside the lines.
 //!
 //! Turned on per tab - `[blame]` in the header, ⌥⇧B, the palette's "toggle blame" or the
 //! text's context menu - and read out of `git blame` over the tab's own buffer, so a line

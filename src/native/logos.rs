@@ -1,4 +1,4 @@
-//! The three apps' logos, embedded as pixels.
+//! Logos - the three apps' logos, embedded as pixels.
 //!
 //! The sources are the `logo-*.svg` files at the repo root. They are rasterized once, by
 //! `scripts/render-logos.sh`, into the PNGs under `assets/logos/` that are embedded here -
@@ -41,6 +41,15 @@ pub(crate) fn logo_image_source(frame: Frame, size: usize) -> egui::ImageSource<
     egui::ImageSource::Bytes {
         uri: format!("bytes://logo-{}-{size}.png", frame.slug()).into(),
         bytes: egui::load::Bytes::Static(logo_png(frame, size)),
+    }
+}
+
+/// The moon logo (`logo-moon.svg`), for the `moon` menu button. 64 pixels: the button draws it
+/// at text height, about 14 points, so this stays sharp up to four pixels per point.
+pub(crate) fn moon_logo_image_source() -> egui::ImageSource<'static> {
+    egui::ImageSource::Bytes {
+        uri: "bytes://logo-moon-64.png".into(),
+        bytes: egui::load::Bytes::Static(include_bytes!("../../assets/logos/moon-64.png")),
     }
 }
 

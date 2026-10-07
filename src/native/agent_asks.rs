@@ -1,5 +1,5 @@
-//! `moon agent start`, `tell` and `view` arriving in the window: what it does about each, on
-//! the thread its socket is read on - see [`AgentAsks`] for why not on a frame.
+//! Agent commands - handles `moon agent start`, `tell` and `view` when they arrive in the
+//! window, on the thread that reads its socket - see [`AgentAsks`] for why not on a frame.
 //!
 //! All three are the window's moon's to do, which is the backend: it starts a task's runs and
 //! holds their shells. The window draws nothing for them. A run started here turns up on the

@@ -1,4 +1,4 @@
-//! One file of the repo, open in a tab of its own for reading and editing.
+//! File pane - opens one file of the repo in a tab of its own, for reading and editing.
 //!
 //! The text and how it is drawn belong to `egui_moon_editor`; what is here is where the text
 //! came from and where it goes - fetching it through the backend, writing it back, the pane's

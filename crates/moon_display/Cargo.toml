@@ -1,0 +1,11 @@
+[package]
+name = "moon_display"
+version = "0.1.0"
+edition = "2024"
+description = "Xvfb remote X display system for moon-dev-tools"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+x11rb = { version = "0.13", features = ["damage", "xtest"] }

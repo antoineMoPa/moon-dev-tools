@@ -1,5 +1,5 @@
-//! A link that logs a browser in: the page `moon serve` hands out at `/moon`, on the repo and
-//! the frame a window is on, with a login ticket in its fragment - see
+//! Login link - builds a link that logs a browser in: the page `moon serve` serves at `/moon`,
+//! on the repo and the frame a window is on, with a login ticket in its fragment. See
 //! `src/server/login.html`, which redeems the ticket and takes it off the address.
 //!
 //! As a QR code, the link gets to a device that has no keyboard worth typing an address on.

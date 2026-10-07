@@ -1,4 +1,4 @@
-//! Small pieces of chrome the review UI reuses: pills, quiet buttons, section headers.
+//! Widgets - small UI pieces the review UI reuses: pills, quiet buttons, section headers.
 
 use egui::{
     Align, Color32, CornerRadius, CursorIcon, Layout, Response, RichText, Sense, Stroke, Ui, vec2,

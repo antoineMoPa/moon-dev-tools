@@ -1,4 +1,5 @@
-//! The sessions each agent already has for a repo, read from where that agent keeps them.
+//! Agent sessions - lists the sessions each agent already has for a repo, read from where that
+//! agent stores them on disk.
 //!
 //! A task resource remembers the session id its agent was started with, but that id stops
 //! meaning anything when the user switches sessions inside the agent or the agent never

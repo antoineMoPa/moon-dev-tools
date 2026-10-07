@@ -1,12 +1,14 @@
-//! The application menu.
+//! Application menu - builds the app's menus and reports which item was picked.
 //!
 //! On macOS the menu bar belongs to the system, not to the window, so it is built with the
 //! platform API. In a browser the system's bar is the browser's, so the window draws the
-//! same menus along the top of its page itself - see [`bar`]. Everywhere else there is no
-//! system-wide bar to put these in, and the same actions are reached from the command
-//! palette - which is also where macOS users can find them, so nothing lives only in the menu.
+//! same menus along the top of its page itself - see [`bar`] - and so does a window that is
+//! its machine's desktop, `moon desktop`, where there is no system to have a bar. Everywhere
+//! else there is no system-wide bar to put these in, and the same actions are reached from
+//! the command palette - which is also where macOS users can find them, so nothing lives
+//! only in the menu.
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
 pub(crate) mod bar;
 
 /// Something the menu asked for.
@@ -47,6 +49,10 @@ pub(crate) enum MenuAction {
     /// command, as a menu item.
     #[cfg(target_arch = "wasm32")]
     ShowPageQr,
+    /// Start an application - an item of `moon › Applications`, by its place in the
+    /// settings' list, which is the list the menu was drawn from.
+    #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
+    StartApplication(usize),
     /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,

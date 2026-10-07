@@ -1,5 +1,5 @@
-//! The window as a process of its own on this machine, which is every window but the one a
-//! browser runs - that one is started by its page, see `crate::web`.
+//! Native window launch - starts the window as its own process on this machine. The browser's
+//! window is started by its page instead, see `crate::web`.
 
 use std::{
     sync::{Arc, Mutex},

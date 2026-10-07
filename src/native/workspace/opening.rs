@@ -345,6 +345,25 @@ impl App {
                 let frame = self.frame_for(PaneKind::Messages, active_frame);
                 self.model.layout.add_pane(frame, Pane::Messages, None);
             }
+            OpenPaneRequest::Display => {
+                // One desktop a server, so one pane of it a window: asking again - another
+                // application started - brings it forward.
+                let pane = match self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Display)
+                {
+                    Some((pane, _)) => {
+                        self.model.layout.focus_pane(pane);
+                        pane
+                    }
+                    None => {
+                        let frame = self.frame_for(PaneKind::Display, active_frame);
+                        self.model.layout.add_pane(frame, Pane::Display, None)
+                    }
+                };
+                self.pane_taking_keyboard = Some(pane);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             OpenPaneRequest::Extension { name } => {
                 // One pane an extension: asking again brings it forward.

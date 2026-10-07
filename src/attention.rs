@@ -1,5 +1,6 @@
-//! What a program prints when it wants a person: the bell, and the desktop-notification
-//! sequences an agent sends when it is waiting on a question, a permission, or has finished.
+//! Attention requests - detects what a program prints to get a person's attention: the bell,
+//! and the desktop-notification sequences an agent sends when it is waiting on a question or a
+//! permission, or has finished.
 //!
 //! A terminal like Ghostty turns these into notifications on the desktop. moon reads the same
 //! bytes off the pty and keeps them: the run's dot on its card turns red, and the text goes

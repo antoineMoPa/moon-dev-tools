@@ -1,5 +1,5 @@
-//! Putting edits a language server worked out into the files they are for - what a rename and
-//! a code action both end in.
+//! Workspace edits - applies the edits a language server returned to the files they are for,
+//! the last step of both a rename and a code action.
 //!
 //! A file open in a tab takes its edits into the tab's buffer, unsaved, the way typing would:
 //! the tab is what the person is looking at, and its unsaved edits are theirs to keep or throw

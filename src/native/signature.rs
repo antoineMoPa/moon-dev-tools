@@ -1,5 +1,5 @@
-//! The signature of the call being typed in a file tab, above the caret, with the parameter the
-//! caret is at picked out.
+//! Signature help - shows the signature of the call being typed in a file tab, above the caret,
+//! with the parameter the caret is at marked.
 //!
 //! When to ask, and which answer is still the one to show, is
 //! [`egui_moon_code_ide::Signing`]'s. What is here is this window's: the question goes through

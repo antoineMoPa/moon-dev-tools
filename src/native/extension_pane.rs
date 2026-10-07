@@ -1,4 +1,4 @@
-//! A pane an extension draws - see [`crate::extensions`].
+//! Extension pane - a pane drawn by an extension, see [`crate::extensions`].
 //!
 //! The script runs on a thread of its own. This is the window's side of it: starting it when
 //! its pane appears, drawing the last view it sent, handing it the clicks and keys the pane

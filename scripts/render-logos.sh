@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p assets/logos
-for pair in "review moonreview" "shell moonshell" "tasks moontasks"; do
+for pair in "review moonreview" "shell moonshell" "tasks moontasks" "moon moon"; do
   set -- $pair
   for size in 32 64 128 256 512; do
     # Scaled to the width and padded to square: the logos are wider than they are tall.

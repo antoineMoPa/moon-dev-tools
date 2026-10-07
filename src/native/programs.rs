@@ -1,4 +1,4 @@
-//! Starting another window, which is another run of this same executable.
+//! New window - starts another window, which is another run of this same executable.
 //!
 //! A window is a process: each one carries its own review server and its own shells, so a
 //! second window is a second run of `moon`, told which frame to open on.

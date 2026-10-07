@@ -1,4 +1,4 @@
-//! The wire in a window - see `crate::moontasks::wire` for what it is.
+//! Wire - opens the wire in a tab of the window, see `crate::moontasks::wire` for what it is.
 //!
 //! `Tools › Wire` and the palette's `wire` open the file its broadcasts are kept in, in a tab
 //! that follows the file as agents post and that nothing can be saved from: `moon wire post`

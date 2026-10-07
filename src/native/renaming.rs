@@ -1,5 +1,5 @@
-//! Rename the name at a file tab's caret, everywhere the language server behind the file knows
-//! it is used.
+//! Rename symbol - renames the name at a file tab's caret, everywhere the language server
+//! behind the file knows it is used.
 //!
 //! Four steps, with a frame or more between each:
 //!

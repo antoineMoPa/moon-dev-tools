@@ -1,4 +1,4 @@
-//! moonreview, as one library behind one executable.
+//! moonreview - the whole application as one library, behind one executable.
 //!
 //! `moon` opens a window on one of three things - a review, the task board, or a shell -
 //! which are three [`cli::Frame`]s over the same everything else; and it reaches the windows
@@ -17,6 +17,8 @@ pub(crate) mod attention;
 mod backend;
 mod cli;
 mod comments;
+#[cfg(not(target_arch = "wasm32"))]
+mod display;
 mod commit_suggestion;
 mod committing;
 #[cfg(not(target_arch = "wasm32"))]

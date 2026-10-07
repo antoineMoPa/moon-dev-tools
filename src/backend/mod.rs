@@ -1,4 +1,4 @@
-//! Where the window gets its reviews from.
+//! Backend - the interface the window gets its reviews through.
 //!
 //! The window is the same either way: [`local::LocalBackend`] reviews a repo in this
 //! process, and [`remote::RemoteBackend`] reviews a repo on another machine over the HTTP
@@ -8,6 +8,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod local;
 pub(crate) mod remote;
+#[cfg(all(test, target_os = "linux"))]
+mod remote_display_tests;
 #[cfg(test)]
 mod remote_shell_tests;
 #[cfg(test)]
@@ -57,6 +59,19 @@ pub(crate) struct ConnectTarget {
 }
 
 /// Every review operation the window performs. Calls block, so the UI runs them
+/// One end of a socket to the server: what the server says arrives in `heard`, a message
+/// each, and `said` is the way to say something back. The far end hears the socket closed
+/// when `said` is dropped.
+pub(crate) struct Socket {
+    pub(crate) heard: std::sync::mpsc::Receiver<Vec<u8>>,
+    pub(crate) said: std::sync::Arc<dyn Say>,
+}
+
+/// The way to send a text message up a [`Socket`].
+pub(crate) trait Say: Send + Sync {
+    fn say(&self, text: String) -> Result<()>;
+}
+
 /// on worker threads - a remote backend is a network round-trip.
 pub(crate) trait Backend: Send + Sync + 'static {
     /// How this connection reads in the UI, e.g. `local` or `dev-box:42000`.
@@ -335,6 +350,23 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Attach to a shell: everything it has printed, and a handle to type into it. This is
     /// what a terminal pane is built from - see [`egui_tty::TtyStream`].
     fn attach_terminal(&self, session_id: &str, terminal_id: &str) -> Result<egui_tty::TtyStream>;
+
+    /// Start an application on the server's desktop, in the session's repo - and the
+    /// desktop with it, when there was none. See `crate::display`. Only a server on another
+    /// machine, or behind a browser's page, is asked: its desktop is what a window there
+    /// cannot be looked at for.
+    fn start_application(
+        &self,
+        session_id: &str,
+        request: &crate::api::display::StartApplicationRequest,
+    ) -> Result<crate::api::display::DisplayView>;
+    /// The server's desktop, when one is running - for a window that did not start it.
+    fn display(&self) -> Result<Option<crate::api::display::DisplayView>>;
+    /// End the server's desktop, and every application on it.
+    fn end_display(&self) -> Result<()>;
+    /// Watch the server's desktop: its patches down the socket, and what the person does up
+    /// it - see [`crate::api::display`]. This is what a display pane is built from.
+    fn attach_display(&self) -> Result<Socket>;
 
     /// Whether a language server is behind this file, and whether it has finished starting.
     fn lsp_status(&self, session_id: &str, file_path: &str) -> Result<LspStatus>;

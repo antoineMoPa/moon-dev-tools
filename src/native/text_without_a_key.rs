@@ -1,6 +1,6 @@
-//! Text macOS types into the window without a key press behind it: dictation (the F5
-//! microphone), the emoji & symbols picker, an accent picked with the mouse from the popup a
-//! held key opens.
+//! Text without a key press - takes the text macOS inserts into the window without a key press:
+//! dictation (the F5 microphone), the emoji & symbols picker, an accent picked with the mouse
+//! from the popup a held key opens.
 //!
 //! The system hands such text to the focused view's `insertText:replacementRange:`. winit's
 //! view passes that call on only when it ends an IME composition - text typed on the keyboard

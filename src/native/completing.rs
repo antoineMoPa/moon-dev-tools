@@ -1,5 +1,5 @@
-//! Asking the server what could be typed in a pane: what would finish the word being typed,
-//! and what could go after a `.`.
+//! Completion - asks the server what could be typed in a pane: what would finish the word being
+//! typed, and what could go after a `.`.
 //!
 //! The editor draws the list and puts the chosen row into the text; when the question is worth
 //! asking at all, and whether an answer that has just landed is still an answer to what is

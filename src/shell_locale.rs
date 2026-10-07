@@ -1,5 +1,5 @@
-//! The locale this window runs in, which is what decides the characters its children can
-//! read and write.
+//! Shell locale - sets the locale this window runs in, which decides the characters its child
+//! processes can read and write.
 //!
 //! A window started from a desktop launcher inherits no locale at all: macOS sets one for
 //! processes it launches from Terminal.app and from a login shell, but not for an app bundle.

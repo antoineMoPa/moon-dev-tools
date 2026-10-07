@@ -1,4 +1,4 @@
-//! The window's answer to the questions an editor puts to a language server.
+//! Language source - answers the questions an editor asks a language server, for this window.
 //!
 //! [`egui_moon_code_ide::LanguageSource`] is a trait rather than a registry precisely
 //! because of this window: a review of a repo on another machine has no files here to start a

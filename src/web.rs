@@ -1,4 +1,4 @@
-//! The window as a page: what `moon serve` hands a browser at `/moon`.
+//! Web entry point - starts the window as a web page, which `moon serve` serves at `/moon`.
 //!
 //! The same window as `moon review --remote`, on the server that served the page. What it
 //! opens on comes from the page's address: `?repo=/path/to/repo` for the repo, which the

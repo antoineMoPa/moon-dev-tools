@@ -1,4 +1,4 @@
-//! ⌘-click a name in a file and land on where it is defined.
+//! Go to definition - ⌘-click on a name in a file jumps to where it is defined.
 //!
 //! The language server answers, and only the language server. It has parsed the project and
 //! knows which `new` of the forty in the repo this one is, which is a thing no amount of

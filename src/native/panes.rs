@@ -1,4 +1,4 @@
-//! What a pane of the workspace is, and how the window draws one.
+//! Panes - the kinds of pane the workspace has, and how the window draws each.
 //!
 //! The arrangement itself - frames, tabs, splits, drags - belongs to `egui_frames`. This is
 //! moonreview's side of it: the four kinds of pane the window has, and the
@@ -47,6 +47,9 @@ pub(crate) enum PaneKind {
     /// [`crate::native::application_pane`].
     #[cfg(target_os = "linux")]
     Application,
+    /// The server's desktop, with the windows of the applications started on it - see
+    /// [`crate::native::display_pane`].
+    Display,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -135,6 +138,10 @@ pub(crate) enum Pane {
         /// What the window calls itself, which it renames as it goes.
         title: String,
     },
+    /// The server's desktop: a virtual X screen on the server, with the applications started
+    /// on it - see [`crate::native::display_pane`]. A server has one desktop, so the pane
+    /// carries no id.
+    Display,
 }
 
 impl PaneKind {
@@ -145,6 +152,8 @@ impl PaneKind {
             Self::Terminal => true,
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension => true,
+            // The applications on the server's desktop, as a shell's program is.
+            Self::Display => true,
             _ => false,
         }
     }
@@ -168,6 +177,7 @@ impl Pane {
             Self::Visualization { .. } => PaneKind::Visualization,
             #[cfg(target_os = "linux")]
             Self::Application { .. } => PaneKind::Application,
+            Self::Display => PaneKind::Display,
         }
     }
 
@@ -211,6 +221,7 @@ impl Pane {
             }
             #[cfg(target_os = "linux")]
             Self::Application { title, .. } => title.clone(),
+            Self::Display => "desktop".to_string(),
         }
     }
 
@@ -293,6 +304,7 @@ impl Pane {
             Self::Agents | Self::NewTask { .. } | Self::Visualization { .. } => None,
             #[cfg(target_os = "linux")]
             Self::Application { .. } => None,
+            Self::Display => Some(OpenPaneRequest::Display),
         }
     }
 
@@ -396,6 +408,8 @@ pub(crate) enum OpenPaneRequest {
     Extension {
         name: String,
     },
+    /// The server's desktop.
+    Display,
 }
 
 /// The match a file is opened at: the line to bring on screen, and the text that was
@@ -472,6 +486,7 @@ impl PaneView<Pane> for App {
             Pane::Visualization { fragment_path } => fragment_path.clone(),
             #[cfg(target_os = "linux")]
             Pane::Application { title, .. } => title.clone(),
+            Pane::Display => "The applications running on the server's desktop".to_string(),
             // The title the program set, which the tab of a named shell does not show - a
             // plain shell's directory, an agent's own status line - and how the tab is renamed.
             Pane::Terminal { terminal_id, .. } => {
@@ -599,6 +614,7 @@ impl PaneView<Pane> for App {
             Pane::Visualization { .. } => crate::native::webview_pane::draw(self, ui, pane_id),
             #[cfg(target_os = "linux")]
             Pane::Application { .. } => crate::native::application_pane::draw(self, ui, pane_id),
+            Pane::Display => crate::native::display_pane::draw(self, ui, pane_id),
         }
     }
 
@@ -648,6 +664,7 @@ impl PaneView<Pane> for App {
                 vec2(height, height),
                 &self.tab_entries_for_strip,
                 &self.model.project,
+                self.applications_offered(),
                 &mut picked,
             );
             self.apply_menu_actions(picked);

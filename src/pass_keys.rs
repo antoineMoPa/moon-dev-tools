@@ -1,4 +1,4 @@
-//! Pass keys: what a request to the server shows to be let in.
+//! Pass keys - generates and checks the key a request to the server must present to be let in.
 //!
 //! The server answers with the repo, writes files and runs shells, so being able to reach its
 //! port must not be enough to use it: any process on the machine can, and so can any page the

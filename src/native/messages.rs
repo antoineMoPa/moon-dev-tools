@@ -1,4 +1,4 @@
-//! Every message the window has posted, and the pane that reads them back.
+//! Messages - keeps every message the window has posted, and draws the pane that lists them.
 //!
 //! A message is a toast: it appears in the corner, it is up for a few seconds, and then it
 //! is gone. That is right for the moment it happens and wrong for a minute later - a message

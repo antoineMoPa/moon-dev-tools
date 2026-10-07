@@ -1,4 +1,4 @@
-//! ⌘F: a find bar over whichever pane has the keyboard.
+//! Find bar - ⌘F opens a find bar over whichever pane has the keyboard.
 //!
 //! One bar, belonging to one pane at a time - the pane that had the keyboard when it opened.
 //! What "search" means is the pane's own business: a shell looks through its screen and its

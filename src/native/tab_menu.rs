@@ -1,6 +1,6 @@
-//! What the hamburger of a phone's tab strip lists: every tab of the window, the one most
-//! recently in front first, so the tab just left - the board, an agent's shell - is the first
-//! row to reach for.
+//! Tab menu - lists every tab of the window behind the hamburger button of a phone's tab strip,
+//! the most recently shown first, so the tab just left - the board, an agent's shell - is the
+//! first row.
 
 use crate::native::{app::App, menu::bar::TabEntry};
 

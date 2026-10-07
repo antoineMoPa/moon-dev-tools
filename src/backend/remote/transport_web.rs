@@ -14,7 +14,10 @@ use serde_json::json;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{BinaryType, MessageEvent, WebSocket};
 
-use crate::{api::SearchLine, backend::SearchListener};
+use crate::{
+    api::SearchLine,
+    backend::{Say, SearchListener, Socket},
+};
 
 use super::{
     RemoteBackend,
@@ -102,16 +105,25 @@ impl RemoteBackend {
         super::rounds::request(method, &format!("{base_url}{path}"), body)
     }
 
-    /// Attach to a shell on the server through its socket. What the socket says goes into the
-    /// output channel as it arrives; the channel closes with the socket.
+    /// Attach to a shell on the server through its socket.
     pub(super) fn attach_shell(&self, url: &str) -> Result<egui_tty::TtyStream> {
+        let Socket { heard, said } = self.open_socket(url)?;
+        Ok(egui_tty::TtyStream {
+            output: heard,
+            tty: Arc::new(RemoteShell { said }),
+        })
+    }
+
+    /// Open a socket to the server. What the socket says goes into the channel of what was
+    /// heard as it arrives; the channel closes with the socket.
+    pub(super) fn open_socket(&self, url: &str) -> Result<Socket> {
         let socket = WebSocket::new(url).map_err(js_error)?;
         socket.set_binary_type(BinaryType::Arraybuffer);
 
-        let (sender, output) = mpsc::channel::<Vec<u8>>();
+        let (sender, heard) = mpsc::channel::<Vec<u8>>();
         let sender = Rc::new(RefCell::new(Some(sender)));
 
-        let heard = Rc::clone(&sender);
+        let hearing = Rc::clone(&sender);
         let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
             let data = event.data();
             let chunk = if let Some(text) = data.as_string() {
@@ -119,14 +131,15 @@ impl RemoteBackend {
             } else {
                 js_sys::Uint8Array::new(&data).to_vec()
             };
-            if let Some(sender) = heard.borrow().as_ref() {
-                // The terminal is gone when this fails; the socket is closed along with it.
+            if let Some(sender) = hearing.borrow().as_ref() {
+                // Whoever was listening is gone when this fails; the socket is closed along
+                // with them.
                 let _ = sender.send(chunk);
             }
         });
         socket.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
-        // Dropping the sender is how the terminal hears the shell is gone.
+        // Dropping the sender is how whoever is listening hears the socket is gone.
         let closed = Rc::clone(&sender);
         let on_close = Closure::<dyn FnMut()>::new(move || {
             closed.borrow_mut().take();
@@ -145,9 +158,9 @@ impl RemoteBackend {
         });
         socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
-        Ok(egui_tty::TtyStream {
-            output,
-            tty: Arc::new(RemoteShell {
+        Ok(Socket {
+            heard,
+            said: Arc::new(SocketToServer {
                 socket,
                 unsent,
                 _handlers: (on_message, on_close, on_open),
@@ -156,9 +169,9 @@ impl RemoteBackend {
     }
 }
 
-/// The browser end of a shell's socket. Messages written before the socket opens - the first
-/// resize, above all - wait in `unsent` until it does.
-struct RemoteShell {
+/// The saying half of a socket to the server, in a browser. Messages said before the socket
+/// opens - a shell's first resize, above all - wait in `unsent` until it does.
+struct SocketToServer {
     socket: WebSocket,
     unsent: Rc<RefCell<Vec<String>>>,
     _handlers: (
@@ -168,30 +181,43 @@ struct RemoteShell {
     ),
 }
 
-// SAFETY: `Tty` asks for Send + Sync because natively a shell's handle is shared with the thread
-// reading it. This build is for wasm32-unknown-unknown without the atomics feature, which has
-// one thread, so the handle is never on another thread to be shared with.
-unsafe impl Send for RemoteShell {}
+// SAFETY: `Say` asks for Send + Sync because natively a socket's handle is shared with the
+// thread reading it. This build is for wasm32-unknown-unknown without the atomics feature,
+// which has one thread, so the handle is never on another thread to be shared with.
+unsafe impl Send for SocketToServer {}
 // SAFETY: as above.
-unsafe impl Sync for RemoteShell {}
+unsafe impl Sync for SocketToServer {}
 
-impl RemoteShell {
-    fn send(&self, message: &serde_json::Value) -> egui_tty::Result<()> {
-        let message = message.to_string();
+impl Say for SocketToServer {
+    fn say(&self, text: String) -> Result<()> {
         if self.socket.ready_state() == WebSocket::CONNECTING {
-            self.unsent.borrow_mut().push(message);
+            self.unsent.borrow_mut().push(text);
             return Ok(());
         }
         self.socket
-            .send_with_str(&message)
-            .map_err(|error| egui_tty::Error::msg(format!("{error:?}")))
+            .send_with_str(&text)
+            .map_err(|error| anyhow!("{error:?}"))
     }
 }
 
-impl Drop for RemoteShell {
+impl Drop for SocketToServer {
     fn drop(&mut self) {
-        // Closing tells the server this window let the shell go; the shell itself goes on.
+        // Closing tells the server this window let go; what was watched goes on.
         let _ = self.socket.close();
+    }
+}
+
+/// A shell attached through a socket: what is typed goes up it as the messages
+/// `crate::terminal` reads.
+struct RemoteShell {
+    said: Arc<dyn Say>,
+}
+
+impl RemoteShell {
+    fn send(&self, message: &serde_json::Value) -> egui_tty::Result<()> {
+        self.said
+            .say(message.to_string())
+            .map_err(|error| egui_tty::Error::msg(format!("{error:#}")))
     }
 }
 

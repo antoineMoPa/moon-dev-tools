@@ -1,5 +1,4 @@
-//! The project pane: the two commands the Project menu runs, how the repo's files are
-//! indented, and where both are set.
+//! Project pane - sets the Project menu's two commands and how the repo's files are indented.
 //!
 //! What builds a repo, and what a Tab press puts into its files, are facts about the repo, so
 //! they are kept in the repo - see [`crate::project`]. This is the frame that writes that

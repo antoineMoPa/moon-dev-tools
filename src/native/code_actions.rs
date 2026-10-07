@@ -1,6 +1,6 @@
-//! Code actions: what the language server offers to do to the code at a file tab's caret - the
-//! fixes for what it found wrong there, and the rewrites it has for the code - picked from the
-//! palette and put in the way a rename is.
+//! Code actions - asks the language server what it can do to the code at a file tab's caret:
+//! the fixes for what it found wrong there, and the rewrites it has for the code. One is picked
+//! from the palette and applied the way a rename is.
 //!
 //! ⌘., the palette's "code actions" and the tab's context menu ask. The question waits until
 //! every tab's text has reached its server - an action's edits are places in those texts, and

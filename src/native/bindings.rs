@@ -1,4 +1,4 @@
-//! Every keyboard shortcut the window answers to, in one table.
+//! Key bindings - every keyboard shortcut of the window, in one table.
 //!
 //! The table is data - an action, the keys that fire it, and how far it reaches - so adding a
 //! shortcut is one row rather than another branch inside the key handler, and so the whole

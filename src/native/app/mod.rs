@@ -240,6 +240,9 @@ pub(crate) struct App {
     pub(crate) window_is_in_front: bool,
     /// The native webviews laid over webview panes - see [`crate::native::webview_pane`].
     pub(crate) webviews: crate::native::webview_pane::Webviews,
+    /// The displays of the server this window is watching - see
+    /// [`crate::native::display_pane`].
+    pub(crate) displays: crate::native::display_pane::Displays,
     /// The windows of other programs laid over application panes, and the X11 session they are
     /// managed in - see [`crate::native::application_pane`].
     #[cfg(target_os = "linux")]
@@ -343,6 +346,8 @@ impl App {
                 work_log_entries_waiting: HashMap::new(),
                 #[cfg(target_arch = "wasm32")]
                 page_qr: Default::default(),
+                server_display: None,
+                display_wants_showing: false,
                 #[cfg(not(target_arch = "wasm32"))]
                 extension_panes: HashMap::new(),
                 markdown_cache: Default::default(),
@@ -444,6 +449,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             window_is_in_front: false,
             webviews: Default::default(),
+            displays: Default::default(),
             #[cfg(target_os = "linux")]
             applications: Default::default(),
             manages_the_session: false,
@@ -598,6 +604,8 @@ const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.draw(ui);
+        // After the draw, which the pane arrangement is lent out to.
+        self.settle_displays(ui.ctx());
         // Here rather than in `draw`: a webview is a child of the window, whose handle only
         // this is handed, and the ui tests draw without one.
         #[cfg(target_os = "macos")]

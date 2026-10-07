@@ -43,6 +43,40 @@ const SPLIT_COMMANDS: &[(DropSide, &str, &str)] = &[
     ),
 ];
 
+/// The applications of `moon › Applications`, each as a command, wherever there is a screen
+/// to start one on that this window can show: the desktop of a server on another machine,
+/// or this window's own when it is its machine's desktop. A window among others on a
+/// machine's own screen has neither - the machine has its own way to start a program.
+fn application_commands(app: &App) -> Vec<Command> {
+    let on_the_server = !app.backend().reads_this_machine();
+    if !on_the_server && !app.manages_the_session {
+        return Vec::new();
+    }
+    let mut commands: Vec<Command> = app
+        .applications_offered()
+        .iter()
+        .map(|application| Command {
+            title: application.name.clone(),
+            description: match on_the_server {
+                true => format!("Start {} on the server's desktop", application.name),
+                false => format!("Start {}", application.name),
+            },
+            action: CommandAction::StartApplication(application.command.clone()),
+            shortcut: None,
+        })
+        .collect();
+    if on_the_server {
+        commands.push(Command {
+            title: "desktop".to_string(),
+            description: "Bring the server's desktop forward: the applications running on it"
+                .to_string(),
+            action: CommandAction::OpenPane(OpenPaneRequest::Display),
+            shortcut: None,
+        });
+    }
+    commands
+}
+
 pub(crate) fn commands_for(app: &App) -> Vec<Command> {
     let mut commands = Vec::new();
     let root = app.model.root_session_id.clone();
@@ -101,6 +135,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::ShowPageQr,
         shortcut: None,
     });
+    commands.extend(application_commands(app));
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {
         title: "open in web".to_string(),

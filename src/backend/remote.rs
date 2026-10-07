@@ -1,4 +1,4 @@
-//! Reviews a repo on another machine, over the HTTP API its `moonreview serve` answers.
+//! Remote backend - reviews a repo on another machine, over its `moonreview serve` HTTP API.
 //!
 //! `moonreview serve` on the far side is the whole server contract, so no extra daemon is
 //! involved.
@@ -898,6 +898,29 @@ impl Backend for RemoteBackend {
             &self.base_url,
             &format!("/api/session/{session_id}/terminals/{terminal_id}/socket"),
         ))
+    }
+
+    fn start_application(
+        &self,
+        session_id: &str,
+        request: &crate::api::display::StartApplicationRequest,
+    ) -> Result<crate::api::display::DisplayView> {
+        self.post_json(
+            &format!("/api/session/{session_id}/display/applications"),
+            request,
+        )
+    }
+
+    fn display(&self) -> Result<Option<crate::api::display::DisplayView>> {
+        self.get("/api/display")
+    }
+
+    fn end_display(&self) -> Result<()> {
+        self.delete("/api/display")
+    }
+
+    fn attach_display(&self) -> Result<crate::backend::Socket> {
+        self.open_socket(&websocket_url(&self.base_url, "/api/display/socket"))
     }
 }
 

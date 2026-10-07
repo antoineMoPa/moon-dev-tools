@@ -1,5 +1,5 @@
-//! `moon open <file>` and `moon shell <folder>` arriving in the window: the tab each opens,
-//! and what the window writes down about itself so a shell can find it in the first place.
+//! Open from shell - handles `moon open <file>` and `moon shell <folder>` when they arrive in
+//! the window: opens the tab for each, and writes down what a shell needs to find this window.
 //!
 //! A file of the project this window is on opens in the window's own review. A file of any
 //! other project opens too: the shell hands it here when no window is open on its project -

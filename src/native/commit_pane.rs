@@ -1,4 +1,4 @@
-//! Committing what the review has staged, and pushing it, without leaving the window.
+//! Commit pane - commits what the review has staged, and pushes it, without leaving the window.
 //!
 //! Both actions run as `git` in a pty rather than as a captured process, and the pane shows
 //! that pty. That is what makes a signed commit work: gpg asks for the passphrase through

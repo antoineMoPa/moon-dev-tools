@@ -278,6 +278,11 @@ impl App {
                 MenuAction::OpenWire => CommandAction::OpenWire,
                 #[cfg(target_arch = "wasm32")]
                 MenuAction::ShowPageQr => CommandAction::ShowPageQr,
+                #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
+                MenuAction::StartApplication(place) => {
+                    let application = &self.applications_offered()[place];
+                    CommandAction::StartApplication(application.command.clone())
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenInWeb => CommandAction::OpenInWeb,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -431,6 +436,8 @@ impl App {
         }
         self.save_project();
         if std::mem::take(&mut self.model.adopt_shells_pending) {
+            // And the server's desktop, which outlives a window as its shells do.
+            self.show_display_if_running();
             self.adopt_existing_shells();
         }
         if std::mem::take(&mut self.model.open_shell_pending) {
@@ -455,10 +462,26 @@ impl App {
             if crate::native::workspace::in_a_phone_window(ctx) {
                 self.tab_entries_for_strip = self.tab_menu_entries();
             } else {
-                let picked =
-                    crate::native::menu::bar::draw(ui, &self.palette_of(), &self.model.project);
+                let picked = crate::native::menu::bar::draw(
+                    ui,
+                    &self.palette_of(),
+                    &self.model.project,
+                    self.applications_offered(),
+                );
                 self.apply_menu_actions(picked);
             }
+        }
+        // A window that is its machine's desktop has no system to draw a bar for it either -
+        // see `moon desktop`.
+        #[cfg(target_os = "linux")]
+        if self.manages_the_session {
+            let picked = crate::native::menu::bar::draw(
+                ui,
+                &self.palette_of(),
+                &self.model.project,
+                self.applications_offered(),
+            );
+            self.apply_menu_actions(picked);
         }
         // Before the workspace, so the strip is taken off the bottom of the window and the
         // frames are laid out in what is left rather than under it.

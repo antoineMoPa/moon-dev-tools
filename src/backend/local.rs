@@ -1,5 +1,5 @@
-//! Reviews the repo in this process. Calls [`crate::service`] straight through, so the
-//! window and anything reaching the embedded server see one shared review.
+//! Local backend - reviews the repo in this process. Calls [`crate::service`] straight through,
+//! so the window and anything reaching the embedded server see one shared review.
 
 use std::{path::Path, sync::Arc};
 
@@ -607,4 +607,30 @@ impl Backend for LocalBackend {
             tty: Arc::new(LocalShell { session }),
         })
     }
+
+    fn start_application(
+        &self,
+        _session_id: &str,
+        _request: &crate::api::display::StartApplicationRequest,
+    ) -> Result<crate::api::display::DisplayView> {
+        anyhow::bail!(NO_DISPLAY_OF_THIS_MACHINE)
+    }
+
+    /// None, rather than a refusal: a window asks this as it opens, whatever it is on.
+    fn display(&self) -> Result<Option<crate::api::display::DisplayView>> {
+        Ok(None)
+    }
+
+    fn end_display(&self) -> Result<()> {
+        anyhow::bail!(NO_DISPLAY_OF_THIS_MACHINE)
+    }
+
+    fn attach_display(&self) -> Result<crate::backend::Socket> {
+        anyhow::bail!(NO_DISPLAY_OF_THIS_MACHINE)
+    }
 }
+
+/// The server's desktop is how an application with windows is seen from another machine. A
+/// window on the machine the application runs on has the machine's own screen for that.
+const NO_DISPLAY_OF_THIS_MACHINE: &str = "the server's desktop shows applications running on \
+     another machine: this window is on the machine they run on, where they open on its own screen";

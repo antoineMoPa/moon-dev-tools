@@ -1,5 +1,5 @@
-//! A pane another program's window is shown in, when moon is the window manager of the X11
-//! session it runs in - see [`moon_launcher`] and `os/` for the machine that boots into one.
+//! Application pane - shows another program's window in a pane, when moon is the window manager
+//! of its X11 session - see [`moon_launcher`] and `os/` for the machine that boots into one.
 //!
 //! The window is not drawn by moon. It is a window of X's own, made a child of the window
 //! eframe draws into, and laid over the pane: egui only keeps the room for it, the way it keeps
@@ -10,7 +10,8 @@
 //! window is gone.
 //!
 //! An X window is drawn over the whole wgpu surface, whatever egui paints there after it -
-//! which is why they are all taken off the screen while the palette or the find bar is up.
+//! which is why they are all taken off the screen while the palette or the find bar is up,
+//! or a menu of the window's bar is open.
 //!
 //! The keyboard follows the pane in front: while an application's pane is the active one, X
 //! sends what is typed to that program, and moon's own window gets it back the moment another
@@ -110,8 +111,11 @@ impl App {
         let Some(launcher) = &self.applications.launcher else {
             return;
         };
-        // Drawn over the panes: a window left showing would cover them.
-        let covered = self.model.palette.open || self.model.find.is_some();
+        // Drawn over the panes: a window left showing would cover them. A menu of the bar
+        // is one more of those - see `crate::native::menu::bar`.
+        let covered = self.model.palette.open
+            || self.model.find.is_some()
+            || egui::Popup::is_any_open(ctx);
         let pixels_per_point = ctx.pixels_per_point();
         let showing: HashMap<PaneId, u32> = self
             .model

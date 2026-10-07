@@ -1,5 +1,4 @@
-//! A pane an agent's visualization is drawn in, by the system's own webview - WKWebView on
-//! macOS.
+//! Webview pane - shows an agent's visualization in the system's webview, WKWebView on macOS.
 //!
 //! The page is not drawn by egui. A webview is a native view of its own, put in the window as
 //! a child of the view eframe draws into, and laid over the pane: egui only keeps the room for

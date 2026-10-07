@@ -1,5 +1,5 @@
-//! The squares at the right of the status bar, one per space, the one the window is on
-//! picked out; a click on another goes there.
+//! Space selector - draws a square per space at the right of the status bar, with the space the
+//! window is on marked; a click on another switches to it.
 //!
 //! The square is the ground color of the space's project with its arrangement drawn small on
 //! it: a block per frame, laid out the way the frames are. That is enough to tell one space

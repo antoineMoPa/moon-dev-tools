@@ -1,5 +1,5 @@
-//! A command typed into the status bar and started on the spot: `⌘⇧!` turns the strip along
-//! the bottom of the window into a line to type in, and Enter starts what was typed.
+//! Command launcher - runs a command typed into the status bar: `⌘⇧!` turns the strip along the
+//! bottom of the window into a line to type in, and Enter starts what was typed.
 //!
 //! What is started has no terminal and a process group of its own, and is waited on by a worker
 //! thread rather than the window, so the strip is free again the moment Enter is pressed. It

@@ -1,5 +1,5 @@
-//! What the window is showing. Plain data: everything here is `Send`, so a worker thread's
-//! result can be applied to it without touching the UI's own state.
+//! Model - the data the window is showing. Plain data: everything here is `Send`, so a worker
+//! thread's result can be applied to it without touching the UI's own state.
 
 mod board;
 mod palette;
@@ -191,6 +191,13 @@ pub(crate) struct Model {
     /// [`crate::native::login_link::page_qr`].
     #[cfg(target_arch = "wasm32")]
     pub(crate) page_qr: crate::native::login_link::page_qr::PageQr,
+    /// The server's desktop, as far as this window has heard: started by it, or found
+    /// running when it opened - see [`crate::native::display_pane`].
+    pub(crate) server_display: Option<crate::api::display::DisplayView>,
+    /// Whether the desktop's pane is to be opened or brought forward: an application was
+    /// started on it, or it was found running. Done once the workspace has been drawn, which
+    /// an answer from the server arrives in the middle of.
+    pub(crate) display_wants_showing: bool,
     /// The extensions open in tabs, keyed by the pane each one draws.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) extension_panes: HashMap<PaneId, crate::native::extension_pane::ExtensionPane>,

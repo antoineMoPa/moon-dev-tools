@@ -19,7 +19,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tungstenite::client::IntoClientRequest;
 
-use crate::{api::SearchLine, backend::SearchListener};
+use crate::{
+    api::SearchLine,
+    backend::{Say, SearchListener, Socket},
+};
 
 use super::{
     RemoteBackend,
@@ -184,9 +187,18 @@ impl RemoteBackend {
         Ok(())
     }
 
-    /// Attach to a shell on the server through its socket. A thread reads the socket into the
-    /// output channel; writes share the socket with it through a lock.
+    /// Attach to a shell on the server through its socket.
     pub(super) fn attach_shell(&self, url: &str) -> Result<egui_tty::TtyStream> {
+        let Socket { heard, said } = self.open_socket(url)?;
+        Ok(egui_tty::TtyStream {
+            output: heard,
+            tty: Arc::new(RemoteShell { said }),
+        })
+    }
+
+    /// Open a socket to the server. A thread reads it into the channel of what was heard;
+    /// what is said shares the socket with that thread through a lock.
+    pub(super) fn open_socket(&self, url: &str) -> Result<Socket> {
         let mut request = url
             .into_client_request()
             .with_context(|| format!("{url} is not a websocket address"))?;
@@ -194,11 +206,11 @@ impl RemoteBackend {
             .headers_mut()
             .insert(AUTHORIZATION, bearer(&self.connection.pass_key)?);
         let (socket, _) = tungstenite::connect(request)
-            .with_context(|| format!("failed to attach to the remote shell at {url}"))?;
+            .with_context(|| format!("failed to open the server's socket at {url}"))?;
         set_read_timeout(&socket)?;
 
         let socket = Arc::new(Mutex::new(socket));
-        let (sender, output) = mpsc::channel();
+        let (sender, heard) = mpsc::channel();
         let reader_socket = Arc::clone(&socket);
 
         thread::spawn(move || {
@@ -239,9 +251,9 @@ impl RemoteBackend {
             }
         });
 
-        Ok(egui_tty::TtyStream {
-            output,
-            tty: Arc::new(RemoteShell { socket }),
+        Ok(Socket {
+            heard,
+            said: Arc::new(SocketToServer { socket }),
         })
     }
 }
@@ -260,13 +272,32 @@ fn remote_refusal(error: reqwest::Error) -> anyhow::Error {
     anyhow!("{error}")
 }
 
-/// Both halves of an attached remote shell run on the socket, so writes go through the
-/// same lock the reader thread holds between frames.
-struct RemoteShell {
+/// The saying half of a socket to the server. Both halves run on the one socket, so what is
+/// said goes through the same lock the reader thread holds between frames.
+struct SocketToServer {
     socket: Arc<Mutex<SharedSocket>>,
 }
 
 type SharedSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
+
+impl Say for SocketToServer {
+    fn say(&self, text: String) -> Result<()> {
+        let mut socket = self
+            .socket
+            .lock()
+            .map_err(|_| anyhow!("the server's socket lock is poisoned"))?;
+        socket
+            .send(tungstenite::Message::Text(text.into()))
+            .context("failed to send to the server")?;
+        Ok(())
+    }
+}
+
+/// A shell attached through a socket: what is typed goes up it as the messages
+/// `crate::terminal` reads.
+struct RemoteShell {
+    said: Arc<dyn Say>,
+}
 
 impl egui_tty::Tty for RemoteShell {
     fn write(&self, data: &[u8]) -> egui_tty::Result<()> {
@@ -298,14 +329,7 @@ impl egui_tty::Tty for RemoteShell {
 
 impl RemoteShell {
     fn send(&self, message: &serde_json::Value) -> Result<()> {
-        let mut socket = self
-            .socket
-            .lock()
-            .map_err(|_| anyhow!("terminal socket lock poisoned"))?;
-        socket
-            .send(tungstenite::Message::Text(message.to_string().into()))
-            .context("failed to send to the remote shell")?;
-        Ok(())
+        self.said.say(message.to_string())
     }
 }
 

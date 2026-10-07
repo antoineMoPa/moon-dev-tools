@@ -1,11 +1,11 @@
-//! Tools › Open in Web: this window's repo in a browser, as the page `moon serve` hands out at
-//! `/moon` - see `crate::server::web_page`. The page is on the server this window reviews
-//! through: the one it carries, or the one it was pointed at with `--remote`. It opens on the
-//! repo and the frame this window is on, logged in already: the address carries a login ticket
-//! in its fragment, good for [`OPEN_IN_WEB_TICKET_LIFETIME`] and one login, which the page's
-//! login redeems and takes off the address - see `src/server/login.html`. Never a pass key: the
-//! address goes through the arguments of whatever opens the browser, and into its session
-//! restore, where a ticket is soon worth nothing.
+//! Open in Web - opens this window's repo in a browser, from Tools › Open in Web, as the page
+//! `moon serve` serves at `/moon` - see `crate::server::web_page`. The page is on the server
+//! this window reviews through: the one it carries, or the one it was pointed at with
+//! `--remote`. It opens on the repo and the frame this window is on, logged in already: the
+//! address carries a login ticket in its fragment, good for [`OPEN_IN_WEB_TICKET_LIFETIME`] and
+//! one login, which the page's login redeems and takes off the address - see
+//! `src/server/login.html`. Never a pass key: the address goes through the arguments of whatever
+//! opens the browser, and into its session restore, where a ticket is soon worth nothing.
 
 use crate::pass_keys::OPEN_IN_WEB_TICKET_LIFETIME;
 

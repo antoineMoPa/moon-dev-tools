@@ -1,6 +1,6 @@
-//! The window's side of an agent's visualizations: asking the server which ones its terminals
-//! have announced, opening a pane for each beside the terminal, and keeping the page each pane
-//! shows current - see [`crate::visualizations`] for where they come from.
+//! Visualizations - the window's side of an agent's visualizations: asks the server which ones
+//! its terminals have announced, opens a pane for each beside the terminal, and keeps the page
+//! each pane shows up to date - see [`crate::visualizations`] for where they come from.
 
 use std::collections::HashMap;
 

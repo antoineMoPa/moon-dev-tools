@@ -1,4 +1,4 @@
-//! A commit message written for the pane by an agent, from what is staged.
+//! Commit suggestion - asks an agent to write the commit pane's message from what is staged.
 //!
 //! The same idea as the `commitwriter` command: hand the staged diff to `opencode`, ask for a
 //! conventional-commit subject and a short paragraph, and print them. Here they arrive in the

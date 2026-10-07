@@ -1,5 +1,5 @@
-//! The places a language server names for the name at a file tab's caret: where it is
-//! defined, where its type is, where it is implemented, and everywhere it is used.
+//! Places - asks the language server for the locations of the name at a file tab's caret: where
+//! it is defined, where its type is, where it is implemented, and everywhere it is used.
 //!
 //! Asked from the tab's context menu, the palette and the function keys - the keyboard's and a
 //! menu's way to what ⌘-click is for a definition. A definition is still

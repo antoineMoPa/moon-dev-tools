@@ -1,4 +1,5 @@
-//! `~/.moonreview/settings.json`: the choices that belong to the person rather than to a repo.
+//! User settings - loads and stores `~/.moonreview/settings.json`: the choices that belong to
+//! the person rather than to a repo.
 //!
 //! A review's session is new on every launch, and the arrangement of panes belongs to the
 //! window, so neither is the right place for something like which agent to hand comments to.
@@ -52,6 +53,35 @@ pub(crate) struct Settings {
     /// [`WorkspaceColor::Plain`]. Ordered so the file reads the same twice running.
     #[serde(default)]
     pub(crate) workspace_colors: BTreeMap<String, WorkspaceColor>,
+    /// What the `moon` menu offers to start under `Applications`: programs with windows, on
+    /// this machine - see [`Applications`].
+    #[serde(default)]
+    pub(crate) applications: Applications,
+}
+
+/// A program with windows, as the `moon` menu lists it.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct Application {
+    /// What the menu calls it.
+    pub(crate) name: String,
+    /// The line of shell that starts it.
+    pub(crate) command: String,
+}
+
+/// The applications the `moon` menu offers, in the order the file has them. A file that
+/// says nothing of them offers a browser, which is what a desktop on a server is most often
+/// for: the list is there to be written over, not to be found empty.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct Applications(pub(crate) Vec<Application>);
+
+impl Default for Applications {
+    fn default() -> Self {
+        Self(vec![Application {
+            name: "chromium".to_owned(),
+            command: "chromium".to_owned(),
+        }])
+    }
 }
 
 /// One change a window asks the server to make to the file.
@@ -295,18 +325,40 @@ mod tests {
     }
 
     /// The file is meant to be edited by hand, so what it holds has to read as what it means.
+    /// A file written before the menu had applications still offers the one it starts with,
+    /// and a file that lists its own offers those and no other.
+    #[test]
+    fn the_applications_offered_are_the_file_s_or_a_browser() {
+        let silent: Settings = serde_json::from_str("{}").expect("expected settings");
+        assert_eq!(silent.applications, Applications::default());
+        assert_eq!(silent.applications.0[0].command, "chromium");
+
+        let listed: Settings = serde_json::from_str(
+            r#"{"applications":[{"name":"terminal","command":"xterm -fa mono"}]}"#,
+        )
+        .expect("expected settings");
+        assert_eq!(
+            listed.applications.0,
+            [Application {
+                name: "terminal".to_owned(),
+                command: "xterm -fa mono".to_owned(),
+            }]
+        );
+    }
+
     #[test]
     fn the_file_names_the_agent_in_words() {
         let encoded = serde_json::to_string(&Settings {
             selected_agent: AgentKind::Claude,
             recent_projects: Vec::new(),
             workspace_colors: BTreeMap::new(),
+            applications: Applications::default(),
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{}}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[{"name":"chromium","command":"chromium"}]}"#
         );
     }
 

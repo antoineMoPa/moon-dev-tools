@@ -1,5 +1,5 @@
-//! `<repo>/.moonreview.json`: the commands a project is built and run with, and how its
-//! files are indented.
+//! Project settings - `<repo>/.moonreview.json`, which holds the commands a project is built
+//! and run with, and how its files are indented.
 //!
 //! Which command builds a repo, and whether its code is written in tabs or in spaces, are
 //! facts about the repo rather than about whoever opened it, so they are kept with the repo

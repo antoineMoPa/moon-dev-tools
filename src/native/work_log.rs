@@ -1,5 +1,5 @@
-//! The work log: the project's journal, opened at a new dated entry by `Tools › Work Log`
-//! and the palette's `work log`.
+//! Work log - opens the project's journal at a new dated entry, from `Tools › Work Log` and the
+//! palette's `work log`.
 //!
 //! It is `work-log.org` in the board's folder, `.moontasks`, made the first time it is
 //! opened. One file the person keeps appending to, entry after entry, each headed by the

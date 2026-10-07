@@ -1,4 +1,4 @@
-//! The faces the app draws code in, and the system fonts that fill in what they lack.
+//! Fonts - installs the faces the app draws code in, and the system fonts for what they lack.
 //!
 //! egui ships Hack Regular as its monospace font and no other weight of it, so nothing in
 //! the app could be set in bold or italic: a terminal's bold had to be faked as brighter

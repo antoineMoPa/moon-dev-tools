@@ -1,7 +1,8 @@
-//! Tools › Generate Pass Key: a key to the server this window reviews through - see
-//! `crate::pass_keys` - put on the clipboard, for a browser's login page or another machine's
-//! `--pass-key`. It is a key to the same server `Open in Web` opens a browser on: the one this
-//! window carries, or the one it was pointed at with `--remote`.
+//! Generate Pass Key - Tools › Generate Pass Key creates a key to the server this window
+//! reviews through - see `crate::pass_keys` - and copies it to the clipboard, for a browser's
+//! login page or another machine's `--pass-key`. It is a key to the same server `Open in Web`
+//! opens a browser on: the one this window carries, or the one it was pointed at with
+//! `--remote`.
 
 use super::app::App;
 

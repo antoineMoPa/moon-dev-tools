@@ -1,4 +1,4 @@
-//! Committing what the review has staged, and pushing it.
+//! Committing - commits what the review has staged, and pushes it.
 //!
 //! Both run as `git` in a pty rather than as a captured process: commits here are signed, and
 //! the only pinentry many machines have is a terminal one, so the passphrase prompt needs a

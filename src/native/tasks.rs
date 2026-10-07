@@ -1,4 +1,4 @@
-//! Backend calls run on worker threads and come back as edits to the model.
+//! Tasks - runs backend calls on worker threads and applies their results to the model.
 //!
 //! Git commands take tens of milliseconds and a remote backend takes a network round-trip,
 //! so nothing the UI thread does is allowed to wait on either. A task is a piece of work

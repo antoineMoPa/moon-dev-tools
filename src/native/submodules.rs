@@ -1,5 +1,5 @@
-//! The submodule hub: the reviewed repo and every submodule of it, each with how many of its
-//! files have changed, and a way into a review of the ones that have changes.
+//! Submodule hub - lists the reviewed repo and every submodule of it, each with how many of its
+//! files have changed, and opens a review of the ones that have changes.
 //!
 //! The list itself is `model.root_repo_status` and `model.submodules`, which
 //! `App::poll_submodules` keeps up to date for the palette; this pane draws the same answer

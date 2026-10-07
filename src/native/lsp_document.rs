@@ -1,4 +1,4 @@
-//! Putting a pane's file to the language server behind it, on the window's own threads.
+//! LSP document sync - sends a pane's file to its language server, on the window's own threads.
 //!
 //! Deciding what a server is owed about an open buffer - opened when the text lands, changed
 //! once the typing has stopped, closed when the last tab on it goes - is not this window's

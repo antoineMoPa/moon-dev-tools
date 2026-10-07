@@ -1,5 +1,5 @@
-//! Format a file tab's text with the language server behind it: rustfmt through rust-analyzer,
-//! the TypeScript server's own formatter for TypeScript and JavaScript.
+//! Formatting - formats a file tab's text with the language server behind it: rustfmt through
+//! rust-analyzer, the TypeScript server's own formatter for TypeScript and JavaScript.
 //!
 //! The server formats the text it was sent, so the request waits until the tab's text has
 //! reached it - the typing of the last moment included - and the edits it answers with go

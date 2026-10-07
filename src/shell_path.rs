@@ -1,5 +1,5 @@
-//! The PATH the tools the user installed are looked for and started on - the coding agents,
-//! and `ag` for finding files by name.
+//! Shell PATH - resolves the PATH used to find and start the tools the user installed: the
+//! coding agents, and `ag` for finding files by name.
 //!
 //! A window opened from a desktop launcher is started by the OS, not by a shell, so it inherits
 //! a bare PATH - on macOS `/usr/bin:/bin:/usr/sbin:/sbin`. What the user installed lives in

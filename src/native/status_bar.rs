@@ -1,5 +1,5 @@
-//! The strip along the bottom of the window: what a language server is doing, and the last
-//! thing the window said.
+//! Status bar - the strip along the bottom of the window, showing what a language server is
+//! doing and the last message the window posted.
 //!
 //! Two things a window has always been bad at saying. A ⌘-click on a name in a file that
 //! comes back with `rust is still indexing this project - try again in a moment` is the

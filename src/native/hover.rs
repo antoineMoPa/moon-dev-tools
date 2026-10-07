@@ -1,6 +1,5 @@
-//! Rest the pointer on a name in a file tab and see what the language server says about it -
-//! its type, its signature, its docs - with anything the server found wrong under the pointer
-//! said above it.
+//! Hover - shows the type, signature and docs the language server has for the name under the
+//! pointer in a file tab, with any problem the server found there shown above them.
 //!
 //! When the pointer has rested long enough to be worth a question, and whether an answer is
 //! still about the word under it, is [`egui_moon_code_ide::Hovering`]'s. What is here is this

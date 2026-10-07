@@ -1,5 +1,6 @@
 // The server's own state is kept apart from the wire types, which are all the window in a
 // browser compiles of this module.
+pub(crate) mod display;
 #[cfg(not(target_arch = "wasm32"))]
 mod server_state;
 #[cfg(not(target_arch = "wasm32"))]

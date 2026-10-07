@@ -1,5 +1,5 @@
-//! What the language server behind a file tab found wrong with it: underlined in the text,
-//! told in a tooltip when the pointer is over it, and counted in the tab's header.
+//! Diagnostics - shows the problems the language server found in a file tab: underlined in the
+//! text, described in a tooltip when the pointer is over one, and counted in the tab's header.
 //!
 //! Servers push these whenever they like - rust-analyzer as it reads a file, and again after
 //! every `cargo check`, which a save sets off. The repo side keeps what was pushed, and the

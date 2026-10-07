@@ -1,4 +1,5 @@
-//! The color a workspace is marked with, so one window is told from another at a glance.
+//! Workspace color - the color a workspace is marked with, so that one window can be told from
+//! another at a glance.
 //!
 //! A workspace is one window - see [`crate::native::workspace`] - and people keep several
 //! open at once. The color names the window, so it has to survive the light/dark switch:

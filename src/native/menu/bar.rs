@@ -1,4 +1,6 @@
-//! The menu bar the window draws for itself, along the top of the page, in a browser.
+//! The menu bar the window draws for itself, along its top: in a browser, whose own bar is
+//! the browser's, and in a window that is its machine's desktop - `moon desktop` - where no
+//! system is there to draw one.
 //!
 //! The same menus as the macOS bar in the parent module, less the items that act on the
 //! machine the window runs on - file pickers, new windows, restarting, launchers - which a
@@ -17,17 +19,28 @@ use super::MenuAction;
 use crate::{
     native::{
         bindings::{self, Action},
+        logos,
         theme::Palette,
     },
     project::{ProjectCommand, ProjectConfig},
+    settings::Application,
 };
 
 /// The bar's id, and the top panel's.
 const BAR_ID: &str = "moonreview-menu-bar";
 
+/// How far below the middle of its line the logo is drawn, in points, to sit level with the
+/// letters of "moon" beside it.
+const LOGO_DROP: f32 = 1.5;
+
 /// Draw the bar, and say what was picked from it this frame. `project` decides which of the
 /// project's commands are offered: only the ones it has set.
-pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> Vec<MenuAction> {
+pub(crate) fn draw(
+    ui: &mut Ui,
+    palette: &Palette,
+    project: &ProjectConfig,
+    applications: &[Application],
+) -> Vec<MenuAction> {
     let mut picked = Vec::new();
     egui::Panel::top(BAR_ID)
         .resizable(false)
@@ -39,14 +52,45 @@ pub(crate) fn draw(ui: &mut Ui, palette: &Palette, project: &ProjectConfig) -> V
         )
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                menus(ui, project, &mut picked);
+                menus(ui, project, applications, &mut picked);
             });
         });
     picked
 }
 
-/// The bar's menus, File to Window.
-fn menus(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
+/// The bar's menus, moon to Window.
+fn menus(
+    ui: &mut Ui,
+    project: &ProjectConfig,
+    applications: &[Application],
+    picked: &mut Vec<MenuAction>,
+) {
+    // The window's own menu, first as a system's is: what there is to start on the server's
+    // desktop, out of the person's settings - see `crate::native::display_pane`.
+    let height = ui.text_style_height(&egui::TextStyle::Button);
+    // A button centers its picture on the line, and "moon" has no tall letters: its middle is
+    // below the line's. The picture is drawn that much lower inside its own square, which
+    // leaves the button's layout alone.
+    let drop = LOGO_DROP / height;
+    let logo = egui::Image::new(logos::moon_logo_image_source())
+        .fit_to_exact_size(egui::Vec2::splat(height))
+        .uv(egui::Rect::from_min_max(
+            egui::pos2(0.0, -drop),
+            egui::pos2(1.0, 1.0 - drop),
+        ));
+    ui.menu_button((logo, "moon"), |ui| {
+        ui.menu_button("Applications", |ui| {
+            for (place, application) in applications.iter().enumerate() {
+                item(
+                    ui,
+                    &application.name,
+                    None,
+                    MenuAction::StartApplication(place),
+                    picked,
+                );
+            }
+        });
+    });
     ui.menu_button("File", |ui| {
         item(
             ui,
@@ -175,6 +219,7 @@ pub(crate) fn hamburger(
     size: egui::Vec2,
     tabs: &[TabEntry],
     project: &ProjectConfig,
+    applications: &[Application],
     picked: &mut Vec<MenuAction>,
 ) {
     // Painted rather than typed: no font is promised to have the glyph.
@@ -213,7 +258,7 @@ pub(crate) fn hamburger(
             ui.weak("no other tabs");
         }
         ui.separator();
-        menus(ui, project, picked);
+        menus(ui, project, applications, picked);
     });
 }
 
@@ -260,7 +305,7 @@ mod tests {
                 picked_in_ui
                     .lock()
                     .expect("the picks")
-                    .extend(draw(ui, &palette, &project));
+                    .extend(draw(ui, &palette, &project, &[]));
             });
         (harness, picked)
     }

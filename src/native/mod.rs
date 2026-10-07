@@ -1,5 +1,5 @@
-//! The window: one of them per process, and - when it is reviewing the machine it runs on -
-//! the review server in the same process and the same executable.
+//! Window - one per process. When it reviews the machine it runs on, the review server runs in
+//! the same process and the same executable.
 
 pub(crate) mod app;
 pub(crate) mod bindings;
@@ -17,6 +17,7 @@ pub(crate) mod definition;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod desktop;
 pub(crate) mod diagnostics;
+pub(crate) mod display_pane;
 // An extension's script runs programs and reads folders on the project's machine, which a
 // browser's window is never on.
 #[cfg(not(target_arch = "wasm32"))]
