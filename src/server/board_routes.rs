@@ -372,3 +372,13 @@ pub(super) async fn link_task_file(
     moontasks::service::link_file(&state, &session_id, &task_id, &request.file_path)?;
     Ok("ok")
 }
+
+pub(super) async fn remove_task_attachment(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<moontasks::RemoveAttachmentRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::remove_attachment(&state, &session_id, &task_id, &request.listed)?;
+    Ok("ok")
+}

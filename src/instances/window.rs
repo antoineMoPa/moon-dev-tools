@@ -1,6 +1,7 @@
 //! The window's end of `moon open`, `moon shell <folder>` and `moon wire post @handle`: the
 //! socket a shell reaches it on, and the files, folders and lines that have come in over it
-//! waiting for the next frame to open them or type them.
+//! waiting for the next frame to open them or type them. A folder comes in for one of two
+//! things, and is kept by which: a shell started in it, or the file picker brought up on it.
 //!
 //! `moon agent start`, `tell` and `view` come in over it too and wait for no frame: each is
 //! answered with what came of it, by whoever the window [said](ShellAsks::agents_answered_by)
@@ -76,6 +77,13 @@ pub(crate) struct OpenShellAsked {
     pub(crate) folder: PathBuf,
 }
 
+/// A folder a shell asked this window to bring its file picker up on: `moon open <folder>`.
+pub(crate) struct PickFileAsked {
+    /// Absolute and resolved, the way the shell that asked named it, and as text: that is how
+    /// it came over the socket and how the picker's line names a folder.
+    pub(crate) folder: String,
+}
+
 /// A direct message of the wire a shell asked this window to type into one of the shells it
 /// holds: `moon wire post @handle …`.
 pub(crate) struct WiredLine {
@@ -96,6 +104,8 @@ pub(crate) struct ShellAsks {
     /// The folders `moon shell <folder>` asked for a shell in, kept apart from the files: a
     /// shell is started rather than opened in a tab, so it goes a different way.
     arrived_shells: Arc<Mutex<Vec<OpenShellAsked>>>,
+    /// The folders `moon open <folder>` asked for the file picker on.
+    arrived_file_picks: Arc<Mutex<Vec<PickFileAsked>>>,
     /// The lines `moon wire post @handle` asked to have typed, in the order they were asked
     /// for - which is the order the window types them in.
     arrived_wired: Arc<Mutex<Vec<WiredLine>>>,
@@ -133,6 +143,7 @@ impl ShellAsks {
             project: Arc::new(Mutex::new(None)),
             arrived: Arc::new(Mutex::new(Vec::new())),
             arrived_shells: Arc::new(Mutex::new(Vec::new())),
+            arrived_file_picks: Arc::new(Mutex::new(Vec::new())),
             arrived_wired: Arc::new(Mutex::new(Vec::new())),
             waited_on: Arc::new(Mutex::new(HashSet::new())),
             agents: Arc::new(Mutex::new(None)),
@@ -144,6 +155,7 @@ impl ShellAsks {
         let arrived = Arrived {
             files: asks.arrived.clone(),
             shells: asks.arrived_shells.clone(),
+            file_picks: asks.arrived_file_picks.clone(),
             wired: asks.arrived_wired.clone(),
             waited_on: asks.waited_on.clone(),
         };
@@ -248,6 +260,17 @@ impl ShellAsks {
         std::mem::take(&mut *self.arrived_shells.lock().expect("the arrived shells lock"))
     }
 
+    /// The folders the file picker was asked for on since the last time this was called, in
+    /// the order they were asked for.
+    pub(crate) fn drain_file_picks(&self) -> Vec<PickFileAsked> {
+        std::mem::take(
+            &mut *self
+                .arrived_file_picks
+                .lock()
+                .expect("the arrived file picks lock"),
+        )
+    }
+
     /// The lines of the wire asked to be typed since the last time this was called, in the
     /// order they were asked for.
     pub(crate) fn drain_wired(&self) -> Vec<WiredLine> {
@@ -259,6 +282,7 @@ impl ShellAsks {
 struct Arrived {
     files: Arc<Mutex<Vec<OpenFileAsked>>>,
     shells: Arc<Mutex<Vec<OpenShellAsked>>>,
+    file_picks: Arc<Mutex<Vec<PickFileAsked>>>,
     wired: Arc<Mutex<Vec<WiredLine>>>,
     waited_on: Arc<Mutex<HashSet<PathBuf>>>,
 }
@@ -272,9 +296,10 @@ impl Drop for ShellAsks {
 /// Read one ask off a connection and answer it.
 ///
 /// A file or folder of another project is taken as readily as one of this window's own: the
-/// window opens a session on the project holding it and puts the tab in that - see
-/// [`crate::native::open_from_shell`]. Which window is asked first is the shell's business,
-/// and it asks the ones open on the path's project before any other.
+/// window opens a session on the project holding it and puts the tab in that, and its file
+/// picker lists any folder of the disk - see [`crate::native::open_from_shell`]. Which window
+/// is asked first is the shell's business, and it asks the ones open on the path's project
+/// before any other.
 ///
 /// What is refused is a window with nothing to open into: one still on its launch screen,
 /// and one whose repo is on another machine, where a path typed in a shell here names
@@ -331,6 +356,17 @@ fn answer(
                     .push(OpenShellAsked {
                         folder: PathBuf::from(folder),
                     });
+                Answer::Opened
+            }
+        },
+        Ask::PickFile { folder } => match refusal(reads_this_machine, project) {
+            Some(refused) => refused,
+            None => {
+                arrived
+                    .file_picks
+                    .lock()
+                    .expect("the arrived file picks lock")
+                    .push(PickFileAsked { folder });
                 Answer::Opened
             }
         },

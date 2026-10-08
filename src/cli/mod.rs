@@ -15,6 +15,10 @@ mod launch;
 #[cfg(not(target_arch = "wasm32"))]
 mod open;
 #[cfg(not(target_arch = "wasm32"))]
+mod task_shell;
+#[cfg(not(target_arch = "wasm32"))]
+mod tasks;
+#[cfg(not(target_arch = "wasm32"))]
 mod wire;
 #[cfg(test)]
 mod tests;

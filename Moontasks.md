@@ -16,6 +16,7 @@ on it in the repo.
 | Escape, or a click on the board beside the cards | let the marks go |
 | drag a column by its heading | move the column, cards and all |
 | click a card's title | open the task's own pane: its title and notes, and what it can start |
+| `⌘F` on a task's pane | find in its notes: the matches are marked in the box, Enter and shift+Enter step through them, and Escape puts the bar away with the keyboard back in the notes and the match it stopped at selected |
 | double click a card's title | rename the task |
 | double click a heading | rename the column |
 | `+` on a column's heading | write a new task, for the top of that column; `[create]` on that pane makes the card |
@@ -212,7 +213,13 @@ delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 
 ```bash
 moon tasks new "fix the races"
+moon tasks list
+moon tasks move IN PROGRESS
 ```
+
+`list` prints the board's columns by name and, under each, its cards: the task's folder and
+its title. `move` is run from a task's shell and moves that task's card to the column the
+board shows under that name.
 
 ## The wire
 

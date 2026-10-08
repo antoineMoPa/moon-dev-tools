@@ -331,19 +331,83 @@ fn notes_written_beside_the_box_reach_it() {
     let (fixture, mut harness) = a_task_pane_open_on("task-notes-beside", TASK);
     fixture.write(&format!(".moontasks/{TASK}/notes.md"), WRITTEN_BESIDE);
 
-    // Stepped here rather than through `settle`, which cannot hand the box to its condition:
-    // what is being waited for is drawn, and reading it needs the harness the steps are on.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let mut shown = the_notes_box_says(&harness);
-    while Instant::now() < deadline && shown.as_deref() != Some(WRITTEN_BESIDE) {
-        harness.step();
-        shown = the_notes_box_says(&harness);
-        std::thread::sleep(Duration::from_millis(10));
-    }
     assert_eq!(
-        shown.as_deref(),
+        the_notes_box_comes_to_say(&mut harness, WRITTEN_BESIDE).as_deref(),
         Some(WRITTEN_BESIDE),
         "the notes box should have taken what was written beside it"
+    );
+}
+
+/// What the notes box is showing once it shows `wanted`, or what it was left showing when the
+/// wait for that ran out.
+///
+/// Stepped here rather than through `settle`, which cannot hand the box to its condition: what
+/// is being waited for is drawn, and reading it needs the harness the steps are on.
+fn the_notes_box_comes_to_say(harness: &mut Harness<'_>, wanted: &str) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut shown = the_notes_box_says(harness);
+    while Instant::now() < deadline && shown.as_deref() != Some(wanted) {
+        harness.step();
+        shown = the_notes_box_says(harness);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    shown
+}
+
+/// ⌘F on a task's pane searches its notes: the bar counts the matches whatever their case,
+/// Enter steps to the next one, and Escape puts the bar away with the keyboard back in the
+/// notes and the match it stopped on selected - so the letter typed next replaces that match.
+///
+/// The notes have accents ahead of the matches, which is what prose has: a match is selected
+/// by character and marked by byte, and the two only agree when neither is taken for the other.
+/// The board is beside the pane with the task's card marked, as it is whenever a pane is opened
+/// from a card - the Escape has to reach the bar rather than let that mark go, which would
+/// close the pane the bar is over.
+#[test]
+fn find_on_a_task_pane_searches_its_notes_and_escape_hands_them_the_keyboard() {
+    const TASK: &str = "write-the-parser-3333";
+    const NOTES: &str = "\u{c9}crire le parser cet \u{e9}t\u{e9}.\nLe Parser est lent.";
+
+    use egui_kittest::kittest::Queryable as _;
+
+    let (fixture, mut harness) = a_task_pane_open_on("task-notes-find", TASK);
+    fixture.write(&format!(".moontasks/{TASK}/notes.md"), NOTES);
+    assert_eq!(
+        the_notes_box_comes_to_say(&mut harness, NOTES).as_deref(),
+        Some(NOTES),
+        "the notes box never took the notes the search is of"
+    );
+
+    let notes_box = the_panes_boxes(&harness).1;
+    click_at(&mut harness, notes_box);
+    press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("parser".to_string()));
+    harness.step();
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("1 of 2").is_some(),
+        "the bar should have found both matches in the notes and started on the first"
+    );
+
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(
+        harness.query_by_label("2 of 2").is_some(),
+        "Enter in the query box should have stepped to the second match"
+    );
+
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(
+        harness.query_by_label("2 of 2").is_none(),
+        "Escape should have put the bar away"
+    );
+    type_letter(&mut harness, egui::Key::X, "X");
+    assert_eq!(
+        the_notes_box_says(&harness).as_deref(),
+        Some("\u{c9}crire le parser cet \u{e9}t\u{e9}.\nLe X est lent."),
+        "the letter should have gone into the notes, over the match the search stopped on"
     );
 }
 

@@ -131,9 +131,8 @@ fn a_card_dropped_above_another_takes_its_place() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.step();
-    // The pointer leaves the cards before the picture is taken: the landed card's title is
-    // right where the drop was, and hovering it long enough draws the tooltip - which names
-    // the fixture's own folder, process id and all, so no two runs would match.
+    // The pointer leaves the cards once the card is let go of: the landed card's title is
+    // right where the drop was, and the order read below is of a board nothing is pointed at.
     harness
         .input_mut()
         .events

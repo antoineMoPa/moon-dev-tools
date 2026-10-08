@@ -247,6 +247,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn open_wire(&self, session_id: &str) -> Result<String>;
     /// Put a file of the repo on the task's card, by its path relative to the repo root.
     fn link_task_file(&self, session_id: &str, task_id: &str, file_path: &str) -> Result<()>;
+    /// Take a document off the task's `file_attachments.txt`, by its line as the board lists
+    /// it. The document stays where it is.
+    fn remove_task_attachment(&self, session_id: &str, task_id: &str, listed: &str) -> Result<()>;
 
     /// The board's columns, left to right. A board that has never had them changed answers
     /// with the three defaults.

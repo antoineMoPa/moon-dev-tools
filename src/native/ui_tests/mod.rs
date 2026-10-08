@@ -51,6 +51,7 @@ mod submodules;
 mod tab_rename;
 mod toasts;
 mod waiting;
+mod window_zoom;
 mod work_log;
 mod workspace_color;
 

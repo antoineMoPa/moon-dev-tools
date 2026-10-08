@@ -14,7 +14,7 @@ use super::{
         review_open_request,
     },
     frame::frame_named,
-    launch, open, wire,
+    launch, open, tasks, wire,
 };
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
@@ -43,7 +43,8 @@ pub(super) enum MoonCommand {
     /// [`crate::pass_keys`].
     GeneratePassKey,
     /// One file, in the window already open on its project - and in the window last in
-    /// front when no window is open on it.
+    /// front when no window is open on it. A folder, once the path is read against the disk
+    /// and turns out to be one, brings that window's file picker up on it instead.
     Open {
         path: String,
         line: Option<usize>,
@@ -75,6 +76,13 @@ pub(super) enum MoonCommand {
     /// task folder it made is printed, which is what the caller wanted it for.
     NewTask {
         title: String,
+    },
+    /// The cards of that board, printed column by column.
+    ListTasks,
+    /// The card of the task this shell belongs to, moved to the column of the board that is
+    /// called this.
+    MoveTask {
+        column: String,
     },
     /// A line from the task this shell belongs to, to the other agents of its board, and the
     /// wire's own help - see [`super::wire`].
@@ -126,7 +134,7 @@ pub(crate) fn run() -> Result<()> {
             );
             Ok(())
         }
-        MoonCommand::Open { path, line, wait } => open::open_file(&path, line, wait),
+        MoonCommand::Open { path, line, wait } => open::open(&path, line, wait),
         MoonCommand::OpenHelp => {
             println!("{}", open::help_text());
             Ok(())
@@ -139,7 +147,9 @@ pub(crate) fn run() -> Result<()> {
             Ok(())
         }
         MoonCommand::Licenses => print_licenses(),
-        MoonCommand::NewTask { title } => new_task(&title),
+        MoonCommand::NewTask { title } => tasks::new_task(&title),
+        MoonCommand::ListTasks => tasks::list_tasks(),
+        MoonCommand::MoveTask { column } => tasks::move_task(&column),
         MoonCommand::Wire(command) => wire::run(command),
         MoonCommand::Agent(command) => agent::run(command),
         MoonCommand::Desktop { path } => open_desktop(path.as_deref()),
@@ -169,18 +179,21 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
     let asks_for_help = rest.iter().any(|arg| arg == "--help" || arg == "-h");
 
     if let Some(frame) = frame_named(&command) {
-        // The one word after a window's name that is not something to open it on. The board
-        // is a folder of files, so a card can be made without a window - which is what an
-        // agent asked to write itself a task needs.
-        if frame == Frame::Tasks && rest.first().is_some_and(|word| word == "new") {
-            // The window's help is where `new` is written up.
+        // The words after a window's name that are not something to open it on. The board
+        // is a folder of files, so its cards can be made, listed and moved without a window -
+        // see [`super::tasks`].
+        if frame == Frame::Tasks
+            && let Some((word, words)) = rest.split_first()
+            && let Some(card_command) = tasks::card_command_named(word)
+        {
+            // The window's help is where they are written up.
             if asks_for_help {
                 return Ok(MoonCommand::Window {
                     frame,
                     args: vec!["--help".to_string()],
                 });
             }
-            return parse_new_task(&rest[1..]);
+            return tasks::parse(card_command, words);
         }
         // `moon shell .` and `moon shell <folder>` are a shell in that folder, and a shell is
         // a tab: it joins a window that is already open, the way `moon edit` does, rather
@@ -265,43 +278,6 @@ fn frame_of_launcher() -> Result<Option<Frame>> {
     frame_named(&named)
         .map(Some)
         .with_context(|| format!("{FRAME_ENV}={named} is not a window this program has"))
-}
-
-/// `moon tasks new <title>`. The title is the whole of the rest, joined, so it needs no
-/// quoting - though it usually gets some.
-fn parse_new_task(args: &[String]) -> Result<MoonCommand> {
-    if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
-        bail!("`{PROGRAM} tasks new` takes the card's title and no options, not {option}");
-    }
-    let title = args.join(" ");
-    if title.trim().is_empty() {
-        bail!(
-            "`{PROGRAM} tasks new` needs the card's title, e.g. `{PROGRAM} tasks new \"fix the races\"`"
-        );
-    }
-    Ok(MoonCommand::NewTask { title })
-}
-
-/// Make a card on the board of the repo this shell is in and print the folder it was given.
-///
-/// It joins the top of the board's first column, which is where the board itself puts a card
-/// nobody said anything else about: the leftmost column is the one work starts in.
-fn new_task(title: &str) -> Result<()> {
-    use crate::moontasks::{ColumnEnd, store};
-
-    let repo_path =
-        project_root(&env::current_dir().context("failed to read the current directory")?)?;
-    let board = store::read_board(&repo_path);
-    let column = board
-        .columns
-        .first()
-        .context("the board has no columns to put a card in")?
-        .id
-        .clone();
-
-    let task_id = store::create_task(&repo_path, title, &column, ColumnEnd::Top)?;
-    println!("{}", store::task_dir(&repo_path, &task_id)?.display());
-    Ok(())
 }
 
 fn parse_serve(args: Vec<String>) -> Result<MoonCommand> {
@@ -578,9 +554,12 @@ lunar local dev tools.
 Usage:
 {windows}
   {PROGRAM} tasks new <title>
+  {PROGRAM} tasks list                show the board's cards
+  {PROGRAM} tasks move <column>       move this shell's task to a column
   {PROGRAM} wire post <one line>      tell the board's other agents
   {PROGRAM} agent <command>           list, start, view or tell the board's agents
   {PROGRAM} edit <path>[:<line>]      Open a file for edition
+  {PROGRAM} edit <folder>             pick a file of a folder to open
   {PROGRAM} open <path>[:<line>]      same as `{PROGRAM} edit`
   {PROGRAM} launch <command>          start a program with windows, from a moon's shell
   {PROGRAM} list                      show open windows
@@ -644,17 +623,32 @@ Pass two paths to review a read-only comparison of those files.\n"
             .replace("{command}", &command)
     };
 
-    // The board is the one window with a command that touches it without opening it.
-    let makes_a_card_usage = if frame == Frame::Tasks {
-        format!("\n  {command} new <title>")
+    // The board is the one window with commands that touch it without opening it - see
+    // [`super::tasks`].
+    let card_commands_usage = if frame == Frame::Tasks {
+        format!("\n  {command} new <title>\n  {command} list\n  {command} move <column>")
     } else {
         String::new()
     };
-    let makes_a_card = if frame == Frame::Tasks {
+    let card_commands_examples = if frame == Frame::Tasks {
+        format!(
+            "\n  {command} new \"fix the races\"\n  {command} list\n  {command} move IN PROGRESS"
+        )
+    } else {
+        String::new()
+    };
+    let card_commands = if frame == Frame::Tasks {
         "\n`{command} new <title>` writes a card on this repo's board and prints the folder it was
 given, without opening a window. That folder is the task's: its notes, its brief, and whatever
-an agent working on it leaves behind.\n"
+an agent working on it leaves behind.
+`{command} list` prints that board without opening a window either: each column by its name,
+left to right, and under it its cards from the top, each as the task's folder and its title.
+`{command} move <column>` moves the card of the task this shell belongs to into the column
+the board shows under that name, written as the board writes it and with no quotes needed:
+`{command} move IN PROGRESS`. It is run from a task's shell, where {TASK_DIR_ENV_VAR}
+says which task that is, and the card arrives the way one dragged there does.\n"
             .replace("{command}", &command)
+            .replace("{TASK_DIR_ENV_VAR}", crate::moontasks::TASK_DIR_ENV_VAR)
     } else {
         String::new()
     };
@@ -665,7 +659,7 @@ an agent working on it leaves behind.\n"
 Opens a window on {opens}.
 
 Usage:
-  {command}{makes_a_card_usage}
+  {command}{card_commands_usage}
   {command} .
   {command} {path_usage}
   {command} <before-path> <after-path>
@@ -676,7 +670,7 @@ Usage:
   {command} --remote <host> [--pass-key <key>] [--repo <path>]
 
 Examples:
-  {command}
+  {command}{card_commands_examples}
   {command} .
   {command} {path_example}
   {command} before.json after.json
@@ -685,7 +679,7 @@ Examples:
   {command} --remote dev-box --repo /home/you/project
 
 Run it inside any git repository you want to work in.
-{opens_without_a_repo}{makes_a_card}{shell_in_a_folder}`--pick` opens the window on its launch screen instead, which is where recent projects and
+{opens_without_a_repo}{card_commands}{shell_in_a_folder}`--pick` opens the window on its launch screen instead, which is where recent projects and
 the folder picker are; it is what the Window menu's New Window items open.
 `--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
 what the Window menu's Restart hands the instance it starts.

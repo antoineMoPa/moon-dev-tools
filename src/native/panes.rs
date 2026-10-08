@@ -602,7 +602,7 @@ impl PaneView<Pane> for App {
             Pane::Tasks => crate::native::board::draw(self, ui),
             Pane::Start { task_id, .. } => {
                 let task_id = task_id.clone();
-                crate::native::start_pane::draw(self, ui, &task_id);
+                crate::native::start_pane::draw(self, ui, pane_id, &task_id);
             }
             Pane::NewTask {
                 column,
@@ -610,7 +610,9 @@ impl PaneView<Pane> for App {
                 draft_id,
             } => {
                 let (column, joins, draft_id) = (column.clone(), *joins, draft_id.clone());
-                crate::native::start_pane::draw_new_task(self, ui, &column, joins, &draft_id);
+                crate::native::start_pane::draw_new_task(
+                    self, ui, pane_id, &column, joins, &draft_id,
+                );
             }
             Pane::Commit { session_id } => {
                 let session_id = session_id.clone();

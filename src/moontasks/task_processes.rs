@@ -208,8 +208,10 @@ A relative path is from this task folder, so a file left in the folder is just i
 Anything else is an absolute path. Add a line, and leave the other lines alone: the file is
 also written by hand.
 
-The task's pane lists the files under `Files`, and a click opens one with the machine's own
-opener.
+The task's pane lists the files under `Files`. A click opens a text file - notes, a log, JSON,
+source - in a tab of the window, and any other document with the machine's own opener. The
+mark at the end of a file's row takes its line out of `file_attachments.txt`, and leaves the
+document where it is.
 ";
 
 /// What an agent is told about the other agents of the board, in the task's folder. The brief

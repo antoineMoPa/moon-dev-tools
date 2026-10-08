@@ -1,7 +1,8 @@
 //! Hunk collection against throwaway repositories built on disk.
 
 use super::hunks::{
-    collect_commit_hunks, collect_hunks, collect_session_hunks, local_change_summary_from_status,
+    BINARY_DETECTION_READ_LIMIT, collect_commit_hunks, collect_hunks, collect_session_hunks,
+    is_likely_binary_file, local_change_summary_from_status,
 };
 use super::{
     branch_commits_since_default, canonicalize_repo, commit_history_page, list_submodule_repos,
@@ -583,6 +584,35 @@ fn collect_hunks_skips_untracked_binary_files() {
     // Assert
     assert!(hunks.iter().any(|hunk| hunk.file_path == "note.txt"));
     assert!(!hunks.iter().any(|hunk| hunk.file_path == "asset.bin"));
+}
+
+/// Text is told from the bytes, whatever the file is called: an empty file is text, a NUL
+/// byte or bytes that are no UTF-8 make a binary, and a long text file whose sample stops
+/// partway through a character is still text. Nothing at the path, or a folder, is an error.
+#[test]
+fn a_file_is_told_text_from_binary_by_its_first_bytes() {
+    let temp = TestDir::new();
+    let is_binary = |name: &str, bytes: &[u8]| {
+        let path = temp.path.join(name);
+        fs::write(&path, bytes).expect("failed to write the file");
+        is_likely_binary_file(&path).expect("failed to inspect the file")
+    };
+
+    assert!(!is_binary("notes.txt", "à faire\n".as_bytes()));
+    assert!(!is_binary("Makefile", b"all:\n"));
+    assert!(!is_binary("empty.log", b""));
+    assert!(is_binary("picture.png", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"));
+    assert!(is_binary("latin1.txt", b"caf\xe9\n"));
+
+    // The two bytes of the `é` sit either side of the end of the sample.
+    let mut cut_mid_character = vec![b'a'; BINARY_DETECTION_READ_LIMIT as usize - 1];
+    cut_mid_character.extend("é and more\n".as_bytes());
+    assert!(!is_binary("long.txt", &cut_mid_character));
+    // A file that ends on half a character was read whole, and is not text.
+    assert!(is_binary("half.txt", &"é".as_bytes()[..1]));
+
+    assert!(is_likely_binary_file(&temp.path.join("nothing-here.txt")).is_err());
+    assert!(is_likely_binary_file(&temp.path).is_err());
 }
 
 #[test]

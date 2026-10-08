@@ -264,6 +264,13 @@ pub(crate) struct LinkFileRequest {
     pub(crate) file_path: String,
 }
 
+/// A document being taken off a task's `file_attachments.txt`, by its line as the board lists
+/// it - see [`TaskView::attachments`].
+#[derive(Serialize, Deserialize)]
+pub(crate) struct RemoveAttachmentRequest {
+    pub(crate) listed: String,
+}
+
 /// The answer to opening a task's notes: where the file pane finds the file, relative to the
 /// repo root, which is how every file pane path is addressed.
 #[derive(Serialize, Deserialize)]

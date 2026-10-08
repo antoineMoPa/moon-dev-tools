@@ -576,7 +576,7 @@ fn draw_card_body(
                 ui.add_space(3.0);
             }
             // The documents the task lists, under what runs in it.
-            super::attachments::draw_list(app, ui, task, &mut card, palette, false);
+            super::attachments::draw_list(app, ui, task, &mut card, palette, actions, false);
             if !task.attachments.is_empty() {
                 ui.add_space(3.0);
             }
@@ -670,8 +670,9 @@ fn draw_card_title(
 ///
 /// A label and nothing more: what a click on it does - open the task, mark the card, pick the
 /// card up - is the card's business rather than the title's, and is settled from the press
-/// itself. All it senses is the pointer being over it, which is what draws the whole title,
-/// since the card may only have room for the start of it.
+/// itself. All it senses is the pointer being over it, which turns the pointer into a hand
+/// and shows nothing else: a title can run to several lines, and showing the whole of it
+/// covered the board each time the pointer crossed a card.
 fn draw_title(ui: &mut Ui, task: &TaskView, width: f32, palette: &Palette) -> egui::Rect {
     let width = width.max(0.0);
     // Cut rather than wrapped without end: a card sits in a column of a fixed width, and a
@@ -696,11 +697,7 @@ fn draw_title(ui: &mut Ui, task: &TaskView, width: f32, palette: &Palette) -> eg
     // Hover only: a label that sensed clicks would take the press the card is claiming. It
     // carries the card's own id, so the title is what anything looking for the card finds.
     ui.interact(laid_out.rect, card_drag_id(&task.id), egui::Sense::hover())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(format!(
-            "{}\n\n{}\n\nClick to open this task, double click to rename it",
-            task.title, task.dir_path
-        ));
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     laid_out.rect
 }
 

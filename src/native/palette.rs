@@ -203,12 +203,7 @@ pub(crate) enum CommandAction {
 /// Every typed term has to appear somewhere in the title or description, which makes
 /// "term cl" find the Claude terminal.
 pub(crate) fn filter(commands: Vec<Command>, query: &str) -> Vec<Command> {
-    let terms: Vec<String> = query
-        .trim()
-        .to_lowercase()
-        .split_whitespace()
-        .map(ToOwned::to_owned)
-        .collect();
+    let terms = terms_of(query);
     if terms.is_empty() {
         return commands;
     }
@@ -222,10 +217,63 @@ pub(crate) fn filter(commands: Vec<Command>, query: &str) -> Vec<Command> {
         .collect()
 }
 
+/// The terms of what is typed: its words, in lower case.
+fn terms_of(query: &str) -> Vec<String> {
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// How much of what is typed a command's title answers for, most first - the order
+/// [`ranked`] lists the matching commands in.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TitleMatch {
+    /// The title is what is typed, word for word.
+    Whole,
+    /// Every typed term is in the title.
+    EveryTerm,
+    /// Some term is only in the description.
+    NotEveryTerm,
+}
+
+impl TitleMatch {
+    fn of(title: &str, terms: &[String]) -> Self {
+        let title = title.to_lowercase();
+        if title.split_whitespace().eq(terms.iter().map(String::as_str)) {
+            Self::Whole
+        } else if terms.iter().all(|term| title.contains(term.as_str())) {
+            Self::EveryTerm
+        } else {
+            Self::NotEveryTerm
+        }
+    }
+}
+
+/// The commands that match what is typed, the ones it names ahead of the ones that only
+/// mention it in their description - see [`TitleMatch`]. The commands of one rank keep the
+/// order the list has them in. So `open file` typed in full is the first row, ahead of
+/// `find file` and `new file`, which come before it in the list and whose descriptions open
+/// a file too.
+///
+/// Only the commands are ranked. The places and the code actions are in the order their
+/// language server put them, which says something a title does not.
+pub(crate) fn ranked(commands: Vec<Command>, query: &str) -> Vec<Command> {
+    let terms = terms_of(query);
+    let mut matches = filter(commands, query);
+    if terms.is_empty() {
+        return matches;
+    }
+    // A stable sort, which is what keeps the list's order within a rank.
+    matches.sort_by_cached_key(|command| TitleMatch::of(&command.title, &terms));
+    matches
+}
+
 /// What the palette is offering under the query: the commands that match it, or the files.
 fn rows_for(app: &App) -> Vec<Command> {
     match app.model.palette.mode {
-        PaletteMode::Commands => filter(commands_for(app), &app.model.palette.query),
+        PaletteMode::Commands => ranked(commands_for(app), &app.model.palette.query),
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
         PaletteMode::Rename => rename_rows(app),
@@ -264,6 +312,23 @@ mod tests {
 
         assert_eq!(matches[0].title, "wl");
         assert!(matches!(matches[0].action, CommandAction::OpenWorkLog));
+    }
+
+    /// `open file` typed in full is the command of that name, first, over the window's whole
+    /// list: `find file` and `new file` come before it there, and both say "Open ... file" in
+    /// their description.
+    #[test]
+    fn a_command_typed_by_its_title_is_the_first_row() {
+        let fixture = crate::native::ui_tests::seeded_fixture("palette-title");
+        let app = crate::native::ui_tests::app_for(
+            &fixture.root,
+            crate::native::theme::ThemeMode::Dark,
+        );
+
+        let matches = ranked(commands_for(&app), "open file");
+
+        let titles: Vec<&str> = matches.iter().map(|row| row.title.as_str()).collect();
+        assert_eq!(titles[0], "open file", "the rows were {titles:?}");
     }
 
     /// Three rows want three rows' height and the two gaps between them, and one row wants

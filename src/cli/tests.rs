@@ -571,6 +571,84 @@ fn the_board_makes_a_card_from_the_command_line() {
     );
 }
 
+/// `moon tasks list` and `moon tasks move <column>` read and move the board's cards without a
+/// window, as `new` makes one, and the column's name is the whole of the rest of the line so
+/// an unquoted `IN PROGRESS` still reads as one name.
+#[test]
+fn the_board_lists_and_moves_its_cards_from_the_command_line() {
+    let parse =
+        |args: &[&str]| parse_command(None, args.iter().map(|arg| arg.to_string()).collect());
+    let moved_to = |column: &str| MoonCommand::MoveTask {
+        column: column.to_string(),
+    };
+
+    assert_eq!(
+        parse(&["tasks", "list"]).expect("expected it to parse"),
+        MoonCommand::ListTasks
+    );
+    assert_eq!(
+        parse(&["tasks", "move", "IN", "PROGRESS"]).expect("expected it to parse"),
+        moved_to("IN PROGRESS")
+    );
+    assert_eq!(
+        parse(&["tasks", "move", "IN PROGRESS"]).expect("expected it to parse"),
+        moved_to("IN PROGRESS")
+    );
+    // As it was typed: whether the board has a column called that is the board's to say.
+    assert_eq!(
+        parse(&["tasks", "move", "backburner"]).expect("expected it to parse"),
+        moved_to("backburner")
+    );
+
+    let error = parse(&["tasks", "list", "DONE"]).expect_err("a list of one column is refused");
+    assert!(error.to_string().contains("takes nothing"), "{error}");
+    let error = parse(&["tasks", "move"]).expect_err("a move to no column is refused");
+    assert!(error.to_string().contains("needs the column"), "{error}");
+    let error = parse(&["tasks", "move", "--top", "DONE"]).expect_err("an option is refused");
+    assert!(
+        error.to_string().contains("no options, not --top"),
+        "{error}"
+    );
+
+    // Every other word after `tasks` is still something to open the window on, and the
+    // other two windows have no such words: `moon review list` is a path called `list`.
+    for (frame, opened_on) in [
+        (Frame::Tasks, &["."][..]),
+        (Frame::Tasks, &["src/list"]),
+        (Frame::Tasks, &["diff", "dev"]),
+        (Frame::Tasks, &["--pick"]),
+        (Frame::Review, &["list"]),
+        (Frame::Shell, &["move", "DONE"]),
+    ] {
+        let mut line = vec![frame.subcommand()];
+        line.extend(opened_on);
+        assert_eq!(
+            parse(&line).expect("expected it to parse"),
+            MoonCommand::Window {
+                frame,
+                args: opened_on.iter().map(|arg| arg.to_string()).collect()
+            }
+        );
+    }
+
+    let help = help_text_for(Frame::Tasks);
+    for said in [
+        "  moon tasks list\n",
+        "  moon tasks move <column>\n",
+        "  moon tasks move IN PROGRESS\n",
+        "`moon tasks list` prints",
+        "`moon tasks move <column>` moves",
+        "MOONREVIEW_TASK_DIR",
+    ] {
+        assert!(
+            help.contains(said),
+            "the board's help should say {said:?}:\n{help}"
+        );
+    }
+    assert!(!help.lines().any(|line| line.trim_start().starts_with('#')));
+    assert!(!help_text_for(Frame::Review).contains("move <column>"));
+}
+
 /// `--help` after a command is a question about it, whatever else was typed around it.
 #[test]
 fn every_command_answers_help_without_doing_anything() {
@@ -584,14 +662,22 @@ fn every_command_answers_help_without_doing_anything() {
     assert_eq!(parse(&["licenses", "--help"]), MoonCommand::Help);
     assert_eq!(parse(&["install-launchers", "--help"]), MoonCommand::Help);
     assert_eq!(parse(&["generate-pass-key", "--help"]), MoonCommand::Help);
-    // The board's window is where `new` is written up, so that is the help it gets.
-    assert_eq!(
-        parse(&["tasks", "new", "--help"]),
-        MoonCommand::Window {
-            frame: Frame::Tasks,
-            args: vec!["--help".to_string()]
-        }
-    );
+    // The board's window is where `new`, `list` and `move` are written up, so that is the
+    // help they get.
+    for asked in [
+        &["tasks", "new", "--help"][..],
+        &["tasks", "list", "-h"],
+        &["tasks", "move", "IN PROGRESS", "--help"],
+    ] {
+        assert_eq!(
+            parse(asked),
+            MoonCommand::Window {
+                frame: Frame::Tasks,
+                args: vec!["--help".to_string()]
+            },
+            "{asked:?}"
+        );
+    }
 }
 
 /// `moon wire post <line>`: the line is the rest of the command line, quoted or not, and the

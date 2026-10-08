@@ -40,16 +40,31 @@ pub(crate) fn arrange(columns: &[BoardColumn], tasks: &mut [TaskView]) {
 /// One column's cards, in the order `sort` keeps. Stable, so cards the order cannot tell
 /// apart - two cards titled the same - keep the order they were dragged into.
 pub(crate) fn sort_cards(sort: ColumnSort, cards: &mut [TaskView]) {
-    cards.sort_by(|left, right| compare(sort, left, right));
+    sort_cards_read_as(sort, cards, |card| (&card.title, card.created_at_unix));
 }
 
-fn compare(sort: ColumnSort, left: &TaskView, right: &TaskView) -> Ordering {
+/// [`sort_cards`] for cards held some other way than as the board draws them: as the
+/// `metadata.json` of each, which is all `moon tasks list` reads. `read` is what an order
+/// compares, a card's title and when it was made.
+pub(crate) fn sort_cards_read_as<Card>(
+    sort: ColumnSort,
+    cards: &mut [Card],
+    read: impl Fn(&Card) -> (&str, u64),
+) {
+    cards.sort_by(|left, right| compare(sort, read(left), read(right)));
+}
+
+fn compare(
+    sort: ColumnSort,
+    (left_title, left_made_at): (&str, u64),
+    (right_title, right_made_at): (&str, u64),
+) -> Ordering {
     match sort {
-        ColumnSort::Alphabetical => title_order(&left.title, &right.title),
-        ColumnSort::Numerical => numbers_order(&left.title, &right.title)
-            .then_with(|| title_order(&left.title, &right.title)),
-        ColumnSort::NewestFirst => right.created_at_unix.cmp(&left.created_at_unix),
-        ColumnSort::OldestFirst => left.created_at_unix.cmp(&right.created_at_unix),
+        ColumnSort::Alphabetical => title_order(left_title, right_title),
+        ColumnSort::Numerical => numbers_order(left_title, right_title)
+            .then_with(|| title_order(left_title, right_title)),
+        ColumnSort::NewestFirst => right_made_at.cmp(&left_made_at),
+        ColumnSort::OldestFirst => left_made_at.cmp(&right_made_at),
     }
 }
 

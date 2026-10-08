@@ -551,13 +551,21 @@ mod tests {
         assert_eq!(requests[0].task_id, "deploy-the-thing-1111");
         assert_eq!(requests[0].path_under_repo, "src");
         assert_eq!(requests[0].branch.as_deref(), Some("the-branch"));
+        // The whole commit comes with the row, for its hover to say: `the-branch` is checked out
+        // nowhere, and the second line names no branch at all, and both still carry theirs.
         assert_eq!(
-            requests[0]
-                .suggestion
-                .as_ref()
-                .expect("a suggestion")
-                .paragraph,
-            "It was eating the last line of every file."
+            requests[0].suggestion,
+            Some(CommitSuggestion {
+                subject: "fix(parser): read the trailing newline".to_string(),
+                paragraph: "It was eating the last line of every file.".to_string(),
+            })
+        );
+        assert_eq!(
+            requests[1].suggestion,
+            Some(CommitSuggestion {
+                subject: "chore: take the submodule forward".to_string(),
+                paragraph: String::new(),
+            })
         );
         // `src` is no repo of its own, so it resolves to the repo it sits in - which is the repo
         // the second line names outright, and the same string for both.

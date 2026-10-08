@@ -3,22 +3,17 @@
 //! told about it.
 //!
 //! It is run from a task's shell, and reads who is posting out of the environment that
-//! shell was started with rather than out of the folder it is in: an agent may have moved
-//! into a submodule, which is another repo with another board, or none.
+//! shell was started with - see [`super::task_shell`].
 
-use std::{
-    ffi::{OsStr, OsString},
-    path::{Path, PathBuf},
-};
+use std::{ffi::OsString, path::Path};
 
 use anyhow::{Context, Result, bail};
 
-use super::PROGRAM;
+use super::{PROGRAM, task_shell::TaskOfShell};
 use crate::{
     instances::{self, Ask, Instance},
     moontasks::{
-        TASK_DIR_ENV_VAR,
-        store::{self, TASKS_DIR_NAME},
+        TASK_DIR_ENV_VAR, store,
         wire::{self, broadcasts, direct, handles},
     },
 };
@@ -107,50 +102,6 @@ pub(super) fn run(command: WireCommand) -> Result<()> {
     }
 }
 
-/// The task a line is posted from, read off the folder its shell was told it is in.
-#[derive(Debug, PartialEq, Eq)]
-struct Sender {
-    /// The repo whose board the task is on.
-    repo_path: PathBuf,
-    task_id: String,
-}
-
-impl Sender {
-    /// The task whose folder this is: `<repo>/.moontasks/<task id>`, as every process moon
-    /// starts for a task is given it. Anything else is not a task's shell, and is refused
-    /// rather than read as the nearest thing to one.
-    fn of(task_dir: Option<&OsStr>) -> Result<Self> {
-        let Some(task_dir) = task_dir.filter(|task_dir| !task_dir.is_empty()) else {
-            bail!(
-                "`{}` is run from a task's shell, and this is not one: {TASK_DIR_ENV_VAR} is \
-                 not set",
-                wire::post_command()
-            );
-        };
-        let task_dir = Path::new(task_dir);
-        let not_a_task_folder = || {
-            format!(
-                "{TASK_DIR_ENV_VAR} is {}, which is not a task's folder in a board's \
-                 {TASKS_DIR_NAME}",
-                task_dir.display()
-            )
-        };
-        let task_id = task_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .with_context(not_a_task_folder)?;
-        let board_dir = task_dir.parent().with_context(not_a_task_folder)?;
-        if board_dir.file_name() != Some(OsStr::new(TASKS_DIR_NAME)) {
-            bail!(not_a_task_folder());
-        }
-        let repo_path = board_dir.parent().with_context(not_a_task_folder)?;
-        Ok(Self {
-            repo_path: repo_path.to_path_buf(),
-            task_id: task_id.to_string(),
-        })
-    }
-}
-
 /// One shell a direct message is to be typed into, with everything checked that can be
 /// before anything is sent.
 struct Delivery {
@@ -163,16 +114,9 @@ struct Delivery {
 /// Post a line: to the board's file when it has no tags, and into the shells of the tagged
 /// tasks' agents when it has.
 fn post(tags: &[String], message: &str, task_dir: Option<OsString>) -> Result<()> {
-    let sender = Sender::of(task_dir.as_deref())?;
+    let sender = TaskOfShell::of(&wire::post_command(), task_dir.as_deref())?;
     let message = wire::one_line(message)?;
-    let folders = store::list_task_ids(&sender.repo_path)?;
-    if !folders.contains(&sender.task_id) {
-        bail!(
-            "{} is not a task of the board in {}",
-            sender.task_id,
-            store::tasks_root(&sender.repo_path).display()
-        );
-    }
+    let folders = sender.folders_of_its_board()?;
     let handle = handles::handle_of(&sender.task_id, &folders);
 
     if tags.is_empty() {
@@ -324,6 +268,8 @@ Refused, with nothing posted and nothing sent:
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::{
         api::AgentKind,
@@ -387,22 +333,6 @@ mod tests {
         tags.iter().map(|tag| tag.to_string()).collect()
     }
 
-    #[test]
-    fn the_sender_is_the_task_whose_folder_the_shell_was_told() {
-        let sender = Sender::of(Some(OsStr::new(
-            "/repos/project/.moontasks/fix-the-races-6f9c1e2a-0b1c-4d2e-8f3a-9b8c7d6e5f4a",
-        )))
-        .expect("expected a sender");
-
-        assert_eq!(
-            sender,
-            Sender {
-                repo_path: PathBuf::from("/repos/project"),
-                task_id: "fix-the-races-6f9c1e2a-0b1c-4d2e-8f3a-9b8c7d6e5f4a".to_string(),
-            }
-        );
-    }
-
     /// Outside a task's shell there is nobody for the line to be from, and the folder the
     /// command was typed in is not asked instead.
     #[test]
@@ -412,15 +342,6 @@ mod tests {
             assert!(
                 error.to_string().contains("is run from a task's shell")
                     && error.to_string().contains(TASK_DIR_ENV_VAR),
-                "{error}"
-            );
-        }
-
-        for not_a_task_folder in ["/repos/project", "/repos/project/src/task", "/"] {
-            let error =
-                Sender::of(Some(OsStr::new(not_a_task_folder))).expect_err("expected a refusal");
-            assert!(
-                error.to_string().contains("is not a task's folder"),
                 "{error}"
             );
         }

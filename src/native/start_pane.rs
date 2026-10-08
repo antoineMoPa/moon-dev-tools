@@ -3,7 +3,8 @@
 //!
 //! Its title and its notes are edited here, in the pane rather than through a file opened
 //! beside it - a task you have just opened is one you are about to say something about - and
-//! under them are the runs and files it has and a button for each thing it can start.
+//! under them are the runs and files it has and a button for each thing it can start. ⌘F
+//! searches the notes, in the box they are written in - see [`notes_box`].
 //! Those two are the card's own, drawn from [`crate::native::board::resources`] and
 //! [`crate::native::board::start`] rather than laid out again here: one task said twice would
 //! be two things to keep in step. The card folds its offers into a `[start]` menu for want
@@ -12,7 +13,10 @@
 //! Starting a shell or an agent from here closes the pane, because the shell it opens is what
 //! this pane was standing in for.
 
+mod notes_box;
+
 use egui::{Key, Modifiers, RichText, Ui, vec2};
+use egui_frames::PaneId;
 
 use crate::{
     moontasks::{ColumnEnd, ColumnId, TaskView},
@@ -35,15 +39,12 @@ const LINE_GAP: f32 = 16.0;
 /// How wide the pane's column is at its widest. A title box the width of a window is a box you
 /// lose the caret in, and notes read as prose rather than as a line per screen.
 const COLUMN_WIDTH: f32 = 520.0;
-/// How many lines of notes the box stands open at. Enough for a paragraph, and it grows with
-/// what is written into it.
-const NOTES_ROWS: usize = 8;
 /// How long the notes are left alone before they are written, once the typing stops. Long
 /// enough not to write a file per letter, short enough that closing the tab a moment later
 /// keeps what was said.
 const NOTES_SETTLE: f64 = 0.8;
 
-pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
     let palette = app.palette_of();
 
     egui::Frame::new()
@@ -74,7 +75,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                         ui.add_space(TOP_GAP);
                         ui.allocate_ui(vec2(width, 0.0), |ui| {
                             ui.vertical(|ui| {
-                                draw_editors(app, ui, &task, &mut actions);
+                                draw_editors(app, ui, pane_id, &palette, &task, &mut actions);
                                 ui.add_space(LINE_GAP);
                                 // What the task has going, in the rows the card lists them in
                                 // - the same rows, so a run is stopped, resumed or opened from
@@ -104,6 +105,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                                         &task,
                                         &mut board::gesture::Controls::elsewhere(),
                                         &palette,
+                                        &mut actions,
                                         true,
                                     );
                                     ui.add_space(LINE_GAP);
@@ -158,10 +160,13 @@ fn draw_tags(
 pub(crate) fn draw_new_task(
     app: &mut App,
     ui: &mut Ui,
+    pane_id: PaneId,
     column: &ColumnId,
     joins: ColumnEnd,
     draft_id: &str,
 ) {
+    let palette = app.palette_of();
+
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(9, 7))
         .show(ui, |ui| {
@@ -175,7 +180,8 @@ pub(crate) fn draw_new_task(
                         ui.add_space(TOP_GAP);
                         ui.allocate_ui(vec2(width, 0.0), |ui| {
                             ui.vertical(|ui| {
-                                created = draw_draft(app, ui, column, joins, draft_id);
+                                created =
+                                    draw_draft(app, ui, pane_id, &palette, column, joins, draft_id);
                             });
                         });
                     });
@@ -196,6 +202,8 @@ pub(crate) fn draw_new_task(
 fn draw_draft(
     app: &mut App,
     ui: &mut Ui,
+    pane_id: PaneId,
+    palette: &Palette,
     column: &ColumnId,
     joins: ColumnEnd,
     draft_id: &str,
@@ -240,12 +248,13 @@ fn draw_draft(
     }
 
     ui.add_space(LINE_GAP);
-    ui.add(
-        egui::TextEdit::multiline(&mut draft.notes)
-            .hint_text("Notes")
-            .desired_width(f32::INFINITY)
-            .desired_rows(NOTES_ROWS)
-            .margin(egui::Margin::symmetric(6, 4)),
+    notes_box::show(
+        ui,
+        pane_id,
+        &mut draft.notes,
+        Some("Notes"),
+        &mut app.model.find,
+        palette,
     );
     let title = draft.title.trim().to_string();
     let notes = draft.notes.clone();
@@ -290,7 +299,14 @@ fn draw_draft(
 /// still has the old title in it, because the rename has not been read back yet, must not be
 /// allowed to take back what was just typed. The notes have a second way of being behind the
 /// box, which is [`accept_notes`].
-fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<BoardAction>) {
+fn draw_editors(
+    app: &mut App,
+    ui: &mut Ui,
+    pane_id: PaneId,
+    palette: &Palette,
+    task: &TaskView,
+    actions: &mut Vec<BoardAction>,
+) {
     let now = ui.input(|input| input.time);
     // A pane opened by a click on the card's notes opens with the keyboard in that box, which
     // is what the click was reaching for; one opened for a task just created opens in the
@@ -361,11 +377,14 @@ fn draw_editors(app: &mut App, ui: &mut Ui, task: &TaskView, actions: &mut Vec<B
     }
 
     ui.add_space(LINE_GAP);
-    let mut written = egui::TextEdit::multiline(&mut editor.notes)
-        .desired_width(f32::INFINITY)
-        .desired_rows(NOTES_ROWS)
-        .margin(egui::Margin::symmetric(6, 4))
-        .show(ui);
+    let mut written = notes_box::show(
+        ui,
+        pane_id,
+        &mut editor.notes,
+        None,
+        &mut app.model.find,
+        palette,
+    );
     if notes_take_keyboard {
         written.response.request_focus();
         // With the caret past what is already written, which is where writing more starts. A

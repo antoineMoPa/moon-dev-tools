@@ -480,6 +480,27 @@ pub(crate) fn read_attachments(repo_path: &Path, task_id: &str) -> Vec<String> {
         .collect()
 }
 
+/// Take one document off a task's attachments file: the first line that reads as `listed`, the
+/// way [`read_attachments`] reads it. The document itself stays where it is.
+///
+/// Every other line is written back exactly as it was, its line ending with it - the file is
+/// also written by hand, and taking one line out is not a licence to tidy the rest. The file
+/// is read again here rather than worked from what the board last saw, and a line that is no
+/// longer in it is refused rather than passed over: the board was showing a list the file
+/// does not hold any more.
+pub(crate) fn remove_attachment(repo_path: &Path, task_id: &str, listed: &str) -> Result<()> {
+    let path = task_dir(repo_path, task_id)?.join(crate::moontasks::ATTACHMENTS_FILE_NAME);
+    let listing =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+
+    let lines: Vec<&str> = listing.split_inclusive('\n').collect();
+    let Some(at) = lines.iter().position(|line| line.trim() == listed) else {
+        bail!("{listed} is not listed in {} any more", path.display());
+    };
+    let kept: String = lines[..at].iter().chain(&lines[at + 1..]).copied().collect();
+    fs::write(&path, kept).with_context(|| format!("failed to write {}", path.display()))
+}
+
 /// Write the whole of a task's notes file, creating it if it is not there.
 pub(crate) fn write_notes(repo_path: &Path, task_id: &str, content: &str) -> Result<()> {
     let dir = task_dir(repo_path, task_id)?;

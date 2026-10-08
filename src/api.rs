@@ -3,6 +3,7 @@
 pub(crate) mod applications;
 pub(crate) mod display;
 pub(crate) mod folders;
+pub(crate) mod image_formats;
 #[cfg(not(target_arch = "wasm32"))]
 mod server_state;
 #[cfg(not(target_arch = "wasm32"))]
@@ -247,6 +248,11 @@ pub(crate) struct FileContentPayload {
     /// empty for a file HEAD does not have, every line of which is new, and `None` for a file
     /// outside the repo, which has no history here to be new against.
     pub(crate) committed: Option<String>,
+    /// The file as a `data:` URI, for a picture: a file named as an image whose bytes are not
+    /// text. A tab on one draws this and not the `content`, which is empty - a picture has no
+    /// text to read or to write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) image_src: Option<String>,
 }
 
 /// Who last touched each stretch of a file, as `git blame` has it - see

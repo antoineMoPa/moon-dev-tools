@@ -463,6 +463,65 @@ fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
     assert_eq!(orphaned.resources[0].terminal_owner, None);
 }
 
+/// A card moved to the finishing column by a moon that holds none of its shells - a command
+/// line - keeps the run another running moon holds as it was recorded, and forgets the one
+/// whose moon has exited.
+#[test]
+fn a_task_finished_from_another_moon_keeps_the_run_that_moon_holds() {
+    let repo = temp_repo("finished-elsewhere");
+    let task_id = store::create_task(
+        &repo,
+        "Fix the login page",
+        &ColumnId::new("in_progress"),
+        ColumnEnd::Top,
+    )
+    .expect("expected the task to be made");
+    let run_in = |terminal_id: &str, owner: u32| TaskResource {
+        id: terminal_id.to_string(),
+        kind: TaskResourceKind::Agent,
+        agent: AgentKind::Claude,
+        file_path: None,
+        terminal_id: Some(terminal_id.to_string()),
+        terminal_owner: Some(owner),
+        agent_session_id: None,
+        name: None,
+        started_at_unix: 0,
+    };
+    // The process that started this test is running, and is not this one.
+    let another_moon = std::os::unix::process::parent_id();
+    let mut metadata = store::read_task(&repo, &task_id).expect("expected the task");
+    metadata.resources = vec![
+        run_in("terminal-held", another_moon),
+        run_in("terminal-orphaned", exited_process()),
+    ];
+    store::write_task(&repo, &task_id, &metadata).expect("expected the runs to be written");
+    let shells_held_here = crate::terminal::TerminalRegistry::new(std::sync::Arc::new(
+        std::sync::Mutex::new(std::time::Instant::now()),
+    ));
+
+    place_tasks_in_repo(
+        &shells_held_here,
+        &repo,
+        std::slice::from_ref(&task_id),
+        ColumnId::new(store::RELEASES_SHELLS_IN),
+        0,
+    )
+    .expect("expected the move");
+
+    let finished = store::read_task(&repo, &task_id).expect("expected the task");
+    assert_eq!(
+        finished.status,
+        Some(ColumnId::new(store::RELEASES_SHELLS_IN))
+    );
+    let [held, orphaned] = finished.resources.as_slice() else {
+        panic!("expected both runs to be kept");
+    };
+    assert_eq!(held.terminal_id.as_deref(), Some("terminal-held"));
+    assert_eq!(held.terminal_owner, Some(another_moon));
+    assert_eq!(orphaned.terminal_id, None);
+    assert_eq!(orphaned.terminal_owner, None);
+}
+
 /// A run recorded with its session and no shell: put on the task by hand, or by its own agent.
 fn run_of_session(session_id: &str) -> TaskMetadata {
     TaskMetadata {

@@ -259,8 +259,11 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     // Escape lets the marks go, for a hand already on the keyboard. Only while there are marks
     // to let go of, so the key is still the filter box's and the palette's the rest of the
     // time, and not while a box is being typed into, where Escape means what that box says.
+    // The find bar's box is asked about by name: Escape there puts the bar away, and letting
+    // the marks go on it would put away the task's page the bar is over instead.
     if !app.model.board.marked.is_empty()
         && !ui.ctx().text_edit_focused()
+        && !crate::native::find::is_typed_into(&app.model.find)
         && !app.model.palette.open
         && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     {

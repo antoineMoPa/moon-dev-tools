@@ -72,6 +72,7 @@ raw-window-handle = "0.6"
 muda = { version = "0.19", default-features = false }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAttributedString", "NSObjCRuntime", "NSRange", "NSString"] }
+raw-window-handle = "0.6"
 wry = { version = "0.57", default-features = false }
 
 [build-dependencies]
@@ -84,33 +85,11 @@ egui_kittest = { version = "0.36", features = ["wgpu", "snapshot"] }
 
 [profile.dev]
 opt-level = 1
+debug = false
 
 [profile.dev.package."*"]
 opt-level = 2
-# Nobody steps through egui or tokio, and their debug info was most of a 15 GB target/debug/deps.
-# A panic's backtrace still names their functions, without the file and line.
-debug = false
 
-# `"*"` is every package but this one, which takes in the crates under crates/ - each is a
-# workspace of its own. Those are stepped through, so they keep their debug info.
-[profile.dev.package.egui_frames]
-debug = true
-[profile.dev.package.egui_tty]
-debug = true
-[profile.dev.package.egui_moon_editor]
-debug = true
-[profile.dev.package.egui_moon_code_ide]
-debug = true
-[profile.dev.package.moon_lsp]
-debug = true
-[profile.dev.package.moon_launcher]
-debug = true
-[profile.dev.package.libghostty-vt-sys]
-debug = true
-
-# build.rs runs wasm-bindgen and gzip over the whole browser build - 17 MB - on every build of
-# moon whose sources changed. Cargo compiles what a build script uses unoptimized, which makes
-# those two take seconds each; these are compiled optimized in every profile instead.
 [profile.dev.package.walrus]
 opt-level = 3
 [profile.dev.package.wasm-bindgen-cli-support]

@@ -19,6 +19,7 @@ mod json_tree;
 mod for_tests;
 mod on_disk;
 mod opening;
+mod picture;
 mod serving;
 
 pub(crate) use opening::tab_on_file;
@@ -133,6 +134,9 @@ pub(crate) struct FileEditor {
     /// the file as it was. Read-only: the text is not the working tree's, so there is nothing
     /// to save it to, no disk to check under it, and no language server to tell about it.
     revision: Option<String>,
+    /// The picture the tab shows in place of the editor, for an image file - see [`picture`].
+    /// Known once the read has come back, because the read is what says the file is one.
+    picture: Option<picture::Picture>,
 }
 
 impl FileEditor {
@@ -174,6 +178,7 @@ impl FileEditor {
             signing: Default::default(),
             blaming: Default::default(),
             revision: None,
+            picture: None,
         }
     }
 
@@ -273,9 +278,12 @@ impl FileEditor {
     }
 
     /// Whether the text can only be read: a file outside the repo, a file as an old commit
-    /// had it, or a file only a command writes. None has anywhere for an edit to go.
+    /// had it, a file only a command writes, or a picture. None has anywhere for an edit to go.
     pub(super) fn is_read_only(&self) -> bool {
-        self.outside_the_repo || self.revision.is_some() || self.only_written_by.is_some()
+        self.outside_the_repo
+            || self.revision.is_some()
+            || self.only_written_by.is_some()
+            || self.picture.is_some()
     }
 
     /// Whether the server behind this file may be asked for edits to it - a rename, a format:
@@ -368,6 +376,7 @@ mod tests {
             signing: Default::default(),
             blaming: Default::default(),
             revision: None,
+            picture: None,
         }
     }
 

@@ -142,6 +142,40 @@ fn a_task_lists_its_attachments_one_per_line() {
     fs::remove_dir_all(repo).expect("failed to remove the test repo");
 }
 
+/// Taking a document off the list takes its line out and nothing else: the lines around it
+/// stay as they were written, blank ones and stray spaces included, and the document is
+/// still in the folder.
+#[test]
+fn removing_an_attachment_takes_out_its_line_and_keeps_the_document() {
+    let repo = temp_repo("remove-attachment");
+    let task_id = create_task(&repo, "Has files", &ColumnId::new("todo"), ColumnEnd::Top)
+        .expect("expected a task");
+    let dir = tasks_root(&repo).join(&task_id);
+    let listing = dir.join(crate::moontasks::ATTACHMENTS_FILE_NAME);
+    fs::write(&listing, "file1.pdf\n\n  file2.xls \n/abs/file3.csv\r\nlast.md")
+        .expect("expected the listing written");
+    fs::write(dir.join("file2.xls"), "figures").expect("expected the document written");
+
+    remove_attachment(&repo, &task_id, "file2.xls").expect("expected the line removed");
+
+    assert_eq!(
+        fs::read_to_string(&listing).expect("expected the listing"),
+        "file1.pdf\n\n/abs/file3.csv\r\nlast.md"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("file2.xls")).expect("expected the document left alone"),
+        "figures"
+    );
+    // A line the file no longer holds is refused, and the file is left as it is.
+    assert!(remove_attachment(&repo, &task_id, "file2.xls").is_err());
+    assert_eq!(
+        read_attachments(&repo, &task_id),
+        ["file1.pdf", "/abs/file3.csv", "last.md"]
+    );
+
+    fs::remove_dir_all(repo).expect("failed to remove the test repo");
+}
+
 /// A card joins the end of the column its `+` was pressed at, and the cards already there
 /// keep the order they were in.
 #[test]

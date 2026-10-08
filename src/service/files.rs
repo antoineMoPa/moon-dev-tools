@@ -32,6 +32,19 @@ pub(crate) fn session_file(
                 outside_the_repo: true,
                 only_written_by: None,
                 committed: None,
+                image_src: None,
+            });
+        }
+        // A picture is sent as the picture it is: its bytes are no text for a tab to show,
+        // and reading them as one is refused.
+        if let Some(image_src) = crate::git::read_repo_image(&session.repo_path, file_path)? {
+            return Ok(FileContentPayload {
+                file_path: file_path.to_string(),
+                content: String::new(),
+                outside_the_repo: false,
+                only_written_by: None,
+                committed: None,
+                image_src: Some(image_src),
             });
         }
         Ok(FileContentPayload {
@@ -48,6 +61,7 @@ pub(crate) fn session_file(
                 )?),
                 false => None,
             },
+            image_src: None,
         })
     })
 }
@@ -92,6 +106,7 @@ pub(crate) fn session_file_at(
             outside_the_repo: false,
             only_written_by: None,
             committed: None,
+            image_src: None,
         })
     })
 }

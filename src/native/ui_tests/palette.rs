@@ -149,7 +149,7 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
         .build_ui(move |ui| {
             app.draw(ui);
             showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
-            let matches = crate::native::palette::filter(
+            let matches = crate::native::palette::ranked(
                 crate::native::palette::commands_for(&app),
                 &app.model.palette.query,
             );

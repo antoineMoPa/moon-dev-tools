@@ -14,7 +14,7 @@ use board_routes::{
     add_column, attach_task_resource, board_task, create_task, delete_column, delete_task,
     delete_task_resource, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_wire, open_work_log, place_column, place_tasks,
-    project_commands,
+    project_commands, remove_task_attachment,
     rename_column, rename_task, resume_task_resource, run_project_command, set_column_arrivals,
     set_column_marks_a_days_work, set_column_sort, set_project_config, set_task_tags, start_task_resource, stop_task_resource,
 };
@@ -364,6 +364,10 @@ fn protected_routes() -> Router<Served> {
         .route(
             "/api/session/{session_id}/tasks/{task_id}/files",
             post(link_task_file),
+        )
+        .route(
+            "/api/session/{session_id}/tasks/{task_id}/attachments/remove",
+            post(remove_task_attachment),
         )
         .route(
             "/api/session/{session_id}/work-log/open",

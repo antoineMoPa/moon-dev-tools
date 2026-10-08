@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use super::{
     ANSWER_TIMEOUT, Answer, Ask, Instance, ask_process, dir, home_instances_dir, launch_in,
-    running, server::ServerAsks, socket_path, window::ShellAsks, window_of, windows_for, wire,
-    write_record,
+    listen_on_own_socket, pick_file, running, server::ServerAsks, socket_path, window::ShellAsks,
+    window_of, windows_for, wire, write_record,
 };
 
 fn instance(pid: u32, project_path: &str) -> Instance {
@@ -306,6 +306,63 @@ fn a_folder_for_a_shell_is_taken_and_kept_apart_from_the_files() {
     assert_eq!(shells.len(), 1);
     assert_eq!(shells[0].folder, folder);
     assert!(asks.drain_shells().is_empty(), "drained once");
+}
+
+/// `moon open <folder>`: the folder is taken as a folder to pick a file in, and is neither a
+/// file to open nor a folder to start a shell in.
+#[test]
+fn a_folder_to_pick_a_file_in_is_taken_and_kept_apart_from_the_rest() {
+    let project = temporary_project("pick-folder");
+    let folder = project.join("src");
+    std::fs::create_dir_all(&folder).expect("expected a folder");
+
+    let asks = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    asks.on_project(&project.display().to_string())
+        .expect("expected the record to be written");
+
+    let window = pick_file(&folder).expect("expected the window to take the folder");
+
+    assert_eq!(window.pid, std::process::id());
+    assert!(asks.drain().is_empty(), "a folder is no file to open");
+    assert!(
+        asks.drain_shells().is_empty(),
+        "nor one to start a shell in"
+    );
+    let picks = asks.drain_file_picks();
+    assert_eq!(picks.len(), 1);
+    assert_eq!(picks[0].folder, folder.display().to_string());
+    assert!(asks.drain_file_picks().is_empty(), "drained once");
+}
+
+/// A window started by a moon from before an ask existed reads it as none it knows and hangs
+/// up. That is a window refusing, not one that has gone: it is still written down, and still
+/// reached by everything it does know.
+#[test]
+fn a_window_that_does_not_know_the_ask_refuses_and_stays_written_down() {
+    let project = temporary_project("older-moon");
+    let listener = listen_on_own_socket().expect("expected a socket");
+    write_record(&this_process(&project.display().to_string())).expect("expected a record");
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            drop(stream);
+        }
+    });
+
+    let error = pick_file(&project).expect_err("expected a refusal");
+
+    assert!(format!("{error}").contains("older moon"), "got {error}");
+    assert_eq!(
+        running(),
+        [this_process(&project.display().to_string())],
+        "a window that hung up is still there"
+    );
+    assert!(
+        socket_path(std::process::id())
+            .expect("expected a path")
+            .exists(),
+        "and so is the socket it is asked on"
+    );
 }
 
 /// A window whose repo is on another machine reads none of the folders a shell here can name

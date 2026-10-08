@@ -1,4 +1,5 @@
-//! `moon open <file>` arriving in the window: the tab it opens.
+//! `moon open <file>` arriving in the window: the tab it opens. And `moon open <folder>`: the
+//! file picker it brings up.
 //!
 //! The socket a shell reaches the window on is `crate::instances`' own business and is
 //! tested there. What is here is the other half: that a file handed to the window turns into
@@ -13,7 +14,7 @@ use egui_frames::PaneId;
 use egui_kittest::Harness;
 
 use crate::{
-    instances::window::OpenFileAsked,
+    instances::window::{OpenFileAsked, PickFileAsked},
     native::{panes::Pane, theme::ThemeMode},
 };
 
@@ -281,6 +282,63 @@ fn a_file_of_another_project_opens_in_a_session_of_its_own() {
     assert!(
         !errors.load(Ordering::Relaxed),
         "opening it said something went wrong"
+    );
+}
+
+/// `moon open <folder>` of a folder outside the project this window is on: the window's own
+/// file picker comes up listing that folder, and no tab is opened on the folder itself.
+#[test]
+fn a_folder_a_shell_asked_for_comes_up_in_the_file_picker() {
+    let fixture = Fixture::new("moon-open-folder");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+    let folder =
+        std::env::temp_dir().join(format!("moonreview-ui-{}-open-folder", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("notes")).expect("expected a folder");
+    std::fs::write(folder.join("hostname"), "moonos\n").expect("expected a file");
+    let folder = folder
+        .canonicalize()
+        .expect("expected the folder to resolve");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let asked = Arc::new(Mutex::new(Some(PickFileAsked {
+        folder: folder.display().to_string(),
+    })));
+    let asked_in_ui = Arc::clone(&asked);
+    // The picker's rows while it is up, and whether a file is in a tab.
+    let seen = Arc::new(Mutex::new((None::<Vec<String>>, false)));
+    let seen_in_ui = Arc::clone(&seen);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .build_ui(move |ui| {
+            // Handed over on the first frame, before the project has finished opening.
+            if let Some(asked) = asked_in_ui.lock().expect("poisoned").take() {
+                app.asked_file_pick = Some(asked);
+            }
+            app.draw(ui);
+            *seen_in_ui.lock().expect("poisoned") = (
+                app.model
+                    .file_picker
+                    .as_ref()
+                    .map(|picker| picker.rows_for_test()),
+                app.model
+                    .layout
+                    .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                    .is_some(),
+            );
+        });
+    let rows = || seen.lock().expect("poisoned").0.clone().unwrap_or_default();
+
+    assert!(
+        settle(&mut harness, || rows() == ["..", "notes/", "hostname"]),
+        "the picker should list the folder asked for, got {:?}",
+        rows()
+    );
+    assert!(
+        !seen.lock().expect("poisoned").1,
+        "a folder is browsed, not opened in a tab"
     );
 }
 

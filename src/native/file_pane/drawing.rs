@@ -4,7 +4,7 @@
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
 use egui_moon_code_ide::LspPosition;
-use egui_moon_editor::{EditorRequest, Marks};
+use egui_moon_editor::EditorRequest;
 
 use crate::native::{
     app::App,
@@ -70,6 +70,7 @@ impl App {
         let problems = crate::native::diagnostics::said_in_header(editor.diagnosed.found());
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
+        let picture = editor.picture.is_some();
         let blaming = editor.blaming.is_on();
         let markdown = is_markdown(file_path);
         // A file of the window's own project reads as its path inside it. One placed in a
@@ -138,6 +139,7 @@ impl App {
                             && !outside_the_repo
                             && !previewing
                             && !treeing
+                            && !picture
                             && widgets::quiet_button(
                                 ui,
                                 if blaming { "[hide blame]" } else { "[blame]" },
@@ -277,7 +279,9 @@ impl App {
                     return;
                 }
 
-                if previewing {
+                if picture {
+                    draw_picture(self, ui, pane_id, &palette);
+                } else if previewing {
                     draw_preview(self, ui, pane_id);
                 } else if treeing {
                     json_tree::draw_tree(self, ui, pane_id);
@@ -286,6 +290,19 @@ impl App {
                 }
             });
     }
+}
+
+/// The picture an image file is, in place of an editor on text it does not have.
+fn draw_picture(app: &App, ui: &mut Ui, pane_id: PaneId, palette: &Palette) {
+    let Some(picture) = app
+        .model
+        .file_editors
+        .get(&pane_id)
+        .and_then(|editor| editor.picture.as_ref())
+    else {
+        return;
+    };
+    picture.draw(ui, palette);
 }
 
 /// About the measure GitHub lays a readme out at. Prose in a full-width pane puts a whole
@@ -338,16 +355,7 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
     let style = palette.editor_style();
     // The find bar over this pane, if there is one. Read out before the editor is borrowed,
     // and handed back what the search turned up once the text has been laid out.
-    let searching = app
-        .model
-        .find
-        .as_ref()
-        .filter(|find| find.pane_id == pane_id)
-        .map(|find| Searching {
-            query: find.query.clone(),
-            at: find.at,
-            pending: find.pending,
-        });
+    let searching = crate::native::find::TextSearch::over(&app.model.find, pane_id);
     // The editor takes the keyboard it is owed, so a file or a task's notes brought forward
     // can be typed into without clicking into the text first. A file still being fetched, or
     // a markdown file showing its rendered page, has no editor to take it and leaves the
@@ -387,15 +395,10 @@ fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, pa
         ui,
         &style,
         &EditorRequest {
-            marks: Marks {
-                ranges: &marks,
-                current: searching.as_ref().map_or(0, |searching| searching.at),
-                // Only when the bar asks: otherwise every frame would drag the caret back to
-                // the match and the file could not be edited while the bar is open.
-                select_current: searching
-                    .as_ref()
-                    .is_some_and(|searching| searching.pending),
-            },
+            marks: searching
+                .as_ref()
+                .map(|searching| searching.marks(&marks))
+                .unwrap_or_default(),
             line_of_interest: reveal.as_ref().map(|at| at.line),
             focus: takes_keyboard,
             // Command on macOS, ctrl elsewhere - the same modifier the whole of
@@ -547,11 +550,4 @@ fn menu_item(
         .unwrap_or_default();
     ui.add_enabled(enabled, egui::Button::new(title).shortcut_text(shortcut))
         .on_disabled_hover_text("No language server serves this file")
-}
-
-/// What the find bar is asking of a file pane this frame.
-struct Searching {
-    query: String,
-    at: usize,
-    pending: bool,
 }

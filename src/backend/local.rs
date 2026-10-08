@@ -405,6 +405,10 @@ impl Backend for LocalBackend {
         moontasks::service::link_file(&self.state, session_id, task_id, file_path)
     }
 
+    fn remove_task_attachment(&self, session_id: &str, task_id: &str, listed: &str) -> Result<()> {
+        moontasks::service::remove_attachment(&self.state, session_id, task_id, listed)
+    }
+
     fn stage_all(&self, session_id: &str) -> Result<()> {
         crate::service::stage_all(&self.state, session_id)
     }

@@ -8,7 +8,7 @@ mod tests;
 pub(crate) use blame::{blame_file, read_file_at};
 pub(crate) use hunks::{
     apply_patch, build_partial_patch_from_selection, collect_review_hunks, collect_session_hunks,
-    local_change_summary_from_status, preview_patch,
+    is_likely_binary_file, local_change_summary_from_status, preview_patch,
 };
 
 use std::{
@@ -175,17 +175,41 @@ pub(crate) fn read_file_named_outside_the_repo(real_path: &Path) -> Result<Strin
     fs::read_to_string(real_path).with_context(|| format!("failed to read {}", real_path.display()))
 }
 
-pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
+/// Where a file of the repo is in the working tree, with its links followed - `None` when
+/// nothing is at the path. A path that leads out of the repo is refused.
+fn resolve_in_working_tree(repo_path: &Path, file_path: &str) -> Result<Option<PathBuf>> {
     if file_path.trim().is_empty() {
         bail!("file path cannot be empty");
     }
+    let Ok(resolved) = repo_path.join(file_path).canonicalize() else {
+        return Ok(None);
+    };
+    if !resolved.starts_with(repo_path) {
+        bail!("file path is outside the repository");
+    }
+    Ok(Some(resolved))
+}
 
-    let candidate = repo_path.join(file_path);
-    if let Ok(resolved) = candidate.canonicalize() {
-        if !resolved.starts_with(repo_path) {
-            bail!("file path is outside the repository");
-        }
+/// A picture of the working tree as the `data:` URI a tab draws it from: a file named as an
+/// image whose bytes are not text. `None` for every other file, which [`read_repo_file`]
+/// reads - an SVG among them, since that one is text and opens as the text it is.
+pub(crate) fn read_repo_image(repo_path: &Path, file_path: &str) -> Result<Option<String>> {
+    let Some(mime_type) = crate::api::image_formats::mime_type_of_path(file_path) else {
+        return Ok(None);
+    };
+    let Some(resolved) = resolve_in_working_tree(repo_path, file_path)? else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&resolved)
+        .map_err(|error| anyhow!("failed to read {}: {error}", resolved.display()))?;
+    if std::str::from_utf8(&bytes).is_ok() {
+        return Ok(None);
+    }
+    Ok(Some(hunks::data_uri(mime_type, &bytes)))
+}
 
+pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
+    if let Some(resolved) = resolve_in_working_tree(repo_path, file_path)? {
         // The reason is said with the path rather than left as the error's cause: a window
         // shows one line, and "permission denied" is the line that matters on `/etc/shadow`.
         return fs::read_to_string(&resolved)

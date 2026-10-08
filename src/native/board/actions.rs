@@ -67,6 +67,12 @@ pub(crate) enum BoardAction {
     OpenVisualization {
         fragment_path: String,
     },
+    /// Take a document off a task's `file_attachments.txt`, by its line as the task lists it.
+    /// The document stays where it is.
+    RemoveAttachment {
+        task_id: String,
+        listed: String,
+    },
     Start(String, StartResourceRequest),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
@@ -484,6 +490,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
         }
         BoardAction::OpenVisualization { fragment_path } => {
             app.model.board.opened_visualization = Some(fragment_path)
+        }
+        BoardAction::RemoveAttachment { task_id, listed } => {
+            act(app, "could not take the file off the task", move |backend| {
+                backend.remove_task_attachment(&session_id, &task_id, &listed)
+            });
         }
         BoardAction::AddColumn { label, at } => {
             // The box closes on the way out: the column it was standing in for is on its way.

@@ -1,5 +1,6 @@
-//! Open from shell - handles `moon open <file>` and `moon shell <folder>` when they arrive in
-//! the window: opens the tab for each, and writes down what a shell needs to find this window.
+//! Open from shell - handles `moon open <file>`, `moon open <folder>` and `moon shell <folder>`
+//! when they arrive in the window: opens the tab for a file and for a shell, brings the file
+//! picker up on a folder, and writes down what a shell needs to find this window.
 //!
 //! A file of the project this window is on opens in the window's own review. A file of any
 //! other project opens too: the shell hands it here when no window is open on its project -
@@ -10,8 +11,14 @@
 //! is found where the disk is rather than here, so the files the window's own picker hands
 //! on - see [`App::open_picked_file`] - are placed the same whichever machine that is.
 //!
-//! A folder goes the way a submodule's shell does: the session on its project is opened as
-//! the shell is started - see [`App::open_shell_in_folder`] - so it needs no session kept.
+//! A folder for a shell goes the way a submodule's shell does: the session on its project is
+//! opened as the shell is started - see [`App::open_shell_in_folder`] - so it needs no session
+//! kept.
+//!
+//! A folder to open is browsed rather than opened: the window's own picker comes up on it,
+//! the one File › Open brings up - see [`crate::native::file_picker`] - and the file picked
+//! there opens the way that one's does. The picker lists any folder of the disk, so a folder
+//! of another project needs no session until a file of it is picked.
 //!
 //! A line of the wire - `moon wire post @handle` - arrives the same way and opens nothing: it
 //! is typed into a shell, which is [`crate::native::wire`]'s.
@@ -24,9 +31,10 @@ use std::{
 
 use crate::{
     api::folders::FilePlaced,
-    instances::window::{OpenFileAsked, OpenShellAsked, ShellAsks},
+    instances::window::{OpenFileAsked, OpenShellAsked, PickFileAsked, ShellAsks},
     native::{
         app::App,
+        file_picker::PickPurpose,
         panes::{OpenAt, Pane},
     },
 };
@@ -112,6 +120,11 @@ impl App {
             }
             self.asked_files.extend(arrived);
             self.asked_shells.extend(asks.drain_shells());
+            // The picker is one box over the window, so the folder asked for last is the one
+            // it comes up on.
+            if let Some(asked) = asks.drain_file_picks().pop() {
+                self.asked_file_pick = Some(asked);
+            }
             wired = asks.drain_wired();
         }
         // A line of the wire is for a shell this window's moon holds, whatever project the
@@ -129,6 +142,10 @@ impl App {
         // so every folder asked for since the last frame starts now.
         for asked in std::mem::take(&mut self.asked_shells) {
             self.open_asked_shell(ctx, asked);
+        }
+        // The picker is put up directly as well: it is a box over the window, not a pane.
+        if let Some(asked) = self.asked_file_pick.take() {
+            self.pick_file_in_asked_folder(ctx, asked);
         }
 
         // One a frame: a tab is opened through the same deferred slot every other pane change
@@ -263,6 +280,14 @@ impl App {
     fn open_asked_shell(&mut self, ctx: &egui::Context, asked: OpenShellAsked) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.open_shell_in_folder(asked.folder);
+    }
+
+    /// Bring the file picker up on the folder a `moon open <folder>` named, and bring the
+    /// window to the front - the ask was typed somewhere else, so this window is not the one
+    /// being looked at. The pick is File › Open's: it goes to [`App::open_picked_file`].
+    fn pick_file_in_asked_folder(&mut self, ctx: &egui::Context, asked: PickFileAsked) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.ask_for_a_pick(PickPurpose::FileToEdit, &asked.folder);
     }
 
     /// Stop the shell waiting on a file this window will never open a tab on.

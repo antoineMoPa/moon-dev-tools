@@ -8,7 +8,8 @@
 //! window that was killed leaves them behind, and the next read clears those out.
 //!
 //! `moon shell <folder>` reaches a window the same way, and asks it for a shell in that
-//! folder rather than a tab on a file.
+//! folder rather than a tab on a file. `moon open <folder>` does too, and asks it for its
+//! file picker on that folder.
 //!
 //! `moon wire post @handle …` reaches one window and no other: the one holding the shell of
 //! the agent the line is for, which it asks to type the line in - see
@@ -104,6 +105,11 @@ pub(crate) enum Ask {
     StillOpen { path: String },
     /// Open a shell in this folder, in a tab: `moon shell <folder>`.
     OpenShell { folder: String },
+    /// Bring the file picker up on this folder, for a file of it to be picked and opened:
+    /// `moon open <folder>`. An ask of its own rather than an [`Ask::OpenFile`] on a folder:
+    /// the shell that asks has read the path against the disk and knows which it is, so the
+    /// window is told rather than left to find out.
+    PickFile { folder: String },
     /// Type a direct message of the wire into one of this window's shells and send it:
     /// `moon wire post @handle …`. It is carried in its parts rather than as the line to
     /// type, because the window writes it down as well, and the two read differently - see
@@ -143,7 +149,8 @@ pub(crate) enum Ask {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "answer", rename_all = "snake_case")]
 pub(crate) enum Answer {
-    /// The window has the file or the folder and is opening it.
+    /// The window has the file or the folder and is opening it - a tab, a shell, or its
+    /// file picker.
     Opened,
     /// The window will not open it, and says why - it has no project open yet, or the repo
     /// it is open on is on another machine, so the path the shell named is not one it reads.
@@ -176,18 +183,29 @@ impl Instance {
 
 /// Ask the moon running as this process to do something, and wait `within` for its answer.
 fn ask_process(pid: u32, ask: &Ask, within: Duration) -> Result<Answer> {
+    ask_over(&reach(pid)?, ask, within)
+}
+
+/// Connect to the socket the moon running as this process is asked on. Apart from the asking
+/// so that a moon that is not there can be told from one that is there and says nothing - see
+/// [`hand_to_a_window`].
+fn reach(pid: u32) -> Result<UnixStream> {
     let socket_path = socket_path(pid).context("no home directory to reach a window in")?;
-    let stream = UnixStream::connect(&socket_path)
-        .with_context(|| format!("failed to reach {}", socket_path.display()))?;
+    UnixStream::connect(&socket_path)
+        .with_context(|| format!("failed to reach {}", socket_path.display()))
+}
+
+/// Ask a moon something over a connection to it, and wait `within` for its answer.
+fn ask_over(stream: &UnixStream, ask: &Ask, within: Duration) -> Result<Answer> {
     stream.set_read_timeout(Some(within))?;
     stream.set_write_timeout(Some(within))?;
 
-    let mut writing = &stream;
+    let mut writing = stream;
     writeln!(writing, "{}", serde_json::to_string(ask)?)?;
     writing.flush()?;
 
     let mut answer = String::new();
-    BufReader::new(&stream)
+    BufReader::new(stream)
         .read_line(&mut answer)
         .context("the window said nothing")?;
     serde_json::from_str(answer.trim())
@@ -417,9 +435,23 @@ pub(crate) fn open_shell(folder: &Path) -> Result<Option<Instance>> {
     hand_to_a_window(folder, &ask).map(Some)
 }
 
+/// Hand a folder to a window for its file picker to be brought up on: the first one that
+/// takes it, in the order [`windows_for`] puts them in - the same windows, in the same order,
+/// that a file of that folder would be handed to.
+pub(crate) fn pick_file(folder: &Path) -> Result<Instance> {
+    let ask = Ask::PickFile {
+        folder: folder.display().to_string(),
+    };
+    hand_to_a_window(folder, &ask)
+}
+
 /// Ask the windows that could take `path` in turn, and say which one did. A window that
 /// refuses says why, and the last of those reasons is what is reported when no window took
 /// it - it is the nearest thing to an explanation there is.
+///
+/// A window that is there and hangs up without an answer is refusing too: it was started by
+/// a moon older than what is asked, and reads the ask as none it knows. Its record and its
+/// socket are left alone - it still answers everything it does know.
 fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
     let candidates = windows_for(path, shell_window(), running());
     if candidates.is_empty() {
@@ -431,13 +463,23 @@ fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
 
     let mut refusal = None;
     for instance in candidates {
-        match instance.ask(ask) {
+        // A window that cannot be reached is one that went away between the record being
+        // read and the socket being opened. The next window is the answer, not an error.
+        let Ok(stream) = reach(instance.pid) else {
+            remove_records(instance.pid);
+            continue;
+        };
+        match ask_over(&stream, ask, ANSWER_TIMEOUT) {
             Ok(Answer::Opened) => return Ok(instance),
             Ok(Answer::Refused { reason }) => refusal = Some(reason),
             Ok(other) => bail!("the window answered an open with {other:?}"),
-            // A window that cannot be reached is one that went away between the record being
-            // read and the socket being opened. The next window is the answer, not an error.
-            Err(_) => remove_records(instance.pid),
+            Err(_) => {
+                refusal = Some(format!(
+                    "the window on {} (process {}) did not answer - if it was started by an \
+                     older moon it does not know what was asked, and has to be restarted",
+                    instance.project_path, instance.pid
+                ))
+            }
         }
     }
 

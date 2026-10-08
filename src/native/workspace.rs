@@ -134,33 +134,28 @@ pub(crate) fn arrangement_for(
 
 impl App {
     /// Move the window when an empty part of a tab strip along the top of the window is
-    /// dragged: the window has no title bar to take hold of - see
-    /// [`crate::native::window_drag`].
+    /// dragged, and zoom it when one is double clicked: the window has no title bar to take
+    /// hold of - see [`crate::native::window_drag`]. Each column has a frame along the top, and
+    /// the strip of every one of them counts.
     #[cfg(target_os = "macos")]
     pub(crate) fn drag_window_by_strip(&mut self, ctx: &egui::Context) {
         let strip_height = self.frames.style().tab_strip_height();
-        let strip = self
+        let strips: Vec<egui::Rect> = self
             .model
             .layout
             .frame_ids()
             .into_iter()
             .filter_map(|frame| self.frames.frame_rect(frame))
-            .find(|rect| rect.min.y < strip_height)
+            .filter(|rect| rect.min.y < strip_height)
             .map(|rect| {
                 egui::Rect::from_min_size(
                     egui::pos2(rect.min.x, 0.0),
                     egui::vec2(rect.width(), rect.min.y + strip_height),
                 )
-            });
-        let busy = self.frames.dragged_pane().is_some() || ctx.dragged_id().is_some();
-        let tabs: Vec<egui::Rect> = self
-            .model
-            .layout
-            .panes()
-            .filter_map(|(pane, _)| self.frames.tab_rect(pane))
+            })
             .collect();
-        self.window_drag
-            .follow(ctx, strip, busy, |at| tabs.iter().any(|tab| tab.contains(at)));
+        let busy = self.frames.dragged_pane().is_some() || ctx.dragged_id().is_some();
+        self.window_drag.follow(ctx, &strips, busy);
     }
 
     /// One frame of the arrangement: drawn, dragged, and whatever the user asked of it done.

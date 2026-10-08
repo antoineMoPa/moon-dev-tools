@@ -232,6 +232,11 @@ pub(crate) struct App {
     /// project so the shell has a session to be started through.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) asked_shells: std::collections::VecDeque<crate::instances::window::OpenShellAsked>,
+    /// The folder `moon open <folder>` asked for the file picker on, waiting for this window
+    /// to be on a project so a file picked there has a session to open through. One and no
+    /// queue: the picker is one box over the window, so the last folder asked for is the one.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) asked_file_pick: Option<crate::instances::window::PickFileAsked>,
     /// The tabs `moon edit --wait` asks opened, which the shell that asked is waiting on -
     /// see [`crate::native::open_from_shell::WaitedTab`].
     #[cfg(not(target_arch = "wasm32"))]
@@ -456,6 +461,8 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             asked_shells: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
+            asked_file_pick: None,
+            #[cfg(not(target_arch = "wasm32"))]
             waited_tabs: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             places_of_asked_files: Arc::new(Mutex::new(HashMap::new())),
@@ -639,6 +646,10 @@ impl eframe::App for App {
         // X is told where they go once the panes they belong to have been drawn.
         #[cfg(target_os = "linux")]
         self.place_application_windows(frame, ui.ctx());
+        // A double click on a tab strip zooms the window, which is asked of the window itself:
+        // here too for its handle.
+        #[cfg(target_os = "macos")]
+        self.window_drag.zoom_window_if_asked(frame);
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let _ = frame;
     }

@@ -10,6 +10,7 @@ use egui::{
 
 use crate::{
     api::AgentKind,
+    commit_suggestion::CommitSuggestion,
     moontasks::{
         ReviewRequestView, RunsOf, TaskResourceKind, TaskResourceView, review_request::Amend,
     },
@@ -118,6 +119,9 @@ fn draw_review_request(
     // tall the row is is only known once they have been.
     let fill = ui.painter().add(egui::Shape::Noop);
     let mut opens = false;
+    // Where the branch was drawn under the name, for a line that named one: the pointer is told
+    // about the branch there, and about the commit everywhere else on the row.
+    let mut branch_line: Option<Rect> = None;
 
     let drawn = ui.scope_builder(
         UiBuilder::new().layout(UiLayout::top_down(Align::Min)),
@@ -135,12 +139,6 @@ fn draw_review_request(
                         palette.muted,
                     ),
                 };
-                // What the agent wrote for the repo says what the review is about, which is more
-                // than the row has room for.
-                let name = match &request.suggestion {
-                    Some(suggestion) => name.on_hover_text(&suggestion.subject),
-                    None => name,
-                };
                 opens |= card.pressed(&name);
 
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
@@ -154,7 +152,7 @@ fn draw_review_request(
             });
 
             if let Some(branch) = &request.branch {
-                ui.horizontal(|ui| {
+                let line = ui.horizontal(|ui| {
                     ui.add_space(ROW_INSET + BRANCH_LINE_INDENT);
                     ui.label(
                         RichText::new(format!(
@@ -163,18 +161,15 @@ fn draw_review_request(
                         ))
                         .size(SMALL_SIZE)
                         .color(palette.muted),
-                    )
-                    .on_hover_text(format!(
-                        "#{branch}\nthe branch this commit belongs on - the review opens \
-                         wherever it is checked out"
-                    ));
+                    );
                 });
+                branch_line = Some(line.response.rect);
             }
         },
     );
 
-    // The whole of what was drawn is one target, taken after it so it covers both lines. The
-    // marks inside it were interacted with as they were drawn, so a click on one is theirs.
+    // The whole of what was drawn is one target, taken after it so it covers both lines - which
+    // puts it over the name as well, so the pointer on the name is on the row.
     let rect = drawn.response.rect;
     let row = ui.interact(
         rect,
@@ -187,9 +182,26 @@ fn draw_review_request(
             egui::epaint::RectShape::filled(rect, CornerRadius::same(3), palette.row_hover_bg),
         );
     }
+    // So the hover is the row's to say, all of it: one put on the name is under the row, and
+    // `egui` shows the row's there and never the name's. Which of the two it says goes by
+    // whether the pointer is on the branch.
+    let on_branch_line = branch_line
+        .zip(row.hover_pos())
+        .is_some_and(|(line, pointer)| line.contains(pointer));
+    let hover = match (&request.branch, &request.suggestion) {
+        (Some(branch), _) if on_branch_line => format!(
+            "#{branch}\nthe branch this commit belongs on - the review opens wherever it is \
+             checked out"
+        ),
+        // What the agent wrote for the repo says what the review is about, which is more than
+        // the row has room for. Whatever branch the repo is on: which commit the message is put
+        // in is the commit pane's to decide, and this only says what was asked for.
+        (_, Some(suggestion)) => commit_written_for(suggestion),
+        (_, None) => "Open the review of this repo".to_string(),
+    };
     let row = row
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Open the review of this repo");
+        .on_hover_text(hover);
     opens |= card.pressed(&row);
 
     // Taking a line out of the file is the one thing done to a request, and it is not something
@@ -241,6 +253,15 @@ fn draw_review_request(
             request.repo_path.clone(),
             request.name.clone(),
         ));
+    }
+}
+
+/// The commit a line of `request_for_review.txt` wrote for its repo, as the row's hover says it:
+/// the subject, and under a blank line the paragraph, for a line that had one indented under it.
+fn commit_written_for(suggestion: &CommitSuggestion) -> String {
+    match suggestion.paragraph.is_empty() {
+        true => suggestion.subject.clone(),
+        false => suggestion.as_message(),
     }
 }
 

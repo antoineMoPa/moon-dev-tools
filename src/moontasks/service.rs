@@ -3,6 +3,7 @@
 //! Like [`crate::service`], this is synchronous and takes `&AppState`, so the native window
 //! calls it directly and the axum routes are a thin skin over the same functions.
 
+mod board_listing;
 mod columns;
 mod resources;
 mod shared_places;
@@ -10,6 +11,7 @@ mod stray_cards;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use board_listing::cards_by_column;
 pub(crate) use columns::{
     add_column, delete_column, list_columns, place_column, rename_column, set_column_arrivals,
     set_column_marks_a_days_work, set_column_sort,
@@ -34,6 +36,7 @@ use crate::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
     },
+    terminal::TerminalRegistry,
 };
 
 /// The repo a session's board belongs to.
@@ -119,7 +122,23 @@ pub(crate) fn place_tasks(
     position: usize,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
-    let board = store::read_board(&repo_path);
+    place_tasks_in_repo(&state.terminals, &repo_path, task_ids, status, position)
+}
+
+/// [`place_tasks`] for a caller with the board's repo in hand and no session on it, which is
+/// what `moon tasks move` is: a command line opens no session.
+///
+/// `terminals` are the shells of the process making the move, the only ones it can end. A
+/// command line holds none, so a task it finishes keeps the shells a window has for it, and
+/// its record goes on saying so - see [`release_a_finished_task`].
+pub(crate) fn place_tasks_in_repo(
+    terminals: &TerminalRegistry,
+    repo_path: &Path,
+    task_ids: &[String],
+    status: ColumnId,
+    position: usize,
+) -> Result<()> {
+    let board = store::read_board(repo_path);
     if !board.has(&status) {
         bail!("{status} is not a column of this board");
     }
@@ -129,11 +148,18 @@ pub(crate) fn place_tasks(
     // `arrivals` end is about: cards shuffled about within a column go where they were put.
     let mut arriving = false;
     for task_id in task_ids {
-        let mut metadata = store::read_task(&repo_path, task_id)?;
+        let mut metadata = store::read_task(repo_path, task_id)?;
         if metadata.status.is_none() {
             bail!("{task_id} is the board task, which is on no column");
         }
-        release_a_finished_task(state, &repo_path, &board, task_id, &mut metadata, &status);
+        release_a_finished_task(
+            terminals,
+            repo_path,
+            &board,
+            task_id,
+            &mut metadata,
+            &status,
+        );
         if *metadata.column() != status {
             arriving = true;
             metadata.status = Some(status.clone());
@@ -146,11 +172,11 @@ pub(crate) fn place_tasks(
     moving.sort_by_key(|(_, metadata)| place_of(metadata));
 
     // The cards already in that column, in the order the board draws them.
-    let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(&repo_path)?
+    let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(repo_path)?
         .into_iter()
         .filter(|other| !task_ids.contains(other))
         .filter_map(|other| {
-            let metadata = store::read_task(&repo_path, &other).ok()?;
+            let metadata = store::read_task(repo_path, &other).ok()?;
             (metadata.status.as_ref() == Some(&status)).then_some((other, metadata))
         })
         .collect();
@@ -174,7 +200,7 @@ pub(crate) fn place_tasks(
             continue;
         }
         metadata.position = position;
-        store::write_task(&repo_path, &id, &metadata)?;
+        store::write_task(repo_path, &id, &metadata)?;
     }
     Ok(())
 }
@@ -494,6 +520,17 @@ pub(crate) fn link_file(
     store::write_task(&repo_path, task_id, &metadata)
 }
 
+/// Take one document off a task's `file_attachments.txt`, leaving the document where it is -
+/// see [`store::remove_attachment`].
+pub(crate) fn remove_attachment(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    listed: &str,
+) -> Result<()> {
+    store::remove_attachment(&repo_of(state, session_id)?, task_id, listed)
+}
+
 pub(crate) fn create_task(
     state: &AppState,
     session_id: &str,
@@ -513,8 +550,14 @@ pub(crate) fn create_task(
 
 /// A finished task lets go of its shells. Until then they keep running with no tab open,
 /// which is what makes closing an agent's tab safe.
+///
+/// The shells let go of are the ones this moon holds, and its record forgets those along
+/// with the ones no moon holds any more. A shell another running moon holds is not this
+/// one's to end - an agent typing `moon tasks move DONE` is in one, held by its window - so
+/// the record goes on saying where it is, rather than leave a shell running that no card
+/// knows of.
 fn release_a_finished_task(
-    state: &AppState,
+    terminals: &TerminalRegistry,
     repo_path: &Path,
     board: &BoardConfig,
     task_id: &str,
@@ -524,10 +567,11 @@ fn release_a_finished_task(
     if board.role(store::RELEASES_SHELLS_IN).as_ref() != Some(status) {
         return;
     }
-    state
-        .terminals
-        .remove_owned_by(&store::run_owner(repo_path, task_id));
+    terminals.remove_owned_by(&store::run_owner(repo_path, task_id));
     for resource in &mut metadata.resources {
+        if moon_holding(resource).is_some() {
+            continue;
+        }
         resource.terminal_id = None;
         resource.terminal_owner = None;
     }

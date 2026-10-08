@@ -1,7 +1,9 @@
 # 🌚 moon-dev-tools
 
-`moon-dev-tools` brings task planning, agent workspaces, shells and code review together. It
-installs one executable, `moon`.
+`moon-dev-tools` brings task planning, agent workspaces, shells and code review together. It installs one executable, `moon`. 
+
+It is usable both natively and in browsers, allowing to control
+remote workspaces.
 
 | | |
 | --- | --- |
@@ -82,6 +84,7 @@ moon tasks              # the sprint board
 moon review             # review local changes
 moon shell              # a shell in the folder
 moon edit src/main.rs   # open a file for edition
+moon edit src/          # pick a file of a folder to open
 moon launch chromium    # in a shell of `moon serve` or `moon desktop`: start a program with windows
 ```
 

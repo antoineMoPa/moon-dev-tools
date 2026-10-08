@@ -31,6 +31,10 @@ impl FileEditor {
         self.error = None;
         self.outside_the_repo = payload.outside_the_repo;
         self.only_written_by = payload.only_written_by;
+        self.picture = payload
+            .image_src
+            .as_deref()
+            .map(super::picture::Picture::from_data_uri);
         self.written_elsewhere = None;
         self.reload_confirmed = false;
     }
@@ -84,12 +88,14 @@ impl App {
             .is_none_or(|last| last.elapsed() >= DISK_CHECK_INTERVAL);
         // Nothing to compare against before the text has arrived, a file being written is
         // about to be what this pane sent, a new file has nothing on disk to read yet, and an
-        // old version of a file is not on the disk at all.
+        // old version of a file is not on the disk at all. A picture is not read again either:
+        // it is the whole file every time, and it has no edits for a change to be set against.
         if editor.saved.is_none()
             || editor.saving
             || !due
             || !editor.on_disk
             || editor.revision.is_some()
+            || editor.picture.is_some()
         {
             return;
         }
@@ -149,6 +155,7 @@ mod tests {
             outside_the_repo: false,
             only_written_by: None,
             committed: Some(String::new()),
+            image_src: None,
         }
     }
 

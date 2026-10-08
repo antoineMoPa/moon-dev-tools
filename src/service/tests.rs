@@ -150,6 +150,30 @@ fn a_file_a_language_server_named_reads_and_says_it_is_outside_the_repo() {
     assert!(payload.outside_the_repo);
 }
 
+/// A picture of the repo reads as the picture it is, where it used to be refused for not
+/// being text. An SVG is named as an image too, but it is text, and reads as its text.
+#[test]
+fn an_image_file_reads_as_a_picture_and_an_svg_as_its_text() {
+    let served = served_repo("picture");
+    // No text has a 0xff byte in it.
+    fs::write(served.repo_path.join("shot.webp"), b"RIFF\x04\0\0\0WEBP\xff")
+        .expect("failed to write the picture");
+    fs::write(served.repo_path.join("logo.svg"), "<svg/>\n").expect("failed to write the svg");
+
+    let picture = served
+        .read("shot.webp")
+        .expect("expected the picture to read");
+    assert_eq!(
+        picture.image_src.as_deref(),
+        Some("data:image/webp;base64,UklGRgQAAABXRUJQ/w==")
+    );
+    assert!(picture.content.is_empty());
+
+    let svg = served.read("logo.svg").expect("expected the svg to read");
+    assert_eq!(svg.content, "<svg/>\n");
+    assert!(svg.image_src.is_none());
+}
+
 /// The list is of resolved files, not of the strings that were handed in: a `..` walk off
 /// the named file and a symlink pointing away from it are both refused, while a symlink
 /// onto the named file is the named file and reads.

@@ -11,7 +11,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use egui::{RichText, Ui, vec2};
 
 use crate::{
-    api::ImageDiffView,
+    api::{ImageDiffView, image_formats::extension_of_mime_type},
     native::{
         app::App,
         model::hash_of,
@@ -131,34 +131,30 @@ fn image_source(app: &mut App, data_uri: &str) -> Option<egui::ImageSource<'stat
         .or_insert_with(|| decode_image_data_uri(data_uri));
     let (extension, bytes) = decoded.as_ref()?;
 
-    Some(egui::ImageSource::Bytes {
+    Some(bytes_source(key, extension, bytes))
+}
+
+/// What egui draws a decoded image from. `key` is the hash of the `data:` URI it arrived as.
+pub(crate) fn bytes_source(
+    key: u64,
+    extension: &str,
+    bytes: &Arc<[u8]>,
+) -> egui::ImageSource<'static> {
+    egui::ImageSource::Bytes {
         // Named after the content: two hunks showing the same image share one texture, and an
         // image that changes gets a URI egui has never seen.
         uri: format!("bytes://image-{key:016x}.{extension}").into(),
         bytes: egui::load::Bytes::Shared(Arc::clone(bytes)),
-    })
+    }
 }
 
-/// The file extension egui should read a MIME type as. It sniffs the bytes for most formats,
-/// but the URI's extension is what routes an SVG to the loader that can draw it.
-const MIME_EXTENSIONS: &[(&str, &str)] = &[
-    ("image/apng", "apng"),
-    ("image/avif", "avif"),
-    ("image/gif", "gif"),
-    ("image/jpeg", "jpg"),
-    ("image/png", "png"),
-    ("image/svg+xml", "svg"),
-    ("image/webp", "webp"),
-];
-
-/// Splits `data:<mime>;base64,<payload>` into the extension to name it by and its bytes.
-fn decode_image_data_uri(data_uri: &str) -> Option<(&'static str, Arc<[u8]>)> {
+/// Splits `data:<mime>;base64,<payload>` into the extension to name it by and its bytes. egui
+/// sniffs the bytes for most formats, but the URI's extension is what routes an SVG to the
+/// loader that can draw it.
+pub(crate) fn decode_image_data_uri(data_uri: &str) -> Option<(&'static str, Arc<[u8]>)> {
     let body = data_uri.strip_prefix("data:")?;
     let (mime_type, payload) = body.split_once(";base64,")?;
-    let extension = MIME_EXTENSIONS
-        .iter()
-        .find(|(known, _)| *known == mime_type)
-        .map(|(_, extension)| *extension)?;
+    let extension = extension_of_mime_type(mime_type)?;
     let bytes = BASE64.decode(payload).ok()?;
     Some((extension, Arc::from(bytes)))
 }

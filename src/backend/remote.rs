@@ -549,6 +549,16 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn remove_task_attachment(&self, session_id: &str, task_id: &str, listed: &str) -> Result<()> {
+        // In the body rather than the path: a listed document is a path itself, slashes and all.
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/attachments/remove"),
+            &crate::moontasks::RemoveAttachmentRequest {
+                listed: listed.to_string(),
+            },
+        )
+    }
+
     fn stage_all(&self, session_id: &str) -> Result<()> {
         self.post(&format!("/api/session/{session_id}/stage-all"), &json!({}))
     }

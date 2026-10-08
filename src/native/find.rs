@@ -3,20 +3,31 @@
 //! One bar, belonging to one pane at a time - the pane that had the keyboard when it opened.
 //! What "search" means is the pane's own business: a shell looks through its screen and its
 //! scrollback, a review looks through every hunk it is showing rather than only the ones on
-//! screen. All this file owns is the query, which match of them is the current one, and the
-//! bar the two are typed and stepped through in.
+//! screen, and an open file and a task's notes mark the matches in their text - see
+//! [`TextSearch`]. All this file owns is the query, which match of them is the current one,
+//! and the bar the two are typed and stepped through in.
+
+use std::ops::Range;
 
 use egui::{Color32, CornerRadius, Key, RichText, Stroke};
 
 use egui_frames::PaneId;
+use egui_moon_editor::Marks;
 
 use crate::native::{app::App, model::ToastKind, panes::PaneKind, theme::SMALL_SIZE};
 
-/// The panes that have something for a find bar to look through. The agent monitor is a list
+/// The panes that have something for a find bar to look through. A task's own pane is here
+/// for its notes, which is the one thing on it long enough to lose a word in - and so is the
+/// pane a new task is written on, which is the same kind of pane. The agent monitor is a list
 /// of what the agents are doing rather than a document, so ⌘F says so instead of opening a
 /// bar that could only ever report nothing - and the board is not here because it answers
 /// ⌘F with its own filter instead of a bar.
-const SEARCHABLE: &[PaneKind] = &[PaneKind::Review, PaneKind::Terminal, PaneKind::File];
+const SEARCHABLE: &[PaneKind] = &[
+    PaneKind::Review,
+    PaneKind::Terminal,
+    PaneKind::File,
+    PaneKind::Start,
+];
 
 /// The find bar, and the search it is running.
 pub(crate) struct Find {
@@ -71,6 +82,50 @@ impl Find {
         };
         self.pending = true;
     }
+}
+
+/// What the find bar is asking, this frame, of a pane that marks the matches in its text: an
+/// open file, or a task's notes.
+///
+/// Read out of the bar before the pane borrows the text it is about to draw, and answered with
+/// [`Find::found`] once the text has been laid out.
+pub(crate) struct TextSearch {
+    pub(crate) query: String,
+    at: usize,
+    pending: bool,
+}
+
+impl TextSearch {
+    /// The search the bar is running over `pane_id`, while the bar is open on that pane.
+    pub(crate) fn over(find: &Option<Find>, pane_id: PaneId) -> Option<Self> {
+        find.as_ref()
+            .filter(|find| find.pane_id == pane_id)
+            .map(|find| Self {
+                query: find.query.clone(),
+                at: find.at,
+                pending: find.pending,
+            })
+    }
+
+    /// The marks to lay into the text, given where the query was found in it - the character
+    /// ranges [`egui_moon_editor::matches_in`] hands back.
+    pub(crate) fn marks<'a>(&self, found: &'a [Range<usize>]) -> Marks<'a> {
+        Marks {
+            ranges: found,
+            current: self.at,
+            // Only when the bar asks: otherwise every frame would drag the caret back to the
+            // match and the text could not be typed into while the bar is open.
+            select_current: self.pending,
+        }
+    }
+}
+
+/// Whether the bar's query box is the thing being typed into. Escape typed there puts the bar
+/// away, and egui has taken the keyboard off the box by the time anything is drawn on the
+/// frame the key arrives - so whatever draws before the bar and would answer a loose Escape
+/// asks this first.
+pub(crate) fn is_typed_into(find: &Option<Find>) -> bool {
+    find.as_ref().is_some_and(|find| find.has_keyboard)
 }
 
 /// Open the bar over the pane with the keyboard, or bring it back to the front if it is
@@ -131,6 +186,13 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let Some(rect) = app.pane_rect(find.pane_id) else {
+        // Behind another tab the bar is not drawn, and a box that is not drawn is not being
+        // typed into - which `is_typed_into` is asked while the bar is out of sight too.
+        app.model
+            .find
+            .as_mut()
+            .expect("the bar is open")
+            .has_keyboard = false;
         return;
     };
 

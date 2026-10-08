@@ -10,11 +10,13 @@ use super::{append_pathspec, git_command, run_git, run_git_allow_status, run_git
 use crate::{
     agent::ChildExt,
     api::{
-        DiffHunk, DiffTarget, FileChangeKind, ImageDiffView, RepoSession, ReviewTarget, stable_id,
+        DiffHunk, DiffTarget, FileChangeKind, ImageDiffView, RepoSession, ReviewTarget,
+        image_formats::mime_type_of_path, stable_id,
     },
 };
 
-const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
+/// How much of a file, from its start, is read to tell text from binary.
+pub(super) const BINARY_DETECTION_READ_LIMIT: u64 = 8192;
 
 pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
     if let Some([before, after]) = &diff_target.comparison {
@@ -78,7 +80,7 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
             Err(_) => continue,
         };
         if is_binary {
-            if let Some(mime_type) = image_mime_type(&path) {
+            if let Some(mime_type) = mime_type_of_path(&path) {
                 let Ok(data) = fs::read(&full_path) else {
                     continue;
                 };
@@ -123,7 +125,11 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
     Ok(hunks)
 }
 
-fn is_likely_binary_file(path: &Path) -> Result<bool> {
+/// Whether a file is something other than text, told from its first
+/// [`BINARY_DETECTION_READ_LIMIT`] bytes rather than from its name: a `.txt`, a `.rs` and a
+/// file with no extension are all text, and an empty file is too. An error for a path that
+/// cannot be read as a file - nothing there, or a folder.
+pub(crate) fn is_likely_binary_file(path: &Path) -> Result<bool> {
     let file =
         fs::File::open(path).with_context(|| format!("failed to inspect {}", path.display()))?;
     let mut buffer = Vec::new();
@@ -131,7 +137,18 @@ fn is_likely_binary_file(path: &Path) -> Result<bool> {
         .read_to_end(&mut buffer)
         .with_context(|| format!("failed to inspect {}", path.display()))?;
 
-    Ok(buffer.contains(&0) || std::str::from_utf8(&buffer).is_err())
+    if buffer.contains(&0) {
+        return Ok(true);
+    }
+    let Err(not_utf8) = std::str::from_utf8(&buffer) else {
+        return Ok(false);
+    };
+    // A long text file is cut wherever the limit falls, which can be partway through a
+    // character of several bytes: bytes that only stop short at the very end of a full read
+    // are text. A file shorter than the limit was read whole, and has no such excuse.
+    let cut_mid_character =
+        not_utf8.error_len().is_none() && buffer.len() as u64 == BINARY_DETECTION_READ_LIMIT;
+    Ok(!cut_mid_character)
 }
 
 pub(crate) fn collect_session_hunks(session: &RepoSession) -> Result<Vec<DiffHunk>> {
@@ -277,7 +294,7 @@ fn image_diff_from_section(
     file_path: &str,
     section: &[String],
 ) -> Result<Option<ImageDiffView>> {
-    let Some(mime_type) = image_mime_type(file_path) else {
+    let Some(mime_type) = mime_type_of_path(file_path) else {
         return Ok(None);
     };
 
@@ -333,22 +350,8 @@ fn image_blob_data_uri(
     Ok(Some(data_uri(mime_type, &bytes)))
 }
 
-fn data_uri(mime_type: &str, data: &[u8]) -> String {
+pub(super) fn data_uri(mime_type: &str, data: &[u8]) -> String {
     format!("data:{mime_type};base64,{}", BASE64.encode(data))
-}
-
-fn image_mime_type(path: &str) -> Option<&'static str> {
-    let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
-    match extension.as_str() {
-        "apng" => Some("image/apng"),
-        "avif" => Some("image/avif"),
-        "gif" => Some("image/gif"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "png" => Some("image/png"),
-        "svg" => Some("image/svg+xml"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    }
 }
 
 fn split_diff_sections(diff: &str) -> Vec<Vec<String>> {

@@ -9,6 +9,9 @@
 //! was in front most recently - which opens a session on that project to put it in. So the
 //! command is worth typing wherever a window is open at all, rather than only where one
 //! happens to be open on the right repo.
+//!
+//! `moon open <folder>` lands in the same window and opens nothing yet: the window's file
+//! picker comes up on the folder, for a file of it to be picked.
 
 use std::path::{Path, PathBuf};
 
@@ -21,9 +24,12 @@ use crate::instances;
 pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
     let mut args = args.into_iter().peekable();
     let wait = args.next_if(|arg| arg == "--wait").is_some();
-    let named = args
-        .next()
-        .with_context(|| format!("`{PROGRAM} open` needs a file to open\n\n{}", help_text()))?;
+    let named = args.next().with_context(|| {
+        format!(
+            "`{PROGRAM} open` needs a file or a folder to open\n\n{}",
+            help_text()
+        )
+    })?;
     // A word starting with a dash is an option being tried, not a file: `--wait` is the only
     // one, and a tab opened on a file called `--foo` is nobody's idea of an answer. A file
     // really named that way is reached as `./--foo`.
@@ -34,24 +40,26 @@ pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
         );
     }
     if let Some(extra) = args.next() {
-        bail!("`{PROGRAM} open` opens one file, so it has nothing to do with {extra}");
+        bail!("`{PROGRAM} open` opens one file or folder, so it has nothing to do with {extra}");
     }
 
     let (path, line) = split_line_number(&named);
     Ok(MoonCommand::Open { path, line, wait })
 }
 
-/// `moon open --help`: how a file is named, and where it lands.
+/// `moon open --help`: how a file or a folder is named, and where it lands.
 pub(super) fn help_text() -> String {
     format!(
         "{PROGRAM} open [--wait] <path>[:<line>]
 
 Opens a file in a window that is already open: the one on the file's project, or the one
 last in front when no window is open on it. `{PROGRAM} edit` is the same command.
+A folder brings up that window's file picker on it, to pick a file of the folder to open.
 
 Usage:
   {PROGRAM} open <path>
   {PROGRAM} open <path>:<line>
+  {PROGRAM} open <folder>
   {PROGRAM} edit <path>
   {PROGRAM} edit --wait <path>
 
@@ -64,10 +72,14 @@ Examples:
   {PROGRAM} open src/main.rs
   {PROGRAM} open src/main.rs:42
   {PROGRAM} edit .moontasks/notes.md
+  {PROGRAM} open src/
 
 The path is read against the directory this shell is in, the way the shell completed it.
 A path nothing is at yet opens an empty tab, and the file is created when that tab is saved;
-its folder has to exist already.
+its folder has to exist already. One written with a `/` at its end names a folder, and is
+refused when no folder is there.
+A folder has no line to open at and no tab to wait on, so it takes neither `:<line>` nor
+`--wait`.
 `{PROGRAM} list` says which windows are open, and what they are on."
     )
 }
@@ -87,19 +99,61 @@ fn split_line_number(named: &str) -> (String, Option<usize>) {
     }
 }
 
-/// Open a file in a window, and say which window took it.
+/// What `moon open` was asked to open, once its path has been read against the disk - which
+/// is where a folder is first known for one, and so where it stops being handled as a file.
+#[derive(Debug, PartialEq, Eq)]
+enum Named {
+    /// A file to open in a tab. `new` when nothing is at it yet.
+    File { file: PathBuf, new: bool },
+    /// A folder to bring the window's file picker up on.
+    Folder(PathBuf),
+}
+
+/// `moon open <path>`: a file in a tab of a window, or that window's file picker on a folder.
 ///
 /// The path is resolved here rather than in the window: it is typed against the directory
 /// this shell is in, and the window is somewhere else entirely.
+pub(super) fn open(path: &str, line: Option<usize>, wait: bool) -> Result<()> {
+    match named_on_disk(path, line, wait)? {
+        Named::File { file, new } => open_file(&file, new, line, wait),
+        Named::Folder(folder) => pick_file_in(&folder),
+    }
+}
+
+/// What a path names on the disk, resolved the way the windows' records are.
+///
+/// A folder is not a place in a text and gets no tab of its own, so one named with a line or
+/// with `--wait` is refused rather than opened with either dropped.
+fn named_on_disk(path: &str, line: Option<usize>, wait: bool) -> Result<Named> {
+    if !Path::new(path).is_dir() {
+        let (file, new) = file_to_open(path)?;
+        return Ok(Named::File { file, new });
+    }
+
+    let folder = folder_to_open(path)?;
+    if let Some(line) = line {
+        bail!(
+            "{} is a folder, so it has no line {line} to open at",
+            folder.display()
+        );
+    }
+    if wait {
+        bail!(
+            "{} is a folder, so it has no tab for `--wait` to wait on",
+            folder.display()
+        );
+    }
+    Ok(Named::Folder(folder))
+}
+
+/// Open a file in a window, and say which window took it.
 ///
 /// A path nothing is at yet is a file about to be written, the way `vim notes.md` is: the
 /// window opens an empty tab on it, and the file is only created when that tab is saved - see
 /// [`crate::native::panes::OpenPaneRequest::NewFile`]. Its folder has to exist: a folder that
 /// does not is more likely a typo than a place to start writing.
-pub(super) fn open_file(path: &str, line: Option<usize>, wait: bool) -> Result<()> {
-    let (file, new) = file_to_open(path)?;
-
-    let instance = instances::open_file(&file, line, wait)?;
+fn open_file(file: &Path, new: bool, line: Option<usize>, wait: bool) -> Result<()> {
+    let instance = instances::open_file(file, line, wait)?;
     let at = match line {
         Some(line) => format!(":{line}"),
         None => String::new(),
@@ -116,8 +170,21 @@ pub(super) fn open_file(path: &str, line: Option<usize>, wait: bool) -> Result<(
         instance.project_path
     );
     if wait {
-        instances::wait_until_closed(&instance, &file)?;
+        instances::wait_until_closed(&instance, file)?;
     }
+    Ok(())
+}
+
+/// Bring a window's file picker up on a folder, and say which window took it: the one a file
+/// of that folder would have opened in.
+fn pick_file_in(folder: &Path) -> Result<()> {
+    let instance = instances::pick_file(folder)?;
+    println!(
+        "file picker on {} → {} on {}",
+        folder.display(),
+        instance.program,
+        instance.project_path
+    );
     Ok(())
 }
 
@@ -135,6 +202,11 @@ fn file_to_open(path: &str) -> Result<(PathBuf, bool)> {
         }
         return Ok((file, false));
     }
+    // Written the way a folder is, and no folder is there: nothing says a new file was meant,
+    // and a tab opened on one called `notes` would not be what `notes/` asked for.
+    if path.ends_with(std::path::MAIN_SEPARATOR) {
+        bail!("there is no folder at {path}");
+    }
 
     let name = named
         .file_name()
@@ -150,9 +222,9 @@ fn file_to_open(path: &str) -> Result<(PathBuf, bool)> {
     Ok((folder.join(name), true))
 }
 
-/// The folder `moon shell <folder>` names, resolved the way the windows' records are. It has
-/// to be there: a shell is started in it, and a folder that is not is more likely a typo
-/// than a place to start one.
+/// The folder `moon shell <folder>` or `moon open <folder>` names, resolved the way the
+/// windows' records are. It has to be there: a shell is started in it, or its files are
+/// listed, and a folder that is not is more likely a typo than a place to start either.
 pub(super) fn folder_to_open(path: &str) -> Result<PathBuf> {
     let folder = Path::new(path)
         .canonicalize()
@@ -345,6 +417,70 @@ mod tests {
             "got {error}"
         );
         let error = folder_to_open(&folder.join("nowhere").display().to_string())
+            .expect_err("expected a refusal");
+        assert!(format!("{error}").contains("no folder at"), "got {error}");
+    }
+
+    /// `moon open <folder>` is known for a folder here, where the path is read against the
+    /// disk, and is handed on as one rather than as a file the window would fail to read.
+    #[test]
+    fn a_folder_is_named_as_a_folder_with_or_without_its_slash() {
+        let folder = temporary_folder("folder");
+        let named = folder.display().to_string();
+
+        assert_eq!(
+            named_on_disk(&named, None, false).expect("expected the folder"),
+            Named::Folder(folder.clone())
+        );
+        assert_eq!(
+            named_on_disk(&format!("{named}/"), None, false).expect("expected the folder"),
+            Named::Folder(folder)
+        );
+    }
+
+    /// `moon open src:42`: a folder is not a text with a line 42 in it.
+    #[test]
+    fn a_folder_with_a_line_number_is_refused() {
+        let folder = temporary_folder("folder-line");
+
+        let error = named_on_disk(&folder.display().to_string(), Some(42), false)
+            .expect_err("expected a refusal");
+
+        assert!(
+            format!("{error}").contains("is a folder, so it has no line 42"),
+            "got {error}"
+        );
+    }
+
+    /// `moon edit --wait src`: the picker is no tab, so nothing would ever end the wait.
+    #[test]
+    fn waiting_on_a_folder_is_refused() {
+        let folder = temporary_folder("folder-wait");
+
+        let error = named_on_disk(&folder.display().to_string(), None, true)
+            .expect_err("expected a refusal");
+
+        assert!(
+            format!("{error}").contains("no tab for `--wait`"),
+            "got {error}"
+        );
+    }
+
+    /// A path nothing is at is a new file, unless it is written as a folder: then it is a
+    /// folder that is not there, and no file is opened under its name.
+    #[test]
+    fn a_path_nothing_is_at_is_a_new_file_unless_it_ends_in_a_slash() {
+        let folder = temporary_folder("nothing-there");
+        let path = folder.join("notes");
+
+        assert_eq!(
+            named_on_disk(&path.display().to_string(), None, false).expect("expected a new file"),
+            Named::File {
+                file: path.clone(),
+                new: true,
+            }
+        );
+        let error = named_on_disk(&format!("{}/", path.display()), None, false)
             .expect_err("expected a refusal");
         assert!(format!("{error}").contains("no folder at"), "got {error}");
     }
