@@ -140,6 +140,21 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn list_folder(&self, folder: &str) -> Result<crate::api::folders::FolderListing> {
+        let encoded = urlencode(folder);
+        self.get(&format!("/api/folder?path={encoded}"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn place_file(&self, path: &str) -> Result<crate::api::folders::FilePlaced> {
+        self.post_json(
+            "/api/session/place-file",
+            &crate::api::folders::PlaceFileRequest {
+                path: path.to_string(),
+            },
+        )
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         let encoded = urlencode(file_path);
         self.get(&format!(
@@ -909,6 +924,10 @@ impl Backend for RemoteBackend {
             &format!("/api/session/{session_id}/display/applications"),
             request,
         )
+    }
+
+    fn installed_applications(&self) -> Result<crate::api::applications::InstalledApplications> {
+        self.get("/api/applications")
     }
 
     fn display(&self) -> Result<Option<crate::api::display::DisplayView>> {

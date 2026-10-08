@@ -8,6 +8,9 @@ mod rows;
 
 pub(crate) use commands::commands_for;
 pub(crate) use drawing::draw;
+pub(in crate::native) use drawing::{
+    Kept, cut_to_width, floating_frame, floating_width, paint_highlight, pressed_outside,
+};
 
 use rows::{code_action_rows, content_rows, file_rows, place_rows, rename_rows};
 
@@ -164,6 +167,8 @@ pub(crate) enum CommandAction {
     /// Start an application with windows, by the line of shell that starts it - see
     /// [`crate::native::display_pane`].
     StartApplication(String),
+    /// Stop every application on the server's desktop, which ends it.
+    EndDisplay,
     /// The QR code that opens this page on another device, logged in - see
     /// `crate::native::login_link::page_qr`. A window that is no page gets to another device
     /// through a tunnel, whose window has the code.

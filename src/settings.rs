@@ -53,35 +53,21 @@ pub(crate) struct Settings {
     /// [`WorkspaceColor::Plain`]. Ordered so the file reads the same twice running.
     #[serde(default)]
     pub(crate) workspace_colors: BTreeMap<String, WorkspaceColor>,
-    /// What the `moon` menu offers to start under `Applications`: programs with windows, on
-    /// this machine - see [`Applications`].
+    /// The person's own entries of `moon › Applications`, in the order the file has them,
+    /// listed ahead of the applications installed on this machine - which the menu reads for
+    /// itself, see `crate::desktop_entries`. For a program no package has installed an
+    /// entry for, or a line of shell of one's own.
     #[serde(default)]
-    pub(crate) applications: Applications,
+    pub(crate) applications: Vec<Application>,
 }
 
-/// A program with windows, as the `moon` menu lists it.
+/// A program with windows, as the person wrote it for the `moon` menu.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(crate) struct Application {
     /// What the menu calls it.
     pub(crate) name: String,
     /// The line of shell that starts it.
     pub(crate) command: String,
-}
-
-/// The applications the `moon` menu offers, in the order the file has them. A file that
-/// says nothing of them offers a browser, which is what a desktop on a server is most often
-/// for: the list is there to be written over, not to be found empty.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct Applications(pub(crate) Vec<Application>);
-
-impl Default for Applications {
-    fn default() -> Self {
-        Self(vec![Application {
-            name: "chromium".to_owned(),
-            command: "chromium".to_owned(),
-        }])
-    }
 }
 
 /// One change a window asks the server to make to the file.
@@ -325,20 +311,20 @@ mod tests {
     }
 
     /// The file is meant to be edited by hand, so what it holds has to read as what it means.
-    /// A file written before the menu had applications still offers the one it starts with,
-    /// and a file that lists its own offers those and no other.
+    /// A file that says nothing of applications adds none to the ones the machine has
+    /// installed - it names no program that may not be there - and a file that lists its own,
+    /// as every file did before the menu read the installed ones, still has them.
     #[test]
-    fn the_applications_offered_are_the_file_s_or_a_browser() {
+    fn the_person_s_own_applications_are_the_file_s_and_none_unwritten() {
         let silent: Settings = serde_json::from_str("{}").expect("expected settings");
-        assert_eq!(silent.applications, Applications::default());
-        assert_eq!(silent.applications.0[0].command, "chromium");
+        assert!(silent.applications.is_empty());
 
         let listed: Settings = serde_json::from_str(
             r#"{"applications":[{"name":"terminal","command":"xterm -fa mono"}]}"#,
         )
         .expect("expected settings");
         assert_eq!(
-            listed.applications.0,
+            listed.applications,
             [Application {
                 name: "terminal".to_owned(),
                 command: "xterm -fa mono".to_owned(),
@@ -352,13 +338,13 @@ mod tests {
             selected_agent: AgentKind::Claude,
             recent_projects: Vec::new(),
             workspace_colors: BTreeMap::new(),
-            applications: Applications::default(),
+            applications: Vec::new(),
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[{"name":"chromium","command":"chromium"}]}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[]}"#
         );
     }
 

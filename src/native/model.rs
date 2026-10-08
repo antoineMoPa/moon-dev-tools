@@ -149,6 +149,12 @@ pub(crate) struct Model {
     /// submodule beside its repo has a set of servers per review.
     pub(crate) language_servers_working: HashMap<String, crate::native::status_bar::ServersWorking>,
     pub(crate) palette: PaletteState,
+    /// The window's own file picker, while it is up - see [`crate::native::file_picker`].
+    pub(crate) file_picker: Option<crate::native::file_picker::FilePicker>,
+    /// The folder each session opened for a file of another project is on, by session - see
+    /// [`crate::api::folders::FilePlaced`]. What a tab of such a session says its file is
+    /// under.
+    pub(crate) projects_of_placed_files: HashMap<String, String>,
     /// The rename under way, if there is one - see [`crate::native::renaming`].
     pub(crate) renaming: Option<crate::native::renaming::Renaming>,
     /// Places a language server named, waiting for a frame that can go to them or list them -
@@ -178,6 +184,9 @@ pub(crate) struct Model {
     /// The server's `settings.json`, as it was read when the window opened and changed since
     /// by this window. `None` until the server has answered - see `App::load_settings`.
     pub(crate) settings: Option<crate::settings::Settings>,
+    /// The applications the server has installed, as it last answered. `None` until it has
+    /// - see `App::list_installed_applications`.
+    pub(crate) installed_applications: Option<crate::api::applications::InstalledApplications>,
     /// What each review's commit pane is holding: the message being written, and the last
     /// run. Keyed by review rather than by pane, so closing the tab keeps the message.
     pub(crate) commit_panes: HashMap<String, crate::native::commit_pane::CommitPane>,
@@ -192,7 +201,8 @@ pub(crate) struct Model {
     #[cfg(target_arch = "wasm32")]
     pub(crate) page_qr: crate::native::login_link::page_qr::PageQr,
     /// The server's desktop, as far as this window has heard: started by it, or found
-    /// running when it opened - see [`crate::native::display_pane`].
+    /// running when it last asked, which it does on its clock - see
+    /// [`crate::native::display_pane`].
     pub(crate) server_display: Option<crate::api::display::DisplayView>,
     /// Whether the desktop's pane is to be opened or brought forward: an application was
     /// started on it, or it was found running. Done once the workspace has been drawn, which

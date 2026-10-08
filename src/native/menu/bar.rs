@@ -3,11 +3,12 @@
 //! system is there to draw one.
 //!
 //! The same menus as the macOS bar in the parent module, less the items that act on the
-//! machine the window runs on - file pickers, new windows, restarting, launchers - which a
-//! page has no machine for. Drawn each frame rather than built once, so it can list only the
-//! project commands the project has set, the way the palette does, where the system bar has
-//! to carry all three and say no when one is picked. And one item more than that bar has:
-//! the QR code of the page's own address - see `crate::native::login_link::page_qr`.
+//! machine the window runs on - new windows, restarting, launchers - which a page has no
+//! machine for, and in a page less the two that pick a file. Drawn each frame rather than
+//! built once, so it can list only the project commands the project has set, the way the
+//! palette does, where the system bar has to carry all three and say no when one is picked.
+//! And one item more than that bar has: the QR code of the page's own address - see
+//! `crate::native::login_link::page_qr`.
 //!
 //! A chord written beside an item is the one its keyboard binding has, so the bar doubles as
 //! the place to learn them - the browser keeps a few for itself (⌘T, ⌘W, ⌘N), which is why
@@ -18,12 +19,12 @@ use egui::Ui;
 use super::MenuAction;
 use crate::{
     native::{
+        applications_offered::ApplicationsOffered,
         bindings::{self, Action},
         logos,
         theme::Palette,
     },
     project::{ProjectCommand, ProjectConfig},
-    settings::Application,
 };
 
 /// The bar's id, and the top panel's.
@@ -39,7 +40,7 @@ pub(crate) fn draw(
     ui: &mut Ui,
     palette: &Palette,
     project: &ProjectConfig,
-    applications: &[Application],
+    applications: ApplicationsOffered<'_>,
 ) -> Vec<MenuAction> {
     let mut picked = Vec::new();
     egui::Panel::top(BAR_ID)
@@ -62,11 +63,11 @@ pub(crate) fn draw(
 fn menus(
     ui: &mut Ui,
     project: &ProjectConfig,
-    applications: &[Application],
+    applications: ApplicationsOffered<'_>,
     picked: &mut Vec<MenuAction>,
 ) {
     // The window's own menu, first as a system's is: what there is to start on the server's
-    // desktop, out of the person's settings - see `crate::native::display_pane`.
+    // desktop - see `crate::native::applications_offered`.
     let height = ui.text_style_height(&egui::TextStyle::Button);
     // A button centers its picture on the line, and "moon" has no tall letters: its middle is
     // below the line's. The picture is drawn that much lower inside its own square, which
@@ -78,20 +79,25 @@ fn menus(
             egui::pos2(0.0, -drop),
             egui::pos2(1.0, 1.0 - drop),
         ));
-    ui.menu_button((logo, "moon"), |ui| {
+    let moon = ui.menu_button((logo, "moon"), |ui| {
         ui.menu_button("Applications", |ui| {
-            for (place, application) in applications.iter().enumerate() {
-                item(
-                    ui,
-                    &application.name,
-                    None,
-                    MenuAction::StartApplication(place),
-                    picked,
-                );
-            }
+            super::applications::draw(ui, applications, picked);
         });
     });
+    // Opening the menu asks the server again for what it has installed, so that a package
+    // installed since the window opened is listed.
+    if moon.response.clicked() {
+        picked.push(MenuAction::ListApplications);
+    }
     ui.menu_button("File", |ui| {
+        // Picked with the window's picker - see `crate::native::file_picker`. A browser's
+        // window does not open a file by picking yet.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            item(ui, "New File", None, MenuAction::NewFile, picked);
+            item(ui, "Open File…", None, MenuAction::OpenFile, picked);
+            ui.separator();
+        }
         item(
             ui,
             "Find File…",
@@ -219,7 +225,7 @@ pub(crate) fn hamburger(
     size: egui::Vec2,
     tabs: &[TabEntry],
     project: &ProjectConfig,
-    applications: &[Application],
+    applications: ApplicationsOffered<'_>,
     picked: &mut Vec<MenuAction>,
 ) {
     // Painted rather than typed: no font is promised to have the glyph.
@@ -265,7 +271,7 @@ pub(crate) fn hamburger(
 /// One item of a menu: its label, the chord of the binding that does the same thing when
 /// there is one, and what picking it asks for. Picking closes the menu, the way a bar's
 /// menus close.
-fn item(
+pub(super) fn item(
     ui: &mut Ui,
     label: &str,
     bound: Option<Action>,
@@ -302,10 +308,14 @@ mod tests {
             .with_size(egui::vec2(600.0, 300.0))
             .build_ui(move |ui| {
                 let palette = Palette::of(ThemeMode::Dark);
+                let applications = ApplicationsOffered {
+                    own: &[],
+                    installed: None,
+                };
                 picked_in_ui
                     .lock()
                     .expect("the picks")
-                    .extend(draw(ui, &palette, &project, &[]));
+                    .extend(draw(ui, &palette, &project, applications));
             });
         (harness, picked)
     }

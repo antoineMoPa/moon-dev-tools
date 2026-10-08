@@ -238,7 +238,7 @@ impl App {
             // keeps that one for itself. Opening the palette is what it asked for, and the
             // palette covers the panes, which is what takes the windows off the screen and the
             // keyboard back off the program a few lines further down.
-            moon_launcher::Event::AskedForTheWindow => self.model.palette.show(),
+            moon_launcher::Event::AskedForTheWindow => self.show_palette(),
             moon_launcher::Event::Retitled { client, title } => {
                 if title.is_empty() {
                     return;

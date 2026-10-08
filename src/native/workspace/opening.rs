@@ -406,9 +406,11 @@ impl App {
     ) -> egui_frames::PaneId {
         // Not a tab on an old version of it: that is another thing, and opening the file by
         // name is opening the file as it is.
+        // Nor a tab of another session on a file of the same name: `hostname` of the repo and
+        // `/etc/hostname`, read through a session of its own, are two files.
         match self.model.layout.find_pane(|pane| {
-            matches!(pane, Pane::File { file_path: open, revision: None, .. }
-                if open.as_str() == file_path)
+            matches!(pane, Pane::File { session_id: of, file_path: open, revision: None, .. }
+                if of.as_str() == session_id && open.as_str() == file_path)
         }) {
             Some((pane, _)) => {
                 self.model.layout.focus_pane(pane);

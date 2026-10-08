@@ -11,6 +11,8 @@ mod args;
 mod command;
 mod frame;
 #[cfg(not(target_arch = "wasm32"))]
+mod launch;
+#[cfg(not(target_arch = "wasm32"))]
 mod open;
 #[cfg(not(target_arch = "wasm32"))]
 mod wire;

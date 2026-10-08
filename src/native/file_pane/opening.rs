@@ -4,6 +4,8 @@
 use egui_frames::PaneId;
 use egui_moon_code_ide::LanguageSource;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::native::file_picker::PickPurpose;
 use crate::native::{
     app::App,
     language_source::SessionLanguages,
@@ -199,32 +201,60 @@ impl App {
         });
     }
 
-    /// Ask where an untitled tab's file goes, and name the tab after the answer. `false` when
-    /// nothing was chosen - the dialog was cancelled, or the place is outside the repo - and
-    /// the tab stays untitled.
+    /// Ask where an untitled tab's file goes, with the picker opened on the repo. The tab is
+    /// still untitled as this returns: the picker saves it once it has a pick, in
+    /// [`App::save_untitled_file_as`].
     #[cfg(not(target_arch = "wasm32"))]
-    fn name_untitled_file(&mut self, pane_id: PaneId) -> bool {
+    fn name_untitled_file(&mut self, pane_id: PaneId, session_id: &str) {
         let Some(repo_root) = self.repo_root() else {
             self.model.error("no repo is open in this window yet");
-            return false;
+            return;
         };
         let placeholder = self.model.file_editors[&pane_id].file_path.clone();
-        let picked = rfd::FileDialog::new()
-            .set_title("Save the new file")
-            .set_directory(&repo_root)
-            .set_file_name(&placeholder)
-            .save_file();
-        self.tasks.request_repaint();
-        let Some(picked) = picked else {
-            return false;
-        };
-        // The file may not exist yet, so its folder is what is checked to be in the repo.
-        let (Some(folder), Some(name)) = (picked.parent(), picked.file_name()) else {
-            self.model
-                .error(format!("{} is not a place a file can go", picked.display()));
-            return false;
-        };
-        let Some(folder_in_repo) = crate::native::app::path_inside_repo(&repo_root, folder) else {
+        self.ask_for_a_pick(
+            PickPurpose::NameForUntitledFile {
+                pane_id,
+                session_id: session_id.to_string(),
+                suggested: placeholder,
+            },
+            &repo_root.display().to_string(),
+        );
+    }
+
+    /// The window's own picker has a place for an untitled tab's file: name the tab after it,
+    /// and go on with the save that asked. `is_there` is whether a file already has the name,
+    /// which the picker said in so many words on the row that was picked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn save_untitled_file_as(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        picked: &std::path::Path,
+        is_there: bool,
+    ) {
+        // The tab may have been closed while the picker was up, and its text with it.
+        if !self.model.file_editors.contains_key(&pane_id) {
+            return;
+        }
+        if self.name_untitled_tab(pane_id, picked, is_there) {
+            self.save_file_pane(pane_id, session_id);
+        }
+    }
+
+    /// Name an untitled tab after the place picked for its file: an absolute path whose
+    /// folder is resolved. `false` for a place outside the repo, which the tab's session
+    /// cannot write, and the tab stays untitled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn name_untitled_tab(
+        &mut self,
+        pane_id: PaneId,
+        picked: &std::path::Path,
+        is_there: bool,
+    ) -> bool {
+        let repo_root = self
+            .repo_root()
+            .expect("a tab is only named in a window with a repo open");
+        let Ok(file_path) = picked.strip_prefix(&repo_root) else {
             self.model.error(format!(
                 "{} is outside {}, and only files of the repo can be saved here",
                 picked.display(),
@@ -232,12 +262,7 @@ impl App {
             ));
             return false;
         };
-        let file_path = std::path::Path::new(&folder_in_repo)
-            .join(name)
-            .display()
-            .to_string();
-        // The dialog has already asked about replacing a file that is there.
-        let exists = picked.exists();
+        let file_path = file_path.display().to_string();
         if let Some(Pane::File {
             file_path: named, ..
         }) = self.model.layout.pane_mut(pane_id)
@@ -252,7 +277,7 @@ impl App {
         editor.set_language_of(&file_path);
         editor.file_path = file_path;
         editor.untitled = false;
-        editor.on_disk = exists;
+        editor.on_disk = is_there;
         true
     }
 
@@ -313,8 +338,9 @@ impl App {
             .file_editors
             .get(&pane_id)
             .is_some_and(|editor| editor.untitled && !editor.saving)
-            && !self.name_untitled_file(pane_id)
         {
+            // Saved by the picker, once it has a name for it.
+            self.name_untitled_file(pane_id, session_id);
             return;
         }
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {

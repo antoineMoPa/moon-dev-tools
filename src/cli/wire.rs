@@ -227,8 +227,8 @@ fn deliveries(
             bail!("{TAG_MARK}{tag} has no running agent");
         }
         for agent in agents {
-            // Only a window listens for a line. A `moon serve` holds shells too, and has
-            // nothing to be asked on.
+            // Only a window listens for a line. A `moon serve` holds shells too, and answers
+            // `moon launch` alone.
             let Some(window) = instances::window_of(agent.held_by) else {
                 bail!(
                     "{TAG_MARK}{tag}'s agent runs in a moon with no window (process {}), such \

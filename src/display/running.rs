@@ -2,18 +2,21 @@
 //! on it, and broadcasts its patches to every watcher.
 
 use std::{
+    collections::HashMap,
     os::unix::process::CommandExt,
     path::Path,
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
     thread,
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio::sync::{broadcast, watch};
 
 use crate::api::display::{DisplayInput, DisplayPatch, DisplayView};
+
+use super::started::{self, Ended, Said, Started};
 
 /// How many patches a watcher may fall behind by before it is shown the whole display in
 /// their place - see `routes::watching`. A patch is a thirtieth of a second of the display,
@@ -37,6 +40,9 @@ pub(super) struct Running {
     /// The display, until it is ended: dropping it is what stops Xvfb.
     display: Mutex<Option<moon_display::Display>>,
     occupied: Mutex<Occupied>,
+    /// Told whenever a window opens or closes and whenever an application ends, which is
+    /// what a start waits on to answer - see `Running::start_application`.
+    occupancy_changed: Condvar,
     /// Every patch of the display, as the message its socket carries.
     patches: broadcast::Sender<Arc<Vec<u8>>>,
     /// Whether the desktop is over, for the sockets watching it to hang up on.
@@ -51,6 +57,9 @@ struct Occupied {
     programs: Vec<u32>,
     /// How many windows are open.
     windows: usize,
+    /// The applications whose start is still waited on - see `Running::start_application` -
+    /// by process group, each with how it ended once it has.
+    starting: HashMap<u32, Option<Ended>>,
 }
 
 impl Occupied {
@@ -76,6 +85,7 @@ impl Running {
             scale,
             display: Mutex::new(Some(display)),
             occupied: Mutex::default(),
+            occupancy_changed: Condvar::new(),
             patches,
             over,
         });
@@ -94,6 +104,7 @@ impl Running {
                         }
                         moon_display::Event::WindowsOpen(open) => {
                             watched.occupied().windows = open;
+                            watched.occupancy_changed.notify_all();
                             watched.end_if_left_empty();
                         }
                     }
@@ -104,38 +115,74 @@ impl Running {
         Ok(running)
     }
 
-    /// Start `command` in `folder` with its windows going to this desktop.
+    /// Start `command` in `folder` with its windows going to this desktop, and answer once
+    /// its start is known to have gone one way or the other: well when a window opens on the
+    /// desktop or the program ends well, and with an error saying what it said when it ends
+    /// in failure. One that has done none of these [`started::SOON`] after is taken to have
+    /// started; one that opens a window and then fails is not reported.
+    ///
+    /// Any window opening after the start counts: whose it is, the display does not say.
+    ///
+    /// The answer is how a failure reaches the window that asked because it is the one
+    /// message that window is waiting for, and already shows as an error: the desktop's
+    /// socket is opened only after it, is every watching window's, and carries nothing but
+    /// patches.
     pub(super) fn start_application(self: &Arc<Self>, command: &str, folder: &Path) -> Result<()> {
-        let mut program = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(folder)
-            .env("DISPLAY", &self.view.name)
-            .envs(SCALED_BY.iter().map(|read| (read, self.scale.to_string())))
-            // A session of another kind would be found first by a toolkit that looks for one.
-            .env_remove("WAYLAND_DISPLAY")
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("`{command}` would not start"))?;
+        let program = Started::start(
+            Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .current_dir(folder)
+                .env("DISPLAY", &self.view.name)
+                .envs(SCALED_BY.iter().map(|read| (read, self.scale.to_string())))
+                // A session of another kind would be found first by a toolkit that looks for
+                // one.
+                .env_remove("WAYLAND_DISPLAY")
+                // The command is found where a shell tab of this server would find it, so
+                // that the browser started from the menu is the one typed there by name.
+                .env("PATH", crate::shell_path::installed_tools_path())
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null()),
+            Said::KeptOnly,
+        )
+        .with_context(|| format!("`{command}` would not start"))?;
         let group = program.id();
-        self.occupied().programs.push(group);
+        // Held from here until this is waiting below, so that neither a window opening nor
+        // the program ending in between goes unheard.
+        let mut occupied = self.occupied();
+        occupied.programs.push(group);
+        let windows_before = occupied.windows;
 
         let desktop = Arc::clone(self);
-        thread::Builder::new()
-            .name(format!("moon display {} application", self.view.name))
-            .spawn(move || {
-                let _ = program.wait();
-                desktop
-                    .occupied()
-                    .programs
-                    .retain(|running| *running != group);
-                desktop.end_if_left_empty();
+        program.wait(move |ended| {
+            {
+                let mut occupied = desktop.occupied();
+                occupied.programs.retain(|running| *running != group);
+                // Kept for a start still waiting to hear, and for no one otherwise.
+                if let Some(how) = occupied.starting.get_mut(&group) {
+                    *how = Some(ended);
+                }
+            }
+            desktop.occupancy_changed.notify_all();
+            desktop.end_if_left_empty();
+        })?;
+        occupied.starting.insert(group, None);
+        let (mut occupied, _) = self
+            .occupancy_changed
+            .wait_timeout_while(occupied, started::SOON, |occupied| {
+                occupied.windows <= windows_before && occupied.starting[&group].is_none()
             })
-            .context("the application's thread would not start")?;
-        Ok(())
+            .expect("the display's occupancy lock is poisoned");
+        let ended = occupied
+            .starting
+            .remove(&group)
+            .expect("a start is waited on until this takes it back");
+        drop(occupied);
+        match ended.and_then(|ended| ended.failure_of(command)) {
+            Some(failure) => bail!(failure),
+            None => Ok(()),
+        }
     }
 
     /// Everything drawn on the display from now on, after the whole of it as it is now.

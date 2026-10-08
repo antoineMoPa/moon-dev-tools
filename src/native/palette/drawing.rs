@@ -32,7 +32,7 @@ const ROW_PADDING: f32 = 9.0;
 
 /// Which end of a text is kept when it is wider than the room it has.
 #[derive(Clone, Copy)]
-enum Kept {
+pub(in crate::native) enum Kept {
     Start,
     End,
 }
@@ -112,19 +112,9 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         .order(egui::Order::Foreground)
         .anchor(Align2::CENTER_TOP, vec2(0.0, screen.height() * 0.12))
         .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(palette.panel)
-                .stroke(Stroke::new(1.0, palette.line))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(egui::Margin::same(9))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0, 10],
-                    blur: 28,
-                    spread: 0,
-                    color: Color32::from_black_alpha(60),
-                })
+            floating_frame(&palette)
                 .show(ui, |ui| {
-                    ui.set_width((screen.width() * 0.5).clamp(360.0, 560.0));
+                    ui.set_width(floating_width(screen));
 
                     let hint = hint_of(app);
                     let entry = ui.add(
@@ -201,6 +191,41 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// The box the palette is drawn in, floating over the window: the panel's ground, a hairline
+/// round it and a shadow under it. The file picker is the same kind of box - see
+/// [`crate::native::file_picker`].
+pub(in crate::native) fn floating_frame(palette: &Palette) -> egui::Frame {
+    egui::Frame::new()
+        .fill(palette.panel)
+        .stroke(Stroke::new(1.0, palette.line))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(9))
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 10],
+            blur: 28,
+            spread: 0,
+            color: Color32::from_black_alpha(60),
+        })
+}
+
+/// How wide that box is: half the window, within what a line of a command and a phone's
+/// window allow.
+pub(in crate::native) fn floating_width(screen: egui::Rect) -> f32 {
+    (screen.width() * 0.5).clamp(360.0, 560.0)
+}
+
+/// The ground and outline of the row the keyboard is on.
+pub(in crate::native) fn paint_highlight(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(5), palette.control_active_bg);
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(5),
+        Stroke::new(1.0, palette.accent),
+        StrokeKind::Inside,
+    );
+}
+
 /// How tall `rows` rows are when laid out one under the other: the rows themselves, and the
 /// layout's gap between each pair. Counting the rows alone left the area a gap short per row,
 /// which put a scrollbar on a list of three rows that all fit.
@@ -239,7 +264,10 @@ fn select_all(ctx: &egui::Context, id: egui::Id, query: &str) {
 /// Whether a pointer button went down this frame away from where the palette drew last frame.
 /// Before it has drawn once there is nowhere to be outside of, and the press is somebody
 /// else's business.
-fn pressed_outside(ctx: &egui::Context, drawn_at: Option<egui::Rect>) -> bool {
+pub(in crate::native) fn pressed_outside(
+    ctx: &egui::Context,
+    drawn_at: Option<egui::Rect>,
+) -> bool {
     let Some(drawn_at) = drawn_at else {
         return false;
     };
@@ -253,7 +281,7 @@ fn pressed_outside(ctx: &egui::Context, drawn_at: Option<egui::Rect>) -> bool {
 }
 
 /// `text` on one line no wider than `width`, with an ellipsis where the rest of it was.
-fn cut_to_width(
+pub(in crate::native) fn cut_to_width(
     painter: &egui::Painter,
     text: &str,
     font: egui::FontId,
@@ -302,14 +330,7 @@ fn draw_row(
 
     if ui.is_rect_visible(rect) {
         if highlighted {
-            ui.painter()
-                .rect_filled(rect, CornerRadius::same(5), palette.control_active_bg);
-            ui.painter().rect_stroke(
-                rect,
-                CornerRadius::same(5),
-                Stroke::new(1.0, palette.accent),
-                StrokeKind::Inside,
-            );
+            paint_highlight(ui, rect, palette);
         }
         let small = egui::FontId::proportional(SMALL_SIZE - 1.0);
         let mut text_width = rect.width() - 2.0 * ROW_PADDING;

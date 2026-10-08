@@ -248,8 +248,8 @@ impl Task {
         agents
             .into_iter()
             .map(|agent| {
-                // Only a window listens. A `moon serve` holds shells too, and has nothing to
-                // be asked on.
+                // Only a window answers this. A `moon serve` holds shells too, and answers
+                // `moon launch` alone.
                 let window = instances::window_of(agent.held_by).with_context(|| {
                     format!(
                         "{HANDLE_MARK}{handle}'s agent runs in a moon with no window (process \

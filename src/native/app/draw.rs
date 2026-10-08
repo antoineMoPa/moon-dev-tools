@@ -4,17 +4,14 @@ use std::time::Duration;
 
 use egui::{Align, Align2, CornerRadius, Key, Layout as UiLayout, RichText, Ui, vec2};
 
-use crate::{
-    api::OpenSessionRequest,
-    native::{
-        bindings::{self},
-        find, fonts, logos,
-        model::{Stage, ToastKind},
-        palette,
-        theme::{self, Palette, SMALL_SIZE},
-        widgets,
-        workspace::SHELL_REPAINT_INTERVAL,
-    },
+use crate::native::{
+    bindings::{self},
+    find, fonts, logos,
+    model::{Stage, ToastKind},
+    palette,
+    theme::{self, Palette, SMALL_SIZE},
+    widgets,
+    workspace::SHELL_REPAINT_INTERVAL,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,8 +30,8 @@ const LOGO_GAP: f32 = 8.0;
 impl App {
     pub(super) fn draw_prompt(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
-        // A repo on this machine can be pointed at; one on the far side of a remote connection
-        // can only be typed out, since this machine cannot browse for it.
+        // A repo on this machine is pointed at. One on the far side of a remote connection can
+        // be typed out as well: its path is often already on the clipboard.
         let picks_folders = self.backend().reads_this_machine();
         let mut open_path = None;
         let mut pick_folder = false;
@@ -67,7 +64,7 @@ impl App {
                 ui.add_space(6.0);
 
                 // Browsing for the repo is the whole of it on this machine, so there is
-                // nothing to type; a remote repo cannot be browsed for and has to be.
+                // nothing to type there.
                 let typed = (!picks_folders).then(|| {
                     let entry = ui.add_sized(
                         vec2(460.0, 24.0),
@@ -86,7 +83,13 @@ impl App {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     const BUTTON: egui::Vec2 = egui::vec2(120.0, 24.0);
-                    ui.add_space((ui.available_width() - BUTTON.x).max(0.0) / 2.0);
+                    // One button where the repo is browsed for, and two where its path is
+                    // typed: the one that opens what was typed, and the picker's beside it.
+                    let buttons = match &typed {
+                        None => BUTTON.x,
+                        Some(_) => 2.0 * BUTTON.x + ui.spacing().item_spacing.x,
+                    };
+                    ui.add_space((ui.available_width() - buttons).max(0.0) / 2.0);
 
                     match &typed {
                         None => {
@@ -104,6 +107,11 @@ impl App {
                             if (go || *submitted) && !path.is_empty() {
                                 open_path = Some(path.clone());
                             }
+                            // The window's picker, which lists the far machine's folders.
+                            pick_folder = widgets::clickable(
+                                ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
+                            )
+                            .clicked();
                         }
                     }
                 });
@@ -114,21 +122,12 @@ impl App {
             });
         });
 
-        // Both deferred: the dialog blocks, and opening a review takes `self`.
-        #[cfg(not(target_arch = "wasm32"))]
-        if pick_folder && let Some(picked) = self.pick_repo_folder(&ui.ctx().clone()) {
-            open_path = Some(picked);
+        // Both deferred: each takes `self`.
+        if pick_folder {
+            self.pick_repo_folder();
         }
-        // Offered only where the repo is on this machine, which a browser's never is.
-        #[cfg(target_arch = "wasm32")]
-        assert!(!pick_folder, "a browser has no folder picker to offer");
         if let Some(repo_path) = open_path {
-            self.model.stage = Stage::Opening;
-            self.open_review(OpenSessionRequest {
-                repo_path,
-                diff_target: None,
-                active_commit: None,
-            });
+            self.open_picked_folder(repo_path);
         }
     }
 
@@ -279,9 +278,13 @@ impl App {
                 #[cfg(target_arch = "wasm32")]
                 MenuAction::ShowPageQr => CommandAction::ShowPageQr,
                 #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
-                MenuAction::StartApplication(place) => {
-                    let application = &self.applications_offered()[place];
-                    CommandAction::StartApplication(application.command.clone())
+                MenuAction::StartApplication(place) => CommandAction::StartApplication(
+                    self.applications_offered().command_at(place).to_owned(),
+                ),
+                #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
+                MenuAction::ListApplications => {
+                    self.list_installed_applications();
+                    continue;
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenInWeb => CommandAction::OpenInWeb,
@@ -315,7 +318,7 @@ impl App {
                     continue;
                 }
                 MenuAction::OpenCommandPalette => {
-                    self.model.palette.show();
+                    self.show_palette();
                     continue;
                 }
             });
@@ -367,6 +370,7 @@ impl App {
             Stage::Prompt { .. } => {
                 self.apply_launch_screen_shortcuts(ctx);
                 self.draw_prompt(ui);
+                crate::native::file_picker::draw(self, ctx);
                 // No status bar in front of a prompt, so nothing to stand clear of.
                 self.draw_toasts(ctx, 0.0);
                 return;
@@ -492,6 +496,7 @@ impl App {
             ctx.request_repaint();
         }
         palette::draw(self, ctx);
+        crate::native::file_picker::draw(self, ctx);
         find::draw(self, ctx);
         self.draw_armed_prefix(ctx);
         #[cfg(not(target_arch = "wasm32"))]

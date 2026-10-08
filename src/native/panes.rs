@@ -486,7 +486,17 @@ impl PaneView<Pane> for App {
             Pane::Visualization { fragment_path } => fragment_path.clone(),
             #[cfg(target_os = "linux")]
             Pane::Application { title, .. } => title.clone(),
-            Pane::Display => "The applications running on the server's desktop".to_string(),
+            // With the desktop's name on the server, which the pane itself has no room for.
+            // The window asks the server for it on its clock, so a desktop this window did not
+            // start is without one only until the next tick.
+            Pane::Display => match &self.model.server_display {
+                Some(display) => format!(
+                    "The applications running on the server's desktop\n\nDISPLAY={} in a shell on \
+                     the server opens a program's windows here",
+                    display.name
+                ),
+                None => "The applications running on the server's desktop".to_string(),
+            },
             // The title the program set, which the tab of a named shell does not show - a
             // plain shell's directory, an agent's own status line - and how the tab is renamed.
             Pane::Terminal { terminal_id, .. } => {

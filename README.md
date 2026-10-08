@@ -1,9 +1,7 @@
 # 🌚 moon-dev-tools
 
-A collection of local tools for the agentic era.
-
 `moon-dev-tools` brings task planning, agent workspaces, shells and code review together. It
-installs one executable, `moon`, which opens on three things:
+installs one executable, `moon`.
 
 | | |
 | --- | --- |
@@ -77,19 +75,6 @@ windows from the OS as well - Spotlight and Launchpad on macOS, the application 
 moon install-launchers
 ```
 
-It writes one launcher per window: a `.app` bundle in `/Applications` on macOS -
-in `~/Applications` instead, for an account that cannot write the shared folder - and a
-`.desktop` entry in `~/.local/share/applications` on Linux. The window has the same thing in
-its macOS menu bar and in the command palette, as `install desktop launchers`. Each launcher
-runs the executable where it is installed, so `cargo install` over it is also an upgrade of
-what the launcher opens; rerun the command only after moving the executable somewhere else.
-
-A window opened that way starts outside every repo. `moon tasks` and `moon shell` open on the
-project the last window opened - neither needs a repo - and `moon review`, which has nothing
-to show without one, asks which repo to open with the folder picker of the OS.
-
-`install.sh` writes the launchers itself, so a prebuilt install needs nothing further.
-
 ## Usage
 
 ```bash
@@ -97,11 +82,8 @@ moon tasks              # the sprint board
 moon review             # review local changes
 moon shell              # a shell in the folder
 moon edit src/main.rs   # open a file for edition
+moon launch chromium    # in a shell of `moon serve` or `moon desktop`: start a program with windows
 ```
-
-Run any of them inside a git repository. `moon tasks` and `moon shell` run just as well in a
-folder that is no repository: the review is the part that needs one. The other tools remain
-one command-palette action away (`⌘⇧P`).
 
 `moon edit --wait` returns only once the file's tab is closed, so git can write its commit
 messages in a moon window:
@@ -320,13 +302,6 @@ cargo install --locked --path .; moon install-launchers
 ```
 
 On mac you will need to drag applications from the Applications folder to your menu bar.
-
-## Origin of the names
-
-Moonreview started as a lunch-time project named `noon-review` by an AI tool. That was a
-terrible name, so it became Moonreview: close enough to the original, more fun, and fitting for
-reviewing after a long hacking day. Moontasks and Moonshell joined it later, and
-`moon-dev-tools` became the home for the whole collection.
 
 ## Regenerating the docs screenshots
 

@@ -66,6 +66,7 @@ impl App {
     pub(super) fn take_window_from(&mut self, left: &mut App) {
         self.set_theme(left.model.theme);
         self.model.settings = left.model.settings.take();
+        self.model.installed_applications = left.model.installed_applications.take();
         self.model.messages = std::mem::take(&mut left.model.messages);
         self.spaces = std::mem::take(&mut left.spaces);
         self.asks_language_servers = left.asks_language_servers;
@@ -85,7 +86,7 @@ impl App {
         {
             self.menu = left.menu.take();
             self.shell_asks = left.shell_asks.take();
-            self.sessions_for_asked_files = Arc::clone(&left.sessions_for_asked_files);
+            self.places_of_asked_files = Arc::clone(&left.places_of_asked_files);
             self.window_is_in_front = left.window_is_in_front;
         }
     }

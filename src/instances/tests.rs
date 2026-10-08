@@ -3,8 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    Answer, Ask, Instance, dir, home_instances_dir, running, socket_path, window::ShellAsks,
-    window_of, windows_for, wire, write_record,
+    ANSWER_TIMEOUT, Answer, Ask, Instance, ask_process, dir, home_instances_dir, launch_in,
+    running, server::ServerAsks, socket_path, window::ShellAsks, window_of, windows_for, wire,
+    write_record,
 };
 
 fn instance(pid: u32, project_path: &str) -> Instance {
@@ -673,4 +674,53 @@ fn what_is_asked_about_an_agent_is_refused_by_a_window_that_answers_nothing_abou
         let answer = window.ask(&ask).expect("expected an answer");
         assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
     }
+}
+
+/// `moon launch`, over the real socket and with a real program: a window among others starts
+/// nothing and says why; a window that is its machine's session starts the line of shell in
+/// the folder asked from, each quoted word one argument, and answers a start that failed with
+/// what the program said; and a `moon serve` answers a launch and nothing else.
+#[test]
+fn a_launch_is_answered_with_how_the_start_went_by_a_moon_that_starts_programs() {
+    use crate::display::started::OnThisScreen;
+
+    let folder = temporary_project("launched");
+    std::fs::write(folder.join("a b.txt"), "").expect("expected a file");
+    let moon = std::process::id();
+
+    let window = ShellAsks::listen("moon shell".to_string(), true, egui::Context::default())
+        .expect("expected a socket");
+    let refusal = launch_in(moon, "true", &folder).expect_err("expected a refusal");
+    assert!(
+        format!("{refusal}").contains("has its own way to start a program"),
+        "got {refusal}"
+    );
+
+    window.applications_started_by(std::sync::Arc::new(OnThisScreen));
+    assert_eq!(
+        launch_in(moon, "'test' '-f' 'a b.txt'", &folder).expect("expected it to start"),
+        "this screen"
+    );
+    let failure = launch_in(moon, "echo no display >&2; exit 3", &folder)
+        .expect_err("expected the failure");
+    assert_eq!(
+        format!("{failure}"),
+        "`echo no display >&2; exit 3` ended (exit status: 3): no display"
+    );
+
+    drop(window);
+    let _server = ServerAsks::listen(std::sync::Arc::new(OnThisScreen)).expect("expected a socket");
+    assert_eq!(
+        launch_in(moon, "true", &folder).expect("expected it to start"),
+        "this screen"
+    );
+    let answer = ask_process(
+        moon,
+        &Ask::OpenShell {
+            folder: folder.display().to_string(),
+        },
+        ANSWER_TIMEOUT,
+    )
+    .expect("expected an answer");
+    assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
 }

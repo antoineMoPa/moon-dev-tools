@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::{CommitAction, CommitState, StagedFile};
-use crate::{api::FileChangeKind, git};
+use crate::{api::FileChangeKind, git, shell_quoting::single_quoted};
 
 /// The status letters `git status --porcelain` reports for the index, and what each one is a
 /// change of. `--no-renames` is what keeps a rename off this list: it is reported as the
@@ -154,12 +154,6 @@ fn run_script(command: &str) -> String {
         format!("exec {shell} -l"),
     ]
     .join("\n")
-}
-
-/// A string a shell reads back as itself: single quotes hold every character literally, and
-/// the one they cannot hold is closed, escaped, and reopened.
-fn single_quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn ahead_behind(repo_path: &Path, upstream: &str) -> Result<(usize, usize)> {
@@ -596,11 +590,6 @@ mod tests {
             script.lines().next(),
             Some("printf '%s\\n' 'git commit -F \"$MOONREVIEW_RUN_MESSAGE\"'")
         );
-    }
-
-    #[test]
-    fn a_quote_of_its_own_is_closed_escaped_and_reopened() {
-        assert_eq!(single_quoted("it's"), "'it'\\''s'");
     }
 
     #[test]

@@ -29,8 +29,8 @@ use std::{
 };
 
 use egui::{
-    Color32, ColorImage, Event, MouseWheelUnit, Pos2, Rect, RichText, Sense, TextureHandle,
-    TextureOptions, Ui, Vec2, pos2, vec2,
+    Color32, ColorImage, Event, MouseWheelUnit, Pos2, Rect, Sense, TextureHandle, TextureOptions,
+    Ui, Vec2, pos2, vec2,
 };
 use egui_frames::PaneId;
 
@@ -40,8 +40,7 @@ use crate::{
     native::{
         app::App,
         panes::{OpenPaneRequest, Pane},
-        theme::{self, SMALL_SIZE},
-        widgets,
+        theme,
     },
 };
 
@@ -392,32 +391,11 @@ impl Watched {
     }
 }
 
-/// The desktop's name on the server over the desktop itself.
+/// The desktop, over the whole of its pane: nothing of the pane's own is drawn beside it. Its
+/// name on the server is said on the pane's tab - see `PaneView::tab` - and it is ended from
+/// the palette.
 pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
     let palette = app.palette_of();
-    let mut end = false;
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(display) = &app.model.server_display {
-                    ui.label(RichText::new(format!("DISPLAY={}", display.name)).size(SMALL_SIZE))
-                        .on_hover_text(
-                            "what a program started in a shell on the server is given to open \
-                             its windows here",
-                        );
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    end = widgets::small_button(ui, "end", true)
-                        .on_hover_text("stop every application on the server's desktop")
-                        .clicked();
-                });
-            });
-        });
-    if end {
-        app.end_display();
-    }
-
     let rect = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     let says = |ui: &Ui, text: &str, color: Color32| {
@@ -489,14 +467,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
 }
 
 impl App {
-    /// What `moon › Applications` offers: the settings' list, once the server has sent it.
-    pub(crate) fn applications_offered(&self) -> &[crate::settings::Application] {
-        match &self.model.settings {
-            Some(settings) => &settings.applications.0,
-            None => &[],
-        }
-    }
-
     /// Start an application with windows - what `moon › Applications` and the palette ask
     /// for. On the server's desktop, which is started with it when there is none, and shown
     /// in a pane; or, in a window that is its machine's own desktop - `moon desktop` - on
@@ -532,24 +502,48 @@ impl App {
 
     /// Start a program on the screen this window is on. Its window is the session's to find
     /// and put in a pane - see [`crate::native::application_pane`].
+    ///
+    /// One that ends in failure as it starts is said in the window, with what it said - see
+    /// [`crate::display::started`].
     #[cfg(target_os = "linux")]
     fn start_application_on_this_screen(&mut self, command: &str) {
-        let started = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .stdin(std::process::Stdio::null())
-            .spawn();
+        use crate::display::started::{self, Said, Started};
+
+        let (ending, ended) = std::sync::mpsc::channel();
+        let started = Started::start(
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .stdin(std::process::Stdio::null()),
+            // The session's log is where an application's own words went, and still go.
+            Said::PassedOn,
+        )
+        // Nobody left to hear is the wait below being over: it ended later than soon.
+        .and_then(|program| {
+            program.wait(move |ended| {
+                let _ = ending.send(ended);
+            })
+        });
         match started {
-            // Waited for on a thread of its own, so that an application that has ended is
-            // not kept by the system as one that has yet to be asked how it went.
-            Ok(mut program) => {
-                std::thread::spawn(move || {
-                    let _ = program.wait();
-                });
+            Ok(()) => {
+                let command = command.to_owned();
+                // On a worker, which is what waits while the window goes on drawing: for the
+                // program to end, or `SOON`, whichever is first.
+                self.tasks.spawn(
+                    move |_backend| {
+                        let ended = ended.recv_timeout(started::SOON).ok();
+                        Ok(ended.and_then(|ended| ended.failure_of(&command)))
+                    },
+                    |model, failed| {
+                        if let Ok(Some(failure)) = failed {
+                            model.error(failure);
+                        }
+                    },
+                );
             }
             Err(error) => self
                 .model
-                .error(format!("could not start `{command}`: {error}")),
+                .error(format!("could not start `{command}`: {error:#}")),
         }
     }
 
@@ -559,26 +553,40 @@ impl App {
         unreachable!("no window off Linux manages the session it is in");
     }
 
-    /// Ask the server whether its desktop is running, for a window that has just opened to
-    /// show it: started by another window, or by this one before the page was loaded again.
+    /// Ask the server whether its desktop is running, and show it when that is news to this
+    /// window: started by another window, by a `moon launch` typed in one of the server's
+    /// shells, or by this window before the page was loaded again.
+    ///
+    /// Asked as the window opens and then on its clock - see `App::poll_running_shells`.
+    /// Nothing tells a window what happened on the server without it asking, and a desktop
+    /// an agent started there is one no window asked for.
+    ///
+    /// A desktop this window already knows of is not shown again: closing its pane leaves it
+    /// running, and the pane is not to come back a second later.
     pub(crate) fn show_display_if_running(&mut self) {
+        let known_when_asked = self.model.server_display.clone();
         self.tasks.spawn_keyed(
             Some("display-running".to_owned()),
             |backend| backend.display(),
-            |model, running| match running {
-                Ok(Some(display)) => {
-                    model.server_display = Some(display);
+            move |model, running| {
+                // What this window knows changed while the answer was on its way - a start of
+                // its own was answered, or its pane's socket closed - and that is the later
+                // news. A failed answer leaves the last one standing, as on every clock here.
+                let Ok(running) = running else { return };
+                if model.server_display != known_when_asked {
+                    return;
+                }
+                if running.is_some() && running != known_when_asked {
                     model.display_wants_showing = true;
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    model.error(format!("could not ask for the server's desktop: {error:#}"));
-                }
+                model.server_display = running;
             },
         );
     }
 
-    fn end_display(&mut self) {
+    /// Stop every application on the server's desktop, which ends it - what the palette's
+    /// `end desktop` asks for.
+    pub(crate) fn end_display(&mut self) {
         self.tasks.spawn(
             |backend| backend.end_display(),
             |model, ended| {

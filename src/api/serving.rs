@@ -105,6 +105,12 @@ pub(crate) struct FileQuery {
     pub(crate) file_path: String,
 }
 
+/// The folder a picker asks to have listed, as [`crate::service::list_folder`] reads one.
+#[derive(Deserialize)]
+pub(crate) struct FolderQuery {
+    pub(crate) path: String,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct FileSearchQuery {
     pub(crate) query: String,

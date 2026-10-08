@@ -6,14 +6,17 @@
 //! answered with what came of it, by whoever the window [said](ShellAsks::agents_answered_by)
 //! answers about agents - see [`AgentAsks`].
 //!
+//! `moon launch` comes in over it as well, and is answered the same way by whoever the window
+//! [said](ShellAsks::applications_started_by) starts programs - which only a window that is
+//! its machine's session does.
+//!
 //! Only a real window listens. Every other caller of the app is a ui test, and a test must
 //! not put itself in the way of a `moon open` typed in the window the developer running it
 //! has open - see [`crate::native::app::App::listen_for_shell_asks`].
 
 use std::{
     collections::HashSet,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    os::unix::net::UnixStream,
     path::PathBuf,
     sync::{Arc, Mutex},
     thread,
@@ -22,7 +25,10 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use super::{Answer, Ask, Instance, remove_records, socket_path, write_record};
+use super::{
+    Answer, Ask, Instance, StartsApplications, launched, listen_on_own_socket, read_ask,
+    remove_records, write_answer, write_record,
+};
 use crate::{api::AgentKind, terminal::Shown};
 
 /// What a window does about the agents of its board for a shell that asked: `moon agent
@@ -44,6 +50,15 @@ pub(crate) trait AgentAsks: Send + Sync {
 
 /// Who answers about agents, once the window has said - see [`ShellAsks::agents_answered_by`].
 type AnswersAboutAgents = Arc<Mutex<Option<Arc<dyn AgentAsks>>>>;
+
+/// Who starts the programs `moon launch` asks this window for, once the window has said - see
+/// [`ShellAsks::applications_started_by`].
+type StartsWhatIsLaunched = Arc<Mutex<Option<Arc<dyn StartsApplications>>>>;
+
+/// What a window that starts no programs answers a `moon launch` with.
+const STARTS_NO_PROGRAMS: &str = "this moon is a window among others on its machine's own \
+    screen, which has its own way to start a program: `moon launch` is for a shell tab of \
+    `moon serve` or of `moon desktop`";
 
 /// A file a shell asked this window to open.
 pub(crate) struct OpenFileAsked {
@@ -92,6 +107,9 @@ pub(crate) struct ShellAsks {
     /// Who answers `moon agent start`, `tell` and `view`. Nobody until the window says, which
     /// is what a window in a test never does.
     agents: AnswersAboutAgents,
+    /// Who starts what `moon launch` asks for. Nobody until the window says, which only a
+    /// window that is its machine's session does: every other window refuses.
+    applications: StartsWhatIsLaunched,
     /// What this window is called on the command line, which is what `moon list` prints
     /// beside the project.
     program: String,
@@ -109,15 +127,7 @@ impl ShellAsks {
         reads_this_machine: bool,
         ctx: egui::Context,
     ) -> Result<Self> {
-        let path = socket_path(std::process::id()).context("no home directory to listen in")?;
-        let dir = path.parent().expect("the socket sits in the instances dir");
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("failed to create {}", dir.display()))?;
-        // A pid this process was handed again may have left its socket behind; binding to a
-        // path that already exists fails, and that file cannot belong to anyone else.
-        let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)
-            .with_context(|| format!("failed to listen on {}", path.display()))?;
+        let listener = listen_on_own_socket()?;
 
         let asks = Self {
             project: Arc::new(Mutex::new(None)),
@@ -126,6 +136,7 @@ impl ShellAsks {
             arrived_wired: Arc::new(Mutex::new(Vec::new())),
             waited_on: Arc::new(Mutex::new(HashSet::new())),
             agents: Arc::new(Mutex::new(None)),
+            applications: Arc::new(Mutex::new(None)),
             program,
             focused_at_unix: Arc::new(Mutex::new(0)),
         };
@@ -137,6 +148,7 @@ impl ShellAsks {
             waited_on: asks.waited_on.clone(),
         };
         let agents = asks.agents.clone();
+        let applications = asks.applications.clone();
         thread::Builder::new()
             .name("moon-shell-asks".to_string())
             .spawn(move || {
@@ -144,9 +156,14 @@ impl ShellAsks {
                     // One ask per connection, and each is answered before the next is read:
                     // a shell waits for its answer, so nothing is gained by doing several at
                     // once, and the window is only ever asked as fast as somebody types.
-                    if let Err(error) =
-                        answer(stream, reads_this_machine, &project, &arrived, &agents)
-                    {
+                    if let Err(error) = answer(
+                        stream,
+                        reads_this_machine,
+                        &project,
+                        &arrived,
+                        &agents,
+                        &applications,
+                    ) {
                         eprintln!("[moonreview] could not answer a `moon` ask: {error}");
                         continue;
                     }
@@ -164,6 +181,16 @@ impl ShellAsks {
     /// is said they are refused.
     pub(crate) fn agents_answered_by(&self, agents: Arc<dyn AgentAsks>) {
         *self.agents.lock().expect("the agents lock") = Some(agents);
+    }
+
+    /// Say who starts the programs `moon launch` asks this window for. Until it is said they
+    /// are refused, with [`STARTS_NO_PROGRAMS`].
+    ///
+    /// Only a window on Linux is ever its machine's session, so only there - and in the tests
+    /// - is there anything to say it with.
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn applications_started_by(&self, applications: Arc<dyn StartsApplications>) {
+        *self.applications.lock().expect("the applications lock") = Some(applications);
     }
 
     /// Say which project this window is on, so a shell asking about a file of it finds this
@@ -263,21 +290,18 @@ impl Drop for ShellAsks {
 /// is the window's refusal, in the words of whatever failed. An agent is started only by a
 /// window open on the board's own repo: the run is listed on the board in that window, and
 /// its shell is one only that window can open.
+///
+/// A program to start is answered here and now as well, once its start is known to have gone
+/// one way or the other - see [`StartsApplications`].
 fn answer(
     stream: UnixStream,
     reads_this_machine: bool,
     project: &Arc<Mutex<Option<String>>>,
     arrived: &Arrived,
     agents: &AnswersAboutAgents,
+    applications: &StartsWhatIsLaunched,
 ) -> Result<()> {
-    let mut asked = String::new();
-    BufReader::new(&stream)
-        .read_line(&mut asked)
-        .context("failed to read the ask")?;
-    let asked: Ask = serde_json::from_str(asked.trim())
-        .with_context(|| format!("failed to read {asked:?} as an ask"))?;
-
-    let answer = match asked {
+    let answer = match read_ask(&stream)? {
         Ask::OpenFile { path, line, wait } => match refusal(reads_this_machine, project) {
             Some(refused) => refused,
             None => {
@@ -365,11 +389,19 @@ fn answer(
                 Answer::Closed
             }
         }
+        Ask::Launch { command, folder } => {
+            // Taken out of the lock before the start, which is waited on.
+            let applications = applications.lock().expect("the applications lock").clone();
+            match applications {
+                Some(applications) => launched(applications.as_ref(), &command, &folder),
+                None => Answer::Refused {
+                    reason: STARTS_NO_PROGRAMS.to_string(),
+                },
+            }
+        }
     };
 
-    let mut writing = &stream;
-    writeln!(writing, "{}", serde_json::to_string(&answer)?)?;
-    writing.flush().context("failed to answer the shell")
+    write_answer(&stream, &answer)
 }
 
 /// Why this window will not open anything a shell here names, or `None` when it will.

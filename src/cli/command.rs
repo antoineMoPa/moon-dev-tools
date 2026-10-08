@@ -14,7 +14,7 @@ use super::{
         review_open_request,
     },
     frame::frame_named,
-    open, wire,
+    launch, open, wire,
 };
 use crate::{
     api::{DiffTarget, OpenSessionRequest},
@@ -59,6 +59,14 @@ pub(super) enum MoonCommand {
     OpenShell {
         path: String,
     },
+    /// `moon launch <command>`: a program with windows, started in the moon whose shell this
+    /// was typed in - see [`super::launch`].
+    Launch {
+        /// A line of shell: the words of the command, each quoted to be read back as it was.
+        command: String,
+    },
+    /// What `launch` takes, printed and nothing started.
+    LaunchHelp,
     /// Which windows are open, and what they are open on.
     ListWindows,
     /// moon's license, and the licenses and notices of everything it is built from.
@@ -125,6 +133,11 @@ pub(crate) fn run() -> Result<()> {
         }
         MoonCommand::ListWindows => open::list_windows(),
         MoonCommand::OpenShell { path } => open_shell(&path),
+        MoonCommand::Launch { command } => launch::launch(&command),
+        MoonCommand::LaunchHelp => {
+            println!("{}", launch::help_text());
+            Ok(())
+        }
         MoonCommand::Licenses => print_licenses(),
         MoonCommand::NewTask { title } => new_task(&title),
         MoonCommand::Wire(command) => wire::run(command),
@@ -191,6 +204,9 @@ pub(super) fn parse_command(launched_on: Option<Frame>, args: Vec<String>) -> Re
         // `edit` and `open` are one thing said two ways: the tab it lands in is one that
         // edits the file, and both are words a hand reaches for.
         "open" | "edit" => open::parse_open(rest),
+        // Ahead of the help every other command answers: what follows `launch` is a program's
+        // own command line, and a `--help` in it is the program's to answer.
+        "launch" => launch::parse_launch(rest),
         // The wire answers for its own help, which is where its rules are written.
         "wire" => Ok(MoonCommand::Wire(wire::parse(&rest, asks_for_help)?)),
         // So do the agents, for theirs.
@@ -566,6 +582,7 @@ Usage:
   {PROGRAM} agent <command>           list, start, view or tell the board's agents
   {PROGRAM} edit <path>[:<line>]      Open a file for edition
   {PROGRAM} open <path>[:<line>]      same as `{PROGRAM} edit`
+  {PROGRAM} launch <command>          start a program with windows, from a moon's shell
   {PROGRAM} list                      show open windows
   {PROGRAM} serve [--logs]
   {PROGRAM} desktop [<folder>]        start as x11 desktop env

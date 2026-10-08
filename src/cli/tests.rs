@@ -857,9 +857,6 @@ fn the_agents_answer_help_with_their_own_commands() {
         "moon agent start <task> <pi|claude|codex|opencode>",
         "moon agent view <task> [--lines <n>]",
         "moon agent tell <task> <one line>",
-        "presses Enter",
-        "no running agent",
-        "nothing written in its box",
     ] {
         assert!(
             help.contains(said),

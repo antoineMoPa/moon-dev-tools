@@ -26,12 +26,19 @@ pub(crate) async fn start_application(
     let folder =
         crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
     crate::api::mark_activity(&state.last_activity);
-    Ok(Json(state.display.start_application(
-        &asked.command,
-        &folder,
-        [asked.width, asked.height],
-        asked.scale,
-    )?))
+    // Off the threads the other requests are answered on: this one is not answered until
+    // the application's start is known to have gone well or not - see
+    // `Running::start_application`.
+    let display = tokio::task::spawn_blocking(move || {
+        state.display.start_application(
+            &asked.command,
+            &folder,
+            [asked.width, asked.height],
+            asked.scale,
+        )
+    })
+    .await??;
+    Ok(Json(display))
 }
 
 /// `GET /api/display`: the server's desktop, when one is running - which is how a window

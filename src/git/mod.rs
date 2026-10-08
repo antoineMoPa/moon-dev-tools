@@ -18,7 +18,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::api::{CommitView, DiffTarget};
 
@@ -186,8 +186,10 @@ pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String
             bail!("file path is outside the repository");
         }
 
+        // The reason is said with the path rather than left as the error's cause: a window
+        // shows one line, and "permission denied" is the line that matters on `/etc/shadow`.
         return fs::read_to_string(&resolved)
-            .with_context(|| format!("failed to read {}", resolved.display()));
+            .map_err(|error| anyhow!("failed to read {}: {error}", resolved.display()));
     }
 
     let head_spec = format!("HEAD:{file_path}");
@@ -230,7 +232,8 @@ pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) 
         bail!("{file_path} is not a file in the working tree");
     }
 
-    fs::write(&resolved, content).with_context(|| format!("failed to write {}", resolved.display()))
+    fs::write(&resolved, content)
+        .map_err(|error| anyhow!("failed to write {}: {error}", resolved.display()))
 }
 
 /// Create a file in the working tree that is not there yet: the first save of a tab opened on a
@@ -260,9 +263,9 @@ pub(crate) fn create_repo_file(repo_path: &Path, file_path: &str, content: &str)
 
     let path = folder.join(name);
     let mut file = fs::File::create_new(&path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
+        .map_err(|error| anyhow!("failed to create {}: {error}", path.display()))?;
     std::io::Write::write_all(&mut file, content.as_bytes())
-        .with_context(|| format!("failed to write {}", path.display()))
+        .map_err(|error| anyhow!("failed to write {}: {error}", path.display()))
 }
 
 pub(crate) fn append_pathspec<'a>(args: &mut Vec<&'a str>, pathspec: Option<&'a str>) {

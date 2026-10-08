@@ -3,6 +3,7 @@
 
 mod auth;
 mod board_routes;
+mod folder_routes;
 mod review_routes;
 pub(crate) mod users;
 mod web_page;
@@ -177,6 +178,7 @@ fn protected_routes() -> Router<Served> {
             "/api/session/{session_id}/display/applications",
             post(crate::display::start_application),
         )
+        .route("/api/applications", get(crate::desktop_entries::listed))
         .route(
             "/api/display",
             get(crate::display::shown).delete(crate::display::end),
@@ -191,6 +193,11 @@ fn protected_routes() -> Router<Served> {
             get(resolve_comment_by_key),
         )
         .route("/api/session/open", post(open_session))
+        .route("/api/session/place-file", post(folder_routes::place_file))
+        // The disk outside any repo, for the window's own file picker. Behind the pass key
+        // like every route here, and no more than a logged-in window's shell tab shows it -
+        // see `folder_routes`. It lists; reading and writing stay with the session routes.
+        .route("/api/folder", get(folder_routes::list_folder))
         .route("/api/session/{session_id}/state", get(session_state))
         .route(
             "/api/session/{session_id}/submodules",
@@ -470,6 +477,12 @@ pub(crate) async fn run_server() -> Result<()> {
     let state = build_state(Arc::clone(&last_activity));
     let users = Users::for_this_machine()?;
     let listener = bind().await?;
+    // Where a `moon launch` typed in one of this server's shells reaches it, kept until the
+    // server ends. Not fatal: the server works, `moon launch` just cannot reach this one.
+    let _shell_asks = crate::instances::server::ServerAsks::listen(Arc::new(state.clone()))
+        .inspect_err(|error| {
+            eprintln!("[moonreview] `moon launch` cannot reach this server: {error}")
+        });
 
     let ticket = users.keys().login_ticket(SERVE_TICKET_LIFETIME);
     println!("Moon Review listening on {}", server_url());

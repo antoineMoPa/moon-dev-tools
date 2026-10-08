@@ -150,6 +150,17 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Create a file nothing is at yet, which is the first save of a tab opened on a new file.
     /// Refused where something already is.
     fn create_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
+    /// What is in a folder of the disk this backend reads, for the picker the window draws
+    /// itself - see [`crate::native::file_picker`]. The folder is named from `/`, or from `~`
+    /// for the home of whoever the server runs as.
+    fn list_folder(&self, folder: &str) -> Result<crate::api::folders::FolderListing>;
+    /// Give a file anywhere on that disk a session to be read and written through - see
+    /// [`crate::api::folders::FilePlaced`]. The path is absolute.
+    ///
+    /// Only asked for a file `moon open` named or File › Open picked, and a browser's window
+    /// has neither yet.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn place_file(&self, path: &str) -> Result<crate::api::folders::FilePlaced>;
 
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;
     fn resolve_comment(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
@@ -360,6 +371,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
         session_id: &str,
         request: &crate::api::display::StartApplicationRequest,
     ) -> Result<crate::api::display::DisplayView>;
+    /// The applications installed on the server, out of its desktop entries - see
+    /// `crate::desktop_entries`. What `moon › Applications` and the palette offer to start.
+    fn installed_applications(&self) -> Result<crate::api::applications::InstalledApplications>;
     /// The server's desktop, when one is running - for a window that did not start it.
     fn display(&self) -> Result<Option<crate::api::display::DisplayView>>;
     /// End the server's desktop, and every application on it.

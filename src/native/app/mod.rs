@@ -1,9 +1,8 @@
 //! The window itself: what it holds, how it is built, and what it hands to eframe.
 
 mod actions;
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::native) use actions::path_inside_repo;
 mod draw;
+mod picking;
 mod settings;
 mod spaces;
 mod switching;
@@ -230,10 +229,10 @@ pub(crate) struct App {
     /// see [`crate::native::open_from_shell::WaitedTab`].
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) waited_tabs: Vec<crate::native::open_from_shell::WaitedTab>,
-    /// The sessions this window opened so it could take files of projects it is not itself
-    /// on - see [`crate::native::open_from_shell`].
+    /// Where the repo's side put the files of projects this window is not itself on, until
+    /// each is opened - see [`crate::native::open_from_shell`].
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) sessions_for_asked_files: crate::native::open_from_shell::SessionsForAskedFiles,
+    pub(crate) places_of_asked_files: crate::native::open_from_shell::PlacesOfAskedFiles,
     /// Whether the window was in front on the last frame, so the frame it comes forward on
     /// is the one that writes that down for the shells to read.
     #[cfg(not(target_arch = "wasm32"))]
@@ -335,6 +334,8 @@ impl App {
                 messages: Default::default(),
                 language_servers_working: HashMap::new(),
                 palette: Default::default(),
+                file_picker: None,
+                projects_of_placed_files: HashMap::new(),
                 renaming: None,
                 places_found: None,
                 code_acting: None,
@@ -366,6 +367,7 @@ impl App {
                 // and the review says this machine still has it - see `App::load_settings`.
                 restored_agent: None,
                 settings: None,
+                installed_applications: None,
             },
             tasks,
             terminals: HashMap::new(),
@@ -445,7 +447,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             waited_tabs: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
-            sessions_for_asked_files: Arc::new(Mutex::new(HashMap::new())),
+            places_of_asked_files: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(not(target_arch = "wasm32"))]
             window_is_in_front: false,
             webviews: Default::default(),
@@ -457,6 +459,7 @@ impl App {
         };
 
         app.load_settings();
+        app.list_installed_applications();
         if let Some(open) = launch.open {
             app.open_review(open);
         }
@@ -468,8 +471,7 @@ impl App {
     /// not where a test runs.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn install_menu(&mut self) {
-        let picks_files = self.backend().reads_this_machine();
-        self.menu = crate::native::menu::NativeMenu::install(picks_files, self.frame);
+        self.menu = crate::native::menu::NativeMenu::install(self.frame);
     }
 
     pub(crate) fn backend(&self) -> &Arc<dyn Backend> {

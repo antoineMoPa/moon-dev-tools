@@ -39,10 +39,15 @@ pub(crate) fn session_file(
             content: read_repo_file(&session.repo_path, file_path)?,
             outside_the_repo: false,
             only_written_by: only_writer_of(file_path),
-            committed: Some(crate::git::read_committed_file(
-                &session.repo_path,
-                file_path,
-            )?),
+            // A folder that is no repo - the one `/etc/hostname` is read through - has
+            // nothing committed for the text to be new against.
+            committed: match crate::git::is_git_repo(&session.repo_path) {
+                true => Some(crate::git::read_committed_file(
+                    &session.repo_path,
+                    file_path,
+                )?),
+                false => None,
+            },
         })
     })
 }

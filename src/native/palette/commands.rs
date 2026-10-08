@@ -52,16 +52,23 @@ fn application_commands(app: &App) -> Vec<Command> {
     if !on_the_server && !app.manages_the_session {
         return Vec::new();
     }
-    let mut commands: Vec<Command> = app
-        .applications_offered()
+    // Flat, the person's own first: what is typed finds one by its name, which a menu's
+    // submenus are for when there is nothing to type.
+    let offered = app.applications_offered();
+    let own = offered.own.iter().map(|own| (&own.name, &own.command));
+    let installed = offered
+        .installed_listed()
         .iter()
-        .map(|application| Command {
-            title: application.name.clone(),
+        .map(|installed| (&installed.name, &installed.command));
+    let mut commands: Vec<Command> = own
+        .chain(installed)
+        .map(|(name, command)| Command {
+            title: name.clone(),
             description: match on_the_server {
-                true => format!("Start {} on the server's desktop", application.name),
-                false => format!("Start {}", application.name),
+                true => format!("Start {name} on the server's desktop"),
+                false => format!("Start {name}"),
             },
-            action: CommandAction::StartApplication(application.command.clone()),
+            action: CommandAction::StartApplication(command.clone()),
             shortcut: None,
         })
         .collect();
@@ -73,6 +80,21 @@ fn application_commands(app: &App) -> Vec<Command> {
             action: CommandAction::OpenPane(OpenPaneRequest::Display),
             shortcut: None,
         });
+        // Only while this window shows the desktop: its pane gives all its room to the
+        // desktop, so this is where it is ended from.
+        if app
+            .model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Display)
+            .is_some()
+        {
+            commands.push(Command {
+                title: "end desktop".to_string(),
+                description: "Stop every application on the server's desktop".to_string(),
+                action: CommandAction::EndDisplay,
+                shortcut: None,
+            });
+        }
     }
     commands
 }
@@ -378,10 +400,10 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
             shortcut: bindings::chord_of(Action::RenameSymbol),
         });
     }
-    // Only when the repo is on this machine: the picker is the OS's, and it cannot browse a
-    // repo that lives on the far side of a `--remote` connection.
+    // Picked with the window's picker, which browses the disk the repo is on wherever that
+    // is. A browser's window does not open a file by picking yet.
     #[cfg(not(target_arch = "wasm32"))]
-    if app.backend().reads_this_machine() {
+    {
         commands.push(Command {
             title: "new file".to_string(),
             description: "Open an empty file in a tab, to save later or not at all".to_string(),
@@ -390,7 +412,7 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         });
         commands.push(Command {
             title: "open file".to_string(),
-            description: "Open a file of the repo in a tab, to read and edit".to_string(),
+            description: "Open a file in a tab, to read and edit".to_string(),
             action: CommandAction::OpenFile,
             shortcut: None,
         });

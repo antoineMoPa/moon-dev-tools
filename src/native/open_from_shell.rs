@@ -3,10 +3,12 @@
 //!
 //! A file of the project this window is on opens in the window's own review. A file of any
 //! other project opens too: the shell hands it here when no window is open on its project -
-//! see [`crate::instances::windows_for`] - and the window opens a session on that project,
-//! the same way a submodule review is opened, so the file has a repo to be read and written
-//! in. One session per project, kept in [`SessionsForAskedFiles`], so a second file of the
-//! same project lands in a tab beside the first rather than opening the project again.
+//! see [`crate::instances::windows_for`] - and the window has the repo's side place it, in a
+//! session on the project it sits in, the same way a submodule review is opened, so the file
+//! has a folder to be read and written in - see [`crate::api::folders::FilePlaced`]. A file
+//! in no repo at all, `/etc/hostname`, is placed in a session on its own folder. The project
+//! is found where the disk is rather than here, so the files the window's own picker hands
+//! on - see [`App::open_picked_file`] - are placed the same whichever machine that is.
 //!
 //! A folder goes the way a submodule's shell does: the session on its project is opened as
 //! the shell is started - see [`App::open_shell_in_folder`] - so it needs no session kept.
@@ -16,12 +18,12 @@
 
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use crate::{
-    api::OpenSessionRequest,
+    api::folders::FilePlaced,
     instances::window::{OpenFileAsked, OpenShellAsked, ShellAsks},
     native::{
         app::App,
@@ -29,18 +31,18 @@ use crate::{
     },
 };
 
-/// The sessions this window opened so it could take files of other projects, by the project
-/// each was opened on. Shared with the tasks that open them, which is where entries come from.
-pub(crate) type SessionsForAskedFiles = Arc<Mutex<HashMap<PathBuf, ProjectSession>>>;
+/// Where the repo's side put the files of other projects this window asked it to place, by
+/// the path each was asked for under. Shared with the tasks that ask, which is where entries
+/// come from; an entry is taken out as its file is opened.
+pub(crate) type PlacesOfAskedFiles = Arc<Mutex<HashMap<PathBuf, AskedFilePlace>>>;
 
-/// What became of the session a file of another project needs.
-#[derive(Clone)]
-pub(crate) enum ProjectSession {
-    /// The session the project is open on now, which the file's tab is opened against.
-    Open(String),
-    /// The project could not be opened, and the window has said so. The files waiting on it
-    /// are dropped rather than asked for again on every frame.
-    Unopenable,
+/// What came of placing a file of another project.
+pub(crate) enum AskedFilePlace {
+    /// The session its tab is opened against, and its path in that session's project.
+    Placed(FilePlaced),
+    /// It could not be placed, and the window has said so. The file is dropped rather than
+    /// asked about again on every frame.
+    Nowhere,
 }
 
 /// A tab a `moon edit --wait` asked for, which the shell that asked is waiting on to close.
@@ -66,6 +68,15 @@ impl App {
                 asks.agents_answered_by(Arc::new(crate::native::agent_asks::WindowAgents {
                     backend: Arc::clone(self.backend()),
                 }));
+                // A window that is its machine's session starts what `moon launch` asks for,
+                // on the screen it is on. Any other window starts no programs and says so.
+                // Compiled wherever `started` is: on Linux, and with the tests.
+                #[cfg(any(target_os = "linux", test))]
+                if self.manages_the_session {
+                    asks.applications_started_by(Arc::new(
+                        crate::display::started::OnThisScreen,
+                    ));
+                }
                 self.shell_asks = Some(asks);
             }
             // Not fatal: the window works, `moon open` just cannot reach this one.
@@ -129,17 +140,21 @@ impl App {
             return;
         };
 
-        if asked.path.starts_with(&repo_root) {
+        if let Ok(file_path) = asked.path.strip_prefix(&repo_root) {
+            let file_path = file_path.display().to_string();
             let asked = self.asked_files.pop_front().expect("a file is waiting");
             let session_id = self.model.root_session_id.clone();
-            self.open_asked_file(ctx, &session_id, &repo_root, asked);
+            // A shell only reaches a window that reads this machine - see
+            // [`crate::instances::window`] - so this is the disk the path was typed against.
+            let exists = asked.path.exists();
+            self.open_asked_file(ctx, &session_id, file_path, exists, asked);
             return;
         }
         self.open_asked_file_of_another_project(ctx);
     }
 
-    /// The file at the front of the queue is one of another project: open it in the session
-    /// this window keeps for that project, opening the session first when there is not one.
+    /// The file at the front of the queue is one of another project: open it where the repo's
+    /// side placed it, asking for that first when it has not been asked yet.
     fn open_asked_file_of_another_project(&mut self, ctx: &egui::Context) {
         let path = self
             .asked_files
@@ -147,94 +162,69 @@ impl App {
             .expect("a file is waiting")
             .path
             .clone();
-        let folder = path.parent().expect("a file sits in a folder");
-        let project = match crate::git::project_root(folder) {
-            Ok(project) => project,
-            Err(error) => {
-                let asked = self.asked_files.pop_front().expect("a file is waiting");
-                self.release(&asked);
-                self.model
-                    .error(format!("could not open {}: {error}", path.display()));
-                return;
-            }
-        };
-
-        let opened = self
-            .sessions_for_asked_files
+        let place = self
+            .places_of_asked_files
             .lock()
-            .expect("the sessions lock")
-            .get(&project)
-            .cloned();
-        match opened {
-            Some(ProjectSession::Open(session_id)) => {
+            .expect("the places lock")
+            .remove(&path);
+        match place {
+            Some(AskedFilePlace::Placed(placed)) => {
                 let asked = self.asked_files.pop_front().expect("a file is waiting");
-                self.open_asked_file(ctx, &session_id, &project, asked);
+                // Said in the tab's header, where the path inside the project alone would
+                // not say which `hostname` this is.
+                self.model
+                    .projects_of_placed_files
+                    .insert(placed.session_id.clone(), placed.project);
+                self.open_asked_file(
+                    ctx,
+                    &placed.session_id,
+                    placed.file_path,
+                    placed.exists,
+                    asked,
+                );
             }
             // The window has already said why, so the file goes quietly.
-            Some(ProjectSession::Unopenable) => {
+            Some(AskedFilePlace::Nowhere) => {
                 let asked = self.asked_files.pop_front().expect("a file is waiting");
                 self.release(&asked);
             }
-            None => self.open_project_for_asked_files(project),
+            None => self.place_asked_file(path),
         }
     }
 
-    /// Open a session on a project this window is not on, so the files a shell asked for can
-    /// be read and written in it. Keyed by the project, so the files waiting on it ask for it
-    /// once between them however many frames go by before it answers.
-    fn open_project_for_asked_files(&mut self, project: PathBuf) {
-        let sessions = Arc::clone(&self.sessions_for_asked_files);
-        let repo_path = project.display().to_string();
+    /// Ask the repo's side for a session on the project a file sits in, so the file can be
+    /// read and written there. Keyed by the file, so it is asked for once however many frames
+    /// go by before the answer.
+    fn place_asked_file(&mut self, path: PathBuf) {
+        let places = Arc::clone(&self.places_of_asked_files);
+        let asked = path.display().to_string();
         self.tasks.spawn_keyed(
-            Some(format!("open-project-for-asked-files:{repo_path}")),
-            move |backend| {
-                backend.open_session(OpenSessionRequest {
-                    repo_path: repo_path.clone(),
-                    diff_target: None,
-                    active_commit: None,
-                })
-            },
+            Some(format!("place-asked-file:{asked}")),
+            move |backend| backend.place_file(&asked),
             move |model, result| {
-                let mut sessions = sessions.lock().expect("the sessions lock");
-                match result {
-                    Ok(opened) => {
-                        sessions.insert(project, ProjectSession::Open(opened.session_id));
-                    }
+                let place = match result {
+                    Ok(placed) => AskedFilePlace::Placed(placed),
                     Err(error) => {
-                        model.error(format!(
-                            "could not open {} to put the file in: {error}",
-                            project.display()
-                        ));
-                        sessions.insert(project, ProjectSession::Unopenable);
+                        model.error(format!("could not open {}: {error}", path.display()));
+                        AskedFilePlace::Nowhere
                     }
-                }
+                };
+                places.lock().expect("the places lock").insert(path, place);
             },
         );
     }
 
-    /// Open one file a shell asked for, in the session on the project holding it, and bring
-    /// the window to the front - the ask was typed somewhere else, so this window is not the
-    /// one being looked at.
+    /// Open one asked-for file in the session on the project holding it, by its path inside
+    /// that project, and bring the window to the front - a shell's ask was typed somewhere
+    /// else, so this window is not the one being looked at.
     fn open_asked_file(
         &mut self,
         ctx: &egui::Context,
         session_id: &str,
-        project: &Path,
+        file_path: String,
+        exists: bool,
         asked: OpenFileAsked,
     ) {
-        // A file is named by its path inside the project its session is on. It can still be a
-        // file of the project this window was on when the ask was made, which is this window's
-        // answer to a window that has moved on: it says so and opens nothing.
-        let Ok(file_path) = asked.path.strip_prefix(project) else {
-            self.model.error(format!(
-                "{} is outside {}, so this window cannot open it",
-                asked.path.display(),
-                project.display()
-            ));
-            self.release(&asked);
-            return;
-        };
-        let file_path = file_path.display().to_string();
         if asked.wait {
             self.waited_tabs.push(WaitedTab {
                 path: asked.path.clone(),
@@ -247,9 +237,8 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         // A path nothing is at yet is a file about to be written, the way `vim notes.md` is:
         // the tab opens empty and its first save creates the file, so a tab closed unsaved
-        // leaves nothing behind. A shell only reaches a window that reads this machine - see
-        // [`crate::instances::window`] - so this is the disk the path was typed against.
-        if !asked.path.exists() {
+        // leaves nothing behind.
+        if !exists {
             self.pending_action = Some(crate::native::palette::CommandAction::OpenPane(
                 crate::native::panes::OpenPaneRequest::NewFile {
                     session_id: session_id.to_string(),

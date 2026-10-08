@@ -362,6 +362,9 @@ impl App {
                 }
             },
         );
+        // And whether the server's desktop is running: a shell's `moon launch` or another
+        // window starts it without this window having asked for anything.
+        self.show_display_if_running();
     }
 
     /// Read the project's commands, which is what the Project menu offers.
@@ -431,7 +434,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::RestartWindow => self.restart_window(ctx),
             #[cfg(not(target_arch = "wasm32"))]
-            CommandAction::OpenFile => self.pick_file_to_edit(ctx),
+            CommandAction::OpenFile => self.pick_file_to_edit(),
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::NewFile => self.open_untitled_file(),
             CommandAction::FindFile => {
@@ -463,6 +466,7 @@ impl App {
             CommandAction::OpenWorkLog => self.open_work_log(),
             CommandAction::OpenWire => self.open_wire(),
             CommandAction::StartApplication(command) => self.start_application(command),
+            CommandAction::EndDisplay => self.end_display(),
             #[cfg(target_arch = "wasm32")]
             CommandAction::ShowPageQr => self.show_page_qr(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -554,43 +558,6 @@ impl App {
             session_id: self.model.root_session_id.clone(),
             placeholder_path,
         });
-    }
-
-    /// The OS file picker, opened on the repo, for a file to read and edit in a tab of its
-    /// own - the same tab the review opens a file into.
-    ///
-    /// A file is named to the review server by its path inside the repo, so a pick from
-    /// anywhere else on disk has no name to be opened under. Rather than open a tab that
-    /// cannot load, the pick is refused and says why.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn pick_file_to_edit(&mut self, ctx: &egui::Context) {
-        let Some(repo_root) = self.repo_root() else {
-            self.model.error("no repo is open in this window yet");
-            return;
-        };
-
-        let picked = rfd::FileDialog::new()
-            .set_title("Open a file to edit")
-            .set_directory(&repo_root)
-            .pick_file();
-        // The window loses the keyboard to the dialog, and egui only learns that it is back
-        // once something else asks it to draw.
-        ctx.request_repaint();
-        let Some(picked) = picked else {
-            return;
-        };
-
-        match path_inside_repo(&repo_root, &picked) {
-            Some(file_path) => {
-                let session_id = self.model.root_session_id.clone();
-                self.open_file_pane(&session_id, &file_path);
-            }
-            None => self.model.error(format!(
-                "{} is outside {}, and only files of the repo can be opened here",
-                picked.display(),
-                repo_root.display()
-            )),
-        }
     }
 
     /// What the menu bar and the keyboard still do before a project is open. The launch
@@ -724,7 +691,7 @@ impl App {
 
     fn apply_action(&mut self, action: Action) {
         match action {
-            Action::OpenPalette => self.model.palette.show(),
+            Action::OpenPalette => self.show_palette(),
             Action::NewShellTab => self.pending_tab_action = Some(TabAction::New),
             Action::CloseTab => self.pending_tab_action = Some(TabAction::Close),
             // Deferred like every pane opened from a chord, and nothing at all when no tab
@@ -836,33 +803,6 @@ impl App {
         }
     }
 
-    /// The OS folder picker, opened where the last project was found so the next one is
-    /// usually a sibling, or on the board task directory. What it comes back with is what opens.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn pick_repo_folder(&mut self, ctx: &egui::Context) -> Option<String> {
-        let mut dialog = rfd::FileDialog::new().set_title("Choose a repo");
-        if let Some(recent) = self
-            .model
-            .settings
-            .as_ref()
-            .and_then(|settings| settings.recent_projects.first())
-        {
-            let beside = std::path::Path::new(recent).parent().unwrap_or_else(|| {
-                // A project at the filesystem root has no parent to open beside it.
-                std::path::Path::new(recent)
-            });
-            if beside.is_dir() {
-                dialog = dialog.set_directory(beside);
-            }
-        }
-
-        let picked = dialog.pick_folder()?;
-        // The window loses the keyboard to the dialog, and egui only learns that it is back
-        // once something else asks it to draw.
-        ctx.request_repaint();
-        Some(picked.display().to_string())
-    }
-
     /// Run the find bar's search over a review, and tell the bar what it found.
     ///
     /// A search walks every hunk, so it only happens when the bar asks - a changed query or a
@@ -902,87 +842,5 @@ impl App {
         if let Some(find) = &mut self.model.find {
             find.found(found.len());
         }
-    }
-}
-
-/// Both sides are resolved before they are compared: on macOS a repo is often reached through
-/// a symlink - `/var` for `/private/var`, and the picker hands back the resolved form - so
-/// comparing what was picked against an unresolved root would refuse a file plainly inside it.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::native) fn path_inside_repo(repo_root: &std::path::Path, picked: &std::path::Path) -> Option<String> {
-    let repo_root = repo_root.canonicalize().ok()?;
-    let picked = picked.canonicalize().ok()?;
-    let relative = picked.strip_prefix(&repo_root).ok()?;
-    Some(relative.display().to_string())
-}
-
-#[cfg(test)]
-mod path_tests {
-    use std::{
-        path::PathBuf,
-        sync::atomic::{AtomicU32, Ordering},
-    };
-
-    use super::path_inside_repo;
-
-    static NEXT_ID: AtomicU32 = AtomicU32::new(0);
-
-    /// A directory of its own, removed when the test ends.
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "moonreview-open-file-{}-{}",
-                std::process::id(),
-                NEXT_ID.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).expect("failed to create temp test directory");
-            Self { path }
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
-    #[test]
-    fn a_file_in_the_repo_is_named_by_its_path_inside_it() {
-        let repo = TestDir::new();
-        let nested = repo.path.join("src");
-        std::fs::create_dir(&nested).expect("expected a dir");
-        let file = nested.join("main.rs");
-        std::fs::write(&file, "fn main() {}").expect("expected a file");
-
-        assert_eq!(
-            path_inside_repo(&repo.path, &file).as_deref(),
-            Some(format!("src{}main.rs", std::path::MAIN_SEPARATOR).as_str())
-        );
-    }
-
-    #[test]
-    fn a_file_outside_the_repo_has_no_name_to_be_opened_under() {
-        let repo = TestDir::new();
-        let elsewhere = TestDir::new();
-        let file = elsewhere.path.join("notes.txt");
-        std::fs::write(&file, "not in the repo").expect("expected a file");
-
-        assert_eq!(path_inside_repo(&repo.path, &file), None);
-    }
-
-    /// The picker can only hand back a file that is there, but the repo may have moved out
-    /// from under the window since it was opened.
-    #[test]
-    fn a_file_that_is_not_there_is_not_a_file_of_the_repo() {
-        let repo = TestDir::new();
-
-        assert_eq!(
-            path_inside_repo(&repo.path, &repo.path.join("gone.rs")),
-            None
-        );
     }
 }

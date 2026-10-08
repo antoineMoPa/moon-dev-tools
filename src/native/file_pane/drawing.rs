@@ -72,6 +72,16 @@ impl App {
         let loaded = editor.saved.is_some();
         let blaming = editor.blaming.is_on();
         let markdown = is_markdown(file_path);
+        // A file of the window's own project reads as its path inside it. One placed in a
+        // session of its own - `/etc/hostname` - reads as where it is on disk: its path
+        // inside a project nobody opened says nothing about which file this is.
+        let shown_path = match self.model.projects_of_placed_files.get(session_id) {
+            Some(project) => std::path::Path::new(project)
+                .join(file_path)
+                .display()
+                .to_string(),
+            None => file_path.to_string(),
+        };
         // The find bar selects matches in the laid-out text, so while it is on this pane the
         // text is what is shown, whatever the toggle says.
         let find_is_here = self
@@ -245,13 +255,13 @@ impl App {
                         }
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                             ui.add(
-                                egui::Label::new(RichText::new(file_path).strong())
+                                egui::Label::new(RichText::new(&shown_path).strong())
                                     .truncate()
                                     .selectable(true),
                             )
                             // The whole of it, since the pane may only have room for the
                             // start.
-                            .on_hover_text(file_path);
+                            .on_hover_text(&shown_path);
                         });
                     });
                 });

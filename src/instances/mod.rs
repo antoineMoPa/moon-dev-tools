@@ -18,7 +18,12 @@
 //! board an agent is started on, and the one holding the shell of the agent told or looked at
 //! - and are answered with what came of it rather than with a promise: see
 //! [`window::AgentAsks`].
+//!
+//! `moon launch <command>` reaches the moon whose shell it was typed in, and that one may be
+//! a `moon serve`: it is no window and is written down as none, and listens on a socket named
+//! the same way for this one ask - see [`server`].
 
+pub(crate) mod server;
 pub(crate) mod window;
 
 #[cfg(test)]
@@ -26,7 +31,7 @@ mod tests;
 
 use std::{
     io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
+    os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -48,6 +53,23 @@ pub(crate) const WINDOW_ENV: &str = "MOON_INSTANCE";
 /// window is tried. It is a local socket and the answer is written the moment the ask is
 /// read, so this is only ever hit by a window that is not really there any more.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long a moon is given to say how the start of a program went, which it only says once
+/// it knows: a desktop may have to be started for the program first, and the program is then
+/// given a second and a half to open a window or fail - see `crate::display::started`.
+const LAUNCH_ANSWER_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// What a moon does with a program a shell asked it to start: `moon launch`.
+///
+/// Answered on the thread the socket is read on, with how the start went, as what is asked
+/// about an agent is - see [`window::AgentAsks`]: whoever asked is a command waiting to say
+/// so.
+pub(crate) trait StartsApplications: Send + Sync {
+    /// Start a line of shell for its windows, run in `folder`, and answer once the start is
+    /// known to have gone one way or the other: with where its windows open, in the words the
+    /// shell that asked prints, or with what the program said when it ended in failure.
+    fn start(&self, command: &str, folder: &Path) -> Result<String>;
+}
 
 /// One running window: what it is open on, and where to reach it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +129,14 @@ pub(crate) enum Ask {
     Tell { terminal_id: String, line: String },
     /// Say what one of this window's shells is showing: `moon agent view`.
     Shown { terminal_id: String, wanted: Shown },
+    /// Start a program for its windows: `moon launch`. Asked of the moon whose shell it was
+    /// typed in, which a `moon serve` can be - see [`launch`].
+    Launch {
+        /// A line of shell.
+        command: String,
+        /// The folder the shell that asked is in, which is where the program is run.
+        folder: String,
+    },
 }
 
 /// What the window answers.
@@ -132,29 +162,36 @@ pub(crate) enum Answer {
     Told,
     /// What the shell is showing, one line per row.
     Shown { text: String },
+    /// The program is started: a window of it has opened, or it has not ended in failure in
+    /// the time its start is given. `on` is where its windows open, for the shell to print.
+    Launched { on: String },
 }
 
 impl Instance {
     /// Ask this window to do something, and wait for its answer.
     pub(crate) fn ask(&self, ask: &Ask) -> Result<Answer> {
-        let socket_path =
-            socket_path(self.pid).context("no home directory to reach a window in")?;
-        let stream = UnixStream::connect(&socket_path)
-            .with_context(|| format!("failed to reach {}", socket_path.display()))?;
-        stream.set_read_timeout(Some(ANSWER_TIMEOUT))?;
-        stream.set_write_timeout(Some(ANSWER_TIMEOUT))?;
-
-        let mut writing = &stream;
-        writeln!(writing, "{}", serde_json::to_string(ask)?)?;
-        writing.flush()?;
-
-        let mut answer = String::new();
-        BufReader::new(&stream)
-            .read_line(&mut answer)
-            .context("the window said nothing")?;
-        serde_json::from_str(answer.trim())
-            .with_context(|| format!("the window answered with {answer:?}"))
+        ask_process(self.pid, ask, ANSWER_TIMEOUT)
     }
+}
+
+/// Ask the moon running as this process to do something, and wait `within` for its answer.
+fn ask_process(pid: u32, ask: &Ask, within: Duration) -> Result<Answer> {
+    let socket_path = socket_path(pid).context("no home directory to reach a window in")?;
+    let stream = UnixStream::connect(&socket_path)
+        .with_context(|| format!("failed to reach {}", socket_path.display()))?;
+    stream.set_read_timeout(Some(within))?;
+    stream.set_write_timeout(Some(within))?;
+
+    let mut writing = &stream;
+    writeln!(writing, "{}", serde_json::to_string(ask)?)?;
+    writing.flush()?;
+
+    let mut answer = String::new();
+    BufReader::new(&stream)
+        .read_line(&mut answer)
+        .context("the window said nothing")?;
+    serde_json::from_str(answer.trim())
+        .with_context(|| format!("the window answered with {answer:?}"))
 }
 
 /// Where the records live. `None` when this account has no home directory, which is the one
@@ -209,6 +246,45 @@ fn record_path(pid: u32) -> Option<PathBuf> {
 
 fn socket_path(pid: u32) -> Option<PathBuf> {
     Some(dir()?.join(format!("{pid}.sock")))
+}
+
+/// Open the socket this process is asked on. It is named after the process, so a shell that
+/// knows which moon started it knows where to ask.
+fn listen_on_own_socket() -> Result<UnixListener> {
+    let path = socket_path(std::process::id()).context("no home directory to listen in")?;
+    let dir = path.parent().expect("the socket sits in the instances dir");
+    std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    // A pid this process was handed again may have left its socket behind; binding to a
+    // path that already exists fails, and that file cannot belong to anyone else.
+    let _ = std::fs::remove_file(&path);
+    UnixListener::bind(&path).with_context(|| format!("failed to listen on {}", path.display()))
+}
+
+/// Read the one ask a connection carries.
+fn read_ask(stream: &UnixStream) -> Result<Ask> {
+    let mut asked = String::new();
+    BufReader::new(stream)
+        .read_line(&mut asked)
+        .context("failed to read the ask")?;
+    serde_json::from_str(asked.trim())
+        .with_context(|| format!("failed to read {asked:?} as an ask"))
+}
+
+/// Write the answer to an ask back to the shell waiting on it.
+fn write_answer(mut stream: &UnixStream, answer: &Answer) -> Result<()> {
+    writeln!(stream, "{}", serde_json::to_string(answer)?)?;
+    stream.flush().context("failed to answer the shell")
+}
+
+/// Start the program a `moon launch` asked for, and answer with how its start went: one that
+/// failed is refused in the words of whatever failed, the program's own among them.
+fn launched(applications: &dyn StartsApplications, command: &str, folder: &str) -> Answer {
+    match applications.start(command, Path::new(folder)) {
+        Ok(on) => Answer::Launched { on },
+        Err(error) => Answer::Refused {
+            reason: format!("{error:#}"),
+        },
+    }
 }
 
 /// Write down that this process's window is open on this project, replacing what it said
@@ -375,7 +451,8 @@ fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
 }
 
 /// The window of a moon, by its process - or `None` for a process with no window written
-/// down, which is what a `moon serve` is: it holds shells and listens on no socket.
+/// down, which is what a `moon serve` is: it holds shells, and the socket it listens on
+/// answers `moon launch` and nothing a window is asked - see [`server`].
 pub(crate) fn window_of(pid: u32) -> Option<Instance> {
     running().into_iter().find(|instance| instance.pid == pid)
 }
@@ -469,6 +546,43 @@ pub(crate) fn shown(window: &Instance, terminal_id: &str, wanted: Shown) -> Resu
     match ask_about_an_agent(window, &ask)? {
         Answer::Shown { text } => Ok(text),
         other => bail!("the window answered a look at a shell with {other:?}"),
+    }
+}
+
+/// Have the moon this shell was started by start a program for its windows, run in `folder`,
+/// and wait to hear how the start went: on the desktop of a `moon serve`, or on the screen a
+/// `moon desktop` is the session of. Answers with where the program's windows open.
+///
+/// Only that moon is asked. The program is started where the shell is, and its windows are
+/// shown by the moon the shell is a tab of - no other moon on the machine is either.
+pub(crate) fn launch(command: &str, folder: &Path) -> Result<String> {
+    let Some(moon) = shell_window() else {
+        bail!(
+            "this shell was not started by a moon, so there is no moon to start a program in: \
+             `moon launch` is typed in a shell tab of `moon serve` or of `moon desktop`"
+        );
+    };
+    launch_in(moon, command, folder)
+}
+
+/// The same, of the moon running as this process. Its refusal is the whole of what there is
+/// to say: how the program failed as it started, or why this moon starts none.
+fn launch_in(moon: u32, command: &str, folder: &Path) -> Result<String> {
+    let ask = Ask::Launch {
+        command: command.to_string(),
+        folder: folder.display().to_string(),
+    };
+    let answer = ask_process(moon, &ask, LAUNCH_ANSWER_TIMEOUT).with_context(|| {
+        format!(
+            "the moon this shell was started by (process {moon}) did not answer - it has \
+             ended, or it was started by an older moon, which does not know what was asked \
+             and has to be restarted"
+        )
+    })?;
+    match answer {
+        Answer::Launched { on } => Ok(on),
+        Answer::Refused { reason } => bail!("{reason}"),
+        other => bail!("the moon answered a launch with {other:?}"),
     }
 }
 

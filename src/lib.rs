@@ -18,6 +18,8 @@ mod backend;
 mod cli;
 mod comments;
 #[cfg(not(target_arch = "wasm32"))]
+mod desktop_entries;
+#[cfg(not(target_arch = "wasm32"))]
 mod display;
 mod commit_suggestion;
 mod committing;
@@ -49,6 +51,8 @@ mod settings;
 mod shell_locale;
 #[cfg(not(target_arch = "wasm32"))]
 mod shell_path;
+#[cfg(not(target_arch = "wasm32"))]
+mod shell_quoting;
 #[cfg(not(target_arch = "wasm32"))]
 mod terminal;
 mod visualizations;

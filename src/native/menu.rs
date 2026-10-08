@@ -9,6 +9,8 @@
 //! only in the menu.
 
 #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
+mod applications;
+#[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
 pub(crate) mod bar;
 
 /// Something the menu asked for.
@@ -49,10 +51,14 @@ pub(crate) enum MenuAction {
     /// command, as a menu item.
     #[cfg(target_arch = "wasm32")]
     ShowPageQr,
-    /// Start an application - an item of `moon › Applications`, by its place in the
-    /// settings' list, which is the list the menu was drawn from.
+    /// Start an application - an item of `moon › Applications`, by its place in the lists
+    /// the menu was drawn from.
     #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
-    StartApplication(usize),
+    StartApplication(crate::native::applications_offered::ApplicationPlace),
+    /// Ask the server again which applications it has installed - the bar's `moon` menu,
+    /// being opened.
+    #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
+    ListApplications,
     /// This window's repo in a browser - the palette's `open in web` command, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenInWeb,
@@ -145,11 +151,9 @@ mod platform {
     }
 
     impl NativeMenu {
-        /// Install the menu bar. `picks_files` decides whether Open File is offered at all,
-        /// since it needs the repo to be on this machine for the OS picker to reach it.
-        /// `frame` is which of the three programs this window is - the one whose new window
-        /// takes ⌘N.
-        pub(crate) fn install(picks_files: bool, frame: Frame) -> Option<Self> {
+        /// Install the menu bar. `frame` is which of the three programs this window is - the
+        /// one whose new window takes ⌘N.
+        pub(crate) fn install(frame: Frame) -> Option<Self> {
             let menu = Menu::new();
 
             // Written on demand rather than by the installer, which drops executables on PATH
@@ -175,10 +179,10 @@ mod platform {
             // A File menu with the one thing this window opens files for: reading and editing
             // one in a tab. ⌘O is what the chord means everywhere else, and the review's own
             // way to a file - clicking it in the sidebar - opens the same tab.
-            let new_file = MenuItem::new("New File", picks_files, None);
+            let new_file = MenuItem::new("New File", true, None);
             let open_file = MenuItem::new(
                 "Open File…",
-                picks_files,
+                true,
                 Some(Accelerator::new(Some(Modifiers::META), Code::KeyO)),
             );
             // The two searches that open a file without knowing where it is: by its name, and
@@ -545,7 +549,7 @@ mod platform {
     pub(crate) struct NativeMenu;
 
     impl NativeMenu {
-        pub(crate) fn install(_picks_files: bool, _frame: crate::cli::Frame) -> Option<Self> {
+        pub(crate) fn install(_frame: crate::cli::Frame) -> Option<Self> {
             None
         }
 

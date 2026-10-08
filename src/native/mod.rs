@@ -2,6 +2,7 @@
 //! the same process and the same executable.
 
 pub(crate) mod app;
+pub(crate) mod applications_offered;
 pub(crate) mod bindings;
 pub(crate) mod blame;
 pub(crate) mod board;
@@ -23,6 +24,7 @@ pub(crate) mod display_pane;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod extension_pane;
 pub(crate) mod file_pane;
+pub(crate) mod file_picker;
 pub(crate) mod find;
 pub(crate) mod fonts;
 pub(crate) mod formatting;

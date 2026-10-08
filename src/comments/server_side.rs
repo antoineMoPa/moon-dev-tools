@@ -255,7 +255,7 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
 /// runs on this machine, whose secret the key is made with.
 fn shell_quoted_moon() -> String {
     let moon = std::env::current_exe().expect("the running executable has a path");
-    format!("'{}'", moon.to_string_lossy().replace('\'', "'\\''"))
+    crate::shell_quoting::single_quoted(&moon.to_string_lossy())
 }
 
 /// Every comment of the session, whether or not its hunk is still part of the current diff.

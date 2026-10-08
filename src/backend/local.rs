@@ -133,6 +133,14 @@ impl Backend for LocalBackend {
         service::create_session_file(&self.state, session_id, file_path, content)
     }
 
+    fn list_folder(&self, folder: &str) -> Result<crate::api::folders::FolderListing> {
+        service::list_folder(folder)
+    }
+
+    fn place_file(&self, path: &str) -> Result<crate::api::folders::FilePlaced> {
+        service::place_file(&self.state, path)
+    }
+
     fn file_content(&self, session_id: &str, file_path: &str) -> Result<FileContentPayload> {
         service::session_file(&self.state, session_id, file_path)
     }
@@ -616,7 +624,11 @@ impl Backend for LocalBackend {
         anyhow::bail!(NO_DISPLAY_OF_THIS_MACHINE)
     }
 
-    /// None, rather than a refusal: a window asks this as it opens, whatever it is on.
+    fn installed_applications(&self) -> Result<crate::api::applications::InstalledApplications> {
+        Ok(crate::desktop_entries::installed())
+    }
+
+    /// None, rather than a refusal: a window asks this on its clock, whatever it is on.
     fn display(&self) -> Result<Option<crate::api::display::DisplayView>> {
         Ok(None)
     }
