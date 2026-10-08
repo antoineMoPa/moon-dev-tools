@@ -156,6 +156,7 @@ pub(crate) enum Admission {
 #[derive(Clone)]
 pub(crate) struct Users {
     shared: Arc<Mutex<Shared>>,
+    pub(crate) profiles: super::profiles::Profiles,
     /// Counts the kicks, for whoever holds a connection open to hear of one - see
     /// [`Users::kicks`].
     kicks: watch::Sender<u64>,
@@ -181,6 +182,7 @@ impl Users {
         let keys = PassKeys::kept_at(secret_path)?;
         let kicked = read_kicked(&kicked_path(secret_path))?;
         Ok(Self {
+            profiles: super::profiles::Profiles::kept_at(secret_path)?,
             shared: Arc::new(Mutex::new(Shared {
                 keys,
                 secret_path: secret_path.to_path_buf(),
@@ -268,6 +270,7 @@ impl Users {
         if !shared.seen.contains_key(user) {
             bail!("no user {user} has been seen by this server");
         }
+        self.profiles.forget_admission(user)?;
         shared.kicked.insert(user.clone());
         write_kicked(&kicked_path(&shared.secret_path), &shared.kicked)?;
         drop(shared);
@@ -280,6 +283,7 @@ impl Users {
     /// what they are; the file of kicks is emptied, since the ids it held cannot come back.
     pub(crate) fn kick_everyone(&self) -> Result<()> {
         let mut shared = self.lock();
+        self.profiles.forget_all_admissions()?;
         shared.keys = PassKeys::renewed_at(&shared.secret_path)?;
         let everyone: Vec<UserId> = shared.seen.keys().cloned().collect();
         shared.kicked = everyone.into_iter().collect();

@@ -19,6 +19,8 @@ pub(crate) mod definition;
 pub(crate) mod desktop;
 pub(crate) mod diagnostics;
 pub(crate) mod display_pane;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod web_account;
 // An extension's script runs programs and reads folders on the project's machine, which a
 // browser's window is never on.
 #[cfg(not(target_arch = "wasm32"))]

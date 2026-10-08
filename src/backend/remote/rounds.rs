@@ -21,8 +21,6 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use wasm_bindgen::{JsCast, closure::Closure};
-use web_sys::XmlHttpRequest;
 
 /// What a call that went out in this run answers with. The work sees it as any other error.
 #[derive(Debug)]
@@ -81,7 +79,10 @@ impl Round {
         self.state.cursor.set(0);
         RUNNING.with(|running| {
             let previous = running.borrow_mut().replace(self.clone());
-            assert!(previous.is_none(), "a task's work ran inside another task's work");
+            assert!(
+                previous.is_none(),
+                "a task's work ran inside another task's work"
+            );
         });
         let result = work();
         RUNNING.with(|running| running.borrow_mut().take());
@@ -96,8 +97,15 @@ impl Round {
 
     /// Call `then` once every request out is answered.
     pub(crate) fn when_answered(&self, then: impl FnOnce() + 'static) {
-        let previous = self.state.when_answered.borrow_mut().replace(Box::new(then));
-        assert!(previous.is_none(), "a round was told twice what to do once answered");
+        let previous = self
+            .state
+            .when_answered
+            .borrow_mut()
+            .replace(Box::new(then));
+        assert!(
+            previous.is_none(),
+            "a round was told twice what to do once answered"
+        );
     }
 
     fn answer(&self, method: &str, url: &str, body: Option<&str>) -> Result<String> {
@@ -125,8 +133,11 @@ impl Round {
             answer: None,
         });
         self.state.waiting.set(self.state.waiting.get() + 1);
-        send(method, url, body, self.clone(), at)
-            .map_err(|error| anyhow!("{method} {url} could not be sent: {error:?}"))?;
+        if let Err(error) = send(method, url, body, self.clone(), at) {
+            let reason = format!("{method} {url} could not be sent: {error:?}");
+            self.answered(at, Err(reason.clone()));
+            return Err(anyhow!(reason));
+        }
         Err(StillFetching.into())
     }
 
@@ -166,10 +177,20 @@ fn log_in_again() {
 /// Ask the server, through the round of the task whose work is running. Every backend call in
 /// a browser is made from a task's work - see `crate::native::tasks`.
 pub(super) fn request(method: &str, url: &str, body: Option<&str>) -> Result<String> {
-    let round = RUNNING.with(|running| running.borrow().clone()).unwrap_or_else(|| {
-        panic!("{method} {url} was asked outside a task, where a browser has nothing to wait with")
-    });
+    let round = RUNNING
+        .with(|running| running.borrow().clone())
+        .unwrap_or_else(|| {
+            panic!(
+                "{method} {url} was asked outside a task, where a browser has nothing to wait with"
+            )
+        });
     round.answer(method, url, body)
+}
+
+/// The identity this page opened as, kept fixed until reload. Reading the current account
+/// afresh here would allow an old window to silently act as somebody signed in elsewhere.
+pub(super) fn expected_profile() -> Option<String> {
+    crate::web::account::expected_profile()
 }
 
 fn send(
@@ -179,32 +200,27 @@ fn send(
     round: Round,
     at: usize,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    let request = XmlHttpRequest::new()?;
-    request.open_with_async(method, url, true)?;
-
-    let heard = request.clone();
     let described = format!("{method} {url}");
-    let on_end = Closure::once_into_js(move || {
-        let status = heard.status().unwrap_or(0);
-        let text = heard.response_text().ok().flatten().unwrap_or_default();
-        // The server puts the reason for a refusal in the body, so that is what one reads as.
-        let answer = match status {
-            0 => Err(format!("{described} failed: the server could not be reached")),
-            200..=299 => Ok(text),
-            _ => Err(format!("{described} answered {status}: {text}")),
-        };
-        if status == LOGIN_OVER {
-            log_in_again();
-        }
-        round.answered(at, answer);
-    });
-    request.set_onloadend(Some(on_end.unchecked_ref()));
-
-    match body {
-        Some(body) => {
-            request.set_request_header("content-type", "application/json")?;
-            request.send_with_opt_str(Some(body))
-        }
-        None => request.send(),
-    }
+    crate::web::http::send(
+        method,
+        url,
+        body,
+        expected_profile().as_deref(),
+        0,
+        false,
+        move |status, text| {
+            // The server puts the reason for a refusal in the body, so that is what one reads as.
+            let answer = match status {
+                0 => Err(format!(
+                    "{described} failed: the server could not be reached"
+                )),
+                200..=299 => Ok(text),
+                _ => Err(format!("{described} answered {status}: {text}")),
+            };
+            if status == LOGIN_OVER {
+                crate::web::activity::when_active(log_in_again);
+            }
+            round.answered(at, answer);
+        },
+    )
 }

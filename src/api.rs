@@ -7,6 +7,7 @@ pub(crate) mod folders;
 mod server_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod serving;
+pub(crate) mod terminal_stream;
 
 use serde::{Deserialize, Serialize};
 
@@ -566,3 +567,5 @@ pub(crate) struct AgentLogPayload {
     pub(crate) dispatch_key: String,
     pub(crate) text: String,
 }
+
+pub(crate) mod profiles;

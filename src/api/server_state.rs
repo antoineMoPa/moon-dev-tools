@@ -46,6 +46,7 @@ pub(crate) struct ServerState {
 }
 
 pub(crate) struct RepoSession {
+    pub(crate) namespace: Option<String>,
     pub(crate) repo_path: PathBuf,
     pub(crate) diff_target: DiffTarget,
     pub(crate) active_commit: Option<String>,

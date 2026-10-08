@@ -4,6 +4,7 @@
 mod auth;
 mod board_routes;
 mod folder_routes;
+pub(crate) mod profiles;
 mod review_routes;
 pub(crate) mod users;
 mod web_page;
@@ -108,6 +109,12 @@ impl FromRef<Served> for PassKeys {
     }
 }
 
+impl FromRef<Served> for profiles::Profiles {
+    fn from_ref(served: &Served) -> Self {
+        served.users.profiles.clone()
+    }
+}
+
 impl FromRef<Served> for Users {
     fn from_ref(served: &Served) -> Self {
         served.users.clone()
@@ -170,6 +177,14 @@ async fn robots_txt() -> &'static str {
 fn protected_routes() -> Router<Served> {
     Router::new()
         .route("/api/pass-key", get(pass_key_admitted).post(mint_pass_key))
+        .route("/api/me", get(profiles::me))
+        .route("/api/me/github/device", post(profiles::device))
+        .route("/api/me/github/poll", post(profiles::poll))
+        .route("/api/me/disconnect", post(profiles::disconnect))
+        .route(
+            "/api/me/layout",
+            axum::routing::put(profiles::save_layout),
+        )
         .route("/api/users", get(users::list))
         .route("/api/users/kick-all", post(users::kick_everyone))
         .route("/api/users/{id}/kick", post(users::kick))

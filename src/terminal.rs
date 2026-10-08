@@ -1,5 +1,6 @@
 mod answered_queries;
 mod naming;
+mod output;
 mod registry;
 mod routes;
 mod shown;
@@ -58,6 +59,7 @@ const TYPE_AHEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 const TYPE_AHEAD_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 /// How much shell output we keep so a reopened tab can replay what it missed.
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
+use output::Scrollback;
 const BROADCAST_CAPACITY: usize = 256;
 
 #[derive(Deserialize)]
@@ -225,7 +227,7 @@ pub(crate) struct TerminalSession {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
-    output: broadcast::Sender<Vec<u8>>,
+    output: broadcast::Sender<output::OutputChunk>,
     /// Flipped once the shell is gone. Attached tabs watch it so they learn about it even
     /// though they hold this session alive.
     ///
@@ -381,57 +383,6 @@ impl TerminalSession {
             pixel_height: 0,
         })?;
         Ok(())
-    }
-}
-
-/// Output chunks kept for replay, oldest dropped once the byte budget is spent.
-#[derive(Default)]
-struct Scrollback {
-    chunks: Vec<PrintedChunk>,
-    bytes: usize,
-}
-
-/// A chunk of what the shell printed, and whether a window was attached to read it as it
-/// came - which says whether the questions in it were answered. See
-/// [`answered_queries`].
-struct PrintedChunk {
-    bytes: Vec<u8>,
-    seen_live: bool,
-}
-
-impl Scrollback {
-    fn push(&mut self, chunk: &[u8], seen_live: bool) {
-        self.chunks.push(PrintedChunk {
-            bytes: chunk.to_vec(),
-            seen_live,
-        });
-        self.bytes += chunk.len();
-        while self.bytes > SCROLLBACK_LIMIT && self.chunks.len() > 1 {
-            self.bytes -= self.chunks.remove(0).bytes.len();
-        }
-    }
-
-    /// Everything kept, for a window attaching now, with the questions an attached window
-    /// already answered taken out - a second answer would reach the program as typing.
-    /// Stretches seen live are joined before they are filtered, so a question split across
-    /// two chunks is still found.
-    fn replay(&self) -> Vec<u8> {
-        let mut replay = Vec::with_capacity(self.bytes);
-        for stretch in self
-            .chunks
-            .chunk_by(|before, after| before.seen_live == after.seen_live)
-        {
-            let printed: Vec<u8> = stretch
-                .iter()
-                .flat_map(|chunk| chunk.bytes.iter().copied())
-                .collect();
-            if stretch[0].seen_live {
-                replay.extend(answered_queries::without_answered_queries(&printed));
-            } else {
-                replay.extend(printed);
-            }
-        }
-        replay
     }
 }
 

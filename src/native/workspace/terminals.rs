@@ -202,6 +202,21 @@ impl App {
     /// Draw a shell, or say why there isn't one to draw.
     pub(crate) fn draw_terminal(&mut self, ui: &mut Ui, pane_id: PaneId, terminal_id: &str) {
         let palette = self.palette_of();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(error) = self
+            .terminals
+            .get(terminal_id)
+            .and_then(egui_tty::Terminal::connection_error)
+        {
+            ui.label(RichText::new(error).color(palette.warn));
+            ui.label("The shell is still running. Reconnecting starts a fresh view of its retained output.");
+            if ui.button("Reconnect to shell").clicked() {
+                self.terminals.remove(terminal_id);
+                self.attach_terminal(terminal_id);
+                return;
+            }
+            ui.disable();
+        }
         if let Some(error) = self.terminal_errors.get(terminal_id) {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);

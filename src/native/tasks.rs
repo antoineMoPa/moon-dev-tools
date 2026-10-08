@@ -213,6 +213,11 @@ impl Tasks {
         W: Fn(&dyn Backend, &ModelEdits) -> Result<T> + Send + 'static,
         A: FnOnce(&mut Model, Result<T>) + Send + 'static,
     {
+        if !crate::web::activity::active() {
+            let tasks = self.clone();
+            crate::web::activity::when_active(move || tasks.attempt(round, hold, work, apply));
+            return;
+        }
         let edits_held = Arc::new(Mutex::new(Vec::new()));
         let edits = ModelEdits {
             inbox: Arc::clone(&edits_held),

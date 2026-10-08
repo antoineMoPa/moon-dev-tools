@@ -5,7 +5,7 @@ use std::convert::Infallible;
 
 use anyhow::Result;
 use axum::{
-    Json,
+    Extension, Json,
     body::{Body, Bytes},
     extract::{Path as AxumPath, Query, State},
     http::header,
@@ -41,10 +41,16 @@ pub(super) async fn session_submodules(
 
 pub(super) async fn open_session(
     State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
     Json(request): Json<OpenSessionRequest>,
 ) -> Result<Json<SessionOpened>, AppError> {
     mark_activity(&state);
-    Ok(Json(service::open_session(&state, request)?))
+    Ok(Json(service::open_session_for_profile(
+        &state,
+        request,
+        Some(profiles.namespace(&user)),
+    )?))
 }
 
 pub(super) async fn session_state(
@@ -339,19 +345,36 @@ pub(super) async fn suggest_commit_message(
 pub(super) async fn start_commit_run(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
     Json(action): Json<crate::committing::CommitAction>,
 ) -> Result<impl IntoResponse, AppError> {
     mark_activity(&state);
-    let terminal_id = crate::committing::start_commit_run(&state, &session_id, &action)?;
+    let env = profiles.git_environment(&user)?;
+    let namespace = profiles.namespace(&user);
+    let terminal_id = crate::committing::start_commit_run_personal(
+        &state,
+        &session_id,
+        &action,
+        Some(&namespace),
+        env,
+    )?;
     Ok(Json(crate::api::CommitRunStarted { terminal_id }))
 }
 
 pub(super) async fn commit_run_outcome(
     AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
 ) -> Result<impl IntoResponse, AppError> {
     mark_activity(&state);
-    let exit_code = crate::committing::commit_run_outcome(&state, &session_id, &terminal_id)?;
+    let exit_code = crate::committing::commit_run_outcome_personal(
+        &state,
+        &session_id,
+        &terminal_id,
+        Some(&profiles.namespace(&user)),
+    )?;
     Ok(Json(crate::api::CommitRunOutcome { exit_code }))
 }
 

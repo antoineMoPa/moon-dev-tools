@@ -167,6 +167,10 @@ fn page_address(state: &AppState, mut asked: Vec<(String, String)>) -> String {
     let names_repo = asked.iter().any(|(name, _)| name == REPO_PARAMETER);
     if !names_repo && let Some(repo) = home_repo(state) {
         asked.insert(0, (REPO_PARAMETER.to_owned(), repo));
+        // A saved personal layout may resume another repo. Tell the browser this
+        // path is only the server's fallback, rather than an explicit repo link.
+        asked.retain(|(name, _)| name != "default_repo");
+        asked.push(("default_repo".into(), "1".into()));
     }
     address_with_query(&asked)
 }

@@ -4,6 +4,8 @@
 mod auth;
 mod board_task;
 mod columns;
+mod profile_identity;
+mod terminal_stream;
 mod users;
 
 use std::{

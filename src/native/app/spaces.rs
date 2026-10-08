@@ -30,7 +30,7 @@ use super::App;
 pub(crate) const SPACE_COUNT: usize = 4;
 
 /// One place in the list of spaces.
-enum Slot {
+pub(super) enum Slot {
     /// The space in front: the [`App`] this is a field of.
     Front,
     Parked(Box<App>),
@@ -40,8 +40,8 @@ enum Slot {
 
 /// Every space of the window, in the order they are listed.
 pub(crate) struct Spaces {
-    slots: Vec<Slot>,
-    front: usize,
+    pub(super) slots: Vec<Slot>,
+    pub(super) front: usize,
 }
 
 impl Default for Spaces {

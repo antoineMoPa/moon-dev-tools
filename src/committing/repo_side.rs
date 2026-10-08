@@ -143,17 +143,23 @@ fn open_pr_step(state: &CommitState) -> Result<String> {
 /// The script prints the command first, so the pane shows what ran the way a prompt would
 /// have; then it writes down how the command went; then it hands the pty to an interactive
 /// login shell, so the output stays on screen above a shell to carry on in.
-fn run_script(command: &str) -> String {
+fn run_script(command: &str, personal: bool) -> String {
     let login_shell = crate::shell_path::login_shell();
     let printed = single_quoted(command);
     let shell = single_quoted(&login_shell);
-    [
+    let mut lines = vec![
         format!("printf '%s\\n' {printed}"),
         command.to_string(),
         format!("echo $? > \"${STATUS_VARIABLE}\""),
-        format!("exec {shell} -l"),
-    ]
-    .join("\n")
+    ];
+    if personal {
+        // Keep personal Git identity and restricted helpers in the follow-on shell, but
+        // require a new authenticated action to supply credentials for another push.
+        lines
+            .push("unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN".into());
+    }
+    lines.push(format!("exec {shell} -l"));
+    lines.join("\n")
 }
 
 fn ahead_behind(repo_path: &Path, upstream: &str) -> Result<(usize, usize)> {
@@ -272,14 +278,28 @@ pub(crate) fn start_commit_run(
     session_id: &str,
     action: &CommitAction,
 ) -> Result<String> {
+    start_commit_run_personal(state, session_id, action, None, Vec::new())
+}
+
+pub(crate) fn start_commit_run_personal(
+    state: &crate::api::AppState,
+    session_id: &str,
+    action: &CommitAction,
+    namespace: Option<&str>,
+    mut environment: Vec<(String, String)>,
+) -> Result<String> {
     crate::api::ensure_session_is_writable(state, session_id)?;
     let (repo_path, pathspec) = repo_of(state, session_id)?;
     let command = command_for(action, &read_commit_state(&repo_path, pathspec.as_deref())?)?;
 
     // Whatever the last run left behind is not this run's answer, and a message left from a
     // commit that is over must not be what the next one takes.
-    let message_path = run_message_path(session_id);
-    let status_path = run_status_path(session_id);
+    let run_id = namespace.map_or_else(
+        || session_id.to_string(),
+        |n| format!("{session_id}-{}", n.replace(':', "-")),
+    );
+    let message_path = run_message_path(&run_id);
+    let status_path = run_status_path(&run_id);
     let _ = std::fs::remove_file(&status_path);
     match action.commit_message() {
         Some(message) => std::fs::write(&message_path, message)
@@ -291,24 +311,19 @@ pub(crate) fn start_commit_run(
 
     // One run at a time per review: the pane shows one, and the last one's shell has nothing
     // left to say once the next starts.
-    let owner = run_owner(session_id);
+    let owner = run_owner(&run_id);
     state.terminals.remove_owned_by(&owner);
 
+    environment.extend(vec![
+        (MESSAGE_VARIABLE.into(), message_path.display().to_string()),
+        (STATUS_VARIABLE.into(), status_path.display().to_string()),
+    ]);
     state.terminals.spawn(crate::terminal::TerminalSpec {
         cwd: repo_path,
         program: crate::terminal::TerminalProgram::LoginShell,
         name: None,
-        args: vec!["-c".to_string(), run_script(&command)],
-        env: vec![
-            (
-                MESSAGE_VARIABLE.to_string(),
-                message_path.display().to_string(),
-            ),
-            (
-                STATUS_VARIABLE.to_string(),
-                status_path.display().to_string(),
-            ),
-        ],
+        args: vec!["-c".to_string(), run_script(&command, namespace.is_some())],
+        env: environment,
         owner: Some(owner),
         type_ahead: None,
     })
@@ -322,9 +337,22 @@ pub(crate) fn commit_run_outcome(
     session_id: &str,
     terminal_id: &str,
 ) -> Result<Option<i32>> {
+    commit_run_outcome_personal(state, session_id, terminal_id, None)
+}
+
+pub(crate) fn commit_run_outcome_personal(
+    state: &crate::api::AppState,
+    session_id: &str,
+    terminal_id: &str,
+    namespace: Option<&str>,
+) -> Result<Option<i32>> {
     crate::api::with_session(state, session_id, |_| Ok(()))?;
 
-    let status_path = run_status_path(session_id);
+    let run_id = namespace.map_or_else(
+        || session_id.to_string(),
+        |n| format!("{session_id}-{}", n.replace(':', "-")),
+    );
+    let status_path = run_status_path(&run_id);
     // An empty file is `echo` caught halfway through writing it, which is still going.
     let written = std::fs::read_to_string(&status_path).ok();
     let Some(status) = written
@@ -342,7 +370,7 @@ pub(crate) fn commit_run_outcome(
 
     let exit_code = status.parse().unwrap_or(SHELL_WENT_AWAY);
     let _ = std::fs::remove_file(&status_path);
-    let _ = std::fs::remove_file(run_message_path(session_id));
+    let _ = std::fs::remove_file(run_message_path(&run_id));
     Ok(Some(exit_code))
 }
 
@@ -562,7 +590,7 @@ mod tests {
     /// `echo` on a line of its own rather than appended to it.
     #[test]
     fn a_run_keeps_the_status_echo_off_the_command_it_runs() {
-        let script = run_script("git push -u origin HEAD");
+        let script = run_script("git push -u origin HEAD", false);
         let lines: Vec<&str> = script.lines().collect();
 
         assert_eq!(
@@ -583,8 +611,22 @@ mod tests {
     }
 
     #[test]
+    fn personal_run_records_status_then_discards_credentials_but_keeps_identity() {
+        let script = run_script("git push", true);
+        let lines: Vec<_> = script.lines().collect();
+        assert_eq!(lines[2], "echo $? > \"$MOONREVIEW_RUN_STATUS\"");
+        assert_eq!(
+            lines[3],
+            "unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN"
+        );
+        assert!(!script.contains("GIT_AUTHOR"));
+        assert!(!script.contains("GIT_CONFIG_COUNT"));
+        assert!(lines[4].starts_with("exec "));
+    }
+
+    #[test]
     fn a_command_the_script_prints_is_quoted_so_the_shell_leaves_it_alone() {
-        let script = run_script("git commit -F \"$MOONREVIEW_RUN_MESSAGE\"");
+        let script = run_script("git commit -F \"$MOONREVIEW_RUN_MESSAGE\"", false);
 
         assert_eq!(
             script.lines().next(),

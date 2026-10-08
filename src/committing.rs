@@ -10,7 +10,10 @@
 mod repo_side;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use repo_side::{commit_run_outcome, commit_state, start_commit_run};
+pub(crate) use repo_side::{
+    commit_run_outcome, commit_run_outcome_personal, commit_state, start_commit_run,
+    start_commit_run_personal,
+};
 
 use serde::{Deserialize, Serialize};
 

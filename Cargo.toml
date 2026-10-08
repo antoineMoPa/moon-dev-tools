@@ -61,7 +61,7 @@ similar = { version = "3.2", features = ["wasm32_web_time"] }
 js-sys = "0.3"
 wasm-bindgen = "=0.2.126"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Location", "Window", "Storage", "XmlHttpRequest", "WebSocket", "BinaryType", "MessageEvent", "UrlSearchParams", "console", "HtmlCanvasElement"] }
+web-sys = { version = "0.3", features = ["Document", "Location", "Window", "Storage", "XmlHttpRequest", "WebSocket", "BinaryType", "MessageEvent", "UrlSearchParams", "console", "HtmlCanvasElement", "History", "Request", "RequestInit", "Headers"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 moon_launcher = { version = "0.1", path = "crates/moon_launcher" }

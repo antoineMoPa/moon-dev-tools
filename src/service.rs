@@ -19,7 +19,7 @@ pub(crate) use files::{
     blame_session_file, create_session_file, find_session_files, search_session_contents,
     session_file, session_file_at, write_session_file,
 };
-pub(crate) use folders::{list_folder, place_file};
+pub(crate) use folders::{list_folder, place_file, place_file_for_profile};
 pub(crate) use staging::{
     discard_hunk, discard_hunks, stage_all, stage_file, stage_hunk, stage_selection, unstage_file,
     unstage_hunk,
@@ -118,6 +118,15 @@ fn unchanged_file_path(
 }
 
 pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Result<SessionOpened> {
+    open_session_for_profile(state, request, None)
+}
+
+/// Browser reviews keep selection and comments within the admitted person's profile.
+pub(crate) fn open_session_for_profile(
+    state: &AppState,
+    request: OpenSessionRequest,
+    namespace: Option<String>,
+) -> Result<SessionOpened> {
     let repo_path = project_root(PathBuf::from(request.repo_path))?;
     let diff_target = request.diff_target.unwrap_or_default();
     let active_commit = request
@@ -131,6 +140,11 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
     }
     let session_id =
         crate::api::session_id_for_view(&repo_path, &diff_target, active_commit.as_deref());
+
+    let session_id = match namespace.as_deref() {
+        Some(namespace) => crate::api::stable_id(&(namespace, session_id)),
+        None => session_id,
+    };
 
     let mut guard = state
         .inner
@@ -147,6 +161,7 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
             guard.sessions.insert(
                 session_id.clone(),
                 RepoSession {
+                    namespace,
                     repo_path,
                     diff_target,
                     active_commit,

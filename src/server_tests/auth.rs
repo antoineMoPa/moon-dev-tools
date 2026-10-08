@@ -358,6 +358,12 @@ fn public_pages_do_not_disclose_the_home_repository() {
             .unwrap()
             .starts_with("/moon/?repo=")
     );
+    assert!(
+        admitted.headers()[LOCATION]
+            .to_str()
+            .unwrap()
+            .ends_with("&default_repo=1")
+    );
 }
 
 #[test]

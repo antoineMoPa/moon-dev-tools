@@ -2,17 +2,14 @@
 //! task making them - see [`super::rounds`] - and a shell's socket as the browser's
 //! `WebSocket`.
 
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, mpsc},
-};
+#[path = "web_socket.rs"]
+mod web_socket;
+
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
-use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-use web_sys::{BinaryType, MessageEvent, WebSocket};
 
 use crate::{
     api::SearchLine,
@@ -117,93 +114,15 @@ impl RemoteBackend {
     /// Open a socket to the server. What the socket says goes into the channel of what was
     /// heard as it arrives; the channel closes with the socket.
     pub(super) fn open_socket(&self, url: &str) -> Result<Socket> {
-        let socket = WebSocket::new(url).map_err(js_error)?;
-        socket.set_binary_type(BinaryType::Arraybuffer);
-
-        let (sender, heard) = mpsc::channel::<Vec<u8>>();
-        let sender = Rc::new(RefCell::new(Some(sender)));
-
-        let hearing = Rc::clone(&sender);
-        let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
-            let data = event.data();
-            let chunk = if let Some(text) = data.as_string() {
-                text.into_bytes()
-            } else {
-                js_sys::Uint8Array::new(&data).to_vec()
-            };
-            if let Some(sender) = hearing.borrow().as_ref() {
-                // Whoever was listening is gone when this fails; the socket is closed along
-                // with them.
-                let _ = sender.send(chunk);
-            }
-        });
-        socket.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
-
-        // Dropping the sender is how whoever is listening hears the socket is gone.
-        let closed = Rc::clone(&sender);
-        let on_close = Closure::<dyn FnMut()>::new(move || {
-            closed.borrow_mut().take();
-        });
-        socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
-
-        let unsent = Rc::new(RefCell::new(Vec::<String>::new()));
-        let opened_socket = socket.clone();
-        let flushed = Rc::clone(&unsent);
-        let on_open = Closure::<dyn FnMut()>::new(move || {
-            for message in flushed.borrow_mut().drain(..) {
-                if let Err(error) = opened_socket.send_with_str(&message) {
-                    web_sys::console::error_1(&error);
-                }
-            }
-        });
-        socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
-
-        Ok(Socket {
-            heard,
-            said: Arc::new(SocketToServer {
-                socket,
-                unsent,
-                _handlers: (on_message, on_close, on_open),
-            }),
-        })
-    }
-}
-
-/// The saying half of a socket to the server, in a browser. Messages said before the socket
-/// opens - a shell's first resize, above all - wait in `unsent` until it does.
-struct SocketToServer {
-    socket: WebSocket,
-    unsent: Rc<RefCell<Vec<String>>>,
-    _handlers: (
-        Closure<dyn FnMut(MessageEvent)>,
-        Closure<dyn FnMut()>,
-        Closure<dyn FnMut()>,
-    ),
-}
-
-// SAFETY: `Say` asks for Send + Sync because natively a socket's handle is shared with the
-// thread reading it. This build is for wasm32-unknown-unknown without the atomics feature,
-// which has one thread, so the handle is never on another thread to be shared with.
-unsafe impl Send for SocketToServer {}
-// SAFETY: as above.
-unsafe impl Sync for SocketToServer {}
-
-impl Say for SocketToServer {
-    fn say(&self, text: String) -> Result<()> {
-        if self.socket.ready_state() == WebSocket::CONNECTING {
-            self.unsent.borrow_mut().push(text);
-            return Ok(());
-        }
-        self.socket
-            .send_with_str(&text)
-            .map_err(|error| anyhow!("{error:?}"))
-    }
-}
-
-impl Drop for SocketToServer {
-    fn drop(&mut self) {
-        // Closing tells the server this window let go; what was watched goes on.
-        let _ = self.socket.close();
+        let url = match super::rounds::expected_profile() {
+            Some(profile) => format!(
+                "{url}{}moon_profile={}",
+                if url.contains('?') { '&' } else { '?' },
+                super::urlencode(&profile),
+            ),
+            None => url.to_owned(),
+        };
+        web_socket::open(&url, url.contains("/terminals/"))
     }
 }
 
@@ -222,6 +141,10 @@ impl RemoteShell {
 }
 
 impl egui_tty::Tty for RemoteShell {
+    fn connection_error(&self) -> Option<String> {
+        self.said.connection_error()
+    }
+
     fn write(&self, data: &[u8]) -> egui_tty::Result<()> {
         let text = String::from_utf8_lossy(data).to_string();
         self.send(&json!({ "type": "input", "data": text }))
@@ -248,8 +171,4 @@ impl egui_tty::Tty for RemoteShell {
 fn decode<T: DeserializeOwned>(method: &str, path: &str, body: &str) -> Result<T> {
     serde_json::from_str(body)
         .map_err(|error| anyhow!("could not decode the response to {method} {path}: {error}"))
-}
-
-fn js_error(error: JsValue) -> anyhow::Error {
-    anyhow!("{error:?}")
 }

@@ -320,3 +320,102 @@ fn a_folder_that_is_no_repo_opens_with_an_empty_review() {
 
     fs::remove_dir_all(&enclosing).expect("failed to remove test directory");
 }
+
+#[test]
+fn browser_profiles_keep_review_state_and_workspace_shells_separate() {
+    let repo = served_repo("profiles");
+    let open = |namespace: &str| {
+        open_session_for_profile(
+            &repo.state,
+            OpenSessionRequest {
+                repo_path: repo.repo_path.display().to_string(),
+                diff_target: None,
+                active_commit: None,
+            },
+            Some(namespace.to_string()),
+        )
+        .unwrap()
+        .session_id
+    };
+    let alice = open("github:1");
+    let bob = open("github:2");
+    assert_ne!(alice, bob);
+    assert_ne!(alice, repo.session_id);
+    crate::api::with_session(&repo.state, &alice, |session| {
+        session
+            .comments
+            .insert("hunk".into(), "Alice's review".into());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(open("github:1"), alice);
+    crate::api::with_session(&repo.state, &bob, |session| {
+        assert!(session.comments.is_empty());
+        Ok(())
+    })
+    .unwrap();
+
+    let shell = crate::terminal::start_workspace_shell(&repo.state, &alice, None).unwrap();
+    assert_eq!(
+        repo.state
+            .terminals
+            .terminal_ids_for_owner(Some("workspace:github:1")),
+        vec![shell.clone()]
+    );
+    assert!(
+        repo.state
+            .terminals
+            .terminal_ids_for_owner(Some("workspace:github:2"))
+            .is_empty()
+    );
+    assert!(repo.state.terminals.terminal_ids().is_empty());
+    let file = repo.repo_path.join("lib.rs").display().to_string();
+    assert_eq!(
+        place_file_for_profile(&repo.state, &file, Some("github:1".into()))
+            .unwrap()
+            .session_id,
+        alice
+    );
+    assert_eq!(
+        place_file_for_profile(&repo.state, &file, Some("github:2".into()))
+            .unwrap()
+            .session_id,
+        bob
+    );
+    assert_eq!(
+        place_file(&repo.state, &file).unwrap().session_id,
+        repo.session_id
+    );
+    assert!(
+        repo.state
+            .terminals
+            .activity_visible_to(&shell, Some("workspace:github:1"))
+    );
+    assert!(
+        !repo
+            .state
+            .terminals
+            .activity_visible_to(&shell, Some("workspace:github:2"))
+    );
+    assert!(!repo.state.terminals.activity_visible_to(&shell, None));
+    let shared = repo
+        .state
+        .terminals
+        .spawn(crate::terminal::TerminalSpec {
+            owner: Some("task:shared".into()),
+            ..crate::terminal::TerminalSpec::shell(repo.repo_path.clone(), None, None)
+        })
+        .unwrap();
+    assert!(
+        repo.state
+            .terminals
+            .activity_visible_to(&shared, Some("workspace:github:1"))
+    );
+    assert!(
+        repo.state
+            .terminals
+            .activity_visible_to(&shared, Some("workspace:github:2"))
+    );
+    repo.state.terminals.remove(&shared);
+    repo.state.terminals.remove(&shell);
+}

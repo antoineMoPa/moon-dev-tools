@@ -80,6 +80,14 @@ fn folder_named(path: &str) -> Result<PathBuf> {
 /// The path is absolute. A symlink is followed to the file it leads to, since that is the
 /// file a save writes; a path nothing is at yet is placed by its folder, which has to exist.
 pub(crate) fn place_file(state: &AppState, path: &str) -> Result<FilePlaced> {
+    place_file_for_profile(state, path, None)
+}
+
+pub(crate) fn place_file_for_profile(
+    state: &AppState,
+    path: &str,
+    namespace: Option<String>,
+) -> Result<FilePlaced> {
     let named = Path::new(path);
     if !named.is_absolute() {
         bail!("{path} is not an absolute path");
@@ -103,13 +111,14 @@ pub(crate) fn place_file(state: &AppState, path: &str) -> Result<FilePlaced> {
         .parent()
         .with_context(|| format!("{path} does not name a file"))?;
 
-    let opened = super::open_session(
+    let opened = super::open_session_for_profile(
         state,
         OpenSessionRequest {
             repo_path: folder.display().to_string(),
             diff_target: None,
             active_commit: None,
         },
+        namespace,
     )?;
     let project = crate::api::with_session(state, &opened.session_id, |session| {
         Ok(session.repo_path.clone())

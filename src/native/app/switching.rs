@@ -64,6 +64,11 @@ impl App {
     /// there is one - the session it manages. Both a switch of project and a switch of space
     /// hand these across, so what the window is stays the same window.
     pub(super) fn take_window_from(&mut self, left: &mut App) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.web_account = left.web_account.take();
+            self.showing_web_account = std::mem::take(&mut left.showing_web_account);
+        }
         self.set_theme(left.model.theme);
         self.model.settings = left.model.settings.take();
         self.model.installed_applications = left.model.installed_applications.take();

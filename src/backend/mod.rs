@@ -70,6 +70,12 @@ pub(crate) struct Socket {
 /// The way to send a text message up a [`Socket`].
 pub(crate) trait Say: Send + Sync {
     fn say(&self, text: String) -> Result<()>;
+
+    /// A persistent failure of this attachment, if the stream needs reconnecting.
+    #[cfg(target_arch = "wasm32")]
+    fn connection_error(&self) -> Option<String> {
+        None
+    }
 }
 
 /// on worker threads - a remote backend is a network round-trip.

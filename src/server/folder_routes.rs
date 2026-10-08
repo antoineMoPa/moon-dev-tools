@@ -2,7 +2,7 @@
 //! listed, and a file picked anywhere on it given a session to be read through.
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
 };
 
@@ -40,8 +40,14 @@ pub(super) async fn list_folder(
 /// and a session reads and writes the files under its folder. This finds the folder for it.
 pub(super) async fn place_file(
     State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
     Json(request): Json<PlaceFileRequest>,
 ) -> Result<Json<FilePlaced>, AppError> {
     mark_activity(&state);
-    Ok(Json(service::place_file(&state, &request.path)?))
+    Ok(Json(service::place_file_for_profile(
+        &state,
+        &request.path,
+        Some(profiles.namespace(&user)),
+    )?))
 }

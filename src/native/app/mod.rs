@@ -6,6 +6,8 @@ mod picking;
 mod settings;
 mod spaces;
 mod switching;
+#[cfg(any(target_arch = "wasm32", test))]
+mod web_windows;
 #[cfg(not(target_arch = "wasm32"))]
 mod windows;
 
@@ -18,6 +20,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::native::panes::Pane;
 use anyhow::Result;
 use egui_frames::{Frames, Layout, PaneId};
 use web_time::Instant;
@@ -30,7 +34,6 @@ use crate::{
         bindings::Keymap,
         model::{Model, Stage, hash_of},
         palette::CommandAction,
-        panes::Pane,
         review::diff::{DiffLine, attach_syntax, build_diff_lines},
         tasks::Tasks,
         theme::{self, Palette, ThemeMode},
@@ -90,6 +93,10 @@ pub(crate) enum TerminalHolder {
 
 pub(crate) struct App {
     pub(crate) model: Model,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_account: Option<crate::web::account::Account>,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) showing_web_account: bool,
     pub(crate) tasks: Tasks,
     pub(crate) terminals: HashMap<String, egui_tty::Terminal>,
     /// The pty of each commit pane's last run, kept until that pane runs something else.
@@ -369,6 +376,10 @@ impl App {
                 settings: None,
                 installed_applications: None,
             },
+            #[cfg(target_arch = "wasm32")]
+            web_account: None,
+            #[cfg(target_arch = "wasm32")]
+            showing_web_account: false,
             tasks,
             terminals: HashMap::new(),
             commit_terminals: HashMap::new(),
@@ -601,11 +612,23 @@ impl App {
 /// Where the pane arrangement is kept between runs. Which agent comments go to is not here:
 /// that belongs to the person rather than to the window, so it lives in
 /// [`crate::settings`] - one file, in the server's home directory, that they can read and edit.
+#[cfg(not(target_arch = "wasm32"))]
 const LAYOUT_STORAGE_KEY: &str = "moonreview-workspace-layout";
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(target_arch = "wasm32")]
+        if self
+            .web_account
+            .as_ref()
+            .is_some_and(|account| account.0.borrow().stopped)
+        {
+            self.draw_web_account(ui.ctx());
+            return;
+        }
         self.draw(ui);
+        #[cfg(target_arch = "wasm32")]
+        self.draw_web_account(ui.ctx());
         // After the draw, which the pane arrangement is lent out to.
         self.settle_displays(ui.ctx());
         // Here rather than in `draw`: a webview is a child of the window, whose handle only
@@ -639,7 +662,18 @@ impl eframe::App for App {
             .extend(super::text_without_a_key::take().into_iter().map(egui::Event::Text));
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn auto_save_interval(&self) -> Duration {
+        Duration::from_secs(3)
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = storage;
+            self.save_web_window();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if let Ok(encoded) = serde_json::to_string(&self.model.layout) {
             storage.set_string(LAYOUT_STORAGE_KEY, encoded);
         }
@@ -651,6 +685,7 @@ impl App {
     ///
     /// A malformed or outdated value is simply ignored: a window that opens on the default
     /// arrangement is a far better outcome than one that refuses to open.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn restore_layout_from(&mut self, storage: Option<&dyn eframe::Storage>) {
         let Some(encoded) = storage.and_then(|storage| storage.get_string(LAYOUT_STORAGE_KEY))
         else {

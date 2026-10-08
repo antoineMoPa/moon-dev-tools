@@ -51,6 +51,8 @@ pub(crate) enum MenuAction {
     /// command, as a menu item.
     #[cfg(target_arch = "wasm32")]
     ShowPageQr,
+    #[cfg(target_arch = "wasm32")]
+    ShowWebAccount,
     /// Start an application - an item of `moon › Applications`, by its place in the lists
     /// the menu was drawn from.
     #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]

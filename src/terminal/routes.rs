@@ -8,7 +8,7 @@ use std::{
 use axum::{
     Extension, Json,
     extract::{
-        Path as AxumPath, State, WebSocketUpgrade,
+        Path as AxumPath, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     response::IntoResponse,
@@ -38,7 +38,7 @@ pub(crate) fn start_workspace_shell(
 ) -> anyhow::Result<String> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
-    spawn_workspace_shell(state, repo_path.clone(), repo_path, command)
+    spawn_workspace_shell(state, session_id, repo_path.clone(), repo_path, command)
 }
 
 /// A login shell started in a folder of the repo rather than at its root: what
@@ -62,12 +62,13 @@ pub(crate) fn start_workspace_shell_in_folder(
     if !folder.is_dir() {
         anyhow::bail!("{} is not a folder", folder.display());
     }
-    spawn_workspace_shell(state, repo_path, folder.to_path_buf(), None)
+    spawn_workspace_shell(state, session_id, repo_path, folder.to_path_buf(), None)
 }
 
 /// A shell of the workspace's own, named after its program and started in `cwd`.
 fn spawn_workspace_shell(
     state: &AppState,
+    session_id: &str,
     repo_path: PathBuf,
     cwd: PathBuf,
     command: Option<AgentKind>,
@@ -75,9 +76,10 @@ fn spawn_workspace_shell(
     let program = TerminalProgram::of_agent(command);
     // A workspace shell belongs to no task, so its name is the program and the number alone.
     let name = name_for_new_shell(state, &repo_path, None, &program)?;
-    state
-        .terminals
-        .spawn(TerminalSpec::shell(cwd, command, Some(name)))
+    state.terminals.spawn(TerminalSpec {
+        owner: workspace_owner(state, session_id)?,
+        ..TerminalSpec::shell(cwd, command, Some(name))
+    })
 }
 
 /// The same shell with one command line typed into it and sent: what an extension opens when
@@ -94,9 +96,24 @@ pub(crate) fn start_workspace_shell_running(
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
     let name = name_for_new_shell(state, &repo_path, None, &TerminalProgram::LoginShell)?;
     state.terminals.spawn(TerminalSpec {
+        owner: workspace_owner(state, session_id)?,
         name: Some(name),
         ..TerminalSpec::running(repo_path, command)
     })
+}
+
+fn workspace_owner(state: &AppState, session_id: &str) -> anyhow::Result<Option<String>> {
+    crate::api::with_session(state, session_id, |session| {
+        Ok(session
+            .namespace
+            .as_ref()
+            .map(|namespace| format!("workspace:{namespace}")))
+    })
+}
+
+fn workspace_terminal_ids(state: &AppState, session_id: &str) -> anyhow::Result<Vec<String>> {
+    let owner = workspace_owner(state, session_id)?;
+    Ok(state.terminals.terminal_ids_for_owner(owner.as_deref()))
 }
 
 pub(crate) async fn create_terminal(
@@ -126,7 +143,7 @@ pub(crate) async fn list_terminals(
 ) -> Result<impl IntoResponse, AppError> {
     crate::api::with_session(&state, &session_id, |_| Ok(()))?;
     Ok(Json(TerminalList {
-        terminal_ids: state.terminals.terminal_ids(),
+        terminal_ids: workspace_terminal_ids(&state, &session_id)?,
     }))
 }
 
@@ -138,7 +155,15 @@ pub(crate) async fn terminals_running_a_command(
     // Waits for the session lock and asks the ptys, both on a clock: kept off the async workers.
     let terminal_ids = tokio::task::spawn_blocking(move || {
         crate::api::with_session(&state, &session_id, |_| Ok(()))?;
-        anyhow::Ok(state.terminals.terminals_running_a_command())
+        let owner = workspace_owner(&state, &session_id)?;
+        anyhow::Ok(
+            state
+                .terminals
+                .terminals_running_a_command()
+                .into_iter()
+                .filter(|id| state.terminals.activity_visible_to(id, owner.as_deref()))
+                .collect(),
+        )
     })
     .await??;
     Ok(Json(TerminalList { terminal_ids }))
@@ -151,7 +176,19 @@ pub(crate) async fn terminals_wanting_attention(
 ) -> Result<impl IntoResponse, AppError> {
     let terminals = tokio::task::spawn_blocking(move || {
         crate::api::with_session(&state, &session_id, |_| Ok(()))?;
-        anyhow::Ok(state.terminals.wanting_attention())
+        let owner = workspace_owner(&state, &session_id)?;
+        anyhow::Ok(
+            state
+                .terminals
+                .wanting_attention()
+                .into_iter()
+                .filter(|terminal| {
+                    state
+                        .terminals
+                        .activity_visible_to(&terminal.terminal_id, owner.as_deref())
+                })
+                .collect(),
+        )
     })
     .await??;
     Ok(Json(TerminalAttentionList { terminals }))
@@ -164,7 +201,7 @@ pub(crate) async fn close_terminal(
     crate::api::with_session(&state, &session_id, |_| Ok(()))?;
     state.terminals.remove(&terminal_id);
     Ok(Json(TerminalList {
-        terminal_ids: state.terminals.terminal_ids(),
+        terminal_ids: workspace_terminal_ids(&state, &session_id)?,
     }))
 }
 
@@ -199,6 +236,7 @@ pub(crate) async fn terminal_socket(
     State(users): State<Users>,
     Extension(user): Extension<UserId>,
     upgrade: WebSocketUpgrade,
+    Query(stream): Query<TerminalStreamQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     crate::api::with_session(&state, &session_id, |_| Ok(()))?;
     let session = state
@@ -207,10 +245,17 @@ pub(crate) async fn terminal_socket(
         .ok_or_else(|| AppError(anyhow::anyhow!("unknown terminal {terminal_id}")))?;
 
     Ok(upgrade.on_upgrade(move |socket| async move {
-        if let Err(error) = attach_terminal(socket, session, users, user).await {
+        if let Err(error) = attach_terminal(socket, session, users, user, stream).await {
             eprintln!("[moonreview] terminal attachment ended: {error}");
         }
     }))
+}
+
+#[derive(Default, serde::Deserialize)]
+pub(crate) struct TerminalStreamQuery {
+    #[serde(default)]
+    moon_terminal_stream: bool,
+    moon_terminal_cursor: Option<u64>,
 }
 
 async fn attach_terminal(
@@ -218,33 +263,69 @@ async fn attach_terminal(
     session: Arc<TerminalSession>,
     users: Users,
     user: UserId,
+    stream: TerminalStreamQuery,
 ) -> anyhow::Result<()> {
     // Subscribe before replaying so nothing written in between is lost.
     let mut output = session.output.subscribe();
     let mut exited = session.exited.subscribe();
     let mut kicks = users.kicks();
-    let replay = session.scrollback.lock().unwrap().replay();
-
+    let replay = session
+        .scrollback
+        .lock()
+        .unwrap()
+        .attachment(if stream.moon_terminal_stream {
+            stream.moon_terminal_cursor
+        } else {
+            None
+        });
     let (mut socket_sender, mut socket_receiver) = socket.split();
-    if !replay.is_empty() {
-        socket_sender.send(Message::Binary(replay.into())).await?;
+    let replay = match replay {
+        Ok(replay) => replay,
+        Err(error) => {
+            socket_sender.send(stream_error(&error)).await?;
+            return Ok(());
+        }
+    };
+    let mut cursor = replay.sequence;
+    if stream.moon_terminal_stream || !replay.bytes.is_empty() {
+        socket_sender
+            .send(output_message(&replay, stream.moon_terminal_stream))
+            .await?;
     }
-
+    let output_session = Arc::clone(&session);
     let mut pump_output = tokio::spawn(async move {
         loop {
-            match output.recv().await {
-                Ok(chunk) => {
-                    if socket_sender
-                        .send(Message::Binary(chunk.into()))
-                        .await
-                        .is_err()
-                    {
-                        return;
+            let chunk = match output.recv().await {
+                Ok(chunk) => chunk,
+                Err(broadcast::error::RecvError::Lagged(_)) if stream.moon_terminal_stream => {
+                    let resumed = output_session
+                        .scrollback
+                        .lock()
+                        .unwrap()
+                        .attachment(Some(cursor));
+                    match resumed {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            let _ = socket_sender.send(stream_error(&error)).await;
+                            return;
+                        }
                     }
                 }
-                // Lagged: the browser fell behind, keep going with what follows.
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => break,
+            };
+            // A chunk pushed while replay was captured is already in that replay. This
+            // also skips queued broadcasts following recovery from a lagged receiver.
+            if chunk.sequence <= cursor {
+                continue;
+            }
+            cursor = chunk.sequence;
+            if socket_sender
+                .send(output_message(&chunk, stream.moon_terminal_stream))
+                .await
+                .is_err()
+            {
+                return;
             }
         }
         let _ = socket_sender.close().await;
@@ -296,4 +377,22 @@ async fn attach_terminal(
 
     pump_output.abort();
     Ok(())
+}
+
+fn output_message(chunk: &super::output::OutputChunk, framed: bool) -> Message {
+    Message::Binary(
+        if framed {
+            crate::api::terminal_stream::encode(chunk.sequence, &chunk.bytes)
+        } else {
+            chunk.bytes.clone()
+        }
+        .into(),
+    )
+}
+fn stream_error(error: &anyhow::Error) -> Message {
+    Message::Text(
+        serde_json::json!({"terminal_error": error.to_string()})
+            .to_string()
+            .into(),
+    )
 }

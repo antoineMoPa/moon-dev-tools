@@ -157,6 +157,13 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         action: CommandAction::ShowPageQr,
         shortcut: None,
     });
+    #[cfg(target_arch = "wasm32")]
+    commands.push(Command {
+        title: "account".to_string(),
+        description: "Manage your GitHub account".to_string(),
+        action: CommandAction::ShowWebAccount,
+        shortcut: None,
+    });
     commands.extend(application_commands(app));
     #[cfg(not(target_arch = "wasm32"))]
     commands.push(Command {

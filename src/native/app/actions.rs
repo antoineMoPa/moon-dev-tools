@@ -41,7 +41,8 @@ impl App {
             move |model, result| match result {
                 Ok(opened) => {
                     model.root_session_id = opened.session_id.clone();
-                    // A stored arrangement contributes its splits; what goes in it is new.
+                    // Browser personal windows also restore their stable panes; native runs
+                    // reuse the arrangement geometry.
                     model.layout = crate::native::workspace::arrangement_for(
                         model.restored_layout.take(),
                         &opened.session_id,
@@ -56,7 +57,11 @@ impl App {
                     model.board.refresh_requested = true;
                     // `moonshell` opens on a shell, which has to be started before there is
                     // anything to draw.
-                    model.open_shell_pending = frame == crate::cli::Frame::Shell;
+                    model.open_shell_pending = frame == crate::cli::Frame::Shell
+                        && !model
+                            .layout
+                            .panes()
+                            .any(|(_, pane)| matches!(pane, Pane::Terminal { .. }));
                 }
                 Err(error) => {
                     let message = format!("{error}");
@@ -469,6 +474,8 @@ impl App {
             CommandAction::EndDisplay => self.end_display(),
             #[cfg(target_arch = "wasm32")]
             CommandAction::ShowPageQr => self.show_page_qr(),
+            #[cfg(target_arch = "wasm32")]
+            CommandAction::ShowWebAccount => self.showing_web_account = true,
             #[cfg(not(target_arch = "wasm32"))]
             CommandAction::OpenInWeb => self.open_in_web(),
             #[cfg(not(target_arch = "wasm32"))]

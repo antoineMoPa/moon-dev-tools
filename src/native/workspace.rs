@@ -72,10 +72,9 @@ struct ShellMarks {
 /// The arrangement a run starts from: the shape the last one left behind, with this run's
 /// review in the frame whose tab strip is the app header.
 ///
-/// A stored arrangement is worth keeping for its shape - where the user put their columns and
-/// rows. Its panes are not: a review pane names a session that no longer exists, and a shell
-/// pane names a process that died with the last run. Whatever the review and the adopted shells
-/// do not fill is dropped on the first frame drawn.
+/// Native runs keep the stored geometry and populate it with this run's panes. Personal
+/// browser windows retain stable task/terminal panes and verified root-repository tabs.
+/// Their transient review session IDs are rebound after the new root session opens.
 pub(crate) fn arrangement_for(
     stored: Option<Layout<Pane>>,
     session_id: &str,
@@ -83,7 +82,33 @@ pub(crate) fn arrangement_for(
 ) -> Layout<Pane> {
     let mut layout = match stored {
         Some(mut stored) if stored.is_coherent() => {
+            #[cfg(not(target_arch = "wasm32"))]
             stored.take_panes();
+            #[cfg(target_arch = "wasm32")]
+            {
+                let ids: Vec<_> = stored.panes().map(|(id, _)| id).collect();
+                for id in ids {
+                    if let Some(
+                        Pane::Review {
+                            session_id: old, ..
+                        }
+                        | Pane::File {
+                            session_id: old, ..
+                        }
+                        | Pane::Commit { session_id: old },
+                    ) = stored.pane_mut(id)
+                    {
+                        if old.is_empty() {
+                            *old = session_id.to_string();
+                        } else {
+                            stored.close_pane(id);
+                        }
+                    }
+                }
+                if !stored.is_empty() {
+                    return stored;
+                }
+            }
             stored
         }
         _ => Layout::new(),

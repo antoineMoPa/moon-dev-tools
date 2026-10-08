@@ -49,10 +49,29 @@ pub(crate) fn draw(
         .frame(
             egui::Frame::new()
                 .fill(palette.header_bg)
-                .inner_margin(egui::Margin::symmetric(4, 2)),
+                .inner_margin(egui::Margin {
+                    left: 4,
+                    right: 4,
+                    top: if cfg!(target_arch = "wasm32") { 4 } else { 2 },
+                    bottom: 2,
+                }),
         )
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                #[cfg(target_arch = "wasm32")]
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("[account]")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        picked.push(MenuAction::ShowWebAccount);
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        menus(ui, project, applications, &mut picked);
+                    });
+                });
+                #[cfg(not(target_arch = "wasm32"))]
                 menus(ui, project, applications, &mut picked);
             });
         });
@@ -186,6 +205,7 @@ fn menus(
         #[cfg(target_arch = "wasm32")]
         {
             ui.separator();
+            item(ui, "Account…", None, MenuAction::ShowWebAccount, picked);
             item(ui, "Show QR Code", None, MenuAction::ShowPageQr, picked);
         }
     });

@@ -5,6 +5,10 @@
 //! window asks for when it is left off, and `?frame=review` or `?frame=shell` for the review or
 //! a shell rather than the task board - the board being where remote work is started from.
 
+pub(crate) mod account;
+pub(crate) mod activity;
+pub(crate) mod http;
+
 use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
@@ -19,6 +23,8 @@ use crate::{
 /// Start the window in `canvas`. Called once, by the page's own script - see `web/index.html`.
 #[wasm_bindgen]
 pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
+    activity::install()?;
+    let account = account::Account::prepare().await?;
     let location = web_sys::window()
         .ok_or_else(|| JsValue::from_str("moon runs in a window"))?
         .location();
@@ -47,8 +53,15 @@ pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
             canvas,
             eframe::WebOptions::default(),
             Box::new(move |creation| {
+                let ctx = creation.egui_ctx.clone();
+                std::mem::forget(activity::subscribe(move |active| {
+                    if active {
+                        ctx.request_repaint();
+                    }
+                }));
                 let mut app = app::App::new(creation.egui_ctx.clone(), launch);
-                app.restore_layout_from(creation.storage);
+                app.web_account = Some(account.clone());
+                app.restore_web_window(&creation.egui_ctx);
                 Ok(Box::new(app))
             }),
         )

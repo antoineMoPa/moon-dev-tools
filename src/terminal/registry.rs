@@ -52,6 +52,22 @@ impl TerminalRegistry {
         self.get(terminal_id)?.owner.clone()
     }
 
+    /// Workspace activity is personal; task-owned terminals are deliberately shared.
+    pub(crate) fn activity_visible_to(
+        &self,
+        terminal_id: &str,
+        workspace_owner: Option<&str>,
+    ) -> bool {
+        let Some(session) = self.get(terminal_id) else {
+            return false;
+        };
+        match session.owner.as_deref() {
+            None => workspace_owner.is_none(),
+            Some(owner) if owner.starts_with("workspace:") => Some(owner) == workspace_owner,
+            Some(_) => true,
+        }
+    }
+
     /// Call a shell something else. A blank name is refused: a tab has to read as something.
     pub(crate) fn rename(&self, terminal_id: &str, name: &str) -> anyhow::Result<()> {
         let name = name.trim();
@@ -88,7 +104,7 @@ impl TerminalRegistry {
             loop {
                 match output.blocking_recv() {
                     Ok(chunk) => {
-                        if sender.send(chunk).is_err() {
+                        if sender.send(chunk.bytes).is_err() {
                             return;
                         }
                     }
@@ -104,12 +120,16 @@ impl TerminalRegistry {
 
     /// The shells the workspace has of its own - a task's shells are the task's to show.
     pub(crate) fn terminal_ids(&self) -> Vec<String> {
+        self.terminal_ids_for_owner(None)
+    }
+
+    pub(crate) fn terminal_ids_for_owner(&self, owner: Option<&str>) -> Vec<String> {
         let mut ids: Vec<String> = self
             .sessions
             .lock()
             .unwrap()
             .iter()
-            .filter(|(_, session)| session.owner.is_none())
+            .filter(|(_, session)| session.owner.as_deref() == owner)
             .map(|(terminal_id, _)| terminal_id.clone())
             .collect();
         ids.sort();

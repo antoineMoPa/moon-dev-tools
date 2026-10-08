@@ -222,6 +222,24 @@ making a new secret: every pass key and login there was stops working, shells in
 `moon generate-pass-key` mints keys of the new secret from then on. A kick is remembered in
 `~/.moonreview/pass-key-secret.kicked`, so it outlives the server.
 
+**Account** connects GitHub for personal commit/push identity.
+
+In GitHub **Settings › Developer settings › OAuth Apps**, [create an OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app):
+
+- Set **Homepage URL** and **Authorization callback URL** to your Moon URL (e.g. `http://127.0.0.1:42001`; device flow does not use the callback).
+- Check **Enable Device Flow** and copy the app's **Client ID** into `MOON_GITHUB_CLIENT_ID` below.
+- Moon requests the `repo` scope during sign-in; approve organization access if your repository requires it.
+
+Run from this checkout:
+
+```bash
+MOON_GITHUB_CLIENT_ID=your_client_id \
+MOONREVIEW_HOST=127.0.0.1 MOONREVIEW_PORT=42001 \
+cargo run --locked --bin moon -- serve --logs
+```
+
+Open the login link printed in the terminal, then choose **Account › Sign in with GitHub**.
+
 It is the same window as `--remote`, shells included - the same terminal, Ghostty's VT engine
 built to wasm. The differences:
 - The browser keeps most ⌘ chords (⌘T, ⌘W, ⌘N), so Ctrl stands in for ⌘: Ctrl T, Ctrl Shift P.

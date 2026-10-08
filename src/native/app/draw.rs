@@ -277,6 +277,8 @@ impl App {
                 MenuAction::OpenWire => CommandAction::OpenWire,
                 #[cfg(target_arch = "wasm32")]
                 MenuAction::ShowPageQr => CommandAction::ShowPageQr,
+                #[cfg(target_arch = "wasm32")]
+                MenuAction::ShowWebAccount => CommandAction::ShowWebAccount,
                 #[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
                 MenuAction::StartApplication(place) => CommandAction::StartApplication(
                     self.applications_offered().command_at(place).to_owned(),
@@ -366,6 +368,21 @@ impl App {
         self.model
             .tick_toasts(ctx.input(|input| input.stable_dt).min(0.25));
 
+        // The browser header reserves space before every stage, including the
+        // project prompt and opening screen.
+        #[cfg(target_arch = "wasm32")]
+        if crate::native::workspace::in_a_phone_window(ctx) {
+            self.draw_web_account_header(ui);
+        } else {
+            let picked = crate::native::menu::bar::draw(
+                ui,
+                &self.palette_of(),
+                &self.model.project,
+                self.applications_offered(),
+            );
+            self.apply_menu_actions(picked);
+        }
+
         match self.model.stage {
             Stage::Prompt { .. } => {
                 self.apply_launch_screen_shortcuts(ctx);
@@ -411,15 +428,21 @@ impl App {
             None => {}
         }
         let focused = ctx.input(|input| input.focused);
-        self.poll_reviews(focused);
-        self.poll_submodules(focused);
-        self.poll_review_requests();
-        self.poll_running_shells();
-        self.poll_visualizations();
-        self.poll_language_server_work();
-        self.poll_board();
+        #[cfg(target_arch = "wasm32")]
+        let poll = crate::web::activity::active();
         #[cfg(not(target_arch = "wasm32"))]
-        self.poll_tunnel(ctx);
+        let poll = true;
+        if poll {
+            self.poll_reviews(focused);
+            self.poll_submodules(focused);
+            self.poll_review_requests();
+            self.poll_running_shells();
+            self.poll_visualizations();
+            self.poll_language_server_work();
+            self.poll_board();
+            #[cfg(not(target_arch = "wasm32"))]
+            self.poll_tunnel(ctx);
+        }
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
         if let Some((task_id, title)) = self.model.board.opened_task_page.take() {
@@ -457,23 +480,9 @@ impl App {
         self.remember_selected_agent();
         self.prune_diff_cache();
 
-        // A browser's window has the browser's menus, so it draws the window's own along the
-        // top - before the workspace, like the strip, so the frames are laid out under it.
         #[cfg(target_arch = "wasm32")]
-        {
-            // A phone's window has no room for a bar: its menus are in the hamburger of the
-            // tab strip, which is drawn with the workspace.
-            if crate::native::workspace::in_a_phone_window(ctx) {
-                self.tab_entries_for_strip = self.tab_menu_entries();
-            } else {
-                let picked = crate::native::menu::bar::draw(
-                    ui,
-                    &self.palette_of(),
-                    &self.model.project,
-                    self.applications_offered(),
-                );
-                self.apply_menu_actions(picked);
-            }
+        if crate::native::workspace::in_a_phone_window(ctx) {
+            self.tab_entries_for_strip = self.tab_menu_entries();
         }
         // A window that is its machine's desktop has no system to draw a bar for it either -
         // see `moon desktop`.

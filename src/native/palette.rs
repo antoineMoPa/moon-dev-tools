@@ -174,6 +174,8 @@ pub(crate) enum CommandAction {
     /// through a tunnel, whose window has the code.
     #[cfg(target_arch = "wasm32")]
     ShowPageQr,
+    #[cfg(target_arch = "wasm32")]
+    ShowWebAccount,
     /// This window's repo in a browser - see `crate::native::open_in_web`. Nothing a
     /// browser's window has to offer: it is the browser.
     #[cfg(not(target_arch = "wasm32"))]

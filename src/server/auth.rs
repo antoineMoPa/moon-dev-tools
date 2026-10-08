@@ -135,8 +135,43 @@ pub(super) async fn require_pass_key(
     if users.let_in(&user, ip, user_agent) == Admission::Kicked {
         return (StatusCode::UNAUTHORIZED, KICKED).into_response();
     }
+    // A second tab can change the account associated with this cookie. An already-open
+    // window must stop, rather than commit or save its old layout as the new person.
+    // Native clients without this header retain their existing request contract.
+    let expected = match expected_profile(request.headers(), request.uri()) {
+        Ok(expected) => expected,
+        Err(()) => {
+            return (StatusCode::BAD_REQUEST, "invalid profile expectation\n").into_response();
+        }
+    };
+    if expected.is_some_and(|expected| expected != users.profiles.namespace(&user)) {
+        return (
+            StatusCode::CONFLICT,
+            "Account changed in another window; reload before continuing\n",
+        )
+            .into_response();
+    }
     request.extensions_mut().insert(user);
     next.run(request).await
+}
+
+/// WebSocket clients cannot set headers, so they carry the same non-secret identifier in
+/// their query. This is only an expectation; admission still requires the signed cookie.
+fn expected_profile(headers: &HeaderMap, uri: &axum::http::Uri) -> Result<Option<String>, ()> {
+    let query =
+        axum::extract::Query::<std::collections::HashMap<String, String>>::try_from_uri(uri)
+            .map_err(|_| ())?;
+    let from_query = query.get("moon_profile").cloned();
+    let from_header = headers
+        .get("x-moon-profile")
+        .map(|value| value.to_str().map(str::to_owned).map_err(|_| ()))
+        .transpose()?;
+    if let (Some(header), Some(query)) = (&from_header, &from_query)
+        && header != query
+    {
+        return Err(());
+    }
+    Ok(from_header.or(from_query))
 }
 
 /// Who a request is from, for the users list.
