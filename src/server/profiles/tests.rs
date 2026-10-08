@@ -362,3 +362,179 @@ fn git_credential_fill_resets_host_helpers_and_only_returns_personal_github_toke
         "https://github.com/owner/repo.git"
     );
 }
+
+#[test]
+fn personal_shell_commits_keep_identity_isolated_without_credentials() {
+    use std::{
+        process::Command,
+        thread,
+        time::{Duration, Instant},
+    };
+    let profiles = fixture();
+    profiles.connect(&user("a"), account("1")).unwrap();
+    profiles.connect(&user("b"), account("2")).unwrap();
+    let root = profiles.path.parent().unwrap().join("repo");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init"]);
+    git(&["config", "user.name", "Host"]);
+    git(&["config", "user.email", "host@example.com"]);
+    git(&[
+        "-c",
+        "commit.gpgSign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "host",
+    ]);
+    git(&["config", "commit.gpgSign", "true"]);
+    let config_before = fs::read(root.join(".git/config")).unwrap();
+    let state =
+        crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(Instant::now())));
+    let registry = state.terminals.clone();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let spawn = |id: &str| {
+        let env = profiles.shell_git_environment(&user(id));
+        assert!(
+            !env.iter()
+                .any(|(key, value)| key.contains("TOKEN") || value.contains("secret-"))
+        );
+        use axum::{
+            Extension, Json,
+            extract::{Path as AxumPath, State},
+            response::IntoResponse,
+        };
+        let session_id = crate::service::open_session_for_profile(
+            &state,
+            crate::api::OpenSessionRequest {
+                repo_path: root.display().to_string(),
+                diff_target: None,
+                active_commit: None,
+            },
+            Some(profiles.namespace(&user(id))),
+        )
+        .unwrap()
+        .session_id;
+        let terminal = runtime.block_on(async {
+            let response = if id == "b" {
+                crate::terminal::run_in_shell(
+                    AxumPath(session_id),
+                    State(state.clone()),
+                    State(profiles.clone()),
+                    Extension(user(id)),
+                    Json(serde_json::from_value(serde_json::json!({"command":"true"})).unwrap()),
+                )
+                .await
+                .unwrap()
+                .into_response()
+            } else {
+                crate::terminal::create_terminal(
+                    AxumPath(session_id),
+                    State(state.clone()),
+                    State(profiles.clone()),
+                    Extension(user(id)),
+                    Json(
+                        serde_json::from_value(
+                            serde_json::json!({"folder":root.display().to_string()}),
+                        )
+                        .unwrap(),
+                    ),
+                )
+                .await
+                .unwrap()
+                .into_response()
+            };
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["terminal_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        });
+        (terminal.clone(), registry.attach(&terminal).unwrap().1)
+    };
+    // The admitted account cannot launch its identity in another profile's workspace.
+    runtime.block_on(async {
+        use axum::{
+            Extension, Json,
+            extract::{Path as AxumPath, State},
+        };
+        let other_session = crate::service::open_session_for_profile(
+            &state,
+            crate::api::OpenSessionRequest {
+                repo_path: root.display().to_string(),
+                diff_target: None,
+                active_commit: None,
+            },
+            Some(profiles.namespace(&user("b"))),
+        )
+        .unwrap()
+        .session_id;
+        assert!(
+            crate::terminal::create_terminal(
+                AxumPath(other_session),
+                State(state.clone()),
+                State(profiles.clone()),
+                Extension(user("a")),
+                Json(serde_json::from_value(serde_json::json!({})).unwrap()),
+            )
+            .await
+            .is_err()
+        );
+    });
+    let (alice_id, alice) = spawn("a");
+    let (bob_id, bob) = spawn("b");
+    let commit = |shell: &std::sync::Arc<crate::terminal::TerminalSession>, marker: &str| {
+        shell
+            .write_input(
+                format!(
+                    "git commit --allow-empty -m {marker}; printf '%s\\n' $? > {marker}.status\r"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let status = root.join(format!("{marker}.status"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !status.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        fs::read_to_string(status).unwrap()
+    };
+    assert_eq!(commit(&alice, "alice"), "0\n");
+    assert_eq!(
+        git(&["log", "-1", "--format=%an|%ae|%cn|%ce"]).trim(),
+        "Person 1|1@users.noreply.github.com|Person 1|1@users.noreply.github.com"
+    );
+    assert_eq!(commit(&bob, "bob"), "0\n");
+    assert_eq!(
+        git(&["log", "-1", "--format=%an|%ae|%cn|%ce"]).trim(),
+        "Person 2|2@users.noreply.github.com|Person 2|2@users.noreply.github.com"
+    );
+    profiles.forget_admission(&user("a")).unwrap();
+    // An existing process retains its launch environment; newly opened shells use the
+    // current admission, and unsigned-in users cannot fall back to the host's identity.
+    assert_eq!(commit(&alice, "existing"), "0\n");
+    let (anonymous_id, anonymous) = spawn("a");
+    let head = git(&["rev-parse", "HEAD"]);
+    assert_ne!(commit(&anonymous, "anonymous"), "0\n");
+    assert_eq!(git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(fs::read(root.join(".git/config")).unwrap(), config_before);
+    for id in [alice_id, bob_id, anonymous_id] {
+        registry.remove(&id);
+    }
+    fs::remove_dir_all(profiles.path.parent().unwrap()).unwrap();
+}

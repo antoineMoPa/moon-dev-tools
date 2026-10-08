@@ -108,6 +108,7 @@ struct Watcher {
     atoms: Atoms,
     keyboard: Keyboard,
     damage: u32,
+    clipboard: crate::clipboard::Clipboard,
     view: Size,
     /// In the order they were opened: the last is in front, and has the keyboard.
     windows: Vec<Managed>,
@@ -154,12 +155,14 @@ impl Watcher {
 
         let atoms = Atoms::new(&conn)?.reply()?;
         let keyboard = Keyboard::read(&conn, root)?;
+        let clipboard = crate::clipboard::Clipboard::new(&conn, root)?;
         let watcher = Self {
             conn,
             root,
             atoms,
             keyboard,
             damage,
+            clipboard,
             view: within_the_screen(view),
             windows: Vec::new(),
             shown,
@@ -272,6 +275,7 @@ impl Watcher {
         while let Some(event) = self.conn.poll_for_event()? {
             self.heard(event)?;
         }
+        self.clipboard.tick(&self.conn);
         match inputs.recv_timeout(POLL) {
             Ok(input) => self.did(input)?,
             Err(RecvTimeoutError::Timeout) => {}
@@ -294,6 +298,7 @@ impl Watcher {
     }
 
     fn heard(&mut self, event: XEvent) -> anyhow::Result<()> {
+        self.clipboard.heard(&self.conn, &mut self.keyboard, &event);
         match event {
             XEvent::DamageNotify(_) => self.drawn_on = true,
             XEvent::MapRequest(request) => self.adopt(request.window)?,
@@ -402,6 +407,10 @@ impl Watcher {
 
     fn did(&mut self, input: Input) -> anyhow::Result<()> {
         match input {
+            Input::Clipboard(request) => {
+                self.clipboard
+                    .request(&self.conn, &mut self.keyboard, request)
+            }
             Input::PointerMoved { x, y } => {
                 // Past the view is screen nobody sees, where a pointer would be lost.
                 let x = x.clamp(0, self.view.width as i16 - 1);

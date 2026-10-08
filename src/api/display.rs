@@ -3,10 +3,9 @@
 //! the window shows. The server side is `crate::display`, built on `moon_display`; the window
 //! side is `crate::native::display_pane`.
 //!
-//! The desktop's websocket carries two kinds of message. From server to window,
-//! [`DisplayPatch`]es: a rectangle of the view that changed, with its current pixels, one
-//! binary message each. From window to server, [`DisplayInput`]s: what the person watching did,
-//! one JSON text message each.
+//! From server to window, the desktop's websocket carries binary [`DisplayPatch`]es and
+//! requester-only [`DisplayClipboard`] replies. From window to server, [`DisplayInput`]s
+//! describe input and explicit clipboard actions, one JSON text message each.
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -40,6 +39,14 @@ pub(crate) struct DisplayView {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum DisplayInput {
+    Paste {
+        id: u64,
+        text: String,
+    },
+    Copy {
+        id: u64,
+        cut: bool,
+    },
     PointerMoved {
         x: i16,
         y: i16,
@@ -161,5 +168,70 @@ mod tests {
         short.rgb.truncate(20);
         assert!(DisplayPatch::from_message(&short.to_message()).is_err());
         assert!(DisplayPatch::from_message(&message[..5]).is_err());
+    }
+}
+
+/// Connection-local clipboard reply. Its binary prefix cannot be a valid patch width.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub(crate) struct DisplayClipboard {
+    pub(crate) id: u64,
+    pub(crate) text: Option<String>,
+    pub(crate) error: Option<String>,
+}
+pub(crate) const CLIPBOARD_LIMIT: usize = 64 * 1024;
+const CLIPBOARD_PREFIX: &[u8] = b"\0\0MOONCLIP\0";
+impl DisplayClipboard {
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn to_message(&self) -> Vec<u8> {
+        let mut message = CLIPBOARD_PREFIX.to_vec();
+        message.extend(serde_json::to_vec(self).expect("clipboard reply is plain data"));
+        message
+    }
+    pub(crate) fn from_message(message: &[u8]) -> Result<Option<Self>> {
+        let Some(json) = message.strip_prefix(CLIPBOARD_PREFIX) else {
+            return Ok(None);
+        };
+        ensure!(
+            json.len() <= CLIPBOARD_LIMIT * 6 + 1024,
+            "Clipboard reply exceeds its limit"
+        );
+        let reply: Self = serde_json::from_slice(json)?;
+        ensure!(
+            reply
+                .text
+                .as_ref()
+                .is_none_or(|t| t.len() <= CLIPBOARD_LIMIT),
+            "Clipboard text exceeds 64 KiB"
+        );
+        Ok(Some(reply))
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    #[test]
+    fn clipboard_replies_cannot_be_confused_with_screen_patches() {
+        let reply = DisplayClipboard {
+            id: 9,
+            text: Some("世界\n\t🦀".into()),
+            error: None,
+        };
+        assert_eq!(
+            DisplayClipboard::from_message(&reply.to_message()).unwrap(),
+            Some(reply)
+        );
+        assert!(
+            DisplayClipboard::from_message(&[1, 2, 3])
+                .unwrap()
+                .is_none()
+        );
+        assert!(DisplayClipboard::from_message(CLIPBOARD_PREFIX).is_err());
+        let oversized = DisplayClipboard {
+            id: 10,
+            text: Some("x".repeat(CLIPBOARD_LIMIT + 1)),
+            error: None,
+        };
+        assert!(DisplayClipboard::from_message(&oversized.to_message()).is_err());
     }
 }

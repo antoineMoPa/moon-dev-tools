@@ -5,6 +5,14 @@ use crate::{
 };
 
 impl App {
+    pub(crate) fn web_account_label(&self) -> String {
+        let login = self
+            .web_account
+            .as_ref()
+            .and_then(|account| account.0.borrow().profile.login.clone());
+        format!("[{}]", login.as_deref().unwrap_or("account"))
+    }
+
     /// A phone keeps its menus in the tab strip; reserve a header for Account
     /// even while no project is open, so workspace content cannot cover it.
     pub(crate) fn draw_web_account_header(&mut self, ui: &mut egui::Ui) {
@@ -25,7 +33,7 @@ impl App {
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button("[account]")
+                        .button(self.web_account_label())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
@@ -79,68 +87,65 @@ impl App {
             .show(ctx, |ui| {
                 let state = account.0.borrow();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if let Some(login) = &state.profile.login {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        if let Some(login) = &state.profile.login {
+                            ui.add_space(12.);
                             ui.label(format!("Signed in as {login}"));
-                        });
-                    }
-                    if !state.error.is_empty() {
-                        ui.colored_label(ui.visuals().error_fg_color, &state.error);
-                    }
-                    if state.busy {
-                        ui.horizontal(|ui| {
+                        }
+                        if !state.error.is_empty() {
+                            ui.colored_label(ui.visuals().error_fg_color, &state.error);
+                        }
+                        if state.busy {
                             ui.spinner();
                             ui.label("Working…");
-                        });
-                    }
-                    ui.add_enabled_ui(!state.busy, |ui| {
-                        if state.profile.id.is_some() {
-                            ui.add_space(12.);
-                            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        }
+                        ui.add_enabled_ui(!state.busy, |ui| {
+                            if state.profile.id.is_some() {
+                                ui.add_space(12.);
                                 if ui.button("Disconnect GitHub").clicked() {
                                     action = Some(Action::Disconnect);
                                 }
-                            });
-                            ui.add_space(12.);
-                        }
-                        if state.profile.id.is_none() && state.device.is_none() {
-                            ui.add_space(12.);
-                            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                                if ui
-                                    .add_enabled(
-                                        state.profile.device_flow,
-                                        egui::Button::new("Sign in with GitHub"),
-                                    )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .on_disabled_hover_text(
-                                        "Set MOON_GITHUB_CLIENT_ID on the server to enable GitHub sign-in.",
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(Action::Device);
-                                }
-                            });
-                            ui.add_space(12.);
-                        }
-                    });
-                    if let Some(device) = &state.device {
-                        ui.separator();
-                        ui.label("Enter this code on GitHub:");
-                        ui.horizontal(|ui| {
-                            ui.monospace(&device.user_code);
-                            if ui.button("Copy code").clicked() {
-                                ui.ctx().copy_text(device.user_code.clone());
+                                ui.add_space(12.);
+                            }
+                            if state.profile.id.is_none() && state.device.is_none() {
+                                ui.add_space(12.);
+                                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            state.profile.device_flow,
+                                            egui::Button::new("Sign in with GitHub"),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_disabled_hover_text(
+                                            "Set MOON_GITHUB_CLIENT_ID on the server to enable GitHub sign-in.",
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(Action::Device);
+                                    }
+                                });
+                                ui.add_space(12.);
                             }
                         });
-                        ui.add(
-                            egui::Hyperlink::from_label_and_url(
-                                "Open GitHub activation",
-                                &device.verification_uri,
-                            )
-                            .open_in_new_tab(true),
-                        );
-                        ui.label("Waiting for approval…");
-                        ui.horizontal(|ui| {
+                        if let Some(device) = &state.device {
+                            ui.label("Enter this code on GitHub:");
+                            ui.monospace(&device.user_code);
+                            if ui
+                                .button("Copy code")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(device.user_code.clone());
+                            }
+                            ui.add(
+                                egui::Hyperlink::from_label_and_url(
+                                    "Open GitHub activation",
+                                    &device.verification_uri,
+                                )
+                                .open_in_new_tab(true),
+                            );
+                            ui.add_space(12.);
+                            ui.label("Waiting for approval…");
                             if ui
                                 .add_enabled(!state.busy, egui::Button::new("Check now"))
                                 .clicked()
@@ -150,8 +155,8 @@ impl App {
                             if ui.button("Cancel").clicked() {
                                 cancel_device = true;
                             }
-                        });
-                    }
+                        }
+                    });
                 });
             });
         self.showing_web_account = showing;

@@ -379,6 +379,8 @@ impl App {
                 &self.palette_of(),
                 &self.model.project,
                 self.applications_offered(),
+                #[cfg(target_arch = "wasm32")]
+                &self.web_account_label(),
             );
             self.apply_menu_actions(picked);
         }
@@ -493,6 +495,8 @@ impl App {
                 &self.palette_of(),
                 &self.model.project,
                 self.applications_offered(),
+                #[cfg(target_arch = "wasm32")]
+                &self.web_account_label(),
             );
             self.apply_menu_actions(picked);
         }

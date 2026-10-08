@@ -38,7 +38,14 @@ pub(crate) fn start_workspace_shell(
 ) -> anyhow::Result<String> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
-    spawn_workspace_shell(state, session_id, repo_path.clone(), repo_path, command)
+    spawn_workspace_shell(
+        state,
+        session_id,
+        repo_path.clone(),
+        repo_path,
+        command,
+        Vec::new(),
+    )
 }
 
 /// A login shell started in a folder of the repo rather than at its root: what
@@ -52,17 +59,26 @@ pub(crate) fn start_workspace_shell_in_folder(
 ) -> anyhow::Result<String> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
-    if !folder.starts_with(&repo_path) {
-        anyhow::bail!(
-            "{} is outside {}, so no shell of that repo starts there",
-            folder.display(),
-            repo_path.display()
-        );
-    }
-    if !folder.is_dir() {
-        anyhow::bail!("{} is not a folder", folder.display());
-    }
-    spawn_workspace_shell(state, session_id, repo_path, folder.to_path_buf(), None)
+    validate_workspace_folder(&repo_path, folder)?;
+    spawn_workspace_shell(
+        state,
+        session_id,
+        repo_path,
+        folder.to_path_buf(),
+        None,
+        Vec::new(),
+    )
+}
+
+fn validate_workspace_folder(repo: &Path, folder: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        folder.starts_with(repo),
+        "{} is outside {}, so no shell of that repo starts there",
+        folder.display(),
+        repo.display()
+    );
+    anyhow::ensure!(folder.is_dir(), "{} is not a folder", folder.display());
+    Ok(())
 }
 
 /// A shell of the workspace's own, named after its program and started in `cwd`.
@@ -72,12 +88,14 @@ fn spawn_workspace_shell(
     repo_path: PathBuf,
     cwd: PathBuf,
     command: Option<AgentKind>,
+    env: Vec<(String, String)>,
 ) -> anyhow::Result<String> {
     let program = TerminalProgram::of_agent(command);
     // A workspace shell belongs to no task, so its name is the program and the number alone.
     let name = name_for_new_shell(state, &repo_path, None, &program)?;
     state.terminals.spawn(TerminalSpec {
         owner: workspace_owner(state, session_id)?,
+        env,
         ..TerminalSpec::shell(cwd, command, Some(name))
     })
 }
@@ -92,12 +110,22 @@ pub(crate) fn start_workspace_shell_running(
     session_id: &str,
     command: &str,
 ) -> anyhow::Result<String> {
+    start_workspace_shell_running_with_environment(state, session_id, command, Vec::new())
+}
+
+fn start_workspace_shell_running_with_environment(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
+    env: Vec<(String, String)>,
+) -> anyhow::Result<String> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
     let name = name_for_new_shell(state, &repo_path, None, &TerminalProgram::LoginShell)?;
     state.terminals.spawn(TerminalSpec {
         owner: workspace_owner(state, session_id)?,
         name: Some(name),
+        env,
         ..TerminalSpec::running(repo_path, command)
     })
 }
@@ -111,6 +139,28 @@ fn workspace_owner(state: &AppState, session_id: &str) -> anyhow::Result<Option<
     })
 }
 
+/// Local sessions retain the host's shell settings; personal web sessions get only
+/// their own commit identity. Shared task shells never pass through these routes.
+fn workspace_git_environment(
+    state: &AppState,
+    session_id: &str,
+    profiles: &crate::server::profiles::Profiles,
+    user: &UserId,
+) -> anyhow::Result<Vec<(String, String)>> {
+    crate::api::with_session(state, session_id, |session| {
+        match session.namespace.as_deref() {
+            None => Ok(Vec::new()),
+            Some(namespace) => {
+                anyhow::ensure!(
+                    namespace == profiles.namespace(user),
+                    "Account changed; reload this window"
+                );
+                Ok(profiles.shell_git_environment(user))
+            }
+        }
+    })
+}
+
 fn workspace_terminal_ids(state: &AppState, session_id: &str) -> anyhow::Result<Vec<String>> {
     let owner = workspace_owner(state, session_id)?;
     Ok(state.terminals.terminal_ids_for_owner(owner.as_deref()))
@@ -119,21 +169,37 @@ fn workspace_terminal_ids(state: &AppState, session_id: &str) -> anyhow::Result<
 pub(crate) async fn create_terminal(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    State(profiles): State<crate::server::profiles::Profiles>,
+    Extension(user): Extension<UserId>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let terminal_id = match request.folder {
-        Some(folder) => start_workspace_shell_in_folder(&state, &session_id, Path::new(&folder))?,
-        None => start_workspace_shell(&state, &session_id, request.command)?,
+    let env = workspace_git_environment(&state, &session_id, &profiles, &user)?;
+    let repo_path =
+        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    let command = if request.folder.is_some() {
+        None
+    } else {
+        request.command
     };
+    let cwd = request
+        .folder
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_path.clone());
+    validate_workspace_folder(&repo_path, &cwd)?;
+    let terminal_id = spawn_workspace_shell(&state, &session_id, repo_path, cwd, command, env)?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 
 pub(crate) async fn run_in_shell(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    State(profiles): State<crate::server::profiles::Profiles>,
+    Extension(user): Extension<UserId>,
     Json(request): Json<RunInShellRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let terminal_id = start_workspace_shell_running(&state, &session_id, &request.command)?;
+    let env = workspace_git_environment(&state, &session_id, &profiles, &user)?;
+    let terminal_id =
+        start_workspace_shell_running_with_environment(&state, &session_id, &request.command, env)?;
     Ok(Json(TerminalCreated { terminal_id }))
 }
 

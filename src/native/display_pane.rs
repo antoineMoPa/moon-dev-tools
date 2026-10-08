@@ -20,6 +20,7 @@
 //! shell, so closing the pane leaves it running, and a window opened while a desktop is running
 //! shows it. That lets an agent on the server and a person at this window use the same browser.
 
+mod clipboard;
 mod keys;
 
 use std::{
@@ -35,7 +36,7 @@ use egui::{
 use egui_frames::PaneId;
 
 use crate::{
-    api::display::{DisplayInput, DisplayPatch, StartApplicationRequest},
+    api::display::{DisplayClipboard, DisplayInput, DisplayPatch, StartApplicationRequest},
     backend::Socket,
     native::{
         app::App,
@@ -147,6 +148,7 @@ impl Holding {
 /// The desktop, as one pane is watching it.
 struct Watched {
     socket: Socket,
+    clipboard: clipboard::Clipboard,
     /// The display's view, once its first patch has said how large that is.
     picture: Option<(TextureHandle, [u16; 2])>,
     /// The size the display was last asked to make its view.
@@ -167,6 +169,7 @@ impl Watched {
     fn new(socket: Socket) -> Self {
         Self {
             socket,
+            clipboard: clipboard::Clipboard::default(),
             picture: None,
             asked_for: None,
             holding: Holding::default(),
@@ -188,7 +191,10 @@ impl Watched {
     fn hear(&mut self, ctx: &egui::Context) -> anyhow::Result<()> {
         loop {
             match self.socket.heard.try_recv() {
-                Ok(message) => self.paint(ctx, DisplayPatch::from_message(&message)?),
+                Ok(message) => match DisplayClipboard::from_message(&message)? {
+                    Some(reply) => self.clipboard.received(ctx, reply),
+                    None => self.paint(ctx, DisplayPatch::from_message(&message)?),
+                },
                 Err(TryRecvError::Empty) => return Ok(()),
                 Err(TryRecvError::Disconnected) => {
                     self.over = true;
@@ -338,12 +344,17 @@ impl Watched {
                 });
                 self.say(&DisplayInput::Typed { text });
             }
-            // The window turns these three chords into what they mean before a pane sees
-            // them. On the display they are the chord again: it has a clipboard of its own,
-            // which is the one its programs copy to and paste from.
-            Event::Copy => self.chord_with_control(egui::Key::C),
-            Event::Cut => self.chord_with_control(egui::Key::X),
-            Event::Paste(_) => self.chord_with_control(egui::Key::V),
+            Event::Copy | Event::Cut => {
+                let cut = matches!(event, Event::Cut);
+                if let Some(id) = self.clipboard.begin() {
+                    self.say(&DisplayInput::Copy { id, cut });
+                }
+            }
+            Event::Paste(text) => {
+                if let Some(id) = self.clipboard.pasted(&text) {
+                    self.say(&DisplayInput::Paste { id, text });
+                }
+            }
             Event::Key {
                 key,
                 pressed: true,
@@ -366,15 +377,6 @@ impl Watched {
             }
             _ => {}
         }
-    }
-
-    fn chord_with_control(&mut self, key: egui::Key) {
-        self.hold(Holding {
-            control: true,
-            ..self.holding
-        });
-        let keysym = keys::keysym_of_chorded(key).expect("a letter is a chord's key");
-        self.say(&DisplayInput::Stroke { keysym });
     }
 
     /// Tell the display which modifier keys are down, when that is not what it was last told.
@@ -463,6 +465,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
             Color32::WHITE,
         );
     }
+    watched.clipboard.draw(ui.ctx());
     ui.ctx().request_repaint_after(BETWEEN_LOOKS);
 }
 

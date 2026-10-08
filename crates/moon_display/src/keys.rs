@@ -83,6 +83,10 @@ impl Keyboard {
         })
     }
 
+    pub(crate) fn held(&self) -> Held {
+        self.held
+    }
+
     /// Hold exactly these modifier keys, pressing and letting go of whichever differ.
     pub(crate) fn hold(&mut self, conn: &RustConnection, held: Held) -> anyhow::Result<()> {
         for (keysym, was, is) in [

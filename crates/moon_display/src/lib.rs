@@ -16,6 +16,7 @@
 //! The display has no access control beyond X's default for a server started by hand: anyone
 //! with an account on the machine can open a window on it, and read its screen.
 
+mod clipboard;
 mod keys;
 mod screen;
 
@@ -54,7 +55,7 @@ pub struct Held {
 }
 
 /// What a person watching the display did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Input {
     /// The pointer is here, in pixels from the top left of the view.
     PointerMoved { x: i16, y: i16 },
@@ -71,7 +72,26 @@ pub enum Input {
     Holding(Held),
     /// The view is this size from now on.
     Resized(Size),
+    /// An explicit clipboard action, answered only to its requester.
+    Clipboard(ClipboardRequest),
 }
+
+/// Text clipboard action. Copy waits for a fresh selection; paste owns the selection before
+/// issuing Ctrl+V. No clipboard is read in the absence of a request.
+#[derive(Debug, Clone)]
+pub struct ClipboardRequest {
+    pub action: ClipboardAction,
+    pub reply: Sender<Result<Option<String>, String>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ClipboardAction {
+    Paste(String),
+    Copy { cut: bool },
+}
+
+/// Maximum text size accepted in either direction, in UTF-8 bytes.
+pub const CLIPBOARD_LIMIT: usize = 64 * 1024;
 
 /// A rectangle of the view that changed, as it is now.
 #[derive(Debug, Clone, PartialEq, Eq)]

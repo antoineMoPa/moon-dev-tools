@@ -200,6 +200,23 @@ impl Profiles {
         })
     }
 
+    /// Identity only for a personal interactive shell. Credentials stay in short-lived
+    /// commit/push runs; an unsigned-in shell must not silently commit as the host.
+    pub(crate) fn shell_git_environment(&self, user: &UserId) -> Vec<(String, String)> {
+        let account = self.account(user);
+        let name = account.as_ref().map(|a| a.name.as_str()).unwrap_or("");
+        let email = account.as_ref().map(|a| a.email.as_str()).unwrap_or("");
+        vec![
+            ("GIT_AUTHOR_NAME".into(), name.into()),
+            ("GIT_COMMITTER_NAME".into(), name.into()),
+            ("GIT_AUTHOR_EMAIL".into(), email.into()),
+            ("GIT_COMMITTER_EMAIL".into(), email.into()),
+            ("GIT_CONFIG_COUNT".into(), "1".into()),
+            ("GIT_CONFIG_KEY_0".into(), "commit.gpgSign".into()),
+            ("GIT_CONFIG_VALUE_0".into(), "false".into()),
+        ]
+    }
+
     pub(crate) fn git_environment(&self, user: &UserId) -> Result<Vec<(String, String)>> {
         let account = self
             .account(user)

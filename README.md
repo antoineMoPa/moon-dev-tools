@@ -247,6 +247,9 @@ built to wasm. The differences:
   (^C, ^R, ^W, ^P), and chords with Shift or Alt reach the window.
 - A search shows its matches when it is done rather than as they are found.
 
+Forwarded apps support text copy/paste up to 64 KiB. If the browser blocks copying back,
+use the **Copy text** button in the prompt.
+
 Every build of `moon` builds the page and embeds it - build.rs compiles the window a second
 time for `wasm32-unknown-unknown`, and adds that target with rustup the first time. The
 terminal's engine comes along: Zig builds Ghostty for wasm as it does natively.

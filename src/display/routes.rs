@@ -100,7 +100,7 @@ mod watching {
     use tokio::sync::broadcast;
 
     use crate::{
-        api::display::DisplayInput,
+        api::display::{CLIPBOARD_LIMIT, DisplayClipboard, DisplayInput},
         display::running::Running,
         server::users::{UserId, Users},
     };
@@ -120,10 +120,19 @@ mod watching {
         if let Some(shown) = shown {
             down.send(Message::Binary(shown.into())).await?;
         }
+        let (clipboard_down, mut clipboard_replies) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
         let watched = Arc::clone(&running);
         let mut pump = tokio::spawn(async move {
             loop {
-                let message = match patches.recv().await {
+                let patch = tokio::select! {
+                    reply = clipboard_replies.recv() => {
+                        let Some(reply) = reply else { break; };
+                        if down.send(Message::Binary(reply.into())).await.is_err() { return; }
+                        continue;
+                    }
+                    patch = patches.recv() => patch,
+                };
+                let message = match patch {
                     Ok(patch) => patch.as_ref().clone(),
                     // The socket is slower than the display is drawn on. The patches it
                     // missed are not sent late: it is shown the whole display as it is now,
@@ -146,12 +155,22 @@ mod watching {
             let _ = down.close().await;
         });
 
+        let mut transfer: Option<tokio::task::JoinHandle<DisplayClipboard>> = None;
         loop {
             if *over.borrow() {
                 break;
             }
             tokio::select! {
                 _ = &mut pump => break,
+                reply = async {
+                    match &mut transfer {
+                        Some(task) => task.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    transfer = None;
+                    if clipboard_down.send(reply?.to_message()).await.is_err() { break; }
+                },
                 _ = over.changed() => break,
                 kicked = kicks.changed() => {
                     if kicked.is_err() || users.is_kicked(&user) {
@@ -162,12 +181,33 @@ mod watching {
                     let Some(Ok(message)) = incoming else { break };
                     let Message::Text(text) = message else { continue };
                     crate::api::mark_activity(&last_activity);
-                    running.did(serde_json::from_str::<DisplayInput>(&text)?);
+                    // Bound parsing as well as the selection data. JSON escapes can take
+                    // six bytes per character, so retain room for valid bounded text.
+                    if text.len() > CLIPBOARD_LIMIT * 6 + 1024 { continue; }
+                    let input = serde_json::from_str::<DisplayInput>(&text)?;
+                    if matches!(input, DisplayInput::Copy { .. } | DisplayInput::Paste { .. }) {
+                        if transfer.is_some() { continue; }
+                        let id = match &input { DisplayInput::Copy { id, .. } | DisplayInput::Paste { id, .. } => *id, _ => unreachable!() };
+                        let receiver = running.clipboard(input);
+                        transfer = Some(tokio::task::spawn_blocking(move || {
+                            let reply = receiver.recv_timeout(std::time::Duration::from_secs(3))
+                                .unwrap_or_else(|_| Err("Desktop clipboard transfer timed out".into()));
+                            match reply {
+                                Ok(text) => DisplayClipboard { id, text, error: None },
+                                Err(error) => DisplayClipboard { id, text: None, error: Some(error) },
+                            }
+                        }));
+                    } else {
+                        running.did(input);
+                    }
                 }
             }
         }
 
         pump.abort();
+        if let Some(task) = transfer {
+            task.abort();
+        }
         Ok(())
     }
 }

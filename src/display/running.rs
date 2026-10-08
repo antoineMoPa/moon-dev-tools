@@ -125,8 +125,8 @@ impl Running {
     ///
     /// The answer is how a failure reaches the window that asked because it is the one
     /// message that window is waiting for, and already shows as an error: the desktop's
-    /// socket is opened only after it, is every watching window's, and carries nothing but
-    /// patches.
+    /// socket is opened only after it and carries display patches and clipboard replies,
+    /// rather than application launch failures.
     pub(super) fn start_application(self: &Arc<Self>, command: &str, folder: &Path) -> Result<()> {
         let program = Started::start(
             Command::new("sh")
@@ -208,6 +208,24 @@ impl Running {
         *self.over.borrow()
     }
 
+    pub(super) fn clipboard(
+        &self,
+        input: DisplayInput,
+    ) -> std::sync::mpsc::Receiver<Result<Option<String>, String>> {
+        let (reply, received) = std::sync::mpsc::channel();
+        if let Some(display) = &*self.display.lock().expect("the display lock is poisoned") {
+            let action = match input {
+                DisplayInput::Paste { text, .. } => moon_display::ClipboardAction::Paste(text),
+                DisplayInput::Copy { cut, .. } => moon_display::ClipboardAction::Copy { cut },
+                _ => unreachable!("clipboard action"),
+            };
+            display.send(moon_display::Input::Clipboard(
+                moon_display::ClipboardRequest { action, reply },
+            ));
+        }
+        received
+    }
+
     pub(super) fn did(&self, input: DisplayInput) {
         if let Some(display) = &*self.display.lock().expect("the display lock is poisoned") {
             display.send(input_of(input));
@@ -275,6 +293,9 @@ fn input_of(input: DisplayInput) -> moon_display::Input {
     use moon_display::Input;
 
     match input {
+        DisplayInput::Paste { .. } | DisplayInput::Copy { .. } => {
+            unreachable!("clipboard actions have a reply")
+        }
         DisplayInput::PointerMoved { x, y } => Input::PointerMoved { x, y },
         DisplayInput::Button { button, pressed } => Input::Button { button, pressed },
         DisplayInput::Scrolled { right, down } => Input::Scrolled { right, down },

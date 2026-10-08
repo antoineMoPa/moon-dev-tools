@@ -41,6 +41,7 @@ pub(crate) fn draw(
     palette: &Palette,
     project: &ProjectConfig,
     applications: ApplicationsOffered<'_>,
+    #[cfg(target_arch = "wasm32")] account_label: &str,
 ) -> Vec<MenuAction> {
     let mut picked = Vec::new();
     egui::Panel::top(BAR_ID)
@@ -61,7 +62,7 @@ pub(crate) fn draw(
                 #[cfg(target_arch = "wasm32")]
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button("[account]")
+                        .button(account_label)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
