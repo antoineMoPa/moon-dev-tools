@@ -30,7 +30,7 @@ use crate::{
     api::{AgentKind, AppState},
     moontasks::{
         BoardTaskView, CreateTaskRequest, ReviewRequestView, TaskResourceView, TaskView,
-        agent_launch, column_sort,
+        agent_launch, column_sort, remote_tracker,
         review_request::{self, Amend},
         store::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
@@ -426,6 +426,7 @@ fn view_of(
             .to_string(),
         repo_path: repo_path.display().to_string(),
         tags: metadata.tags.clone(),
+        remote_task_tracker_url: metadata.remote_task_tracker_url.clone(),
         notes: store::read_notes(repo_path, task_id),
         attachments: store::read_attachments(repo_path, task_id),
         resources: resources_of(state, repo_path, task_id, metadata, open),
@@ -634,5 +635,24 @@ pub(crate) fn set_tags(
     let repo_path = repo_of(state, session_id)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
     metadata.tags = store::tags_of(tags.iter().map(String::as_str));
+    store::write_task(&repo_path, task_id, &metadata)
+}
+
+/// Link a task to its issue in a tracker kept elsewhere, or take the link off with an empty
+/// one - see [`remote_tracker`]. A link is a web address: a click on the card hands it to
+/// the browser.
+pub(crate) fn set_remote_tracker_url(
+    state: &AppState,
+    session_id: &str,
+    task_id: &str,
+    url: &str,
+) -> Result<()> {
+    let url = url.trim();
+    if !url.is_empty() && !remote_tracker::is_a_web_link(url) {
+        bail!("a tracker link starts with https:// or http://, and `{url}` does not");
+    }
+    let repo_path = repo_of(state, session_id)?;
+    let mut metadata = store::read_task(&repo_path, task_id)?;
+    metadata.remote_task_tracker_url = url.to_string();
     store::write_task(&repo_path, task_id, &metadata)
 }

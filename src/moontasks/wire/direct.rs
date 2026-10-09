@@ -75,6 +75,7 @@ mod tests {
             entered_column_at_unix: None,
             position: 0,
             tags: Vec::new(),
+            remote_task_tracker_url: String::new(),
             resources: vec![
                 run(
                     TaskResourceKind::Agent,

@@ -201,6 +201,49 @@ fn a_markdown_file_opens_rendered() {
     );
 }
 
+/// A picture a markdown file writes beside itself is drawn on the rendered page: read from the
+/// repo, against the folder the markdown file is in.
+#[test]
+fn a_markdown_page_shows_the_pictures_beside_it() {
+    /// A color nothing else in the window is drawn in.
+    const DOT: [u8; 4] = [255, 0, 255, 255];
+
+    let fixture = Fixture::new("file-markdown-pictures");
+    fixture.write("docs/NOTES.md", "# The plan\n\n![the dot](img/dot.png)\n");
+    fixture.write_png("docs/img/dot.png", DOT);
+    fixture.commit("Add the notes");
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    app.set_theme(ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .with_theme(egui::Theme::Dark)
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, "docs/NOTES.md");
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+
+    // The file's read and then the picture's are each a worker thread away.
+    let mut drawn = false;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !drawn {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+        let window = harness.render().expect("the window should render");
+        drawn = window.pixels().any(|pixel| pixel.0 == DOT);
+    }
+    assert!(drawn, "the page should have drawn the picture beside it");
+}
+
 /// Pointed at a file nobody has touched, the review shows the file itself rather than an
 /// empty diff - `moonreview package.json` is a request to read it.
 #[test]

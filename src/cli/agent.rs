@@ -374,8 +374,7 @@ pub(crate) fn help_text() -> String {
     format!(
         "{PROGRAM} agent
 
-The agents of this repo's board, listed, and one started, looked at and told something from
-here.
+Lists, starts, views or tells the agents of this repo's board.
 
 Usage:
   {PROGRAM} agent list

@@ -236,6 +236,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn rename_task(&self, session_id: &str, task_id: &str, title: &str) -> Result<()>;
     /// What a card is marked with, set whole: the tag menu knows the list it wants.
     fn set_task_tags(&self, session_id: &str, task_id: &str, tags: &[String]) -> Result<()>;
+    /// Link a task to its issue in a tracker kept elsewhere; an empty link takes it off.
+    fn set_task_remote_tracker_url(&self, session_id: &str, task_id: &str, url: &str)
+    -> Result<()>;
     /// Make sure the task's notes file exists, and answer with the repo-relative path a file
     /// pane opens it by. Editing then goes through [`Backend::write_file`] like any file.
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String>;

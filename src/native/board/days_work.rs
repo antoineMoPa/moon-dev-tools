@@ -227,6 +227,7 @@ mod tests {
             dir_path: String::new(),
             repo_path: String::new(),
             tags: Vec::new(),
+            remote_task_tracker_url: String::new(),
             notes: String::new(),
             attachments: Vec::new(),
             resources: Vec::new(),

@@ -265,6 +265,10 @@ pub(crate) struct TaskEditor {
     /// caught up with what was just typed cannot take it back.
     pub(crate) said_title: String,
     pub(crate) said_notes: String,
+    /// The task's tracker link as it stands in its box, and what the board last said it was -
+    /// see [`crate::native::board::tracker_link`].
+    pub(crate) tracker_url: String,
+    pub(crate) said_tracker_url: String,
     /// The notes handed to `SaveNotes` and not read back off the board yet. A read that was
     /// already on its way when they were written answers with what was in the file before
     /// them, and the read the write itself asks for answers with them as they stood at that

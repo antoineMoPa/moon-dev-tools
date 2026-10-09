@@ -249,8 +249,7 @@ fn the_brief_points_at_the_coordination_file_without_spelling_it_out() {
     }
 }
 
-/// The whole of what an agent is told about the wire as it starts. The rest is in
-/// `moon wire --help`.
+/// The whole of what an agent is told about the wire as it starts.
 #[test]
 fn the_coordination_file_is_two_sentences() {
     assert_eq!(
@@ -356,6 +355,7 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
         entered_column_at_unix: None,
         position: 0,
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: vec![TaskResource {
             id: "resource".to_string(),
             kind: TaskResourceKind::Agent,
@@ -392,6 +392,7 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
         entered_column_at_unix: None,
         position: 0,
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: vec![TaskResource {
             id: "resource".to_string(),
             kind: TaskResourceKind::Agent,
@@ -428,6 +429,7 @@ fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
         entered_column_at_unix: None,
         position: 0,
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: vec![TaskResource {
             id: "resource".to_string(),
             kind: TaskResourceKind::Agent,
@@ -531,6 +533,7 @@ fn run_of_session(session_id: &str) -> TaskMetadata {
         entered_column_at_unix: None,
         position: 0,
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: vec![TaskResource {
             id: "resource".to_string(),
             kind: TaskResourceKind::Agent,

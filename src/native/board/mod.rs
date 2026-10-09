@@ -23,6 +23,7 @@ pub(crate) mod resources;
 pub(crate) mod selection;
 pub(crate) mod start;
 pub(crate) mod tags;
+pub(crate) mod tracker_link;
 pub(crate) mod work_on_marked;
 
 pub(super) use actions::BoardAction;

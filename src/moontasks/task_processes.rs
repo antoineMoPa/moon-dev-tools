@@ -219,8 +219,7 @@ document where it is.
 pub(crate) const COORDINATION_BRIEF_FILE_NAME: &str = "Coordination.md";
 
 /// The whole of that file. What a line may be, how a handle is read and what is refused are
-/// kept out of it, in `moon wire --help`: an agent reads this on every task, and that only
-/// when a post goes wrong.
+/// kept out of it: an agent reads this on every task, and a post that goes wrong says why.
 pub(crate) fn coordination_brief() -> String {
     format!(
         "Before working, read {wire_file}, then post the areas you will touch: \

@@ -46,6 +46,8 @@ pub(crate) fn logo_image_source(frame: Frame, size: usize) -> egui::ImageSource<
 
 /// The moon logo (`logo-moon.svg`), for the `moon` menu button. 64 pixels: the button draws it
 /// at text height, about 14 points, so this stays sharp up to four pixels per point.
+// Only the windows that draw their own menu bar have that button - see `crate::native::menu`.
+#[cfg(any(target_arch = "wasm32", target_os = "linux", test))]
 pub(crate) fn moon_logo_image_source() -> egui::ImageSource<'static> {
     egui::ImageSource::Bytes {
         uri: "bytes://logo-moon-64.png".into(),

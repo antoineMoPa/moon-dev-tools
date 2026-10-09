@@ -56,6 +56,9 @@ pub(crate) enum BoardAction {
     CancelRename,
     /// What the card is marked with, set whole: the tag box knows the list it wants.
     SetTags(String, Vec<String>),
+    /// Link a task to its issue in a tracker kept elsewhere, or take the link off with an
+    /// empty one.
+    SetRemoteTrackerUrl(String, String),
     /// Turn the palette into the file finder, picking a file to put on this task's card.
     PickFile(String),
     /// Open a file linked to a card, in a pane down the right.
@@ -253,6 +256,8 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                             notes,
                             said_title: task.title.clone(),
                             said_notes: String::new(),
+                            tracker_url: task.remote_task_tracker_url.clone(),
+                            said_tracker_url: task.remote_task_tracker_url.clone(),
                             notes_typed_at: None,
                         },
                     );
@@ -480,6 +485,11 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                     model.board.refresh_requested = true;
                 },
             );
+        }
+        BoardAction::SetRemoteTrackerUrl(task_id, url) => {
+            act(app, "could not set the tracker link", move |backend| {
+                backend.set_task_remote_tracker_url(&session_id, &task_id, &url)
+            });
         }
         BoardAction::PickFile(task_id) => {
             let root = app.model.root_session_id.clone();

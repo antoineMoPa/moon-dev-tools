@@ -18,7 +18,7 @@ use crate::{
             filter::Filter,
             gesture,
             motion::{Axis, slide_into_place, stamp_place},
-            resources, selection, start, tags,
+            resources, selection, start, tags, tracker_link,
         },
         model::Model,
         theme::{Palette, SMALL_SIZE},
@@ -562,6 +562,8 @@ fn draw_card_body(
             ui.add_space(3.0);
             draw_notes_box(ui, task, &mut card, palette, showing, actions);
             ui.add_space(3.0);
+            // The task's issue in the tracker it is kept in, under what the task is about.
+            tracker_link::draw_on_card(ui, task, &mut card, palette);
 
             resources::draw_list(
                 app,
@@ -881,6 +883,7 @@ mod tests {
                 dir_path: String::new(),
                 repo_path: String::new(),
                 tags: Vec::new(),
+                remote_task_tracker_url: String::new(),
                 notes: String::new(),
                 attachments: Vec::new(),
                 resources: Vec::new(),

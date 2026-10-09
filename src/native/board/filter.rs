@@ -13,7 +13,7 @@ use egui::{Align, Key, Layout, Modifiers, RichText, Ui};
 
 use super::BoardAction;
 use crate::{
-    moontasks::TaskView,
+    moontasks::{TaskView, remote_tracker},
     native::{
         app::App,
         theme::{Palette, SMALL_SIZE},
@@ -41,14 +41,18 @@ impl Filter {
 
     /// Whether this task is one of the ones the query asks for.
     ///
-    /// A card shows a title, its tags and the first lines of its `notes.md`, so those are what
-    /// is looked through: what a card says is what it can be found by. Everything matches an
-    /// empty query - a board nobody has typed into shows all of its cards.
+    /// A card shows a title, its tags, the first lines of its `notes.md` and the id of its
+    /// issue in a tracker, so those are what is looked through: what a card says is what it
+    /// can be found by. Everything matches an empty query - a board nobody has typed into
+    /// shows all of its cards.
     pub(crate) fn matches(&self, task: &TaskView) -> bool {
         !self.is_on()
             || task.title.to_lowercase().contains(&self.0)
             || task.notes.to_lowercase().contains(&self.0)
             || task.tags.iter().any(|tag| tag.contains(&self.0))
+            || remote_tracker::label_of(&task.remote_task_tracker_url)
+                .to_lowercase()
+                .contains(&self.0)
     }
 }
 
@@ -137,6 +141,7 @@ mod tests {
             dir_path: String::new(),
             repo_path: String::new(),
             tags: Vec::new(),
+            remote_task_tracker_url: String::new(),
             notes: notes.to_string(),
             attachments: Vec::new(),
             resources: Vec::new(),
@@ -174,6 +179,7 @@ mod tests {
     fn a_query_finds_a_card_by_its_tags() {
         let task = TaskView {
             tags: vec!["needs-tests".to_string()],
+            remote_task_tracker_url: String::new(),
             ..task("Write the parser", "")
         };
 

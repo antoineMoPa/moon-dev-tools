@@ -46,30 +46,19 @@ fn line_of_shell(words: &[String]) -> String {
     quoted.join(" ")
 }
 
-/// `moon launch --help`: what is started, and where.
+/// `moon launch --help`.
 pub(super) fn help_text() -> String {
     format!(
         "{PROGRAM} launch <command> [<argument>...]
 
-Starts a program with windows in the moon this shell is a tab of:
-  - in a shell of `{PROGRAM} serve`, on the server's desktop. The desktop is started with
-    the program when there is none, and every window on that server then opens a pane on it.
-  - in a shell of `{PROGRAM} desktop`, on the screen, where its window is put in a pane.
-A window among others on a machine's own screen starts no programs: run the command itself.
+Starts a program with windows in the moon this shell is a tab of.
 
-It returns once the program has started, and does not wait for it to end. A program that
-fails as it starts is reported with what it said, and `{PROGRAM} launch` fails with it.
+Usage:
+  {PROGRAM} launch <command> [<argument>...]
 
 Examples:
   {PROGRAM} launch chromium
-  {PROGRAM} launch chromium --incognito \"https://example.com/?a=b c\"
-
-The program is run in the directory this shell is in. Each word after `launch` reaches it
-as one argument, quoted here as for any command; none is read as an option of
-`{PROGRAM} launch`, so `{PROGRAM} launch xterm --help` is xterm's help.
-A desktop started this way has a view of 1280x800 until a pane shows it, and draws its
-applications at scale 1; one started from a window's `{PROGRAM} › Applications` draws them
-at that window's scale."
+  {PROGRAM} launch chromium --incognito \"https://example.com/?a=b c\""
     )
 }
 

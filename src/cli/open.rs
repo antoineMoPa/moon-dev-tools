@@ -47,40 +47,26 @@ pub(super) fn parse_open(args: Vec<String>) -> Result<MoonCommand> {
     Ok(MoonCommand::Open { path, line, wait })
 }
 
-/// `moon open --help`: how a file or a folder is named, and where it lands.
+/// `moon open --help`.
 pub(super) fn help_text() -> String {
     format!(
         "{PROGRAM} open [--wait] <path>[:<line>]
 
-Opens a file in a window that is already open: the one on the file's project, or the one
-last in front when no window is open on it. `{PROGRAM} edit` is the same command.
-A folder brings up that window's file picker on it, to pick a file of the folder to open.
+Opens a file in a window that is already open, or a folder in that window's file picker.
 
 Usage:
   {PROGRAM} open <path>
   {PROGRAM} open <path>:<line>
   {PROGRAM} open <folder>
+  {PROGRAM} open --wait <path>
   {PROGRAM} edit <path>
-  {PROGRAM} edit --wait <path>
-
-Options:
-  --wait   return only once the file's tab is closed, so a program waiting on its editor
-           - git, for a commit message - reads the file back when you are done with it:
-             git config --global core.editor \"{PROGRAM} edit --wait\"
 
 Examples:
   {PROGRAM} open src/main.rs
   {PROGRAM} open src/main.rs:42
   {PROGRAM} edit .moontasks/notes.md
   {PROGRAM} open src/
-
-The path is read against the directory this shell is in, the way the shell completed it.
-A path nothing is at yet opens an empty tab, and the file is created when that tab is saved;
-its folder has to exist already. One written with a `/` at its end names a folder, and is
-refused when no folder is there.
-A folder has no line to open at and no tab to wait on, so it takes neither `:<line>` nor
-`--wait`.
-`{PROGRAM} list` says which windows are open, and what they are on."
+  git config --global core.editor \"{PROGRAM} edit --wait\""
     )
 }
 

@@ -636,9 +636,6 @@ fn the_board_lists_and_moves_its_cards_from_the_command_line() {
         "  moon tasks list\n",
         "  moon tasks move <column>\n",
         "  moon tasks move IN PROGRESS\n",
-        "`moon tasks list` prints",
-        "`moon tasks move <column>` moves",
-        "MOONREVIEW_TASK_DIR",
     ] {
         assert!(
             help.contains(said),
@@ -749,10 +746,10 @@ fn a_line_for_the_wire_with_nothing_said_is_refused() {
     assert!(refused(&["wire", "send", "hello"]).contains("`moon wire send` is not a command"));
 }
 
-/// The wire's rules are in its own help, which is what every way of asking gets - and
-/// `moon --help` says the command is there.
+/// The wire has its own help, which is what every way of asking gets - and `moon --help`
+/// says the command is there.
 #[test]
-fn the_wire_answers_help_with_its_own_rules() {
+fn the_wire_answers_help_with_its_own_commands() {
     use super::wire::WireCommand;
 
     let parse = |args: &[&str]| {
@@ -778,13 +775,6 @@ fn the_wire_answers_help_with_its_own_rules() {
     for said in [
         "moon wire post <one line>",
         "moon wire post @<handle> <one line>",
-        ".moontasks/messageboard.txt",
-        "latest 30 lines",
-        "its only writer",
-        "agent @<your handle> sent this message: <line>",
-        "MOONREVIEW_TASK_DIR",
-        "@board-task",
-        "no running agent",
     ] {
         assert!(
             help.contains(said),

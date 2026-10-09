@@ -18,6 +18,7 @@ mod board_pending_card;
 mod board_selection;
 mod board_tags;
 mod board_touch;
+mod board_tracker_link;
 mod board_task_pane;
 mod board_task_pane_boxes;
 mod command_launcher;

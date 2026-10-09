@@ -4,6 +4,7 @@
 //! do to it.
 
 pub(crate) mod column_sort;
+pub(crate) mod remote_tracker;
 pub(crate) mod review_request;
 // The board's folder is read and written by the server - see `store`.
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +46,10 @@ pub(crate) struct TaskView {
     /// [`store::tag_of`].
     #[serde(default)]
     pub(crate) tags: Vec<String>,
+    /// The address of the task's issue in a tracker kept elsewhere, empty for a task with
+    /// none - see [`remote_tracker`].
+    #[serde(default)]
+    pub(crate) remote_task_tracker_url: String,
     /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
     /// card draws its first lines as the task's description, and typing there writes it back.
     pub(crate) notes: String,
@@ -247,6 +252,12 @@ pub(crate) struct CreateTaskRequest {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TaskTitleRequest {
     pub(crate) title: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Serialize, Deserialize)]
+pub(crate) struct TaskRemoteTrackerRequest {
+    pub(crate) url: String,
 }
 
 /// What a card is marked with, set whole rather than one tag at a time: the tag menu knows the

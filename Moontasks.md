@@ -30,6 +30,7 @@ on it in the repo.
 | a file on a card | click its path to open it in a pane; the mark at the end takes it off the card, and leaves the file where it is |
 | the notes under the title | the first lines of the task's `notes.md` — click them to open the task's own pane with the keyboard in its notes box, ready to write |
 | `[add notes]` | the same, on a task that has none yet |
+| the id under a card's description | the task's issue in Linear, Jira, GitHub or GitLab, as that issue's id - `BM-3343`, `moon#12` - which a click opens in the browser. The link is written in `Tracker link` on the task's pane, and kept as `remote_task_tracker_url` in the task's `metadata.json` |
 
 `[add notes]`, `[tags]` and `[start]` are a card's offers: they fade up when the pointer comes onto the
 card and fade away again when it leaves, over a sixth of a second, and hold their rows while
@@ -231,7 +232,7 @@ moon wire post "@fix-the-races are you still in src/cli?"   # to one, typed into
 ```
 
 The first kind is kept in `.moontasks/messageboard.txt`, which `Tools › Wire` opens read-only;
-the second is in the window's Messages. The rules are in `moon wire --help`.
+the second is in the window's Messages.
 
 ## Agents from the command line
 

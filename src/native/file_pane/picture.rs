@@ -27,15 +27,11 @@ impl Picture {
     pub(super) fn from_data_uri(data_uri: &str) -> Self {
         let (extension, bytes) = image_diff::decode_image_data_uri(data_uri)
             .expect("a picture is sent as a base64 `data:` URI of a known image format");
-        let size = image::ImageReader::new(std::io::Cursor::new(&bytes[..]))
-            .with_guessed_format()
-            .ok()
-            .and_then(|reader| reader.into_dimensions().ok());
         Self {
             key: hash_of(data_uri),
             extension,
+            size: size_of(&bytes),
             bytes,
-            size,
         }
     }
 
@@ -44,15 +40,8 @@ impl Picture {
         // A picture is drawn from one texture, and the graphics card says how long a side of
         // one may be. Handing it a longer one takes the window down, so that is said instead.
         let longest_side = ui.ctx().input(|input| input.max_texture_side);
-        if let Some((width, height)) = self.size
-            && width.max(height) as usize > longest_side
-        {
-            ui.label(
-                RichText::new(format!(
-                    "{width} × {height} pixels is more than this window can draw: {longest_side} a side at most"
-                ))
-                .color(palette.warn),
-            );
+        if let Some(too_long) = self.size.and_then(|size| longer_than(size, longest_side)) {
+            ui.label(RichText::new(too_long).color(palette.warn));
             return;
         }
         ui.add(
@@ -65,4 +54,23 @@ impl Picture {
             .max_size(ui.available_size()),
         );
     }
+}
+
+/// How wide and how tall a picture is in pixels, as its own header has it. `None` for bytes
+/// no decoder of this build reads.
+pub(super) fn size_of(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+}
+
+/// What is said in place of a picture with a side longer than the graphics card draws, and
+/// `None` for one that fits.
+pub(super) fn longer_than((width, height): (u32, u32), longest_side: usize) -> Option<String> {
+    (width.max(height) as usize > longest_side).then(|| {
+        format!(
+            "{width} × {height} pixels is more than this window can draw: {longest_side} a side at most"
+        )
+    })
 }

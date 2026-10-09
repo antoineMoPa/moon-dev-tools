@@ -520,6 +520,18 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn set_task_remote_tracker_url(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        url: &str,
+    ) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/tasks/{task_id}/remote-tracker"),
+            &json!({ "url": url }),
+        )
+    }
+
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
         let notes: TaskNotesPayload = self.post_json(
             &format!("/api/session/{session_id}/tasks/{task_id}/notes/open"),

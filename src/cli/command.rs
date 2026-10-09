@@ -589,38 +589,12 @@ pub(super) fn help_text_for(frame: Frame) -> String {
     let command = frame.command();
     let opens = frame.opens();
 
-    // The one line of help that is only true of the two frames that need no repo.
-    let opens_without_a_repo = if frame.opens_without_a_repo() {
-        "A folder that is no git repository works just as well: the review is the part
-that needs one.\n"
-    } else {
-        ""
-    };
-
     // The shell is the one window a folder opens as a tab of rather than a window on, so its
-    // one path is a folder, and none of what a path narrows a review to is true of it.
+    // one path is a folder.
     let (path_usage, path_example) = if frame == Frame::Shell {
         ("<folder>", "src")
     } else {
         ("<path>", "src/main.rs")
-    };
-    let shell_in_a_folder = if frame == Frame::Shell {
-        "`{command} .` and `{command} <folder>` open a shell in that folder as a tab of a window
-that is already open - the one on the folder's project, or the one last in front when no
-window is open on it - the way `{PROGRAM} edit` puts a file in one. Only when no window is
-open at all do they open a window on the folder's project, as `{command}` alone would.\n"
-            .replace("{command}", &command)
-            .replace("{PROGRAM}", PROGRAM)
-    } else {
-        String::new()
-    };
-    let narrows_the_review = if frame == Frame::Shell {
-        String::new()
-    } else {
-        "Run `{command} .` to limit the review to the current directory.
-Pass one path to review only that file or directory's working-tree changes.
-Pass two paths to review a read-only comparison of those files.\n"
-            .replace("{command}", &command)
     };
 
     // The board is the one window with commands that touch it without opening it - see
@@ -634,21 +608,6 @@ Pass two paths to review a read-only comparison of those files.\n"
         format!(
             "\n  {command} new \"fix the races\"\n  {command} list\n  {command} move IN PROGRESS"
         )
-    } else {
-        String::new()
-    };
-    let card_commands = if frame == Frame::Tasks {
-        "\n`{command} new <title>` writes a card on this repo's board and prints the folder it was
-given, without opening a window. That folder is the task's: its notes, its brief, and whatever
-an agent working on it leaves behind.
-`{command} list` prints that board without opening a window either: each column by its name,
-left to right, and under it its cards from the top, each as the task's folder and its title.
-`{command} move <column>` moves the card of the task this shell belongs to into the column
-the board shows under that name, written as the board writes it and with no quotes needed:
-`{command} move IN PROGRESS`. It is run from a task's shell, where {TASK_DIR_ENV_VAR}
-says which task that is, and the card arrives the way one dragged there does.\n"
-            .replace("{command}", &command)
-            .replace("{TASK_DIR_ENV_VAR}", crate::moontasks::TASK_DIR_ENV_VAR)
     } else {
         String::new()
     };
@@ -676,32 +635,6 @@ Examples:
   {command} before.json after.json
   {command} 4542abe
   {command} diff dev
-  {command} --remote dev-box --repo /home/you/project
-
-Run it inside any git repository you want to work in.
-{opens_without_a_repo}{card_commands}{shell_in_a_folder}`--pick` opens the window on its launch screen instead, which is where recent projects and
-the folder picker are; it is what the Window menu's New Window items open.
-`--repo <path>` opens the window on that repo rather than on the one this shell is in; it is
-what the Window menu's Restart hands the instance it starts.
-{narrows_the_review}
-`{command} <commit>` opens a read-only review of a single commit.
-`{command} diff <target>` opens a read-only diff review against a git target.
-Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`.
-
-Reviewing another machine's repo:
-  The window carries the review server inside it, so a window elsewhere can be pointed at
-  this repo - `{PROGRAM} serve` is the same server without a window.
-  `--remote <host>` opens the window against a `serve` on another machine, where the repo
-  lives; `--repo <path>` then names the path there, and without it the window asks.
-  `--remote` accepts `host`, `host:port` or a URL, and defaults to port 42000.
-  The server lets in only a window that shows it a pass key: run `{PROGRAM} generate-pass-key`
-  on that machine, and pass what it prints with `--pass-key <key>` - or in {pass_key_env},
-  which keeps it out of the process list other users can read.
-Changed submodules are offered inside the review, as extra reviews you can open from the
-command palette.
-
-Every other command - the other two windows, `open`, `list`, `serve` and the desktop
-launchers - is in `{PROGRAM} --help`.",
-        pass_key_env = crate::backend::remote::PASS_KEY_ENV_VAR,
+  {command} --remote dev-box --repo /home/you/project"
     )
 }

@@ -1,6 +1,8 @@
 //! Drawing a file tab: its header, the rendered page a markdown file opens on, and the editor
 //! with its context menu.
 
+use std::sync::Arc;
+
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
 use egui_moon_code_ide::LspPosition;
@@ -12,7 +14,7 @@ use crate::native::{
     widgets,
 };
 
-use super::{is_markdown, json_tree};
+use super::{is_markdown, json_tree, preview_images::PreviewImages};
 
 /// Between the pane's border and what it is showing.
 const PANE_PADDING: i8 = 10;
@@ -168,6 +170,7 @@ impl App {
                             && let Some(editor) = self.model.file_editors.get_mut(&pane_id)
                         {
                             editor.preview = !previewing;
+                            editor.preview_images_stale = true;
                         }
                         if json
                             && loaded
@@ -282,7 +285,7 @@ impl App {
                 if picture {
                     draw_picture(self, ui, pane_id, &palette);
                 } else if previewing {
-                    draw_preview(self, ui, pane_id);
+                    draw_preview(self, ui, pane_id, session_id);
                 } else if treeing {
                     json_tree::draw_tree(self, ui, pane_id);
                 } else {
@@ -317,11 +320,19 @@ const PREVIEW_SIDE_PADDING: f32 = 100.0;
 ///
 /// It renders the edited text rather than the saved one, so flipping to the preview shows
 /// what would be saved, not what was.
-fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
-    let Some(editor) = app.model.file_editors.get(&pane_id) else {
+///
+/// The pictures the text writes beside itself are fetched through the backend - see
+/// [`preview_images`].
+fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str) {
+    let Some(editor) = app.model.file_editors.get_mut(&pane_id) else {
         return;
     };
     let text = editor.code.text().to_string();
+    let images = PreviewImages::of(ui.ctx());
+    let uris_of_page = images.uris_of_page(session_id, &editor.file_path);
+    if std::mem::take(&mut editor.preview_images_stale) {
+        images.forget_page(ui.ctx(), &uris_of_page);
+    }
 
     // Measured out here: inside a scroll area that scrolls sideways, the room on offer has no
     // end, and the column would be centred on nothing.
@@ -341,14 +352,22 @@ fn draw_preview(app: &mut App, ui: &mut Ui, pane_id: PaneId) {
                 ui.add_space(margin);
                 ui.vertical(|ui| {
                     ui.set_max_width(width);
-                    egui_commonmark::CommonMarkViewer::new().show(
-                        ui,
-                        &mut app.model.markdown_cache,
-                        &text,
-                    );
+                    egui_commonmark::CommonMarkViewer::new()
+                        .default_implicit_uri_scheme(uris_of_page)
+                        .show(ui, &mut app.model.markdown_cache, &text);
                 });
             });
         });
+
+    // Sent for once the page has been drawn, which is what asked for them.
+    for asked in images.take_asked() {
+        let images = Arc::clone(&images);
+        let (session_id, file_path) = (asked.session_id.clone(), asked.file_path.clone());
+        app.tasks.spawn(
+            move |backend| backend.file_content(&session_id, &file_path),
+            move |_, read| images.arrived(&asked, read),
+        );
+    }
 }
 
 fn draw_editor(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str, palette: &Palette) {

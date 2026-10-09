@@ -3,7 +3,8 @@
 //!
 //! Its title and its notes are edited here, in the pane rather than through a file opened
 //! beside it - a task you have just opened is one you are about to say something about - and
-//! under them are the runs and files it has and a button for each thing it can start. ⌘F
+//! under them are the runs and files it has, a button for each thing it can start, the link
+//! to its issue in a tracker kept elsewhere, and its tags. ⌘F
 //! searches the notes, in the box they are written in - see [`notes_box`].
 //! Those two are the card's own, drawn from [`crate::native::board::resources`] and
 //! [`crate::native::board::start`] rather than laid out again here: one task said twice would
@@ -111,6 +112,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
                                     ui.add_space(LINE_GAP);
                                 }
                                 board::start::draw_list(app, ui, task.runs(), &mut actions);
+                                ui.add_space(LINE_GAP);
+                                board::tracker_link::draw_field(
+                                    app,
+                                    ui,
+                                    &task,
+                                    &palette,
+                                    &mut actions,
+                                );
                                 ui.add_space(LINE_GAP);
                                 draw_tags(app, ui, &task, &palette, &mut actions);
                             });
@@ -333,6 +342,8 @@ fn draw_editors(
             notes: task.notes.clone(),
             said_title: task.title.clone(),
             said_notes: task.notes.clone(),
+            tracker_url: task.remote_task_tracker_url.clone(),
+            said_tracker_url: task.remote_task_tracker_url.clone(),
             notes_typed_at: None,
             written_notes: None,
         });
@@ -476,6 +487,8 @@ mod tests {
             notes_typed_at: None,
             said_title: "Write the parser".to_string(),
             said_notes: said_notes.to_string(),
+            tracker_url: String::new(),
+            said_tracker_url: String::new(),
             written_notes: written_notes.map(str::to_string),
         }
     }

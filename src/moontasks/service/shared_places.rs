@@ -70,6 +70,7 @@ mod tests {
             entered_column_at_unix: None,
             position,
             tags: Vec::new(),
+            remote_task_tracker_url: String::new(),
             resources: Vec::new(),
         };
         (title.to_string(), metadata)

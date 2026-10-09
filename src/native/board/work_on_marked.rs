@@ -52,6 +52,7 @@ mod tests {
             dir_path: format!("/repo/.moontasks/{title}-1111"),
             repo_path: "/repo".to_string(),
             tags: Vec::new(),
+            remote_task_tracker_url: String::new(),
             notes: String::new(),
                 attachments: Vec::new(),
             resources: Vec::new(),

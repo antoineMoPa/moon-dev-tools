@@ -171,6 +171,11 @@ pub(crate) struct TaskMetadata {
     /// the title and looked through by the board's filter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) tags: Vec<String>,
+    /// The address of the task's issue in a tracker kept elsewhere - Linear, Jira, GitHub,
+    /// GitLab - or empty for a task with none. The card shows it as the issue's id - see
+    /// [`crate::moontasks::remote_tracker`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) remote_task_tracker_url: String,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
 }
@@ -391,6 +396,7 @@ pub(crate) fn create_task(
         position,
         status: Some(status.clone()),
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: Vec::new(),
     };
     write_task(repo_path, &task_id, &metadata)?;
@@ -420,6 +426,7 @@ pub(crate) fn create_board_task(repo_path: &Path) -> Result<()> {
         entered_column_at_unix: None,
         position: 0,
         tags: Vec::new(),
+        remote_task_tracker_url: String::new(),
         resources: Vec::new(),
     };
     write_task(repo_path, BOARD_TASK_ID, &metadata)?;

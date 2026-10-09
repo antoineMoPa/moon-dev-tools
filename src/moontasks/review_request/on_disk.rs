@@ -27,6 +27,7 @@ pub(crate) const REVIEW_REQUEST_BRIEF: &str = "\
 Write the repos your work touched to `request_for_review.txt` in this task folder, one per line,
 in the order they have to be committed and deployed. The board draws a row per line - `pending
 turbocharger review` - and the commit pane of each repo offers the message you wrote for it.
+Keep a single review per repo and branch.
 
 One line is:
 

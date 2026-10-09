@@ -216,53 +216,22 @@ fn agents_to_tag(repo_path: &Path, folders: &[String], sender: &str) -> Result<S
     })
 }
 
-/// `moon wire --help`: the whole of the wire's rules. An agent is told one sentence about
-/// the wire as it starts - see `coordination_brief` in [`crate::moontasks`] - and comes here
-/// for the rest, which is the case when a post was refused.
+/// `moon wire --help`. The wire's rules are in [`crate::moontasks::wire`], and a post that
+/// breaks one is refused with the rule it broke.
 pub(crate) fn help_text() -> String {
-    let wire_file = crate::moontasks::wire_repo_path();
-    let kept = broadcasts::KEPT_LINES;
     format!(
         "{PROGRAM} wire
 
-How the agents working on one board tell each other what they are doing.
+Tells the agents working on this board what you are doing: all of them, or one by its @handle.
 
 Usage:
-  {PROGRAM} wire post <one line>              to every agent of the board
-  {PROGRAM} wire post @<handle> <one line>    to one agent, typed into its shell
+  {PROGRAM} wire post <one line>
+  {PROGRAM} wire post @<handle> <one line>
   {PROGRAM} wire --help
 
 Examples:
   {PROGRAM} wire post \"rewriting src/cli/args.rs and its tests\"
-  {PROGRAM} wire post \"@fix-the-races are you still in src/terminal.rs?\"
-
-Run it from a task's shell. Who is posting is read from {TASK_DIR_ENV_VAR}, which every
-shell and agent started from the board is given, so it works from any folder.
-
-A line with no tag in front is appended to {wire_file}, dated and signed
-with your handle, and the file is cut back to its latest {kept} lines. Read that file; never
-write to it. This command is its only writer, and it refuses to post while the file holds a
-line it did not write, naming the line.
-
-A line that starts with one or more @handle words goes to those agents instead, and not
-to the file. The moon window holding each agent's shell types
-`agent @<your handle> sent this message: <line>` into it and presses Enter - once the agent
-is not waiting on an answer to something it asked, and nobody has typed in that shell for a
-few seconds. Until then the line waits, and the lines sent after it wait behind it.
-
-A handle is the front of a task's folder name: the words of its title, as in
-@fix-the-races. Two tasks with the same words each take the first characters of their id
-as well, as in @fix-the-races-3f2; any longer start of the folder name works too. The
-board's own task is @{board_task}.
-
-Refused, with nothing posted and nothing sent:
-  - an empty line, and a line with a line break or any other control character in it
-  - tags with no message after them
-  - a tag that is no task of the board, which lists the tasks with an agent running, or
-    that is several tasks, which lists those
-  - a tagged task with no running agent, or whose agent runs in `{PROGRAM} serve` rather
-    than in a window",
-        board_task = store::BOARD_TASK_ID,
+  {PROGRAM} wire post \"@fix-the-races are you still in src/terminal.rs?\""
     )
 }
 

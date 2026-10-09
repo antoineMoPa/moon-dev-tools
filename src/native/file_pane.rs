@@ -20,6 +20,7 @@ mod for_tests;
 mod on_disk;
 mod opening;
 mod picture;
+mod preview_images;
 mod serving;
 
 pub(crate) use opening::tab_on_file;
@@ -137,6 +138,10 @@ pub(crate) struct FileEditor {
     /// The picture the tab shows in place of the editor, for an image file - see [`picture`].
     /// Known once the read has come back, because the read is what says the file is one.
     picture: Option<picture::Picture>,
+    /// Whether the pictures on the rendered page are read again before the page is next
+    /// drawn: as the tab opens and each time the page is flipped to, so a picture written
+    /// since is the one shown - see [`preview_images`].
+    preview_images_stale: bool,
 }
 
 impl FileEditor {
@@ -179,6 +184,7 @@ impl FileEditor {
             blaming: Default::default(),
             revision: None,
             picture: None,
+            preview_images_stale: true,
         }
     }
 
@@ -377,6 +383,7 @@ mod tests {
             blaming: Default::default(),
             revision: None,
             picture: None,
+            preview_images_stale: true,
         }
     }
 

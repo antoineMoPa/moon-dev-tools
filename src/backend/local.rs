@@ -389,6 +389,15 @@ impl Backend for LocalBackend {
         moontasks::service::set_tags(&self.state, session_id, task_id, tags)
     }
 
+    fn set_task_remote_tracker_url(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        url: &str,
+    ) -> Result<()> {
+        moontasks::service::set_remote_tracker_url(&self.state, session_id, task_id, url)
+    }
+
     fn open_task_notes(&self, session_id: &str, task_id: &str) -> Result<String> {
         moontasks::service::open_notes(&self.state, session_id, task_id)
     }

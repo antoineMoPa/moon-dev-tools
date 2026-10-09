@@ -12,8 +12,8 @@ use crate::{
     moontasks::{
         self, AttachResourceRequest, BoardTaskView, ColumnLabelRequest, ColumnPlacementRequest,
         CreateTaskRequest, LinkFileRequest, NewColumnRequest, ReviewRequestView,
-        StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskTagsRequest,
-        TaskTitleRequest, TaskView, TerminalOpened, WirePayload, WorkLogPayload,
+        StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskRemoteTrackerRequest,
+        TaskTagsRequest, TaskTitleRequest, TaskView, TerminalOpened, WirePayload, WorkLogPayload,
         review_request::Amend,
         store::{BoardColumn, ColumnId},
     },
@@ -330,6 +330,16 @@ pub(super) async fn set_task_tags(
 ) -> Result<&'static str, AppError> {
     mark_activity(&state);
     moontasks::service::set_tags(&state, &session_id, &task_id, &request.tags)?;
+    Ok("ok")
+}
+
+pub(super) async fn set_task_remote_tracker_url(
+    AxumPath((session_id, task_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<TaskRemoteTrackerRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    moontasks::service::set_remote_tracker_url(&state, &session_id, &task_id, &request.url)?;
     Ok("ok")
 }
 
