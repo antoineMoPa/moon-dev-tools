@@ -3,7 +3,7 @@
   font-family: Verdana, Arial, sans-serif;
   font-size: 16px;
   color: #222;
-  background: #fff;
+  background: #fbfaf5;
 }
 
 * { box-sizing: border-box; }
@@ -11,25 +11,35 @@ body { max-width: 780px; margin: 32px auto; padding: 0 24px; line-height: 1.6; }
 a { color: #0000bb; text-decoration: underline; }
 a:visited { color: #551a8b; }
 a:hover { color: #b00000; }
+::selection { background: #ffe66d; }
 a:focus-visible, button:focus-visible { outline: 2px solid #0000bb; outline-offset: 4px; }
 h1, h2, h3 { line-height: 1.3; }
 h1 { margin: 0 0 12px; font: bold 30px Georgia, 'Times New Roman', serif; }
 h2 { margin: 0 0 16px; font: bold 23px Georgia, 'Times New Roman', serif; }
+h2::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 10px; background: #222; }
 h3 { margin: 20px 0 4px; font-size: 16px; }
 p { margin: 0 0 16px; }
-header { border-bottom: 1px solid #999; padding-bottom: 16px; }
+header { border-bottom: 2px solid #222; padding-bottom: 16px; }
 nav { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 14px; }
-section { padding: 26px 0; border-bottom: 1px solid #bbb; scroll-margin-top: 16px; }
+section { padding: 26px 0; border-bottom: 1px dashed #999; scroll-margin-top: 16px; }
 section > :last-child { margin-bottom: 0; }
 .intro { padding-top: 22px; }
 figcaption, footer { font-size: 13px; color: #555; }
 figure { margin: 20px 0 0; }
 #workflow figure { margin-top: 0; }
-figure img { display: block; width: 100%; height: auto; border: 1px solid #999; }
+figure img, .promo { display: block; width: 100%; height: auto; border: 1px solid #222; box-shadow: 5px 5px 0 #222; }
+.promo { margin-top: 26px; background: #0a0d13; }
 /* On a desktop the first screenshot runs 10% past the text column on each side; narrower
    windows have no room to spare, so it stays in the column there. */
 @media (min-width: 1000px) {
   .intro figure img { width: 120%; max-width: none; margin-left: -10%; }
+}
+/* The video runs wider still, where there is the room for it. */
+@media (min-width: 1000px) {
+  .promo { width: 126%; max-width: none; margin-left: -13%; }
+}
+@media (min-width: 1200px) {
+  .promo { width: 150%; margin-left: -25%; }
 }
 figcaption { margin-top: 6px; }
 ul, ol { padding-left: 24px; margin: 12px 0 18px; }
@@ -39,9 +49,11 @@ dl { margin: 0; }
 dt { font-weight: bold; margin-top: 16px; }
 dd { margin: 4px 0 16px 24px; }
 code { font-family: 'Courier New', monospace; overflow-wrap: anywhere; }
-.terminal-command { padding: 12px; border: 1px solid #aaa; background: #f4f4f4; }
+p code, dt code { padding: 1px 4px; background: #efece2; }
+.terminal-command { margin-bottom: 22px; padding: 12px; border: 1px solid #222; background: #fff; box-shadow: 5px 5px 0 #222; }
 .terminal-command code { display: block; margin-bottom: 10px; white-space: pre-wrap; }
-button { padding: 3px 10px; font: 14px Arial, sans-serif; cursor: pointer; }
+button { padding: 3px 10px; border: 1px solid #222; border-radius: 0; background: #ffe66d; color: #222; font: 14px Arial, sans-serif; cursor: pointer; }
+button:active { transform: translate(1px, 1px); }
 footer { padding-top: 18px; }
 .skip-link { position: absolute; left: 12px; top: -100px; background: white; padding: 8px; }
 .skip-link:focus { top: 8px; }

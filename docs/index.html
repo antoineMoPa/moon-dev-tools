@@ -23,6 +23,8 @@
     </header>
 
     <main id="main">
+      <video class="promo" src="assets/moon-dev-tools.mp4" poster="assets/moon-dev-tools-poster.jpg" width="1920" height="1080" controls playsinline preload="none"></video>
+
       <section class="intro" aria-label="About moon dev tools">
         <p>moon-dev-tools is the work environment that will <em>hopefully</em> restore focus to your agentic software development, let you ship hundreds of tasks, and review your code at lunar speed.</p>
         <figure>
@@ -48,8 +50,8 @@
       <section id="remote">
         <h2>Use remotely</h2>
         <p>While it runs natively, moon-dev-tool uses a client/server model letting you do anything remotely from a web browser, using a wasm version of the app.</p>
-        <p>You can use moon shell as a remote web version of ghostty.</p>
-        <p>Start a Cloudflare tunnel from the Tools menu.</p>
+        <p>Run <code>moon serve</code> in a repo on your server and open the link it prints.</p>
+        <p>The server listens on localhost only. Reach it through an SSH tunnel, or start a Cloudflare tunnel from the Tools menu.</p>
         <p>Tools &gt; Cloudflare &gt; Start Tunnel</p>
       </section>
 
