@@ -27,12 +27,23 @@ section > :last-child { margin-bottom: 0; }
 figcaption, footer { font-size: 13px; color: #555; }
 figure { margin: 20px 0 0; }
 #workflow figure { margin-top: 0; }
+#workflow figure + figure { margin-top: 26px; }
+@media (min-width: 700px) { #workflow figure + figure { margin-top: 0; } }
 figure img, .promo { display: block; width: 100%; height: auto; border: 1px solid #222; box-shadow: 5px 5px 0 #222; }
 .promo { margin-top: 26px; background: #0a0d13; }
-/* On a desktop the first screenshot runs 10% past the text column on each side; narrower
-   windows have no room to spare, so it stays in the column there. */
+/* The two screenshots stand side by side where there is the width for it, each given room in
+   proportion to its shape so they come out the same height, and run past the text column on
+   a desktop. */
+@media (min-width: 700px) {
+  #workflow { display: flex; gap: 22px; }
+  #workflow figure:first-child { flex: 1400 1 0; }
+  #workflow figure:last-child { flex: 1276 1 0; }
+}
 @media (min-width: 1000px) {
-  .intro figure img { width: 120%; max-width: none; margin-left: -10%; }
+  #workflow { width: 126%; margin-left: -13%; }
+}
+@media (min-width: 1200px) {
+  #workflow { width: 150%; margin-left: -25%; }
 }
 /* The video runs wider still, where there is the room for it. */
 @media (min-width: 1000px) {
