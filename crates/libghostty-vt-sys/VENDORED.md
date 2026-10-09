@@ -12,8 +12,13 @@ VT engine to wasm. Root `Cargo.toml` puts it in place of the crates.io one with
   `#[cfg(target_pointer_width = "64")]`. The struct definitions themselves use `usize` and
   pointers, and hold on wasm32 as they are.
 
-And one fix for every target: `build.rs` watched `crates/libghostty-vt-sys/build.rs`, a path
-Cargo reads from the crate's own folder, so it never existed and the Zig build ran on every build.
+And two fixes for every target:
+
+- `build.rs` watched `crates/libghostty-vt-sys/build.rs`, a path Cargo reads from the crate's
+  own folder, so it never existed and the Zig build ran on every build.
+- `build.rs` removes the Ghostty clone and Zig's cache from `OUT_DIR` once the library and
+  headers are installed. They are over nine tenths of the folder, and Cargo keeps one such
+  folder for every profile and target built.
 
 Ghostty's wasm build also imports one function from its host, `env.log`, for its log messages.
 moon's build.rs points that import at `web/ghostty_env.js`.

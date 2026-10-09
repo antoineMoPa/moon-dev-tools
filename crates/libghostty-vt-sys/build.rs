@@ -109,7 +109,7 @@ fn build_vendored(link_mode: LinkMode) {
     let host = env::var("HOST").expect("HOST must be set");
 
     // Locate ghostty source: env override > fetch into OUT_DIR.
-    let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
+    let (ghostty_dir, ghostty_dir_is_fetched) = match env::var("GHOSTTY_SOURCE_DIR") {
         Ok(dir) => {
             let p = PathBuf::from(dir);
             assert!(
@@ -117,9 +117,9 @@ fn build_vendored(link_mode: LinkMode) {
                 "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
                 p.display()
             );
-            p
+            (p, false)
         }
-        Err(_) => fetch_ghostty(&out_dir),
+        Err(_) => (fetch_ghostty(&out_dir), true),
     };
 
     // Build libghostty-vt via zig.
@@ -216,6 +216,19 @@ fn build_vendored(link_mode: LinkMode) {
         LinkMode::Static => println!("cargo:rustc-link-lib=static=ghostty-vt"),
     }
     emit_include_metadata(&[include_dir]);
+
+    // Nothing reads the clone or Zig's cache once the library and headers are installed, and
+    // every profile and target of a build has an OUT_DIR, so each would keep its own of both.
+    // A source the caller named with GHOSTTY_SOURCE_DIR is theirs, and stays.
+    remove_dir(&zig_cache_dir);
+    if ghostty_dir_is_fetched {
+        remove_dir(&ghostty_dir);
+    }
+}
+
+fn remove_dir(dir: &Path) {
+    std::fs::remove_dir_all(dir)
+        .unwrap_or_else(|error| panic!("failed to remove {}: {error}", dir.display()));
 }
 
 fn warn_unused_xcframework(lib_dir: &Path) {
@@ -323,7 +336,8 @@ fn zig_optimize_mode() -> &'static str {
 }
 
 /// Clone ghostty at the pinned commit into OUT_DIR/ghostty-src.
-/// Reuses an existing clone if the commit matches.
+/// Reuses an existing clone if the commit matches - one a failed build left, since a build
+/// that succeeds removes its clone.
 fn fetch_ghostty(out_dir: &Path) -> PathBuf {
     let src_dir = out_dir.join("ghostty-src");
     let stamp = src_dir.join(".ghostty-commit");

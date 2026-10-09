@@ -6,7 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 TAG="v$(bash "$ROOT_DIR/scripts/_internal/version.sh")"
-OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
+ARTIFACTS_DIR="$ROOT_DIR/target/release-artifacts"
+OUTPUT_DIR="$ARTIFACTS_DIR/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
 # The executable Cargo builds. install.sh expects it in the archive.
 PROGRAMS=(
@@ -72,6 +73,7 @@ package_binaries() {
     done
 
     tar -C "$stage_dir" -czf "$archive_path" "${PROGRAMS[@]}"
+    rm -rf "$stage_dir"
     checksum_file "$archive_path"
 
     echo "  $archive_path (${PROGRAMS[*]})"
@@ -200,6 +202,9 @@ require_zig
 # build links before anything is built.
 "$ROOT_DIR/scripts/third-party-licenses.py" --check
 
+# Only this release's archives are kept. upload-release.sh reads no others, and the earlier
+# releases have theirs on GitHub.
+rm -rf "$ARTIFACTS_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 echo "Created release artifacts:"

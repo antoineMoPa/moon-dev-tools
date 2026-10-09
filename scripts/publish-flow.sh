@@ -34,4 +34,5 @@ git commit -am "v$NEXT_VERSION"
 git tag -a "v$NEXT_VERSION" -m "v$NEXT_VERSION"
 
 git push --follow-tags
+bash scripts/_internal/clean-builds-of-package.sh
 bash scripts/bin-release.sh
