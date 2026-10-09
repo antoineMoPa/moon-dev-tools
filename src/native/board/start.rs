@@ -14,6 +14,7 @@ use crate::{
     api::AgentKind,
     moontasks::{RunsOf, StartFolder, StartResourceRequest, TaskResourceKind},
     native::{
+        agent_logins::{NOT_LOGGED_IN, log_in_commands},
         app::App,
         board::{BoardAction, agent_label, available_agents, gesture::Controls},
         widgets,
@@ -71,21 +72,16 @@ fn offers(app: &App, task: RunsOf<'_>) -> Vec<Vec<StartOffer>> {
     if agents.is_empty() {
         return groups;
     }
+    let log_in_commands = log_in_commands(app);
     groups.push(
         agents
             .into_iter()
-            .map(|agent| StartOffer {
-                label: agent_label(agent),
-                hover: None,
-                action: BoardAction::Start(
-                    task.id.to_string(),
-                    StartResourceRequest {
-                        kind: TaskResourceKind::Agent,
-                        agent,
-                        opens_in: StartFolder::Repo,
-                        unattended: false,
-                    },
-                ),
+            .flat_map(|agent| {
+                let log_in_command = log_in_commands
+                    .iter()
+                    .find(|(of, _)| *of == agent)
+                    .map(|(_, command)| command.clone());
+                agent_offers(task, agent, log_in_command)
             })
             .collect(),
     );
@@ -100,6 +96,45 @@ fn offers(app: &App, task: RunsOf<'_>) -> Vec<Vec<StartOffer>> {
         },
     }]);
     groups
+}
+
+/// An agent as a task offers it. One the person is not logged in to - which
+/// `log_in_command` being there says, see [`crate::native::agent_logins`] - says so, and has
+/// the shell that logs them in offered under it. It starts all the same when asked to: the
+/// server only reads the signs of a login.
+fn agent_offers(
+    task: RunsOf<'_>,
+    agent: AgentKind,
+    log_in_command: Option<String>,
+) -> Vec<StartOffer> {
+    let start = BoardAction::Start(
+        task.id.to_string(),
+        StartResourceRequest {
+            kind: TaskResourceKind::Agent,
+            agent,
+            opens_in: StartFolder::Repo,
+            unattended: false,
+        },
+    );
+    let Some(log_in_command) = log_in_command else {
+        return vec![StartOffer {
+            label: agent_label(agent),
+            hover: None,
+            action: start,
+        }];
+    };
+    vec![
+        StartOffer {
+            label: format!("{} - {NOT_LOGGED_IN}", agent_label(agent)),
+            hover: Some("Your home on this server has no login for this agent. It starts anyway"),
+            action: start,
+        },
+        StartOffer {
+            label: format!("log in to {}", agent_label(agent)),
+            hover: Some("Open a shell of yours with the command that logs you in typed into it"),
+            action: BoardAction::RunInShell(log_in_command),
+        },
+    ]
 }
 
 /// The `[start]` button at the foot of a card, and the menu of [`offers`] it opens. They were

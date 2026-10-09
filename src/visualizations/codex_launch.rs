@@ -29,6 +29,9 @@ const DEVELOPER_INSTRUCTIONS: &str = "developer_instructions=";
 ///
 /// Both lead: `-c` and `--add-dir` are options of `codex` itself, and `args` may go on to a
 /// subcommand such as `resume`.
+///
+/// Called as the owner of that Codex home - see `TerminalRegistry::spawn` - so the folder made
+/// in it is theirs, as everything else in it is.
 pub(crate) fn codex_arguments(codex_home: &Path, args: &[String]) -> Result<Vec<String>> {
     let (briefs, rest) = take_developer_instructions(args);
     let configured = configured_developer_instructions(codex_home)?;

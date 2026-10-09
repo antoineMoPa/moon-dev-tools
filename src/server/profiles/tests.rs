@@ -15,6 +15,7 @@ fn account(id: &str) -> Account {
         name: format!("Person {id}"),
         email: format!("{id}@users.noreply.github.com"),
         token: format!("secret-{id}"),
+        unix_user: None,
         layout: None,
         windows: HashMap::new(),
     }
@@ -424,7 +425,7 @@ fn personal_shell_commits_keep_identity_isolated_without_credentials() {
                 diff_target: None,
                 active_commit: None,
             },
-            Some(profiles.namespace(&user(id))),
+            Some(profiles.namespace(&user(id)).as_str().into()),
         )
         .unwrap()
         .session_id;
@@ -480,7 +481,7 @@ fn personal_shell_commits_keep_identity_isolated_without_credentials() {
                 diff_target: None,
                 active_commit: None,
             },
-            Some(profiles.namespace(&user("b"))),
+            Some(profiles.namespace(&user("b")).as_str().into()),
         )
         .unwrap()
         .session_id;
@@ -537,4 +538,57 @@ fn personal_shell_commits_keep_identity_isolated_without_credentials() {
         registry.remove(&id);
     }
     fs::remove_dir_all(profiles.path.parent().unwrap()).unwrap();
+}
+
+/// The guard on the switch: a server that is not root gives nobody a Unix user, whoever signs
+/// in, and what a signed-in person starts runs as the server's own user - see
+/// `crate::unix_users`.
+#[test]
+fn without_the_switch_no_unix_user_is_made_and_a_shell_runs_as_the_server() {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+    assert!(!crate::unix_users::each_person_has_one());
+    let profiles = fixture();
+    profiles.connect(&user("a"), account("1")).unwrap();
+    assert_eq!(profiles.view(&user("a")).unix_user, None);
+    assert!(!profiles.view(&user("a")).sign_in_required);
+    let owner = profiles.session_owner(&user("a")).unwrap();
+    assert!(owner.person.is_none());
+
+    let folder = profiles.path.parent().unwrap().to_path_buf();
+    let state =
+        crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(Instant::now())));
+    let session_id = crate::service::open_session_for_profile(
+        &state,
+        crate::api::OpenSessionRequest {
+            repo_path: folder.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        },
+        Some(owner),
+    )
+    .unwrap()
+    .session_id;
+    assert_eq!(crate::api::person_of(&state, &session_id).unwrap(), None);
+    let uid_file = folder.join("uid");
+    let terminal_id = crate::terminal::start_workspace_shell_running(
+        &state,
+        &session_id,
+        &format!("id -u > {}.part && mv {0}.part {0}", uid_file.display()),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !uid_file.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    // SAFETY: reads this process's own credentials.
+    let server_uid = unsafe { libc::getuid() };
+    assert_eq!(
+        fs::read_to_string(&uid_file).unwrap().trim(),
+        server_uid.to_string()
+    );
+    state.terminals.remove(&terminal_id);
+    fs::remove_dir_all(folder).unwrap();
 }

@@ -114,9 +114,12 @@ pub(super) fn new_task(title: &str) -> Result<()> {
     Ok(())
 }
 
-/// The repo whose board `new` and `list` are about: the one this shell is in.
+/// The repo whose board `new` and `list` are about: the one this shell is in - or, for a
+/// person in a work tree of their own, the checkout the board everybody has is in.
 fn repo_of_this_shell() -> Result<PathBuf> {
-    project_root(&env::current_dir().context("failed to read the current directory")?)
+    store::board_checkout(&project_root(
+        &env::current_dir().context("failed to read the current directory")?,
+    )?)
 }
 
 pub(super) fn list_tasks() -> Result<()> {

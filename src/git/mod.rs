@@ -30,12 +30,22 @@ use crate::api::{CommitView, DiffTarget};
 /// index.lock" from their own command. `GIT_OPTIONAL_LOCKS=0` drops only the locks git takes
 /// for its own bookkeeping - the ones `git add` or `git commit` need to do their work are
 /// still taken - so every git call here goes through this.
-fn git_command(repo_path: &Path) -> Command {
-    let mut command = Command::new("git");
+///
+/// It runs as this thread's current user - see [`crate::unix_users::command`]. On a
+/// server that gives each person a Unix user the repo is one person's checkout worked in by
+/// all of them, which git refuses as somebody else's unless told the folder is safe.
+fn git_command(repo_path: &Path) -> Result<Command> {
+    let mut command = crate::unix_users::command("git")?;
     command
         .current_dir(repo_path)
         .env("GIT_OPTIONAL_LOCKS", "0");
-    command
+    if crate::unix_users::each_person_has_one() {
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "safe.directory")
+            .env("GIT_CONFIG_VALUE_0", "*");
+    }
+    Ok(command)
 }
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
@@ -304,7 +314,7 @@ pub(crate) fn run_git_allow_status(
     args: &[&str],
     allowed: &[i32],
 ) -> Result<String> {
-    let output = git_command(repo_path)
+    let output = git_command(repo_path)?
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -318,7 +328,7 @@ pub(crate) fn run_git_allow_status(
 }
 
 pub(crate) fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = git_command(repo_path)
+    let output = git_command(repo_path)?
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -331,7 +341,7 @@ pub(crate) fn run_git_bytes(repo_path: &Path, args: &[&str]) -> Result<Vec<u8>> 
 }
 
 pub(crate) fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = git_command(repo_path)
+    let output = git_command(repo_path)?
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
@@ -344,7 +354,7 @@ pub(crate) fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
 }
 
 pub(crate) fn run_git_no_output(repo_path: &Path, args: &[&str]) -> Result<()> {
-    let output = git_command(repo_path)
+    let output = git_command(repo_path)?
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;

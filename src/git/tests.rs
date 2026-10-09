@@ -72,6 +72,7 @@ fn init_test_repo(repo_root: &PathBuf) {
 fn test_session(repo_root: PathBuf, active_commit: Option<String>) -> RepoSession {
     RepoSession {
         namespace: None,
+        person: None,
         repo_path: repo_root,
         diff_target: DiffTarget::default(),
         active_commit,

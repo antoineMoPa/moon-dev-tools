@@ -568,7 +568,7 @@ pub(crate) fn apply_patch(
     cached: bool,
     reverse: bool,
 ) -> Result<()> {
-    let mut command = git_command(repo_path);
+    let mut command = git_command(repo_path)?;
     command.arg("apply");
     if cached {
         command.arg("--cached");

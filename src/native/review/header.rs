@@ -7,6 +7,7 @@ use egui::{Align, Layout, RichText, Ui};
 use crate::{
     api::{AgentKind, CommentDispatchStatus},
     native::{
+        agent_logins,
         app::App,
         theme::{Palette, SMALL_SIZE},
         widgets,
@@ -169,16 +170,25 @@ pub(crate) fn draw_agent_select(
         .map(|agent| agent.label.clone())
         .unwrap_or_else(|| selected.label().to_string());
 
+    // The shell that logs the person in to an agent, when the menu was asked for one.
+    let mut log_in = None;
     egui::ComboBox::from_id_salt(("agent-select", session_id, salt))
         .selected_text(RichText::new(selected_label).size(SMALL_SIZE))
         .width(112.0)
         .show_ui(ui, |ui| {
             for agent in agents {
+                // An agent the person is not logged in to says so and can be picked all the
+                // same: the server only reads the signs of a login.
+                let log_in_command = agent_logins::log_in_command_of(agent);
+                let label = match log_in_command {
+                    None => agent.label.clone(),
+                    Some(_) => format!("{} - {}", agent.label, agent_logins::NOT_LOGGED_IN),
+                };
                 // An agent that is not installed is listed but cannot be picked, so the
                 // menu explains the gap rather than hiding it.
                 let response = ui
                     .add_enabled_ui(agent.available, |ui| {
-                        ui.selectable_label(agent.kind == selected, agent.label.as_str())
+                        ui.selectable_label(agent.kind == selected, label)
                     })
                     .inner;
                 if !agent.available {
@@ -193,10 +203,20 @@ pub(crate) fn draw_agent_select(
                             backend.set_agent(&for_call, kind)
                         });
                 }
+                if let Some(command) = log_in_command
+                    && widgets::clickable(ui.button(format!("log in to {}", agent.label)))
+                        .on_hover_text(format!("Open a shell with `{command}` typed into it"))
+                        .clicked()
+                {
+                    log_in = Some(command.to_string());
+                }
             }
         })
         .response
         .on_hover_text("where comments get sent");
+    if let Some(command) = log_in {
+        app.run_in_shell(command);
+    }
 
     let _ = palette;
 }

@@ -8,6 +8,13 @@
 //! 2026-10-06 09:14 @fix-the-races: rewriting src/terminal.rs and its tests
 //! ```
 //!
+//! On a server that gives each person a Unix user the text starts with whose agent posted it
+//! - see [`super::from_the_agent_of`]:
+//!
+//! ```text
+//! 2026-10-06 09:14 @fix-the-races: (antoine-mp's agent) rewriting src/terminal.rs
+//! ```
+//!
 //! The file is the latest [`KEPT_LINES`] of them, oldest first. [`post`] is its only writer,
 //! which is what keeps it in that order, at that length and in that shape - so it holds the
 //! file to the shape as well: a line of any other, which is a line somebody wrote by hand,

@@ -1,21 +1,23 @@
 //! What runs on a task: agents and shells started, resumed, attached, stopped and deleted, and
 //! the files and environment a run is started with.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 use crate::{
     agent::agent_is_available,
+    agent_sessions::{AgentHome, OpenSessions},
     api::{AgentKind, AppState},
     moontasks::{
         AttachResourceRequest, StartFolder, StartResourceRequest, agent_launch,
         store::{self, TaskMetadata, TaskResource, TaskResourceKind},
     },
     terminal::{TerminalProgram, TerminalSpec},
+    unix_users::Person,
 };
 
-use super::repo_of;
+use super::{folder_of, repo_of};
 
 /// Start a shell or an agent in a task, and record it on the task.
 pub(crate) fn start_resource(
@@ -24,15 +26,15 @@ pub(crate) fn start_resource(
     task_id: &str,
     request: StartResourceRequest,
 ) -> Result<String> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
+    let person = crate::api::person_of(state, session_id)?;
 
     let agent = match request.kind {
         TaskResourceKind::Shell => AgentKind::None,
         TaskResourceKind::Agent => {
-            if !agent_is_available(state.agent_availability, request.agent) {
-                bail!("{} is not installed here", request.agent.label());
-            }
+            ensure_installed_for(state, person.as_ref(), request.agent)?;
             request.agent
         }
         TaskResourceKind::File => bail!("a file is linked to a task, not started"),
@@ -60,8 +62,10 @@ pub(crate) fn start_resource(
     let name =
         crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
     let task_dir = store::task_dir(&repo_path, task_id)?;
+    // The repo is the folder the session is open on: a person in a work tree of their own
+    // starts their runs there, on a task whose folder is in the checkout everybody has.
     let cwd = match request.opens_in {
-        StartFolder::Repo => repo_path.clone(),
+        StartFolder::Repo => works_in.clone(),
         StartFolder::TaskFolder => task_dir.clone(),
     };
 
@@ -83,6 +87,7 @@ pub(crate) fn start_resource(
         owner: Some(store::run_owner(&repo_path, task_id)),
         name: Some(name.clone()),
         type_ahead,
+        runs_as: person.clone(),
     })?;
     // Before the shell's id is written down or answered with, so nothing is told to it first.
     if request.unattended {
@@ -103,6 +108,8 @@ pub(crate) fn start_resource(
             agent_session_id,
             name: Some(name),
             started_at_unix: store::now_unix(),
+            started_by: person.as_ref().map(started_by),
+            work_tree: store::work_tree_apart_from(&repo_path, &works_in),
         });
         store::write_task(&repo_path, task_id, &metadata)?;
     }
@@ -133,18 +140,23 @@ pub(crate) fn resume_resource(
     {
         return Ok(terminal_id.clone());
     }
+    // The run is whoever's it is started again as: it is their agent that has its session,
+    // open or not, and their agent that is started on it.
+    let person = person_resuming(state, session_id, &resource)?;
+    let resource = TaskResource {
+        started_by: person.as_ref().map(started_by),
+        ..resource
+    };
     // Starting it again here would be a second process on the one session.
-    if let Some(pid) =
-        super::going_elsewhere_in(&resource, &crate::agent_sessions::OpenSessions::read())
-    {
+    let open = OpenSessions::of_runs([&resource])?;
+    if let Some(pid) = super::going_elsewhere_in(&resource, &open) {
         bail!("that run is already going, in process {pid}");
     }
     let Some(launch) = agent_launch(resource.agent) else {
         bail!("a shell cannot be resumed - open a new one");
     };
-    if !agent_is_available(state.agent_availability, resource.agent) {
-        bail!("{} is not installed here", resource.agent.label());
-    }
+    ensure_installed_for(state, person.as_ref(), resource.agent)?;
+    let cwd = folder_a_run_went_in(&repo_path, &resource, person.as_ref())?;
 
     let fillings = write_task_files(task_id, &repo_path, &metadata)?
         .with_session(resource.agent_session_id.as_deref());
@@ -163,7 +175,7 @@ pub(crate) fn resume_resource(
         }
     };
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd,
         program,
         args: fillings.fill_all(template.iter()),
         env: task_env(session_id, task_id, &repo_path),
@@ -172,8 +184,10 @@ pub(crate) fn resume_resource(
         // A resumed run is being picked up where it left off, and it was told the title when
         // it started; typing it again would be typing over whatever it is in the middle of.
         type_ahead: None,
+        runs_as: person.clone(),
     })?;
 
+    metadata.resources[at].started_by = resource.started_by;
     metadata.resources[at].terminal_id = Some(terminal_id.clone());
     metadata.resources[at].terminal_owner = Some(std::process::id());
     metadata.resources[at].name = Some(name);
@@ -193,7 +207,8 @@ pub(crate) fn attach_resource(
     task_id: &str,
     request: &AttachResourceRequest,
 ) -> Result<String> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let agent_session_id = request.agent_session_id.trim();
@@ -203,9 +218,8 @@ pub(crate) fn attach_resource(
     let Some(launch) = agent_launch(request.agent) else {
         bail!("only an agent's session can be attached");
     };
-    if !agent_is_available(state.agent_availability, request.agent) {
-        bail!("{} is not installed here", request.agent.label());
-    }
+    let person = crate::api::person_of(state, session_id)?;
+    ensure_installed_for(state, person.as_ref(), request.agent)?;
 
     let fillings =
         write_task_files(task_id, &repo_path, &metadata)?.with_session(Some(agent_session_id));
@@ -213,7 +227,7 @@ pub(crate) fn attach_resource(
     let name =
         crate::terminal::name_for_new_shell(state, &repo_path, Some(&metadata.title), &program)?;
     let terminal_id = state.terminals.spawn(TerminalSpec {
-        cwd: repo_path.clone(),
+        cwd: works_in.clone(),
         program,
         args: fillings.fill_all(launch.attach.iter()),
         env: task_env(session_id, task_id, &repo_path),
@@ -222,6 +236,7 @@ pub(crate) fn attach_resource(
         // The session being attached is already under way; typing the title at it would be
         // typing over whatever it is in the middle of.
         type_ahead: None,
+        runs_as: person.clone(),
     })?;
 
     metadata.resources.push(TaskResource {
@@ -234,10 +249,96 @@ pub(crate) fn attach_resource(
         agent_session_id: Some(agent_session_id.to_string()),
         name: Some(name),
         started_at_unix: store::now_unix(),
+        started_by: person.as_ref().map(started_by),
+        work_tree: store::work_tree_apart_from(&repo_path, &works_in),
     });
     store::write_task(&repo_path, task_id, &metadata)?;
 
     Ok(terminal_id)
+}
+
+/// Refuse to start an agent that whoever it would run as has not installed: the person, on a
+/// server that gives each a Unix user, and the server's own user everywhere else.
+fn ensure_installed_for(
+    state: &AppState,
+    runs_as: Option<&Person>,
+    agent: AgentKind,
+) -> Result<()> {
+    let home = AgentHome::of_whoever_runs(runs_as);
+    if agent_is_available(crate::agent_sessions::availability_in(state, &home)?, agent) {
+        return Ok(());
+    }
+    match runs_as {
+        Some(person) => bail!(
+            "{} is not installed for {}: it is not on the login PATH of the Unix user {}",
+            agent.label(),
+            person.github_login,
+            person.unix_user.name
+        ),
+        None => bail!("{} is not installed here", agent.label()),
+    }
+}
+
+/// What a run's record says of the person it was started for.
+fn started_by(person: &Person) -> store::StartedBy {
+    store::StartedBy {
+        github_login: person.github_login.clone(),
+        unix_user: person.unix_user.name.clone(),
+    }
+}
+
+/// Who a recorded run is started again as: whoever started it, whoever asks for it back. The
+/// agent's session is in that person's home, and nobody else's agent could open it. A run
+/// written down before runs said who started them is the asker's from here on.
+///
+/// `None` on a server that runs everything as itself, whatever the record says: a board can
+/// be carried to one from a server that gave each person a Unix user.
+fn person_resuming(
+    state: &AppState,
+    session_id: &str,
+    resource: &TaskResource,
+) -> Result<Option<Person>> {
+    if !crate::unix_users::each_person_has_one() {
+        return Ok(None);
+    }
+    let Some(by) = &resource.started_by else {
+        return crate::api::person_of(state, session_id);
+    };
+    let person = crate::agent_sessions::person_who_started(by)?.with_context(|| {
+        format!(
+            "{} started that run as the Unix user {}, which this machine no longer has",
+            by.github_login, by.unix_user
+        )
+    })?;
+    Ok(Some(person))
+}
+
+/// The folder a recorded run is started again in: the one it went in, whoever asks for it back
+/// and whichever folder their window is open on. The agent keeps the run's session under that
+/// folder, and the work the run was in the middle of is there.
+///
+/// A work tree that has gone since is refused rather than the run started somewhere it never
+/// was. It is looked for as `runs_as`, whoever the run is started again as: a work tree in
+/// their home is theirs to enter, and may be nobody else's.
+pub(super) fn folder_a_run_went_in(
+    repo_path: &Path,
+    resource: &TaskResource,
+    runs_as: Option<&Person>,
+) -> Result<PathBuf> {
+    let Some(work_tree) = &resource.work_tree else {
+        return Ok(repo_path.to_path_buf());
+    };
+    let looked_for = match runs_as {
+        Some(person) => crate::unix_users::as_user(person, || std::fs::metadata(work_tree))?,
+        None => std::fs::metadata(work_tree),
+    };
+    match looked_for {
+        Ok(found) if found.is_dir() => Ok(PathBuf::from(work_tree)),
+        Ok(_) => bail!("that run went in the work tree {work_tree}, which is no folder any more"),
+        Err(error) => bail!(
+            "that run went in the work tree {work_tree}, which it cannot be resumed in: {error}"
+        ),
+    }
 }
 
 /// Write down what a task's run is now called, for the run whose shell this is. A task's
@@ -466,8 +567,17 @@ pub(super) fn write_task_files(
     std::fs::write(&path, crate::moontasks::ATTACHMENTS_BRIEF)
         .with_context(|| format!("failed to write {}", path.display()))?;
 
+    // The wire's file is named from the repo, which is where an agent is started - except
+    // where people share the board, and an agent may be in a work tree that has no such
+    // file: there it is named in full.
+    let wire_file = match store::people_share_the_board() {
+        true => crate::moontasks::wire::broadcasts::file_path(repo_path)
+            .display()
+            .to_string(),
+        false => crate::moontasks::wire_repo_path(),
+    };
     let path = dir.join(crate::moontasks::COORDINATION_BRIEF_FILE_NAME);
-    std::fs::write(&path, crate::moontasks::coordination_brief())
+    std::fs::write(&path, crate::moontasks::coordination_brief(&wire_file))
         .with_context(|| format!("failed to write {}", path.display()))?;
     // That file sends the agent to read the wire's, so by then it is there - empty, on a
     // board nobody has posted to yet. Only made: what is in it is the agents'.

@@ -331,9 +331,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Start a shell on the repo with one command line typed into it and sent, and answer with
     /// the shell it runs in: what an extension asks for when what it has to show is a program
     /// of its own - `docker logs -f`, a shell inside a container. Attached with
-    /// [`Backend::attach_terminal`], like any other. Only extensions ask, which a browser's
-    /// window has none of.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// [`Backend::attach_terminal`], like any other. Logging in to an agent asks too - see
+    /// `crate::native::agent_logins` - which a browser's window does as well.
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String>;
     /// Type a line into one of this moon's shells and send it, once nothing there is in the
     /// way - see `told` in [`crate::terminal`]. Answers once the line is waiting its turn. For

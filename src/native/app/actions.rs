@@ -455,6 +455,7 @@ impl App {
             }
             CommandAction::Split(side) => self.split_frame(side),
             CommandAction::RunProject(which) => self.run_project(ctx, which),
+            CommandAction::RunInShell(command) => self.run_in_shell(command),
             CommandAction::SwitchProject => self.switch_project(ctx),
             CommandAction::GoToSpace(index) => self.go_to_space(ctx, index),
             CommandAction::MoveSpace { from, to } => self.move_space(from, to),

@@ -11,18 +11,20 @@
 //! folder rather than a tab on a file. `moon open <folder>` does too, and asks it for its
 //! file picker on that folder.
 //!
-//! `moon wire post @handle …` reaches one window and no other: the one holding the shell of
+//! `moon wire post @handle …` reaches one moon and no other: the one holding the shell of
 //! the agent the line is for, which it asks to type the line in - see
 //! [`crate::moontasks::wire`].
 //!
-//! `moon agent start`, `tell` and `view` each reach one window too - the one open on the
-//! board an agent is started on, and the one holding the shell of the agent told or looked at
-//! - and are answered with what came of it rather than with a promise: see
-//! [`window::AgentAsks`].
+//! `moon agent start`, `tell` and `view` each reach one moon too - the one an agent of the
+//! board is started in, and the one holding the shell of the agent told or looked at - and
+//! are answered with what came of it rather than with a promise: see [`window::AgentAsks`].
 //!
-//! `moon launch <command>` reaches the moon whose shell it was typed in, and that one may be
-//! a `moon serve`: it is no window and is written down as none, and listens on a socket named
-//! the same way for this one ask - see [`server`].
+//! `moon launch <command>` reaches the moon whose shell it was typed in.
+//!
+//! The moon those reach may be a `moon serve`: it is no window and is written down as none,
+//! and listens on a socket named the same way for what is asked about its agents and for a
+//! program to start - see [`server`]. One that gives each person a Unix user listens where
+//! all of them reach it instead, and tells its shells where: see [`SOCKET_ENV`].
 
 pub(crate) mod server;
 pub(crate) mod window;
@@ -31,8 +33,12 @@ pub(crate) mod window;
 mod tests;
 
 use std::{
+    ffi::OsStr,
     io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    os::unix::{
+        fs::PermissionsExt,
+        net::{UnixListener, UnixStream},
+    },
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -40,7 +46,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{api::AgentKind, terminal::Shown};
+use crate::{api::AgentKind, terminal::Shown, unix_users::Person};
 
 const SETTINGS_DIR_NAME: &str = ".moonreview";
 const INSTANCES_DIR_NAME: &str = "instances";
@@ -49,6 +55,27 @@ const INSTANCES_DIR_NAME: &str = "instances";
 /// the window's own shells reaches that window rather than whichever other one holds the
 /// file. Written into every shell the window starts - see [`crate::terminal`].
 pub(crate) const WINDOW_ENV: &str = "MOON_INSTANCE";
+
+/// The socket of the moon a shell was started by, when it is not beside the records in the
+/// shell's own home: a server that gives each person a Unix user runs its shells as users who
+/// cannot enter its home, so it listens in [`SHARED_SOCKETS_DIR`] and writes where into every
+/// shell it starts - see [`socket_for_other_unix_users`]. Unset everywhere else.
+pub(crate) const SOCKET_ENV: &str = "MOON_INSTANCE_SOCKET";
+
+/// The GitHub login of the person a shell was started for, on a server that gives each person
+/// a Unix user: what a command typed in the shell signs with, where it writes the board's
+/// files itself and no server is there to say who is asking - see [`shell_person`]. Unset
+/// everywhere else.
+pub(crate) const PERSON_ENV: &str = "MOON_PERSON";
+
+/// Where a server that gives each person a Unix user listens. Root's to write in, like the
+/// rest of `/run`, and nobody's home.
+const SHARED_SOCKETS_DIR: &str = "/run/moon";
+
+/// Anybody may look in that folder and connect to the socket in it. Who is answered is
+/// decided once they have connected, by whose Unix user they run as - see [`server`].
+const SHARED_SOCKETS_DIR_MODE: u32 = 0o755;
+const SHARED_SOCKET_MODE: u32 = 0o666;
 
 /// How long a window is given to answer before the ask is taken as unanswerable and the next
 /// window is tried. It is a local socket and the answer is written the moment the ask is
@@ -70,6 +97,21 @@ pub(crate) trait StartsApplications: Send + Sync {
     /// known to have gone one way or the other: with where its windows open, in the words the
     /// shell that asked prints, or with what the program said when it ended in failure.
     fn start(&self, command: &str, folder: &Path) -> Result<String>;
+
+    /// The same, asked from a shell of one person of a server that gives each of them a Unix
+    /// user: the program is theirs, and runs as their user. Refused by a moon with no way to
+    /// do that - nothing a person starts runs as the server's own user.
+    fn start_for_person(
+        &self,
+        person: &Person,
+        _command: &str,
+        _folder: &Path,
+    ) -> Result<String> {
+        bail!(
+            "this moon starts no program as the Unix user of {}",
+            person.github_login
+        )
+    }
 }
 
 /// One running window: what it is open on, and where to reach it.
@@ -262,20 +304,89 @@ fn record_path(pid: u32) -> Option<PathBuf> {
     Some(dir()?.join(format!("{pid}.json")))
 }
 
+/// Where the moon running as this process listens, as this process finds it.
 fn socket_path(pid: u32) -> Option<PathBuf> {
-    Some(dir()?.join(format!("{pid}.sock")))
+    socket_path_from(
+        pid,
+        pid == std::process::id() && crate::unix_users::each_person_has_one(),
+        std::env::var_os(SOCKET_ENV).map(PathBuf::from),
+        dir(),
+    )
+}
+
+/// [`socket_path`], from what it reads: whether `pid` is a server whose shells run as other
+/// Unix users, the socket this shell was told - see [`SOCKET_ENV`] - and where the records
+/// are.
+///
+/// The socket a shell was told is believed for the process it is named after and no other.
+/// A window opened from a shell of such a server gives its own shells its own process, and
+/// they are still told the server's socket.
+fn socket_path_from(
+    pid: u32,
+    serves_other_unix_users: bool,
+    told: Option<PathBuf>,
+    records_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let name = format!("{pid}.sock");
+    if serves_other_unix_users {
+        return Some(Path::new(SHARED_SOCKETS_DIR).join(name));
+    }
+    if let Some(told) = told.filter(|told| told.file_name() == Some(OsStr::new(&name))) {
+        return Some(told);
+    }
+    Some(records_dir?.join(name))
+}
+
+/// The socket this process listens on, for the shells it starts to be told - see
+/// [`SOCKET_ENV`]. `None` for every moon but a server that gives each person a Unix user: the
+/// shells of any other find its socket in their own home, which is the moon's.
+pub(crate) fn socket_for_other_unix_users() -> Option<PathBuf> {
+    crate::unix_users::each_person_has_one()
+        .then(|| socket_path(std::process::id()))
+        .flatten()
 }
 
 /// Open the socket this process is asked on. It is named after the process, so a shell that
 /// knows which moon started it knows where to ask.
 fn listen_on_own_socket() -> Result<UnixListener> {
     let path = socket_path(std::process::id()).context("no home directory to listen in")?;
-    let dir = path.parent().expect("the socket sits in the instances dir");
+    let dir = path.parent().expect("the socket sits in a directory");
     std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
     // A pid this process was handed again may have left its socket behind; binding to a
     // path that already exists fails, and that file cannot belong to anyone else.
     let _ = std::fs::remove_file(&path);
-    UnixListener::bind(&path).with_context(|| format!("failed to listen on {}", path.display()))
+    let listener = UnixListener::bind(&path)
+        .with_context(|| format!("failed to listen on {}", path.display()))?;
+    if crate::unix_users::each_person_has_one() {
+        // Said outright rather than left to the mask the server runs with: connecting takes
+        // leave to write to the socket, and the people's users are not in root's group.
+        for (opened, mode) in [(dir, SHARED_SOCKETS_DIR_MODE), (&*path, SHARED_SOCKET_MODE)] {
+            std::fs::set_permissions(opened, std::fs::Permissions::from_mode(mode))
+                .with_context(|| format!("failed to open {} to every user", opened.display()))?;
+        }
+        remove_sockets_of_servers_that_are_gone(dir);
+    }
+    Ok(listener)
+}
+
+/// Take away the sockets of servers that were killed rather than stopped, which leave theirs
+/// behind in a folder only root clears. Each is named after its server's process.
+fn remove_sockets_of_servers_that_are_gone(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let server = path
+            .file_stem()
+            .and_then(|pid| pid.to_str())
+            .and_then(|pid| pid.parse::<u32>().ok());
+        if let Some(server) = server
+            && !is_running(server)
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// Read the one ask a connection carries.
@@ -294,15 +405,31 @@ fn write_answer(mut stream: &UnixStream, answer: &Answer) -> Result<()> {
     stream.flush().context("failed to answer the shell")
 }
 
+/// What came of an ask, as its answer: a failure is the refusal, in the words of whatever
+/// failed.
+fn answered(came_of_it: Result<Answer>) -> Answer {
+    came_of_it.unwrap_or_else(|error| Answer::Refused {
+        reason: format!("{error:#}"),
+    })
+}
+
 /// Start the program a `moon launch` asked for, and answer with how its start went: one that
 /// failed is refused in the words of whatever failed, the program's own among them.
-fn launched(applications: &dyn StartsApplications, command: &str, folder: &str) -> Answer {
-    match applications.start(command, Path::new(folder)) {
-        Ok(on) => Answer::Launched { on },
-        Err(error) => Answer::Refused {
-            reason: format!("{error:#}"),
-        },
-    }
+///
+/// `asker` is the person whose shell asked, on a server that gives each person a Unix user,
+/// and nobody everywhere else - see [`StartsApplications::start_for_person`].
+fn launched(
+    applications: &dyn StartsApplications,
+    asker: Option<&Person>,
+    command: &str,
+    folder: &str,
+) -> Answer {
+    let folder = Path::new(folder);
+    let started = match asker {
+        Some(person) => applications.start_for_person(person, command, folder),
+        None => applications.start(command, folder),
+    };
+    answered(started.map(|on| Answer::Launched { on }))
 }
 
 /// Write down that this process's window is open on this project, replacing what it said
@@ -411,6 +538,11 @@ pub(crate) fn shell_window() -> Option<u32> {
     std::env::var(WINDOW_ENV).ok()?.parse().ok()
 }
 
+/// The GitHub login of the person this shell was started for - see [`PERSON_ENV`].
+pub(crate) fn shell_person() -> Option<String> {
+    std::env::var(PERSON_ENV).ok()
+}
+
 /// Hand a file to a window: the first one that takes it, in the order [`windows_for`] puts
 /// them in.
 pub(crate) fn open_file(file: &Path, line: Option<usize>, wait: bool) -> Result<Instance> {
@@ -494,49 +626,41 @@ fn hand_to_a_window(path: &Path, ask: &Ask) -> Result<Instance> {
 
 /// The window of a moon, by its process - or `None` for a process with no window written
 /// down, which is what a `moon serve` is: it holds shells, and the socket it listens on
-/// answers `moon launch` and nothing a window is asked - see [`server`].
+/// answers for them and for nothing a window opens - see [`server`].
 pub(crate) fn window_of(pid: u32) -> Option<Instance> {
     running().into_iter().find(|instance| instance.pid == pid)
 }
 
-/// Hand a direct message of the wire to the window holding the shell it is for, to be typed
-/// in there. Only that window will do, so its refusal is the answer rather than a reason to
-/// try the next one.
-pub(crate) fn wire(window: &Instance, line: &Ask) -> Result<()> {
-    let answer = window.ask(line).with_context(|| {
-        format!(
-            "the moon window holding that shell (process {}) did not answer",
-            window.pid
-        )
-    })?;
+/// Hand a direct message of the wire to the moon holding the shell it is for - a window or a
+/// `moon serve`, by its process - to be typed in there. Only that moon will do, so its
+/// refusal is the answer rather than a reason to try another.
+pub(crate) fn wire(moon: u32, line: &Ask) -> Result<()> {
+    let answer = ask_process(moon, line, ANSWER_TIMEOUT)
+        .with_context(|| format!("the moon holding that shell (process {moon}) did not answer"))?;
     match answer {
         Answer::Wired => Ok(()),
-        Answer::Refused { reason } => bail!(
-            "the moon window holding that shell (process {}) refused the line: {reason}",
-            window.pid
-        ),
-        other => bail!("the window answered a line of the wire with {other:?}"),
+        Answer::Refused { reason } => {
+            bail!("the moon holding that shell (process {moon}) refused the line: {reason}")
+        }
+        other => bail!("the moon answered a line of the wire with {other:?}"),
     }
 }
 
-/// Ask the one window that can answer something about an agent, and take its refusal as the
-/// answer rather than as a reason to try the next window: no other window is open on that
-/// board with a say in where its agents run, or holds that shell.
+/// Ask the one moon that can answer something about an agent, and take its refusal as the
+/// answer rather than as a reason to try another: no other moon has a say in where that
+/// board's agents run, or holds that shell.
 ///
-/// A window that says nothing is most often one started before this was something a window
-/// could be asked: it reads the ask as none it knows, and hangs up.
-fn ask_about_an_agent(window: &Instance, ask: &Ask) -> Result<Answer> {
-    let answer = window.ask(ask).with_context(|| {
+/// A moon that says nothing is most often one started before this was something it could be
+/// asked: it reads the ask as none it knows, and hangs up.
+fn ask_about_an_agent(moon: u32, ask: &Ask) -> Result<Answer> {
+    let answer = ask_process(moon, ask, ANSWER_TIMEOUT).with_context(|| {
         format!(
-            "the moon window (process {}) did not answer - one started by an older moon does \
-             not know what was asked, and has to be restarted",
-            window.pid
+            "the moon (process {moon}) did not answer - one started by an older moon does not \
+             know what was asked, and has to be restarted"
         )
     })?;
     match answer {
-        Answer::Refused { reason } => {
-            bail!("the moon window (process {}) refused: {reason}", window.pid)
-        }
+        Answer::Refused { reason } => bail!("the moon (process {moon}) refused: {reason}"),
         answer => Ok(answer),
     }
 }
@@ -547,47 +671,65 @@ fn ask_about_an_agent(window: &Instance, ask: &Ask) -> Result<Answer> {
 ///
 /// A window on another project is not asked. The shell an agent runs in is held by the
 /// window that started it, and the board that shows the run is the one in that window.
-pub(crate) fn window_on_board(repo_path: &Path) -> Option<Instance> {
+fn window_on_board(repo_path: &Path) -> Option<Instance> {
     windows_for(repo_path, shell_window(), running())
         .into_iter()
         .find(|instance| Path::new(&instance.project_path) == repo_path)
 }
 
-/// Have a window start an agent on a task of the board it is open on, and say what the run
-/// is called.
-pub(crate) fn start_agent(window: &Instance, task_id: &str, agent: AgentKind) -> Result<String> {
+/// The moon an agent of the board in this repo is started in, by its process: a window open
+/// on that repo - see [`window_on_board`] - and, when there is none, the `moon serve` this
+/// shell was started by. A server is written down as no window and listens all the same; it
+/// holds the shells of every board it is asked about.
+pub(crate) fn moon_for_board(repo_path: &Path) -> Option<u32> {
+    if let Some(window) = window_on_board(repo_path) {
+        return Some(window.pid);
+    }
+    let moon = shell_window()?;
+    let is_a_server = window_of(moon).is_none() && socket_path(moon)?.exists();
+    is_a_server.then_some(moon)
+}
+
+/// Have a moon start an agent on a task of the board in this repo, and say what the run is
+/// called.
+pub(crate) fn start_agent(
+    moon: u32,
+    repo_path: &Path,
+    task_id: &str,
+    agent: AgentKind,
+) -> Result<String> {
     let ask = Ask::StartAgent {
-        repo_path: window.project_path.clone(),
+        repo_path: repo_path.display().to_string(),
         task_id: task_id.to_string(),
         agent,
     };
-    match ask_about_an_agent(window, &ask)? {
+    match ask_about_an_agent(moon, &ask)? {
         Answer::Started { run } => Ok(run),
-        other => bail!("the window answered a start with {other:?}"),
+        other => bail!("the moon answered a start with {other:?}"),
     }
 }
 
-/// Have the window holding a shell type a line into it and send it.
-pub(crate) fn tell(window: &Instance, terminal_id: &str, line: &str) -> Result<()> {
+/// Have the moon holding a shell type a line into it and send it.
+pub(crate) fn tell(moon: u32, terminal_id: &str, line: &str) -> Result<()> {
     let ask = Ask::Tell {
         terminal_id: terminal_id.to_string(),
         line: line.to_string(),
     };
-    match ask_about_an_agent(window, &ask)? {
+    match ask_about_an_agent(moon, &ask)? {
         Answer::Told => Ok(()),
-        other => bail!("the window answered a line for a shell with {other:?}"),
+        other => bail!("the moon answered a line for a shell with {other:?}"),
     }
 }
 
-/// What the window holding a shell says it is showing.
-pub(crate) fn shown(window: &Instance, terminal_id: &str, wanted: Shown) -> Result<String> {
+/// What the moon holding a shell says it is showing.
+pub(crate) fn shown(moon: u32, terminal_id: &str, wanted: Shown) -> Result<String> {
     let ask = Ask::Shown {
         terminal_id: terminal_id.to_string(),
         wanted,
     };
-    match ask_about_an_agent(window, &ask)? {
+    match ask_about_an_agent(moon, &ask)? {
         Answer::Shown { text } => Ok(text),
-        other => bail!("the window answered a look at a shell with {other:?}"),
+        other => bail!("the moon answered a look at a shell with {other:?}"),
     }
 }
 

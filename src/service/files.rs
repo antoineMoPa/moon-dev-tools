@@ -35,9 +35,10 @@ pub(crate) fn session_file(
                 image_src: None,
             });
         }
+        let folder = folder_a_file_is_in(&session.repo_path, file_path)?;
         // A picture is sent as the picture it is: its bytes are no text for a tab to show,
         // and reading them as one is refused.
-        if let Some(image_src) = crate::git::read_repo_image(&session.repo_path, file_path)? {
+        if let Some(image_src) = crate::git::read_repo_image(&folder, file_path)? {
             return Ok(FileContentPayload {
                 file_path: file_path.to_string(),
                 content: String::new(),
@@ -49,14 +50,14 @@ pub(crate) fn session_file(
         }
         Ok(FileContentPayload {
             file_path: file_path.to_string(),
-            content: read_repo_file(&session.repo_path, file_path)?,
+            content: read_repo_file(&folder, file_path)?,
             outside_the_repo: false,
             only_written_by: only_writer_of(file_path),
             // A folder that is no repo - the one `/etc/hostname` is read through - has
             // nothing committed for the text to be new against.
-            committed: match crate::git::is_git_repo(&session.repo_path) {
+            committed: match crate::git::is_git_repo(&folder) {
                 true => Some(crate::git::read_committed_file(
-                    &session.repo_path,
+                    &folder,
                     file_path,
                 )?),
                 false => None,
@@ -147,6 +148,22 @@ pub(crate) fn search_session_contents(
     crate::search::file_contents::stream_matching_lines(&repo_path, query, scope, listener)
 }
 
+/// The folder a path of a session is read and written under: the session's own, and for a
+/// file of the board - a card's notes, the wire, the work log - the checkout the board is
+/// kept in, which is another folder when the session is on a work tree of a shared server -
+/// see [`crate::moontasks::store::board_checkout`].
+fn folder_a_file_is_in(
+    session_folder: &std::path::Path,
+    file_path: &str,
+) -> Result<std::path::PathBuf> {
+    let of_the_board =
+        std::path::Path::new(file_path).starts_with(crate::moontasks::store::TASKS_DIR_NAME);
+    match of_the_board {
+        true => crate::moontasks::store::board_checkout(session_folder),
+        false => Ok(session_folder.to_path_buf()),
+    }
+}
+
 pub(crate) fn write_session_file(
     state: &AppState,
     session_id: &str,
@@ -155,7 +172,8 @@ pub(crate) fn write_session_file(
 ) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;
     crate::api::with_session(state, session_id, |session| {
-        crate::git::write_repo_file(&session.repo_path, file_path, content)
+        let folder = folder_a_file_is_in(&session.repo_path, file_path)?;
+        crate::git::write_repo_file(&folder, file_path, content)
     })
 }
 
@@ -168,6 +186,7 @@ pub(crate) fn create_session_file(
 ) -> Result<()> {
     crate::api::ensure_session_is_writable(state, session_id)?;
     crate::api::with_session(state, session_id, |session| {
-        crate::git::create_repo_file(&session.repo_path, file_path, content)
+        let folder = folder_a_file_is_in(&session.repo_path, file_path)?;
+        crate::git::create_repo_file(&folder, file_path, content)
     })
 }

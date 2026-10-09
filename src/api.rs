@@ -200,7 +200,16 @@ impl AgentKind {
 pub(crate) struct AgentOption {
     pub(crate) kind: AgentKind,
     pub(crate) label: String,
+    /// Whether whoever is asking has it installed.
     pub(crate) available: bool,
+    /// Whether they are logged in to it, on a server that gives each person a Unix user - see
+    /// `crate::agent_sessions::logins`. `None` everywhere else, where it is not asked, and for
+    /// an agent they have not installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) logged_in: Option<bool>,
+    /// What they type in a shell of theirs to log in to it. Said whenever `logged_in` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) log_in_command: Option<String>,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]

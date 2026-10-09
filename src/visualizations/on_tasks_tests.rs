@@ -42,6 +42,16 @@ fn announced(kept: &Kept) -> VisualizationView {
     }
 }
 
+/// Keep what the run announced, on a server that runs everything as itself.
+fn keep_announced(kept: &Kept) -> Result<VisualizationView> {
+    keep_in_task_folder(
+        &kept.repo_path,
+        &kept.task_id,
+        &AgentHome::OfTheServer,
+        announced(kept),
+    )
+}
+
 fn visualizations_on(kept: &Kept) -> Vec<TaskResource> {
     store::read_task(&kept.repo_path, &kept.task_id)
         .unwrap()
@@ -55,8 +65,8 @@ fn visualizations_on(kept: &Kept) -> Vec<TaskResource> {
 fn a_visualization_is_copied_into_the_task_and_listed_on_it_once() {
     let kept = repo_with_task_and_fragment();
 
-    let view = keep_in_task_folder(&kept.repo_path, &kept.task_id, announced(&kept)).unwrap();
-    keep_in_task_folder(&kept.repo_path, &kept.task_id, announced(&kept)).unwrap();
+    let view = keep_announced(&kept).unwrap();
+    keep_announced(&kept).unwrap();
 
     let copy_path = store::tasks_root(&kept.repo_path)
         .join(&kept.task_id)
@@ -86,7 +96,7 @@ fn a_visualization_is_copied_into_the_task_and_listed_on_it_once() {
 #[test]
 fn a_rewritten_fragment_is_copied_again_and_one_taken_off_comes_back() {
     let kept = repo_with_task_and_fragment();
-    keep_in_task_folder(&kept.repo_path, &kept.task_id, announced(&kept)).unwrap();
+    keep_announced(&kept).unwrap();
     let mut metadata = store::read_task(&kept.repo_path, &kept.task_id).unwrap();
     metadata.resources.clear();
     store::write_task(&kept.repo_path, &kept.task_id, &metadata).unwrap();
@@ -94,7 +104,7 @@ fn a_rewritten_fragment_is_copied_again_and_one_taken_off_comes_back() {
     // Later than the copy by more than any clock's resolution.
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(&kept.fragment_path, "<div id=\"widget\">second</div>").unwrap();
-    let view = keep_in_task_folder(&kept.repo_path, &kept.task_id, announced(&kept)).unwrap();
+    let view = keep_announced(&kept).unwrap();
 
     assert_eq!(
         fs::read_to_string(&view.fragment_path).unwrap(),

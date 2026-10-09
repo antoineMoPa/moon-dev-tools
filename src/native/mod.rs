@@ -1,6 +1,7 @@
 //! Window - one per process. When it reviews the machine it runs on, the review server runs in
 //! the same process and the same executable.
 
+pub(crate) mod agent_logins;
 pub(crate) mod app;
 pub(crate) mod applications_offered;
 pub(crate) mod bindings;

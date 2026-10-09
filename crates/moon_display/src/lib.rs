@@ -13,8 +13,10 @@
 //! see `screen`, which is the display's window manager as well as its capture loop - so the
 //! program lays itself out as if the view were the whole screen.
 //!
-//! The display has no access control beyond X's default for a server started by hand: anyone
-//! with an account on the machine can open a window on it, and read its screen.
+//! A display from [`Display::start`] has no access control beyond X's default for a server
+//! started by hand: anyone with an account on the machine can open a window on it, and read its
+//! screen. One from [`Display::start_private`] is kept to one user of the machine: its server
+//! runs as them, and lets in only a program that shows the cookie in a file they alone read.
 
 mod clipboard;
 mod keys;
@@ -22,6 +24,7 @@ mod screen;
 
 use std::{
     io::{BufRead, BufReader},
+    path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,
@@ -44,6 +47,50 @@ const XVFB: &str = "Xvfb";
 pub struct Size {
     pub width: u16,
     pub height: u16,
+}
+
+/// What a program shows a private display to be let onto it: sixteen bytes nobody can guess,
+/// which whoever starts the display makes up.
+pub type Cookie = [u8; 16];
+
+/// What keeps a display to one user of the machine - see [`Display::start_private`].
+pub struct Private {
+    /// `sh`, as that user runs it, with nothing after it yet: the display's server is run
+    /// under it, and so runs as them.
+    pub shell: Command,
+    /// The file the server reads who it lets in from, and a program of the user's is pointed
+    /// at with `XAUTHORITY`. Written before the display is started, with [`authority_of`] the
+    /// cookie in it, for that user alone to read.
+    pub authority: PathBuf,
+    /// The cookie in that file, which this process shows to connect to the display itself.
+    pub cookie: Cookie,
+}
+
+/// The X authorization protocol in which a program is let in for showing a cookie.
+pub(crate) const COOKIE_PROTOCOL: &[u8] = b"MIT-MAGIC-COOKIE-1";
+
+/// The address family an authority file has for an entry that is about any address: Xlib's
+/// `FamilyWild`.
+const ANY_ADDRESS: u16 = 0xFFFF;
+
+/// What an authority file holds for `cookie` to be what a display lets a program in for: one
+/// entry, about any address and any display number.
+///
+/// The file is the display's alone, so there is no other display for the entry to be told
+/// from, and its number is not known until the server reading the file has started. A server
+/// takes every cookie in the file it is given, whatever the entry says it is about; a program
+/// takes the entry for the display it is opening when the entry is about any.
+///
+/// An entry is its address family, then its address, display number, protocol and data, each
+/// behind its length; every number is two bytes, most significant first.
+pub fn authority_of(cookie: &Cookie) -> Vec<u8> {
+    let (any_address, any_number): (&[u8], &[u8]) = (&[], &[]);
+    let mut entry = ANY_ADDRESS.to_be_bytes().to_vec();
+    for field in [any_address, any_number, COOKIE_PROTOCOL, cookie] {
+        entry.extend((field.len() as u16).to_be_bytes());
+        entry.extend(field);
+    }
+    entry
 }
 
 /// The modifier keys held down on the keyboard that is not there.
@@ -134,11 +181,33 @@ impl Display {
     /// Start a display with a view of `size`, and watch it. The events are what happens
     /// there from now on; the channel closes when the display is gone.
     pub fn start(size: Size) -> anyhow::Result<(Self, Receiver<Event>)> {
-        let (number, server) = start_the_server()?;
+        Self::start_kept_to(None, size)
+    }
+
+    /// Start a display as [`Display::start`] does, kept to one user of the machine: the
+    /// server runs as them, and only a program that shows the cookie is let onto it - one of
+    /// theirs, which reads it from the authority file, and this process, which holds it.
+    pub fn start_private(size: Size, private: Private) -> anyhow::Result<(Self, Receiver<Event>)> {
+        Self::start_kept_to(Some(private), size)
+    }
+
+    fn start_kept_to(
+        private: Option<Private>,
+        size: Size,
+    ) -> anyhow::Result<(Self, Receiver<Event>)> {
+        let cookie = private.as_ref().map(|private| private.cookie);
+        let (number, server) = start_the_server(private)?;
         let (inputs, taking_inputs) = std::sync::mpsc::channel();
         let (saying, patches) = std::sync::mpsc::channel();
         let shown = Arc::new(Mutex::new(Shown::default()));
-        screen::watch_on_a_thread(number, size, taking_inputs, saying, Arc::clone(&shown))?;
+        screen::watch_on_a_thread(
+            number,
+            cookie,
+            size,
+            taking_inputs,
+            saying,
+            Arc::clone(&shown),
+        )?;
         Ok((
             Self {
                 number,
@@ -204,8 +273,17 @@ const UNTIL_NOBODY_HOLDS_IT: &str = r#"exec 3>&1 >/dev/null; "$@" >&3 3>&- & ser
 
 /// Start Xvfb on whichever display number is free, which it says on the descriptor it is told
 /// to - its own standard output, here - once it is ready for programs to connect.
-fn start_the_server() -> anyhow::Result<(u32, Child)> {
-    let mut server = Command::new("sh")
+///
+/// A private display's server is run by the shell it was handed, and so as the user that
+/// shell is run as, and is told the file to read who it lets in from. A server that reads a
+/// cookie there lets in whoever shows it and nobody else: not the other users of the machine,
+/// which one told of no such file lets in.
+fn start_the_server(private: Option<Private>) -> anyhow::Result<(u32, Child)> {
+    let (mut shell, authority) = match private {
+        Some(private) => (private.shell, Some(private.authority)),
+        None => (Command::new("sh"), None),
+    };
+    shell
         .args(["-c", UNTIL_NOBODY_HOLDS_IT, "moon-display", XVFB])
         .args(["-displayfd", "1"])
         .args([
@@ -215,7 +293,11 @@ fn start_the_server() -> anyhow::Result<(u32, Child)> {
         ])
         // Reached through its socket on this machine and no other way; and kept running when
         // the last program on it closes, which is otherwise when an X server starts over.
-        .args(["-nolisten", "tcp", "-noreset"])
+        .args(["-nolisten", "tcp", "-noreset"]);
+    if let Some(authority) = &authority {
+        shell.arg("-auth").arg(authority);
+    }
+    let mut server = shell
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

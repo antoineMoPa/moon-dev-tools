@@ -72,8 +72,10 @@ pub(crate) fn rename(
     let Some(owner) = state.terminals.owner(terminal_id) else {
         return Ok(());
     };
-    let repo_path =
+    let session_folder =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
+    // The task is on the board, which a session on a work tree keeps in another folder.
+    let repo_path = crate::moontasks::store::board_checkout(&session_folder)?;
     if let Some(task_id) = crate::moontasks::store::task_owning(&repo_path, &owner) {
         crate::moontasks::service::record_run_name(state, session_id, &task_id, terminal_id, name)?;
     }

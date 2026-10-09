@@ -28,7 +28,7 @@ pub(crate) struct AppState {
     pub(crate) display: Arc<crate::display::ServerDisplay>,
     /// The language servers running for these reviews. Repo-side like the shells beside it,
     /// because a server has to read the files it answers about - see [`crate::lsp`].
-    pub(crate) lsp: Arc<moon_lsp::LspRegistry>,
+    pub(crate) lsp: Arc<crate::lsp::LanguageServers>,
     /// The `settings.json` every window on this server reads and changes, fixed when the
     /// state is built - under test that is on the test's own thread, which is what gives
     /// each test a file of its own. See [`crate::settings::path`].
@@ -47,6 +47,10 @@ pub(crate) struct ServerState {
 
 pub(crate) struct RepoSession {
     pub(crate) namespace: Option<String>,
+    /// Who this session works for on a server that gives each person a Unix user: what it
+    /// starts runs as them - see [`crate::unix_users`]. `None` everywhere else, where
+    /// everything runs as the server's own user.
+    pub(crate) person: Option<crate::unix_users::Person>,
     pub(crate) repo_path: PathBuf,
     pub(crate) diff_target: DiffTarget,
     pub(crate) active_commit: Option<String>,
@@ -58,6 +62,23 @@ pub(crate) struct RepoSession {
     /// go-to-definition questions, which are the only files outside it that may be read - see
     /// [`crate::lsp::FilesNamedOutsideTheRepo`].
     pub(crate) files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo,
+}
+
+/// Whose a browser's session is: the profile its selection and comments are kept within, and,
+/// on a server that gives each person a Unix user, that person.
+pub(crate) struct SessionOwner {
+    pub(crate) namespace: String,
+    pub(crate) person: Option<crate::unix_users::Person>,
+}
+
+/// A profile and no person, which is every session of a server that runs as one user.
+impl From<&str> for SessionOwner {
+    fn from(namespace: &str) -> Self {
+        Self {
+            namespace: namespace.to_string(),
+            person: None,
+        }
+    }
 }
 
 impl RepoSession {
@@ -165,6 +186,14 @@ where
         .get_mut(session_id)
         .ok_or_else(|| anyhow!("unknown session"))?;
     f(session)
+}
+
+/// The person a session works for - see [`RepoSession::person`].
+pub(crate) fn person_of(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Option<crate::unix_users::Person>> {
+    with_session(state, session_id, |session| Ok(session.person.clone()))
 }
 
 pub(crate) fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<()> {

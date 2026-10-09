@@ -107,7 +107,7 @@ fn check_revision(revision: &str) -> Result<()> {
 
 /// `git blame --porcelain` over `text` in place of the working-tree file.
 fn run_blame_of_text(repo_path: &Path, file_path: &str, text: &str) -> Result<String> {
-    let mut child = git_command(repo_path)
+    let mut child = git_command(repo_path)?
         .args(["blame", "--porcelain", "--contents", "-", "--", file_path])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

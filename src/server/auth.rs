@@ -42,6 +42,18 @@ const REFUSED_KEY: &str = "that pass key is not valid for this server\n";
 const KICKED: &str = "that pass key or login was kicked out of this server; get a new pass key\n";
 const MALFORMED_AUTHORIZATION: &str = "Authorization must be `Bearer <pass key>`\n";
 const OTHER_ORIGIN: &str = "moon only answers pages it served itself\n";
+const NOT_SIGNED_IN: &str = "sign in with GitHub from Account first\n";
+const ANOTHER_PERSONS_SESSION: &str = "that session is another person's\n";
+
+/// What a pass key alone reaches on a server that gives each person a Unix user: the check of
+/// the key itself, and the Account pane's sign-in. Everything else waits for the sign-in,
+/// since everything else is done as somebody.
+const ROUTES_BEFORE_SIGN_IN: &[&str] = &[
+    "/api/pass-key",
+    "/api/me",
+    "/api/me/github/device",
+    "/api/me/github/poll",
+];
 
 /// Apply to the entire router, including login, errors and redirects. The browser must not
 /// cache credentials or repository data, or embed the window in a page controlling its UI.
@@ -84,6 +96,7 @@ pub(super) async fn browser_boundary(request: Request, next: Next) -> Response {
 /// users list to mark the asker and a shell's socket to hear of its user being kicked.
 pub(super) async fn require_pass_key(
     State(users): State<Users>,
+    State(state): State<crate::api::AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -151,8 +164,40 @@ pub(super) async fn require_pass_key(
         )
             .into_response();
     }
+    if crate::unix_users::each_person_has_one() {
+        let path = request.uri().path();
+        if !ROUTES_BEFORE_SIGN_IN.contains(&path) && !users.profiles.has_signed_in(&user) {
+            return (StatusCode::FORBIDDEN, NOT_SIGNED_IN).into_response();
+        }
+        // A session's work is done as the person it was opened for, so it is only asked for
+        // by them: what is shared between people - a card's agent - is reached through each
+        // one's own session.
+        let another_persons = session_named_in(path).is_some_and(|session_id| {
+            session_namespace(&state, session_id)
+                .is_some_and(|namespace| namespace != users.profiles.namespace(&user))
+        });
+        if another_persons {
+            return (StatusCode::FORBIDDEN, ANOTHER_PERSONS_SESSION).into_response();
+        }
+    }
     request.extensions_mut().insert(user);
     next.run(request).await
+}
+
+/// What every route of a session starts with, before the session's id.
+const SESSION_ROUTES: &str = "/api/session/";
+
+/// The session a route is about, by the id in its path. The two routes that open a session
+/// have a word there instead, which names no session.
+fn session_named_in(path: &str) -> Option<&str> {
+    path.strip_prefix(SESSION_ROUTES)?.split('/').next()
+}
+
+/// The profile a session was opened within. `None` for an id that names no session, which
+/// its route says for itself.
+fn session_namespace(state: &crate::api::AppState, session_id: &str) -> Option<String> {
+    let held = state.inner.lock().ok()?;
+    held.sessions.get(session_id)?.namespace.clone()
 }
 
 /// WebSocket clients cannot set headers, so they carry the same non-secret identifier in

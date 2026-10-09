@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 
 use super::{PROGRAM, task_shell::TaskOfShell};
 use crate::{
-    instances::{self, Ask, Instance},
+    instances::{self, Ask},
     moontasks::{
         TASK_DIR_ENV_VAR, store,
         wire::{self, broadcasts, direct, handles},
@@ -107,7 +107,8 @@ pub(super) fn run(command: WireCommand) -> Result<()> {
 struct Delivery {
     /// The tag as it was typed, which is how the poster knows the task.
     tag: String,
-    window: Instance,
+    /// The process of the moon holding the shell, a window or a `moon serve`.
+    held_by: u32,
     line: Ask,
 }
 
@@ -120,7 +121,11 @@ fn post(tags: &[String], message: &str, task_dir: Option<OsString>) -> Result<()
     let handle = handles::handle_of(&sender.task_id, &folders);
 
     if tags.is_empty() {
-        broadcasts::post(&sender.repo_path, &handle, message)?;
+        // The file is written here, by this command, so whose agent this is comes from what
+        // the shell was told. A direct message is signed by the server that types it.
+        let person = instances::shell_person();
+        let signed = wire::from_the_agent_of(person.as_deref(), message);
+        broadcasts::post(&sender.repo_path, &handle, &signed)?;
         println!(
             "posted as {TAG_MARK}{handle} to {}",
             broadcasts::file_path(&sender.repo_path).display()
@@ -130,7 +135,7 @@ fn post(tags: &[String], message: &str, task_dir: Option<OsString>) -> Result<()
 
     let deliveries = deliveries(&sender.repo_path, &folders, &handle, tags, message)?;
     for delivery in deliveries {
-        instances::wire(&delivery.window, &delivery.line)
+        instances::wire(delivery.held_by, &delivery.line)
             .with_context(|| format!("{TAG_MARK}{} was not sent the line", delivery.tag))?;
         println!("sent to {TAG_MARK}{}", delivery.tag);
     }
@@ -171,19 +176,9 @@ fn deliveries(
             bail!("{TAG_MARK}{tag} has no running agent");
         }
         for agent in agents {
-            // Only a window listens for a line. A `moon serve` holds shells too, and answers
-            // `moon launch` alone.
-            let Some(window) = instances::window_of(agent.held_by) else {
-                bail!(
-                    "{TAG_MARK}{tag}'s agent runs in a moon with no window (process {}), such \
-                     as `{PROGRAM} serve`, and only a window can be asked to type a line into \
-                     a shell",
-                    agent.held_by
-                );
-            };
             deliveries.push(Delivery {
                 tag: tag.clone(),
-                window,
+                held_by: agent.held_by,
                 line: Ask::Wire {
                     terminal_id: agent.terminal_id,
                     sender: sender.to_string(),
@@ -290,6 +285,8 @@ mod tests {
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         });
         store::write_task(repo, task_id, &metadata).expect("expected the run to be written");
     }
@@ -409,22 +406,22 @@ mod tests {
         assert_eq!(error.to_string(), "@bing-bong has no running agent");
     }
 
-    /// An agent whose shell is held by a moon with no window - this test process, which
-    /// listens on nothing - is one nobody can be asked to type into.
+    /// An agent whose shell is held by a moon that listens on nothing - this test process -
+    /// is one nobody can be asked to type into, and the post says which agent was not sent
+    /// the line and which moon said nothing.
     #[test]
-    fn an_agent_held_by_a_moon_with_no_window_is_refused_with_the_reason() {
-        let (repo, races, bing_bong) = board("no-window");
+    fn an_agent_held_by_a_moon_that_does_not_answer_is_refused_with_the_reason() {
+        let (repo, races, bing_bong) = board("no-answer");
         run_an_agent(&repo, &bing_bong, "terminal-a", std::process::id());
 
         let error = post(&tags(&["bing-bong"]), "hello", task_dir(&repo, &races))
             .expect_err("expected a refusal");
 
+        let said = format!("{error:#}");
         assert!(
-            error.to_string().contains("runs in a moon with no window")
-                && error
-                    .to_string()
-                    .contains(&format!("process {}", std::process::id())),
-            "{error}"
+            said.contains("@bing-bong was not sent the line")
+                && said.contains(&format!("(process {}) did not answer", std::process::id())),
+            "{said}"
         );
     }
 

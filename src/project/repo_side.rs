@@ -74,6 +74,7 @@ pub(crate) fn run(state: &AppState, session_id: &str, which: ProjectCommand) -> 
     };
     state.terminals.spawn(crate::terminal::TerminalSpec {
         name: Some(PROJECT_SHELL_NAME.to_string()),
+        runs_as: crate::api::person_of(state, session_id)?,
         ..crate::terminal::TerminalSpec::running(repo_path, &line)
     })
 }

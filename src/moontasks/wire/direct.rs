@@ -2,8 +2,8 @@
 //!
 //! A task's agents are the runs written on it, and a run that is going says which shell it is
 //! in and which moon holds that shell - see [`TaskResource::terminal_owner`]. That moon is the
-//! one that can type into it, and it is asked to over its window's socket - see
-//! `crate::instances`.
+//! one that can type into it, a window or a `moon serve`, and it is asked to over its socket
+//! - see `crate::instances`.
 
 use crate::moontasks::store::{TaskMetadata, TaskResource, TaskResourceKind};
 
@@ -61,6 +61,8 @@ mod tests {
             terminal_owner,
             agent_session_id: None,
             name: None,
+            started_by: None,
+            work_tree: None,
             started_at_unix: 0,
         }
     }
@@ -99,6 +101,7 @@ mod tests {
                     Some(this_process),
                 ),
             ],
+            made_by: None,
         };
 
         assert_eq!(

@@ -83,7 +83,7 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
 }
 
 fn run_claude(prompt: String, job: &DispatchJob) -> Result<String> {
-    let mut command = Command::new("claude");
+    let mut command = crate::shell_path::installed_tool("claude")?;
     command
         .current_dir(&job.repo_path)
         .args(["-p", "--permission-mode", "bypassPermissions"]);
@@ -104,7 +104,7 @@ fn run_claude(prompt: String, job: &DispatchJob) -> Result<String> {
 }
 
 fn run_codex(prompt: String, job: &DispatchJob) -> Result<String> {
-    let mut command = Command::new("codex");
+    let mut command = crate::shell_path::installed_tool("codex")?;
     command
         .current_dir(&job.repo_path)
         .args(["exec", "--full-auto", "-"]);
@@ -125,7 +125,7 @@ fn run_codex(prompt: String, job: &DispatchJob) -> Result<String> {
 }
 
 fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
-    let mut command = Command::new("opencode");
+    let mut command = crate::shell_path::installed_tool("opencode")?;
     command
         .current_dir(&job.repo_path)
         .args(["run", "--dangerously-skip-permissions"])
@@ -147,7 +147,7 @@ fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
 }
 
 fn run_pi(prompt: String, job: &DispatchJob) -> Result<String> {
-    let mut command = Command::new("pi");
+    let mut command = crate::shell_path::installed_tool("pi")?;
     command.current_dir(&job.repo_path).arg("--print");
     configure_agent_command(&mut command);
     let output = command
@@ -164,11 +164,11 @@ fn run_pi(prompt: String, job: &DispatchJob) -> Result<String> {
     summarize_agent_output("Pi", output)
 }
 
+/// The pipes an agent is talked to through, and a process group of its own, which is what
+/// stopping it ends - see [`stop_process_group`]. Who it runs as and the PATH it is found on
+/// are the command's already - see [`crate::shell_path::installed_tool`].
 fn configure_agent_command(command: &mut Command) {
     command
-        // Same PATH the availability check found the agent on, so a window opened from a
-        // desktop launcher starts it rather than failing to find it.
-        .env("PATH", crate::shell_path::installed_tools_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -342,8 +342,14 @@ fn stream_reader<R: Read>(mut reader: R, prefix: &'static str, log: AgentLog) ->
     Ok(collected)
 }
 
-pub(crate) fn command_exists(command: &str) -> bool {
-    env::split_paths(crate::shell_path::installed_tools_path()).any(|dir| {
+pub(crate) fn command_exists(command: &str) -> Result<bool> {
+    let path = crate::shell_path::tools_path_of_the_current_user()?;
+    Ok(command_exists_on(path.as_ref(), command))
+}
+
+/// Whether one of the folders of `path`, a `PATH`, holds a program of this name.
+fn command_exists_on(path: &std::ffi::OsStr, command: &str) -> bool {
+    env::split_paths(path).any(|dir| {
         let candidate = dir.join(command);
         std::fs::metadata(candidate)
             .map(|meta| meta.is_file())
@@ -351,12 +357,21 @@ pub(crate) fn command_exists(command: &str) -> bool {
     })
 }
 
+/// Which agents the user moon runs as has installed.
 pub(crate) fn detect_agent_availability() -> crate::api::AgentAvailability {
+    detect_agent_availability_on(crate::shell_path::installed_tools_path().as_ref())
+}
+
+/// Which agents are found on `path`, the login `PATH` of whoever would run them - a person's
+/// own, on a server that gives each a Unix user: see `crate::agent_sessions::availability_in`.
+pub(crate) fn detect_agent_availability_on(
+    path: &std::ffi::OsStr,
+) -> crate::api::AgentAvailability {
     crate::api::AgentAvailability {
-        claude: command_exists("claude"),
-        codex: command_exists("codex"),
-        opencode: command_exists("opencode"),
-        pi: command_exists("pi"),
+        claude: command_exists_on(path, "claude"),
+        codex: command_exists_on(path, "codex"),
+        opencode: command_exists_on(path, "opencode"),
+        pi: command_exists_on(path, "pi"),
     }
 }
 
@@ -388,6 +403,9 @@ pub(crate) fn agent_options(
         kind,
         label: label.to_string(),
         available: agent_is_available(availability, kind),
+        // Said for one person, by `crate::agent_sessions::agent_options_for`.
+        logged_in: None,
+        log_in_command: None,
     })
     .collect()
 }

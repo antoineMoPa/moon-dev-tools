@@ -73,9 +73,14 @@ pub(in crate::server) async fn poll(
             Ok(Json(serde_json::json!({"connected":false})))
         }
         github::Poll::Connected(account) => {
-            profiles
-                .connect_if_current(&user, account, generation)
-                .map_err(failed)?;
+            // Off the async workers: a first sign-in may make a Unix user, which is a
+            // program run and waited on.
+            tokio::task::spawn_blocking(move || {
+                profiles.connect_if_current(&user, account, generation)
+            })
+            .await
+            .map_err(|error| failed(error.into()))?
+            .map_err(failed)?;
             Ok(Json(serde_json::json!({"connected":true})))
         }
     }

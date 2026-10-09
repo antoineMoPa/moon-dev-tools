@@ -100,6 +100,28 @@ pub(super) enum MoonCommand {
 }
 
 pub(crate) fn run() -> Result<()> {
+    // Ahead of everything a window or a server does to its own environment: this process is
+    // about to be a person's program, and is given exactly the environment that is for - see
+    // `crate::unix_users`.
+    let words: Vec<String> = env::args().skip(1).collect();
+    if let Some((command, words)) = words.split_first()
+        && command == crate::unix_users::AS_UNIX_USER_COMMAND
+    {
+        // Said and exited with here, rather than returned: a failure of this command is not
+        // the failure of the program it was to run, and has a status of its own to say so.
+        match crate::unix_users::become_and_run(words) {
+            Ok(never) => match never {},
+            Err(error) => {
+                eprintln!("{PROGRAM} {command}: {error:#}");
+                std::process::exit(crate::unix_users::COULD_NOT_RUN_STATUS);
+            }
+        }
+    }
+
+    if crate::instances::shell_person().is_some() {
+        crate::unix_users::write_for_the_group();
+    }
+
     // Before anything starts a thread or a child: a window launched from the Dock has no
     // locale, and every tool it runs would read and write bytes outside ASCII as something
     // other than UTF-8 - see `crate::shell_locale`.
@@ -122,6 +144,7 @@ pub(crate) fn run() -> Result<()> {
             }
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
+                .on_thread_start(crate::unix_users::be_the_server_on_this_thread)
                 .build()
                 .context("failed to build tokio runtime")?;
             runtime.block_on(server::run_server())

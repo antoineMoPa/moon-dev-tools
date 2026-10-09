@@ -517,3 +517,75 @@ fn a_tasks_shells_are_kept_under_its_folder_and_found_by_its_own_repo_only() {
     assert_eq!(task_owning(here, "commit:a-session"), None);
     assert_eq!(task_owning(here, "/repos/here/.moontasks"), None);
 }
+
+/// A work tree as git links one: a `.git` file naming the folder git keeps for it under the
+/// checkout's `.git`, and in that folder the `commondir` leading back.
+fn work_tree_linked_from(checkout: &Path, name: &str) -> PathBuf {
+    let git_dir = checkout.join(".git/worktrees").join(name);
+    fs::create_dir_all(&git_dir).expect("failed to create the work tree's git folder");
+    fs::write(git_dir.join(COMMON_DIR_FILE_NAME), "../..\n").expect("failed to write commondir");
+    let work_tree = temp_repo(name);
+    fs::write(
+        work_tree.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .expect("failed to write the work tree's .git");
+    work_tree
+}
+
+/// Where people share a board, a person's own work tree has the board of the checkout it was
+/// linked from - and everywhere else a work tree keeps the board it always had, its own.
+#[test]
+fn a_work_tree_has_its_checkouts_board_only_where_people_share_one() {
+    let checkout = temp_repo("shared-checkout");
+    let work_tree = work_tree_linked_from(&checkout, "alices");
+    // The path a session opened on the checkout has, which is what two people's shells of
+    // one task are kept under.
+    let resolved = checkout.canonicalize().expect("expected the checkout");
+
+    let shared = board_checkout_when(&work_tree, true).expect("expected a checkout");
+    assert_eq!(shared, resolved);
+    assert_eq!(
+        work_tree_apart_from(&shared, &work_tree),
+        Some(work_tree.display().to_string())
+    );
+    assert_eq!(
+        board_checkout_when(&checkout, true).expect("expected a checkout"),
+        checkout
+    );
+    assert_eq!(work_tree_apart_from(&checkout, &checkout), None);
+
+    assert_eq!(
+        board_checkout_when(&work_tree, false).expect("expected the folder"),
+        work_tree
+    );
+
+    fs::remove_dir_all(checkout).expect("failed to remove the checkout");
+    fs::remove_dir_all(work_tree).expect("failed to remove the work tree");
+}
+
+/// A submodule's `.git` is a file as a work tree's is, and it is linked from nothing: its
+/// board is its own. A `.git` file that names no git folder at all is refused.
+#[test]
+fn a_submodule_is_no_work_tree_and_a_git_file_naming_nothing_is_refused() {
+    let parent = temp_repo("parent");
+    let submodule = parent.join("repos/turbocharger");
+    fs::create_dir_all(&submodule).expect("failed to create the submodule");
+    fs::create_dir_all(parent.join(".git/modules/turbocharger")).expect("failed to create");
+    fs::write(
+        submodule.join(".git"),
+        "gitdir: ../../.git/modules/turbocharger\n",
+    )
+    .expect("failed to write the submodule's .git");
+
+    assert_eq!(
+        board_checkout_when(&submodule, true).expect("expected the folder"),
+        submodule
+    );
+
+    fs::write(submodule.join(".git"), "not what git writes\n").expect("failed to write .git");
+    let error = board_checkout_when(&submodule, true).expect_err("expected a refusal");
+    assert!(error.to_string().contains("gitdir:"), "{error}");
+
+    fs::remove_dir_all(parent).expect("failed to remove the test repo");
+}

@@ -10,7 +10,7 @@ use std::{
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use tokio::sync::{broadcast, watch};
 
-use crate::api::AgentKind;
+use crate::{agent_sessions::AgentHome, api::AgentKind};
 
 use super::{
     BROADCAST_CAPACITY, CLAUDE_NOTIFY_THROUGH_THE_TERMINAL, OUTPUT_CHUNK_SIZE, Scrollback,
@@ -27,48 +27,78 @@ impl TerminalRegistry {
             pixel_height: 0,
         })?;
 
-        let mut command = match &spec.program {
+        // Nothing a person starts runs as root: a start that names nobody is a mistake in
+        // whoever asked for it, and is refused here, where every shell and agent is started.
+        anyhow::ensure!(
+            spec.runs_as.is_some() || !crate::unix_users::each_person_has_one(),
+            "this server runs each person's shells as their own Unix user, and this one was \
+             started for nobody"
+        );
+        let runs_as = spec.runs_as.as_ref().map(|person| &person.unix_user);
+        let (program, mut arguments) = match &spec.program {
             TerminalProgram::LoginShell => {
-                let mut command = CommandBuilder::new(crate::shell_path::login_shell());
-                command.arg("-l");
-                command
+                let shell = match runs_as {
+                    Some(user) => user.shell.clone(),
+                    None => crate::shell_path::login_shell(),
+                };
+                (shell, vec!["-l".to_string()])
             }
             TerminalProgram::Agent(AgentKind::None) => {
                 unreachable!("no agent picked is the login shell, see TerminalProgram::of_agent")
             }
-            TerminalProgram::Agent(AgentKind::Claude) => CommandBuilder::new("claude"),
-            TerminalProgram::Agent(AgentKind::Codex) => CommandBuilder::new("codex"),
-            TerminalProgram::Agent(AgentKind::OpenCode) => CommandBuilder::new("opencode"),
-            TerminalProgram::Agent(AgentKind::Pi) => CommandBuilder::new("pi"),
+            TerminalProgram::Agent(AgentKind::Claude) => ("claude".to_string(), Vec::new()),
+            TerminalProgram::Agent(AgentKind::Codex) => ("codex".to_string(), Vec::new()),
+            TerminalProgram::Agent(AgentKind::OpenCode) => ("opencode".to_string(), Vec::new()),
+            TerminalProgram::Agent(AgentKind::Pi) => ("pi".to_string(), Vec::new()),
         };
         // Every agent moon starts is told to say through the terminal when it wants a
         // person, the way it would tell iTerm2 or Ghostty - which is what the window reads
         // off the pty and shows on the run's card, and never sends to the desktop. Claude
         // takes it as a setting on its command line, OpenCode as an environment variable of
         // its terminal library's - see [`crate::attention`].
-        match &spec.program {
-            TerminalProgram::Agent(AgentKind::Claude) => {
-                command.arg("--settings");
-                command.arg(CLAUDE_NOTIFY_THROUGH_THE_TERMINAL);
-            }
-            TerminalProgram::Agent(AgentKind::OpenCode) => {
-                command.env("OPENTUI_NOTIFICATION_PROTOCOL", "osc9");
-            }
-            _ => {}
+        if spec.program == TerminalProgram::Agent(AgentKind::Claude) {
+            arguments.push("--settings".to_string());
+            arguments.push(CLAUDE_NOTIFY_THROUGH_THE_TERMINAL.to_string());
         }
         // Codex is told how to show a visualization, which moon then shows beside it - see
-        // [`crate::visualizations`].
-        let arguments = match &spec.program {
-            TerminalProgram::Agent(AgentKind::Codex) => {
-                crate::visualizations::codex_launch::codex_arguments(
-                    &crate::visualizations::codex_home(),
-                    &spec.args,
-                )?
+        // [`crate::visualizations`]. Both go by the Codex home of whoever it runs as, which
+        // need not be whoever asked for it: the folder moon makes there is made as its owner,
+        // and what Codex writes there is read as somebody who may - see [`AgentHome`].
+        let codex = (spec.program == TerminalProgram::Agent(AgentKind::Codex)).then(|| {
+            let home = AgentHome::of_whoever_runs(spec.runs_as.as_ref());
+            (crate::visualizations::codex_home_of(&home), home)
+        });
+        arguments.extend(match &codex {
+            Some((codex_home, home)) => home.as_its_owner(|| {
+                crate::visualizations::codex_launch::codex_arguments(codex_home, &spec.args)
+            })??,
+            None => spec.args.clone(),
+        });
+        // As a person's Unix user, the program is run by `moon as-unix-user`, which becomes
+        // the user first and sets their `HOME` and login `PATH` itself. It is handed none of
+        // the server's environment but moon's own variables - see `crate::unix_users`.
+        let mut command = match runs_as {
+            Some(user) => {
+                let line = user.command_line(&program, &arguments)?;
+                let mut command = CommandBuilder::new(&line[0]);
+                command.args(&line[1..]);
+                command.env_clear();
+                for (name, value) in crate::unix_users::kept_server_environment() {
+                    command.env(name, value);
+                }
+                command
             }
-            _ => spec.args.clone(),
+            None => {
+                let mut command = CommandBuilder::new(&program);
+                command.args(&arguments);
+                // The agent is started by name, so it has to be looked up on the PATH the
+                // user's shell has rather than the one a desktop launcher hands this process.
+                command.env("PATH", crate::shell_path::installed_tools_path());
+                command
+            }
         };
-        for argument in &arguments {
-            command.arg(argument);
+        if spec.program == TerminalProgram::Agent(AgentKind::OpenCode) {
+            command.env("OPENTUI_NOTIFICATION_PROTOCOL", "osc9");
         }
         command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
@@ -84,9 +114,14 @@ impl TerminalRegistry {
         // window, so what this names is checked against the windows written down before it is
         // believed - see `crate::instances`.
         command.env(crate::instances::WINDOW_ENV, std::process::id().to_string());
-        // The agent is started by name, so it has to be looked up on the PATH the user's shell
-        // has rather than the one a desktop launcher hands this process.
-        command.env("PATH", crate::shell_path::installed_tools_path());
+        // Where this server is asked, for a shell whose user cannot look in the server's home,
+        // and whose shell it is - see `crate::instances`.
+        if let Some(socket) = crate::instances::socket_for_other_unix_users() {
+            command.env(crate::instances::SOCKET_ENV, socket);
+        }
+        if let Some(person) = &spec.runs_as {
+            command.env(crate::instances::PERSON_ENV, &person.github_login);
+        }
         // Which characters the tools in the shell can read and write - see
         // `crate::shell_locale`. A window has already adopted this into its own environment,
         // so the shell would inherit it either way; a test's registry never goes through
@@ -102,7 +137,15 @@ impl TerminalRegistry {
         for (name, value) in &spec.env {
             command.env(name, value);
         }
-        let child = pty.slave.spawn_command(command)?;
+        // Started as the person it is for, who is not always the one asking - a run is
+        // resumed as whoever started it. The folder it starts in is looked at and entered on
+        // this thread, and may be in that person's home, which is theirs alone to enter.
+        let child = match &spec.runs_as {
+            Some(person) => {
+                crate::unix_users::as_user(person, || pty.slave.spawn_command(command))??
+            }
+            None => pty.slave.spawn_command(command)?,
+        };
         let child_pid = child.process_id();
         // The slave handle must be dropped so the reader sees EOF once the shell exits.
         drop(pty.slave);
@@ -115,6 +158,12 @@ impl TerminalRegistry {
         let order = self.next_id.fetch_add(1, Ordering::Relaxed);
         let terminal_id = format!("terminal-{}-{order}", self.run);
         let started_at_unix = crate::moontasks::store::now_unix();
+        let visualizations = match &codex {
+            Some((codex_home, home)) => Some(Mutex::new(home.reading(|| {
+                crate::visualizations::rollout::CodexRollouts::new(codex_home, started_at_unix)
+            })?)),
+            None => None,
+        };
         let session = Arc::new(TerminalSession {
             owner: spec.owner,
             name: Mutex::new(spec.name),
@@ -137,12 +186,8 @@ impl TerminalRegistry {
             child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
             child_pid,
-            visualizations: (spec.program == TerminalProgram::Agent(AgentKind::Codex)).then(|| {
-                Mutex::new(crate::visualizations::rollout::CodexRollouts::new(
-                    &crate::visualizations::codex_home(),
-                    started_at_unix,
-                ))
-            }),
+            visualizations,
+            runs_as: spec.runs_as,
         });
         self.sessions
             .lock()

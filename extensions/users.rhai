@@ -20,6 +20,31 @@ fn kind_names() {
     #{ pass_key: "pass key", browser: "browser" }
 }
 
+// Who a user is, when the server knows, by the column's heading and the field of a user it
+// shows: the GitHub account a key or browser signed in with, and the Unix user its shells and
+// agents run as on a server that gives each person one.
+fn person_columns() {
+    [
+        #{ heading: "github", field: "github_login" },
+        #{ heading: "unix user", field: "unix_user" },
+    ]
+}
+
+// The `person_columns` that one of these users has something in: a server nobody signed in
+// to has none, and its table is the one it always was.
+fn person_columns_of(users) {
+    let shown = [];
+    for column in person_columns() {
+        for user in users {
+            if user[column.field] != () {
+                shown.push(column);
+                break;
+            }
+        }
+    }
+    shown
+}
+
 // How often the list is read again.
 fn refresh_every() { 3000 }
 
@@ -190,6 +215,11 @@ fn view() {
 
     let kinds = kind_names();
     let now = now();
+    let person_columns = person_columns_of(this.users);
+    let person_headings = [];
+    for column in person_columns {
+        person_headings.push(column.heading);
+    }
     let rows = [];
     for (user, index) in this.users {
         let standing = if user.kicked {
@@ -199,10 +229,12 @@ fn view() {
         } else {
             text("in", #{ ink: "added" })
         };
+        let person = [];
+        for column in person_columns {
+            person.push(text(if user[column.field] == () { "" } else { user[column.field] }));
+        }
         rows.push(#{
-            cells: [
-                standing,
-                text(kinds[user.kind]),
+            cells: [standing, text(kinds[user.kind])] + person + [
                 text(user.ip, #{ mono: true }),
                 muted(if user.user_agent == () { "" } else { user.user_agent }),
                 text(user.id, #{ mono: true, small: true }),
@@ -221,7 +253,11 @@ fn view() {
         row(actions),
         muted("x kick · X kick everyone · g refresh · a kick outlives the server; a new secret takes every key back"),
         separator(),
-        table(["", "kind", "ip", "user agent", "id", "last seen", "first seen", "requests"], rows),
+        table(
+            ["", "kind"] + person_headings
+                + ["ip", "user agent", "id", "last seen", "first seen", "requests"],
+            rows
+        ),
     ])
 }
 

@@ -24,6 +24,7 @@ use anyhow::{Context, anyhow, bail};
 use x11rb::{
     CURRENT_TIME, NONE,
     connection::Connection,
+    errors::ConnectError,
     protocol::{
         Event as XEvent,
         damage::{ConnectionExt as _, ReportLevel},
@@ -34,11 +35,12 @@ use x11rb::{
         },
         xtest::ConnectionExt as _,
     },
-    rust_connection::RustConnection,
+    reexports::x11rb_protocol::parse_display::ConnectAddress,
+    rust_connection::{DefaultStream, RustConnection},
     wrapper::ConnectionExt as _,
 };
 
-use crate::{Event, Input, LARGEST, Patch, Shown, Size, keys::Keyboard};
+use crate::{COOKIE_PROTOCOL, Cookie, Event, Input, LARGEST, Patch, Shown, Size, keys::Keyboard};
 
 /// How long the thread waits on what a person did before looking at X again - see
 /// `moon_launcher`, whose loop this is.
@@ -87,14 +89,41 @@ struct Rect {
     height: usize,
 }
 
+/// Where the X servers of a machine listen, each on a socket named `X` and its display number.
+const SOCKETS: &str = "/tmp/.X11-unix";
+
+/// The screen of a display that has one, which Xvfb is started with.
+const ONLY_SCREEN: usize = 0;
+
+/// Connect to a display that lets in whoever shows `cookie`, on the socket `x11rb::connect`
+/// reaches a display of this machine on.
+///
+/// The cookie is shown as it is held rather than looked up: `x11rb::connect` reads it from
+/// the authority file `XAUTHORITY` names, and this process has one environment for every
+/// display it watches.
+fn connect_showing(number: u32, cookie: Cookie) -> Result<(RustConnection, usize), ConnectError> {
+    let socket = ConnectAddress::Socket(format!("{SOCKETS}/X{number}"));
+    let (stream, _) = DefaultStream::connect(&socket)?;
+    let conn = RustConnection::connect_to_stream_with_auth_info(
+        stream,
+        ONLY_SCREEN,
+        COOKIE_PROTOCOL.to_vec(),
+        cookie.to_vec(),
+    )?;
+    Ok((conn, ONLY_SCREEN))
+}
+
+/// Watch the display of this number on a thread of its own, showing `cookie` to be let onto
+/// it when it is a private one.
 pub(crate) fn watch_on_a_thread(
     number: u32,
+    cookie: Option<Cookie>,
     view: Size,
     inputs: Receiver<Input>,
     events: Sender<Event>,
     shown: Arc<Mutex<Shown>>,
 ) -> anyhow::Result<()> {
-    let watcher = Watcher::take(number, view, shown)?;
+    let watcher = Watcher::take(number, cookie, view, shown)?;
     std::thread::Builder::new()
         .name("moon display".to_string())
         .spawn(move || watcher.run(&inputs, &events))
@@ -122,9 +151,17 @@ struct Watcher {
 
 impl Watcher {
     /// Connect to the display and become its window manager.
-    fn take(number: u32, view: Size, shown: Arc<Mutex<Shown>>) -> anyhow::Result<Self> {
-        let (conn, screen) = x11rb::connect(Some(&format!(":{number}")))
-            .with_context(|| format!("the display :{number} would not be connected to"))?;
+    fn take(
+        number: u32,
+        cookie: Option<Cookie>,
+        view: Size,
+        shown: Arc<Mutex<Shown>>,
+    ) -> anyhow::Result<Self> {
+        let (conn, screen) = match cookie {
+            Some(cookie) => connect_showing(number, cookie),
+            None => x11rb::connect(Some(&format!(":{number}"))),
+        }
+        .with_context(|| format!("the display :{number} would not be connected to"))?;
         let setup = conn.setup();
         let root = setup.roots[screen].root;
         let depth = setup.roots[screen].root_depth;

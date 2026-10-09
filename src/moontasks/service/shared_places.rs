@@ -72,6 +72,7 @@ mod tests {
             tags: Vec::new(),
             remote_task_tracker_url: String::new(),
             resources: Vec::new(),
+            made_by: None,
         };
         (title.to_string(), metadata)
     }

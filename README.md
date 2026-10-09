@@ -243,6 +243,20 @@ cargo run --locked --bin moon -- serve --logs
 
 Open the login link printed in the terminal, then choose **Account › Sign in with GitHub**.
 
+#### Several people on one server
+
+Run that `moon serve` as root, on Linux, and each person who signs in is given a Unix user
+of their own, `moon-<github login>`: their shells and agents run as it, so each keeps their
+own agent logins. Only then - as any other user, or without `MOON_GITHUB_CLIENT_ID`,
+everything runs as the server's user, as before.
+
+- Give the project folder a group of its own before starting: `chgrp -R project . && chmod -R g+w .`.
+  Every person's user is made in that group.
+- Install `moon` and the agents where everyone can run them, such as `/usr/local/bin`.
+  Each person logs their own agent in, from a shell.
+- It keeps logins apart, not people: everyone on the server can read and change the project.
+- Stopping the server ends everyone's agents. It warns every shell and waits 30 seconds first.
+
 It is the same window as `--remote`, shells included - the same terminal, Ghostty's VT engine
 built to wasm. The differences:
 - The browser keeps most ⌘ chords (⌘T, ⌘W, ⌘N), so Ctrl stands in for ⌘: Ctrl T, Ctrl Shift P.

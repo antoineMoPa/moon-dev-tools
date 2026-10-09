@@ -55,6 +55,8 @@ mod shell_path;
 mod shell_quoting;
 #[cfg(not(target_arch = "wasm32"))]
 mod terminal;
+#[cfg(not(target_arch = "wasm32"))]
+mod unix_users;
 mod visualizations;
 #[cfg(target_arch = "wasm32")]
 mod web;

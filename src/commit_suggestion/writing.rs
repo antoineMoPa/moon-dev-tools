@@ -3,7 +3,7 @@
 use std::{
     io::{Read, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     thread,
     time::{Duration, Instant},
 };
@@ -121,8 +121,11 @@ fn build_prompt(repo_root: &Path, name_status: &str, diff: &str) -> String {
 /// Ask `opencode` in the repo, and answer with everything it printed. The prompt goes in on
 /// stdin rather than on the command line: a staged diff is far longer than a command line is
 /// allowed to be.
+///
+/// It runs as whoever asked for the message, with the model and the login of their own
+/// `opencode` - see [`crate::shell_path::installed_tool`].
 fn run_opencode(repo_root: &Path, prompt: &str) -> Result<String> {
-    let mut child = Command::new("opencode")
+    let mut child = crate::shell_path::installed_tool("opencode")?
         // No model of our own: whichever one `opencode` is set up to use is the one the user
         // has already chosen, signed into and paid for, and naming another here would be a
         // model that is not there on some other machine.
@@ -130,9 +133,6 @@ fn run_opencode(repo_root: &Path, prompt: &str) -> Result<String> {
         .arg("--dir")
         .arg(repo_root)
         .current_dir(repo_root)
-        // The PATH the availability check found opencode on, so a window opened from a
-        // desktop launcher starts it rather than failing to find it.
-        .env("PATH", crate::shell_path::installed_tools_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

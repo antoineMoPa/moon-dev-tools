@@ -20,7 +20,7 @@ use serde_json::json;
 use tungstenite::client::IntoClientRequest;
 
 use crate::{
-    api::SearchLine,
+    api::{SearchLine, profiles::ProfileView},
     backend::{Say, SearchListener, Socket},
 };
 
@@ -51,7 +51,8 @@ impl RemoteBackend {
     /// `target` is a URL, or a `host` / `host:port` shorthand that means plain HTTP.
     ///
     /// The key is tried once here, so a wrong one is said to be wrong while connecting rather
-    /// than as the first thing the window asks for failing.
+    /// than as the first thing the window asks for failing. So is a server this window cannot
+    /// sign in to.
     pub(crate) fn connect(target: &str, pass_key: String) -> Result<Self> {
         let base_url = base_url_for(target)?;
         let label = label_for(&base_url);
@@ -80,6 +81,27 @@ impl RemoteBackend {
             );
         }
         admitted.error_for_status().map_err(remote_refusal)?;
+        // A server that gives each person a Unix user refuses everything else until whoever
+        // holds this key has signed in with GitHub, which only its page in a browser does.
+        // Said once here, where the window would hear it from every request it went on to make.
+        let about_me = client
+            .get(format!("{base_url}/api/me"))
+            .send()
+            .with_context(|| format!("failed to reach a moonreview server at {base_url}"))?;
+        // A server from before people signed in has no such route, and asks it of nobody.
+        if about_me.status() != reqwest::StatusCode::NOT_FOUND {
+            let profile: ProfileView = about_me
+                .error_for_status()
+                .map_err(remote_refusal)?
+                .json()
+                .context("could not decode the response to GET /api/me")?;
+            if profile.only_sign_in_is_offered() {
+                bail!(
+                    "{base_url} asks each person to sign in with GitHub, which only its page \
+                     in a browser does: use {base_url}/moon in place of this window"
+                );
+            }
+        }
 
         Ok(Self {
             base_url,

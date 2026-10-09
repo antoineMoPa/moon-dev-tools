@@ -1,4 +1,4 @@
-use super::resources::{Fillings, write_task_files};
+use super::resources::{Fillings, folder_a_run_went_in, write_task_files};
 use super::*;
 
 /// A run's fillings, without the brief file a real one writes.
@@ -253,7 +253,7 @@ fn the_brief_points_at_the_coordination_file_without_spelling_it_out() {
 #[test]
 fn the_coordination_file_is_two_sentences() {
     assert_eq!(
-        crate::moontasks::coordination_brief(),
+        crate::moontasks::coordination_brief(".moontasks/messageboard.txt"),
         "Before working, read .moontasks/messageboard.txt, then post the areas you will touch: \
          `moon wire post \"<one line>\"`. Start it with @handle to message one agent instead.\n"
     );
@@ -305,7 +305,7 @@ fn a_task_started_in_is_given_the_files_its_brief_points_at() {
     }
     assert_eq!(
         std::fs::read_to_string(dir.join("Coordination.md")).expect("expected the file"),
-        crate::moontasks::coordination_brief()
+        crate::moontasks::coordination_brief(&crate::moontasks::wire_repo_path())
     );
     assert_eq!(
         std::fs::read_to_string(repo.join(".moontasks/messageboard.txt"))
@@ -332,7 +332,7 @@ fn the_board_task_is_given_the_same_files_and_the_wire_keeps_its_lines() {
     let dir = store::task_dir(&repo, store::BOARD_TASK_ID).expect("expected the folder");
     assert_eq!(
         std::fs::read_to_string(dir.join("Coordination.md")).expect("expected the file"),
-        crate::moontasks::coordination_brief()
+        crate::moontasks::coordination_brief(&crate::moontasks::wire_repo_path())
     );
     assert!(
         std::fs::read_to_string(dir.join(crate::moontasks::BRIEF_FILE_NAME))
@@ -367,7 +367,10 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         }],
+        made_by: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -403,7 +406,10 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         }],
+        made_by: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -440,7 +446,10 @@ fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
             agent_session_id: None,
             name: None,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         }],
+        made_by: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -488,6 +497,8 @@ fn a_task_finished_from_another_moon_keeps_the_run_that_moon_holds() {
         agent_session_id: None,
         name: None,
         started_at_unix: 0,
+        started_by: None,
+        work_tree: None,
     };
     // The process that started this test is running, and is not this one.
     let another_moon = std::os::unix::process::parent_id();
@@ -544,7 +555,10 @@ fn run_of_session(session_id: &str) -> TaskMetadata {
             agent_session_id: Some(session_id.to_string()),
             name: None,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         }],
+        made_by: None,
     }
 }
 
@@ -574,6 +588,7 @@ fn a_run_another_moon_holds_is_going_and_not_offered_to_be_resumed() {
     let runs = resources_of(
         &state,
         Path::new("/repo"),
+        Path::new("/repo"),
         "task",
         &held,
         &OpenSessions::default(),
@@ -594,7 +609,8 @@ fn a_session_its_agent_has_open_is_going_and_not_offered_to_be_resumed() {
     let on_the_task = run_of_session("a-session");
     let agent = std::os::unix::process::parent_id();
     let view = |open: &OpenSessions| {
-        resources_of(&state, Path::new("/repo"), "task", &on_the_task, open).remove(0)
+        let repo = Path::new("/repo");
+        resources_of(&state, repo, repo, "task", &on_the_task, open).remove(0)
     };
 
     let open = view(&OpenSessions::said_open(&[(
@@ -620,4 +636,31 @@ fn a_session_its_agent_has_open_is_going_and_not_offered_to_be_resumed() {
     )]));
     assert_eq!(exited.going_elsewhere_in, None);
     assert!(exited.resumable);
+}
+
+/// A run is resumed in the folder it went in: the board's checkout, or the work tree it was
+/// started in - and a work tree that has gone since is refused, not swapped for the checkout.
+#[test]
+fn a_run_is_resumed_in_the_work_tree_it_went_in_or_not_at_all() {
+    let checkout = temp_repo("resumed-in");
+    let mut run = run_of_session("a-session").resources.remove(0);
+
+    assert_eq!(
+        folder_a_run_went_in(&checkout, &run, None).expect("expected the checkout"),
+        checkout
+    );
+
+    let work_tree = temp_repo("resumed-in-a-work-tree");
+    run.work_tree = Some(work_tree.display().to_string());
+    assert_eq!(
+        folder_a_run_went_in(&checkout, &run, None).expect("expected the work tree"),
+        work_tree
+    );
+
+    std::fs::remove_dir_all(&work_tree).expect("failed to remove the work tree");
+    let error = folder_a_run_went_in(&checkout, &run, None).expect_err("expected a refusal");
+    assert!(
+        error.to_string().contains(&work_tree.display().to_string()),
+        "{error}"
+    );
 }

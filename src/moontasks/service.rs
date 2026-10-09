@@ -39,9 +39,16 @@ use crate::{
     terminal::TerminalRegistry,
 };
 
-/// The repo a session's board belongs to.
-pub(super) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
+/// The folder a session's person works in: the one their window is open on, which is where
+/// a task's shells and agents are started and what its review is of.
+pub(super) fn folder_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
     crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))
+}
+
+/// The repo a session's board belongs to: the folder the session is open on, or the checkout
+/// that folder is a work tree of where people share a board - see [`store::board_checkout`].
+pub(super) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
+    store::board_checkout(&folder_of(state, session_id)?)
 }
 
 /// Every task on the board, with what each one has running right now.
@@ -49,7 +56,8 @@ pub(super) fn repo_of(state: &AppState, session_id: &str) -> Result<PathBuf> {
 /// Reading the board is also when it catches up with reality by clearing resources whose
 /// shells have exited, including shells lost with a previous run of the server.
 pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskView>> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     let mut read = Vec::new();
 
     for task_id in store::list_task_ids(&repo_path)? {
@@ -82,13 +90,13 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
     }
 
     // Read once for the whole board rather than once a run.
-    let open = OpenSessions::read();
+    let open = OpenSessions::of_runs(read.iter().flat_map(|(_, metadata)| &metadata.resources))?;
     let mut tasks: Vec<_> = read
         .iter()
         .map(|(task_id, metadata)| {
             (
                 place_of(metadata),
-                view_of(state, &repo_path, task_id, metadata, &open),
+                view_of(state, &repo_path, &works_in, task_id, metadata, &open),
             )
         })
         .collect();
@@ -246,11 +254,12 @@ fn moon_holding(resource: &TaskResource) -> Option<u32> {
 /// [`TaskResourceView::going_elsewhere_in`]. Asked of a run this moon has no live shell for.
 ///
 /// Another moon's shell is the record's own word. An agent's own process is the agent's
-/// word, for a session that was put on the task from outside a moon.
+/// word, for a session that was put on the task from outside a moon - read from the home of
+/// whoever started the run, which is where their agent wrote it.
 pub(super) fn going_elsewhere_in(resource: &TaskResource, open: &OpenSessions) -> Option<u32> {
     moon_holding(resource).or_else(|| {
         let session_id = resource.agent_session_id.as_deref()?;
-        open.process_of(resource.agent, session_id)
+        open.process_of(resource.started_by.as_ref(), resource.agent, session_id)
             .filter(|pid| process_is_running(*pid))
     })
 }
@@ -272,7 +281,8 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 /// One whose record cannot be read, or has been put in a column, is an error rather than a
 /// record written over: the runs written on it would be lost.
 pub(crate) fn board_task(state: &AppState, session_id: &str) -> Result<BoardTaskView> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     if !store::has_task_record(&repo_path, store::BOARD_TASK_ID)? {
         store::create_board_task(&repo_path)?;
     }
@@ -290,20 +300,23 @@ pub(crate) fn board_task(state: &AppState, session_id: &str) -> Result<BoardTask
         resources: resources_of(
             state,
             &repo_path,
+            &works_in,
             store::BOARD_TASK_ID,
             &metadata,
-            &OpenSessions::read(),
+            &OpenSessions::of_runs(&metadata.resources)?,
         ),
         id: store::BOARD_TASK_ID.to_string(),
         title: metadata.title,
-        repo_path: repo_path.display().to_string(),
+        repo_path: works_in.display().to_string(),
     })
 }
 
 /// What a task has on it: the runs and files its record lists, and the shells it has open.
+/// `works_in` is the folder of the session asking, which the paths in the answer are read from.
 fn resources_of(
     state: &AppState,
     repo_path: &Path,
+    works_in: &Path,
     task_id: &str,
     metadata: &TaskMetadata,
     open: &OpenSessions,
@@ -326,7 +339,15 @@ fn resources_of(
                     // A file by its path; a visualization by the name it was given as it was
                     // kept, which is what its pane's tab reads.
                     label: resource.name.clone().unwrap_or_else(|| file_path.clone()),
-                    file_path: Some(file_path),
+                    file_path: Some(match resource.kind {
+                        // Its copy is in the task's folder, under the board's checkout, and a
+                        // window open on a work tree of that checkout reads paths from the
+                        // work tree: it is told where the copy is in full.
+                        TaskResourceKind::Visualization if works_in != repo_path => {
+                            repo_path.join(&file_path).display().to_string()
+                        }
+                        _ => file_path,
+                    }),
                     running: false,
                     going_elsewhere_in: None,
                     quiet_for_secs: None,
@@ -334,6 +355,8 @@ fn resources_of(
                     terminal_id: None,
                     resumable: false,
                     started_at_unix: resource.started_at_unix,
+                    started_by: None,
+                    work_tree: None,
                 }
             }
             TaskResourceKind::Shell | TaskResourceKind::Agent => {
@@ -378,6 +401,11 @@ fn resources_of(
                     resumable: agent_launch(resource.agent).is_some()
                         && going_elsewhere_in.is_none(),
                     started_at_unix: resource.started_at_unix,
+                    started_by: resource
+                        .started_by
+                        .as_ref()
+                        .map(|by| by.github_login.clone()),
+                    work_tree: resource.work_tree.clone(),
                 }
             }
         })
@@ -401,6 +429,8 @@ fn resources_of(
                 terminal_id: Some(shell.terminal_id),
                 resumable: false,
                 started_at_unix: shell.started_at_unix,
+                started_by: None,
+                work_tree: None,
             }),
     );
     resources.sort_by_key(|resource| resource.started_at_unix);
@@ -410,6 +440,7 @@ fn resources_of(
 fn view_of(
     state: &AppState,
     repo_path: &Path,
+    works_in: &Path,
     task_id: &str,
     metadata: &TaskMetadata,
     open: &OpenSessions,
@@ -424,12 +455,12 @@ fn view_of(
             .join(task_id)
             .display()
             .to_string(),
-        repo_path: repo_path.display().to_string(),
+        repo_path: works_in.display().to_string(),
         tags: metadata.tags.clone(),
         remote_task_tracker_url: metadata.remote_task_tracker_url.clone(),
         notes: store::read_notes(repo_path, task_id),
         attachments: store::read_attachments(repo_path, task_id),
-        resources: resources_of(state, repo_path, task_id, metadata, open),
+        resources: resources_of(state, repo_path, works_in, task_id, metadata, open),
     }
 }
 
@@ -473,7 +504,8 @@ pub(crate) fn link_file(
     task_id: &str,
     file_path: &str,
 ) -> Result<()> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     let mut metadata = store::read_task(&repo_path, task_id)?;
 
     let file_path = file_path.trim();
@@ -486,9 +518,12 @@ pub(crate) fn link_file(
     // Both sides are resolved before they are compared: on macOS the repo may be reached
     // through a symlink (`/var` for `/private/var`), and comparing a resolved path against an
     // unresolved root would refuse a file that is plainly inside it.
-    let repo_root = repo_path
+    //
+    // The folder the session is open on, whose file pane the card opens the file in: in a
+    // work tree of the board's checkout, that is the work tree.
+    let repo_root = works_in
         .canonicalize()
-        .with_context(|| format!("failed to resolve {}", repo_path.display()))?;
+        .with_context(|| format!("failed to resolve {}", works_in.display()))?;
     let resolved = repo_root
         .join(file_path)
         .canonicalize()
@@ -517,6 +552,8 @@ pub(crate) fn link_file(
         agent_session_id: None,
         name: None,
         started_at_unix: store::now_unix(),
+        started_by: None,
+        work_tree: None,
     });
     store::write_task(&repo_path, task_id, &metadata)
 }
@@ -537,15 +574,17 @@ pub(crate) fn create_task(
     session_id: &str,
     request: &CreateTaskRequest,
 ) -> Result<TaskView> {
-    let repo_path = repo_of(state, session_id)?;
+    let works_in = folder_of(state, session_id)?;
+    let repo_path = store::board_checkout(&works_in)?;
     let task_id = store::create_task(&repo_path, &request.title, &request.status, request.joins)?;
     let metadata = store::read_task(&repo_path, &task_id)?;
     Ok(view_of(
         state,
         &repo_path,
+        &works_in,
         &task_id,
         &metadata,
-        &OpenSessions::read(),
+        &OpenSessions::of_runs(&metadata.resources)?,
     ))
 }
 

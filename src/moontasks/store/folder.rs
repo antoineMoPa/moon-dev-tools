@@ -138,6 +138,24 @@ pub(crate) struct TaskResource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     pub(crate) started_at_unix: u64,
+    /// Who started the run, on a server that gives each person a Unix user. `None` everywhere
+    /// else, and on a run written down before this was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) started_by: Option<StartedBy>,
+    /// The git work tree the run was started in, when that is not the checkout the board is
+    /// in - see [`board_checkout`]. The card says so, and the run is resumed there: its agent
+    /// keeps a session under the folder it ran in. `None` for a run in the board's own
+    /// checkout, which is every run of a board nobody shares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) work_tree: Option<String>,
+}
+
+/// The person a run belongs to: the card shows their GitHub login, and the run is resumed as
+/// their Unix user, whose home has the agent's session - see `crate::unix_users`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StartedBy {
+    pub(crate) github_login: String,
+    pub(crate) unix_user: String,
 }
 
 /// The `metadata.json` of one task folder.
@@ -178,6 +196,10 @@ pub(crate) struct TaskMetadata {
     pub(crate) remote_task_tracker_url: String,
     #[serde(default)]
     pub(crate) resources: Vec<TaskResource>,
+    /// The GitHub login of whoever made the card - or whose agent did - on a server that
+    /// gives each person a Unix user. `None` everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) made_by: Option<String>,
 }
 
 impl TaskMetadata {
@@ -224,6 +246,94 @@ const BOARD_FILE_NAME: &str = "board.json";
 
 pub(crate) fn tasks_root(repo_path: &Path) -> PathBuf {
     repo_path.join(TASKS_DIR_NAME)
+}
+
+/// Whether the board is one several people work on, each of whom may be in a git work tree of
+/// their own: on a server that gives each person a Unix user, and for a `moon` typed in one of
+/// the shells it started.
+pub(crate) fn people_share_the_board() -> bool {
+    crate::unix_users::each_person_has_one() || crate::instances::shell_person().is_some()
+}
+
+/// The checkout whose `.moontasks` is the board of the folder someone works in.
+///
+/// Where people share a board, a person in a work tree of their own still reads and writes the
+/// one everybody has: the board of the checkout their work tree was linked from. Everywhere
+/// else it is the folder itself, a work tree included - a single developer's work trees have a
+/// board each, as they always had.
+///
+/// Every `repo_path` the board's store and service take is this checkout, so it is asked once,
+/// where a session's folder or a shell's comes in.
+pub(crate) fn board_checkout(folder: &Path) -> Result<PathBuf> {
+    board_checkout_when(folder, people_share_the_board())
+}
+
+fn board_checkout_when(folder: &Path, people_share_the_board: bool) -> Result<PathBuf> {
+    if !people_share_the_board {
+        return Ok(folder.to_path_buf());
+    }
+    Ok(checkout_linked_from(folder)?.unwrap_or_else(|| folder.to_path_buf()))
+}
+
+/// The folder someone works in, when it is not the checkout its board is in: a work tree of
+/// their own, which is what a run started there is written down with - see
+/// [`TaskResource::work_tree`].
+pub(crate) fn work_tree_apart_from(board_checkout: &Path, folder: &Path) -> Option<String> {
+    (folder != board_checkout).then(|| folder.display().to_string())
+}
+
+/// What the `.git` of a linked work tree opens with. It is a file where a checkout's is a
+/// folder, and the rest of its line is the folder git keeps that one work tree's state in.
+const GIT_DIR_MARK: &str = "gitdir:";
+
+/// The file, in that folder, naming the `.git` every work tree of the repo shares.
+const COMMON_DIR_FILE_NAME: &str = "commondir";
+
+/// The checkout a git work tree was linked from, or `None` for a folder that is no linked
+/// work tree: a checkout, a submodule, a folder git knows nothing about.
+///
+/// Read off the two files git writes for a work tree rather than asked of git: this is asked
+/// on every read of the board, and git would be a process each time.
+///
+/// A work tree linked from no checkout has none to answer with either: one of a bare repo, or
+/// of a submodule, whose shared `.git` is under its parent's `.git/modules`. That is told the
+/// way `git worktree list` tells it - a checkout is the folder holding a shared git folder
+/// called `.git`.
+fn checkout_linked_from(folder: &Path) -> Result<Option<PathBuf>> {
+    let dot_git = folder.join(".git");
+    if !dot_git.is_file() {
+        return Ok(None);
+    }
+    let named = fs::read_to_string(&dot_git)
+        .with_context(|| format!("failed to read {}", dot_git.display()))?;
+    let git_dir = named
+        .trim()
+        .strip_prefix(GIT_DIR_MARK)
+        .with_context(|| format!("{} does not start with `{GIT_DIR_MARK}`", dot_git.display()))?
+        .trim();
+    // Named from the work tree when it is not named in full, and joining a path that is
+    // named in full answers that path.
+    let git_dir = folder.join(git_dir);
+
+    // A submodule's `.git` is such a file too, and the folder it names has no `commondir`: a
+    // submodule is a repo of its own, linked from nothing.
+    let common_dir_file = git_dir.join(COMMON_DIR_FILE_NAME);
+    if !common_dir_file.is_file() {
+        return Ok(None);
+    }
+    let named = fs::read_to_string(&common_dir_file)
+        .with_context(|| format!("failed to read {}", common_dir_file.display()))?;
+    // Resolved, because it is written from the work tree's own git folder - `../..` - and
+    // the answer has to be the same path a session opened on the checkout itself has.
+    let common_dir = git_dir
+        .join(named.trim())
+        .canonicalize()
+        .with_context(|| format!("{} names no folder", common_dir_file.display()))?;
+    if common_dir.file_name().is_none_or(|name| name != ".git") {
+        return Ok(None);
+    }
+    let checkout = common_dir.parent().expect("a `.git` is in a folder");
+    Ok(Some(checkout.to_path_buf()))
 }
 
 /// What the board's own `.gitignore` says.
@@ -398,6 +508,7 @@ pub(crate) fn create_task(
         tags: Vec::new(),
         remote_task_tracker_url: String::new(),
         resources: Vec::new(),
+        made_by: crate::unix_users::person_this_is_done_for(),
     };
     write_task(repo_path, &task_id, &metadata)?;
     ensure_notes_file(repo_path, &task_id)?;
@@ -428,6 +539,7 @@ pub(crate) fn create_board_task(repo_path: &Path) -> Result<()> {
         tags: Vec::new(),
         remote_task_tracker_url: String::new(),
         resources: Vec::new(),
+        made_by: None,
     };
     write_task(repo_path, BOARD_TASK_ID, &metadata)?;
     ensure_notes_file(repo_path, BOARD_TASK_ID)

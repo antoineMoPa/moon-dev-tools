@@ -4,8 +4,8 @@
 //!
 //! It is run in the repo whose board the task is on, the way `moon tasks new` is, and a task
 //! is named by its handle, the way the wire names one - see [`handles`]. None of it is done
-//! here: an agent runs in a shell a moon window holds, so each command finds the window and
-//! asks it - see [`crate::instances`].
+//! here: an agent runs in a shell a moon holds - a window, or a `moon serve` - so each
+//! command finds that moon and asks it - see [`crate::instances`].
 
 use std::path::Path;
 
@@ -15,7 +15,7 @@ use super::PROGRAM;
 use crate::{
     api::AgentKind,
     git::project_root,
-    instances::{self, Instance},
+    instances,
     moontasks::{
         AGENT_LAUNCHES,
         store::{self, TaskMetadata},
@@ -189,12 +189,14 @@ pub(super) fn run(command: AgentCommand) -> Result<()> {
         println!("{}", help_text());
         return Ok(());
     }
-    let repo_path =
+    let folder =
         project_root(&std::env::current_dir().context("failed to read the current directory")?)?;
+    // The checkout the board is in, which is not this folder in a person's own work tree.
+    let repo_path = store::board_checkout(&folder)?;
     let said = match command {
         AgentCommand::Help => unreachable!("the help was printed above"),
         AgentCommand::List => list(&repo_path)?,
-        AgentCommand::Start { task, agent } => start(&repo_path, &task, agent)?,
+        AgentCommand::Start { task, agent } => start(&folder, &task, agent)?,
         AgentCommand::View { task, wanted } => view(&repo_path, &task, wanted)?,
         AgentCommand::Tell { task, line } => tell(&repo_path, &task, &line)?,
     };
@@ -234,7 +236,7 @@ impl Task {
         })
     }
 
-    /// The task's agents that are running, each with the window holding its shell - or why
+    /// The task's agents that are running, each with the moon holding its shell - or why
     /// there is nothing to tell or to look at.
     fn running_agents(&self) -> Result<Vec<Running>> {
         let handle = &self.handle;
@@ -245,26 +247,14 @@ impl Task {
                  start {handle} <agent>`"
             );
         }
-        agents
+        Ok(agents
             .into_iter()
-            .map(|agent| {
-                // Only a window answers this. A `moon serve` holds shells too, and answers
-                // `moon launch` alone.
-                let window = instances::window_of(agent.held_by).with_context(|| {
-                    format!(
-                        "{HANDLE_MARK}{handle}'s agent runs in a moon with no window (process \
-                         {}), such as `{PROGRAM} serve`, and only a window can be asked about \
-                         a shell it holds",
-                        agent.held_by
-                    )
-                })?;
-                Ok(Running {
-                    run: self.run_in(&agent.terminal_id),
-                    terminal_id: agent.terminal_id,
-                    window,
-                })
+            .map(|agent| Running {
+                run: self.run_in(&agent.terminal_id),
+                terminal_id: agent.terminal_id,
+                held_by: agent.held_by,
             })
-            .collect()
+            .collect())
     }
 
     /// What the run in a shell is called, and the shell's own id for a run written down
@@ -284,15 +274,16 @@ struct Running {
     /// What its run is called - `fix the races claude - 1`.
     run: String,
     terminal_id: String,
-    window: Instance,
+    /// The process of the moon holding its shell, a window or a `moon serve`.
+    held_by: u32,
 }
 
 /// Every agent running on the board in a repo, a line each: the handle of its task, which is
 /// what `view` and `tell` take, and what its run is called. In the order the board reads its
 /// tasks in, and a task's agents in the order they were started.
 ///
-/// An agent held by a moon with no window is listed with the rest: it is running, though
-/// nothing here can tell it anything.
+/// An agent held by a moon that does not answer is listed with the rest: it is running,
+/// though nothing here can tell it anything.
 fn list(repo_path: &Path) -> Result<String> {
     let folders = store::list_task_ids(repo_path)?;
     let mut running: Vec<(String, String)> = Vec::new();
@@ -322,18 +313,19 @@ fn list(repo_path: &Path) -> Result<String> {
         .collect())
 }
 
-/// Start an agent on a task, in the window open on the board's repo, and say what its run is
-/// called.
-fn start(repo_path: &Path, task: &str, agent: AgentKind) -> Result<String> {
-    let task = Task::named(repo_path, task)?;
-    let window = instances::window_on_board(repo_path).with_context(|| {
+/// Start an agent on a task, in the window open on the board's repo - or in the `moon serve`
+/// this shell is a tab of - and say what its run is called. `folder` is the one this shell is
+/// in, which the agent comes up in: the board's repo, or a person's own work tree of it.
+fn start(folder: &Path, task: &str, agent: AgentKind) -> Result<String> {
+    let task = Task::named(&store::board_checkout(folder)?, task)?;
+    let moon = instances::moon_for_board(folder).with_context(|| {
         format!(
             "no {PROGRAM} window is open on {}: an agent runs in a shell a window holds, so \
              open one there with `{PROGRAM} tasks`",
-            repo_path.display()
+            folder.display()
         )
     })?;
-    let run = instances::start_agent(&window, &task.id, agent)?;
+    let run = instances::start_agent(moon, folder, &task.id, agent)?;
     Ok(format!("started {run} on {HANDLE_MARK}{}\n", task.handle))
 }
 
@@ -343,7 +335,7 @@ fn view(repo_path: &Path, task: &str, wanted: Shown) -> Result<String> {
     let running = Task::named(repo_path, task)?.running_agents()?;
     let mut shown = Vec::new();
     for agent in &running {
-        shown.push(instances::shown(&agent.window, &agent.terminal_id, wanted)?);
+        shown.push(instances::shown(agent.held_by, &agent.terminal_id, wanted)?);
     }
     if let [only] = shown.as_slice() {
         return Ok(only.clone());
@@ -361,7 +353,7 @@ fn tell(repo_path: &Path, task: &str, line: &str) -> Result<String> {
     let running = Task::named(repo_path, task)?.running_agents()?;
     let mut told = String::new();
     for agent in running {
-        instances::tell(&agent.window, &agent.terminal_id, line)
+        instances::tell(agent.held_by, &agent.terminal_id, line)
             .with_context(|| format!("{} was not told the line", agent.run))?;
         told.push_str(&format!("told {}\n", agent.run));
     }
@@ -440,6 +432,8 @@ mod tests {
             agent_session_id: None,
             name: Some(name.to_string()),
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         });
         store::write_task(repo, task_id, &metadata).expect("expected the run to be written");
     }
@@ -688,11 +682,12 @@ mod tests {
         }
     }
 
-    /// An agent whose shell is held by a moon with no window - this test process, which
-    /// listens on nothing - is one nobody can be asked about.
+    /// An agent whose shell is held by a moon that listens on nothing - this test process -
+    /// is one nobody can be asked about, and the command says which run was not told and
+    /// which moon said nothing.
     #[test]
-    fn an_agent_held_by_a_moon_with_no_window_is_refused_with_the_reason() {
-        let (repo, races, _) = board("serve");
+    fn an_agent_held_by_a_moon_that_does_not_answer_is_refused_with_the_reason() {
+        let (repo, races, _) = board("no-answer");
         run_an_agent(
             &repo,
             &races,
@@ -703,12 +698,11 @@ mod tests {
 
         let error = tell(&repo, "fix-the-races", "hello").expect_err("expected a refusal");
 
+        let said = format!("{error:#}");
         assert!(
-            error.to_string().contains("runs in a moon with no window")
-                && error
-                    .to_string()
-                    .contains(&format!("process {}", std::process::id())),
-            "{error}"
+            said.contains("fix the races claude - 1 was not told the line")
+                && said.contains(&format!("(process {}) did not answer", std::process::id())),
+            "{said}"
         );
     }
 

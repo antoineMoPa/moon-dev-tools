@@ -12,7 +12,7 @@ use std::{
 
 use tokio::sync::broadcast;
 
-use crate::api::TerminalAttentionView;
+use crate::{agent_sessions::AgentHome, api::TerminalAttentionView};
 
 use super::{OwnedShell, TerminalProgram, TerminalRegistry, TerminalSession};
 
@@ -193,8 +193,12 @@ impl TerminalRegistry {
     }
 
     /// Every visualization the Codex runs in these terminals have announced - see
-    /// [`crate::visualizations::rollout`]. Reads their rollouts, so it is file work.
-    pub(crate) fn visualizations(&self) -> Vec<crate::visualizations::VisualizationView> {
+    /// [`crate::visualizations::rollout`] - each with the home of whoever's Codex it is,
+    /// which is where its fragment is. Reads their rollouts, so it is file work, done for
+    /// each run as somebody who may read that home.
+    pub(crate) fn visualizations(
+        &self,
+    ) -> anyhow::Result<Vec<(AgentHome, crate::visualizations::VisualizationView)>> {
         let codex_runs: Vec<(String, Arc<TerminalSession>)> = self
             .sessions
             .lock()
@@ -208,32 +212,36 @@ impl TerminalRegistry {
             let (Some(rollouts), Some(pid)) = (&session.visualizations, session.child_pid) else {
                 continue;
             };
-            let mut rollouts = rollouts.lock().unwrap();
-            // A Codex that has ended holds nothing open, and has said all it will.
-            let announced = if session.child_ended.load(Ordering::Relaxed) {
-                rollouts.announced()
-            } else {
-                rollouts.poll(pid)
-            };
-            for (fragment_path, announced) in announced {
-                // A fragment removed since it was announced has nothing left to show.
-                let Ok(modified) =
-                    std::fs::metadata(fragment_path).and_then(|meta| meta.modified())
-                else {
-                    continue;
+            let home = AgentHome::of_whoever_runs(session.runs_as.as_ref());
+            home.reading(|| {
+                let mut rollouts = rollouts.lock().unwrap();
+                // A Codex that has ended holds nothing open, and has said all it will.
+                let announced = if session.child_ended.load(Ordering::Relaxed) {
+                    rollouts.announced()
+                } else {
+                    rollouts.poll(pid)
                 };
-                views.push(crate::visualizations::VisualizationView {
-                    terminal_id: terminal_id.clone(),
-                    fragment_path: fragment_path.display().to_string(),
-                    announced: *announced,
-                    modified_unix_ms: modified
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("a file is written after the epoch")
-                        .as_millis() as u64,
-                });
-            }
+                for (fragment_path, announced) in announced {
+                    // A fragment removed since it was announced has nothing left to show.
+                    let Ok(modified) =
+                        std::fs::metadata(fragment_path).and_then(|meta| meta.modified())
+                    else {
+                        continue;
+                    };
+                    let view = crate::visualizations::VisualizationView {
+                        terminal_id: terminal_id.clone(),
+                        fragment_path: fragment_path.display().to_string(),
+                        announced: *announced,
+                        modified_unix_ms: modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .expect("a file is written after the epoch")
+                            .as_millis() as u64,
+                    };
+                    views.push((home.clone(), view));
+                }
+            })?;
         }
-        views
+        Ok(views)
     }
 
     /// The plain shells one task has open right now, oldest first.
@@ -273,6 +281,43 @@ impl TerminalRegistry {
             .collect();
         for terminal_id in owned {
             self.remove(&terminal_id);
+        }
+    }
+
+    /// End every shell and agent running as this Unix user, which is what kicking the person
+    /// out does - see `crate::server::users`.
+    pub(crate) fn remove_run_as(&self, user: &crate::unix_users::UnixUser) {
+        let theirs: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| {
+                session
+                    .runs_as
+                    .as_ref()
+                    .is_some_and(|person| person.unix_user.uid == user.uid)
+            })
+            .map(|(terminal_id, _)| terminal_id.clone())
+            .collect();
+        for terminal_id in theirs {
+            self.remove(&terminal_id);
+        }
+    }
+
+    /// Print a line of moon's own in every shell the server has, for whoever is looking at
+    /// one: the server is about to restart, say, and their agent with it. It is shown, not
+    /// typed: the program in the shell is told nothing.
+    pub(crate) fn say_in_every_shell(&self, notice: &str) {
+        let sessions: Vec<Arc<TerminalSession>> =
+            self.sessions.lock().unwrap().values().cloned().collect();
+        for session in sessions {
+            let chunk = session
+                .scrollback
+                .lock()
+                .unwrap()
+                .push(format!("\r\n\x1b[33m[{notice}]\x1b[0m\r\n").as_bytes(), true);
+            let _ = session.output.send(chunk);
         }
     }
 

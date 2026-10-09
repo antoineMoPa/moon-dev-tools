@@ -27,12 +27,29 @@ const STATUS_VARIABLE: &str = "MOONREVIEW_RUN_STATUS";
 /// The two files one review's run uses. They live in the temp dir rather than in the repo, so
 /// nothing a run needs can end up staged by the next one; a review runs one command at a time,
 /// so its own id is enough to name them apart from every other review's.
+///
+/// On a server that gives each person a Unix user both are the person's: the message is
+/// written, and the status read and taken away, by a thread working as them, and the shell
+/// between the two runs as them - see [`crate::unix_users::as_user`].
 fn run_message_path(session_id: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("moonreview-run-{session_id}.message"))
+    run_files_dir().join(format!("moonreview-run-{session_id}.message"))
 }
 
 fn run_status_path(session_id: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("moonreview-run-{session_id}.status"))
+    run_files_dir().join(format!("moonreview-run-{session_id}.status"))
+}
+
+/// The temp dir every Unix user of a machine can write in.
+const EVERYONES_TEMP_DIR: &str = "/tmp";
+
+/// Where the runs' files are kept: this process's temp dir, and on a server that gives each
+/// person a Unix user the one they can all write in - the server's own may be root's alone,
+/// where root has a `TMPDIR`.
+fn run_files_dir() -> std::path::PathBuf {
+    match crate::unix_users::each_person_has_one() {
+        true => std::path::PathBuf::from(EVERYONES_TEMP_DIR),
+        false => std::env::temp_dir(),
+    }
 }
 
 /// What the pane is told when the shell a run was going in disappeared before the command said
@@ -64,8 +81,8 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
         behind,
         staged_files,
         unstaged_count,
-        gh_installed: crate::agent::command_exists("gh"),
-        opencode_installed: crate::agent::command_exists("opencode"),
+        gh_installed: crate::agent::command_exists("gh")?,
+        opencode_installed: crate::agent::command_exists("opencode")?,
     })
 }
 
@@ -142,11 +159,11 @@ fn open_pr_step(state: &CommitState) -> Result<String> {
 ///
 /// The script prints the command first, so the pane shows what ran the way a prompt would
 /// have; then it writes down how the command went; then it hands the pty to an interactive
-/// login shell, so the output stays on screen above a shell to carry on in.
-fn run_script(command: &str, personal: bool) -> String {
-    let login_shell = crate::shell_path::login_shell();
+/// login shell, so the output stays on screen above a shell to carry on in. `login_shell` is
+/// that of whoever the run is for.
+fn run_script(command: &str, personal: bool, login_shell: &str) -> String {
     let printed = single_quoted(command);
-    let shell = single_quoted(&login_shell);
+    let shell = single_quoted(login_shell);
     let mut lines = vec![
         format!("printf '%s\\n' {printed}"),
         command.to_string(),
@@ -318,14 +335,23 @@ pub(crate) fn start_commit_run_personal(
         (MESSAGE_VARIABLE.into(), message_path.display().to_string()),
         (STATUS_VARIABLE.into(), status_path.display().to_string()),
     ]);
+    let runs_as = crate::api::person_of(state, session_id)?;
+    // The shell left to carry on in is the one the run started in: the person's own, where
+    // the run is a person's - see `TerminalRegistry::spawn`.
+    let login_shell = match &runs_as {
+        Some(person) => person.unix_user.shell.clone(),
+        None => crate::shell_path::login_shell(),
+    };
+    let script = run_script(&command, namespace.is_some(), &login_shell);
     state.terminals.spawn(crate::terminal::TerminalSpec {
         cwd: repo_path,
         program: crate::terminal::TerminalProgram::LoginShell,
         name: None,
-        args: vec!["-c".to_string(), run_script(&command, namespace.is_some())],
+        args: vec!["-c".to_string(), script],
         env: environment,
         owner: Some(owner),
         type_ahead: None,
+        runs_as,
     })
 }
 
@@ -590,7 +616,7 @@ mod tests {
     /// `echo` on a line of its own rather than appended to it.
     #[test]
     fn a_run_keeps_the_status_echo_off_the_command_it_runs() {
-        let script = run_script("git push -u origin HEAD", false);
+        let script = run_script("git push -u origin HEAD", false, "/bin/sh");
         let lines: Vec<&str> = script.lines().collect();
 
         assert_eq!(
@@ -612,7 +638,7 @@ mod tests {
 
     #[test]
     fn personal_run_records_status_then_discards_credentials_but_keeps_identity() {
-        let script = run_script("git push", true);
+        let script = run_script("git push", true, "/bin/sh");
         let lines: Vec<_> = script.lines().collect();
         assert_eq!(lines[2], "echo $? > \"$MOONREVIEW_RUN_STATUS\"");
         assert_eq!(
@@ -626,7 +652,11 @@ mod tests {
 
     #[test]
     fn a_command_the_script_prints_is_quoted_so_the_shell_leaves_it_alone() {
-        let script = run_script("git commit -F \"$MOONREVIEW_RUN_MESSAGE\"", false);
+        let script = run_script(
+            "git commit -F \"$MOONREVIEW_RUN_MESSAGE\"",
+            false,
+            "/bin/sh",
+        );
 
         assert_eq!(
             script.lines().next(),

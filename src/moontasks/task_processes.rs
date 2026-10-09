@@ -220,11 +220,11 @@ pub(crate) const COORDINATION_BRIEF_FILE_NAME: &str = "Coordination.md";
 
 /// The whole of that file. What a line may be, how a handle is read and what is refused are
 /// kept out of it: an agent reads this on every task, and a post that goes wrong says why.
-pub(crate) fn coordination_brief() -> String {
+/// `wire_file` is the file the wire's broadcasts are kept in, as the agent is to read it.
+pub(crate) fn coordination_brief(wire_file: &str) -> String {
     format!(
         "Before working, read {wire_file}, then post the areas you will touch: \
          `{post} \"<one line>\"`. Start it with @handle to message one agent instead.\n",
-        wire_file = wire_repo_path(),
         post = super::wire::post_command()
     )
 }

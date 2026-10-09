@@ -96,6 +96,7 @@ fn spawn_workspace_shell(
     state.terminals.spawn(TerminalSpec {
         owner: workspace_owner(state, session_id)?,
         env,
+        runs_as: crate::api::person_of(state, session_id)?,
         ..TerminalSpec::shell(cwd, command, Some(name))
     })
 }
@@ -126,6 +127,7 @@ fn start_workspace_shell_running_with_environment(
         owner: workspace_owner(state, session_id)?,
         name: Some(name),
         env,
+        runs_as: crate::api::person_of(state, session_id)?,
         ..TerminalSpec::running(repo_path, command)
     })
 }
@@ -290,7 +292,11 @@ pub(crate) async fn rename_terminal(
     State(state): State<AppState>,
     Json(request): Json<TerminalNameRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    rename(&state, &session_id, &terminal_id, &request.name)?;
+    // The name is written on the run's card, as whoever renamed it.
+    crate::server::session_work(state, session_id, move |state, session_id| {
+        rename(state, session_id, &terminal_id, &request.name)
+    })
+    .await?;
     Ok("ok")
 }
 

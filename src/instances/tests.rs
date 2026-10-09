@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use super::{
     ANSWER_TIMEOUT, Answer, Ask, Instance, ask_process, dir, home_instances_dir, launch_in,
-    listen_on_own_socket, pick_file, running, server::ServerAsks, socket_path, window::ShellAsks,
-    window_of, windows_for, wire, write_record,
+    listen_on_own_socket, pick_file, running, server::ServerAsks, socket_path, socket_path_from,
+    window::ShellAsks, window_of, windows_for, wire, write_record,
 };
 
 fn instance(pid: u32, project_path: &str) -> Instance {
@@ -128,6 +128,28 @@ fn the_records_live_beside_the_settings() {
     let dir = home_instances_dir().expect("expected a directory");
 
     assert!(dir.ends_with(".moonreview/instances"), "got {dir:?}");
+}
+
+/// A moon listens beside the records, in its own home, and that is where its shells find it.
+/// A server that gives each person a Unix user is the one that listens elsewhere - its shells
+/// run as users who cannot enter its home - and a shell it started is told where, which it
+/// believes for that server's process and no other.
+#[test]
+fn a_server_whose_shells_run_as_other_unix_users_listens_where_they_all_reach_it() {
+    let records = || Some(PathBuf::from("/home/someone/.moonreview/instances"));
+    let beside_the_records = Some(PathBuf::from("/home/someone/.moonreview/instances/7.sock"));
+    let shared = PathBuf::from("/run/moon/7.sock");
+
+    assert_eq!(socket_path_from(7, false, None, records()), beside_the_records);
+    assert_eq!(socket_path_from(7, true, None, records()), Some(shared.clone()));
+    assert_eq!(
+        socket_path_from(7, false, Some(shared.clone()), records()),
+        Some(shared.clone())
+    );
+    assert_eq!(
+        socket_path_from(8, false, Some(shared), records()),
+        Some(PathBuf::from("/home/someone/.moonreview/instances/8.sock"))
+    );
 }
 
 /// A window writes as it runs, so a test run must not be able to reach the real records - it
@@ -443,7 +465,7 @@ fn a_line_of_the_wire_is_taken_and_waits_in_the_order_it_was_asked_for() {
             Answer::Wired
         );
     }
-    wire(&window, &wire_ask("terminal-b", "four")).expect("expected the line to be taken");
+    wire(window.pid, &wire_ask("terminal-b", "four")).expect("expected the line to be taken");
 
     assert!(asks.drain().is_empty(), "a line is no file to open");
     assert!(asks.drain_shells().is_empty(), "nor a folder for a shell");
@@ -482,7 +504,8 @@ fn a_line_of_the_wire_that_is_not_one_line_is_refused() {
             .expect("expected an answer");
         assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
     }
-    let error = wire(&window, &wire_ask("terminal-a", "one\ntwo")).expect_err("expected a refusal");
+    let error =
+        wire(window.pid, &wire_ask("terminal-a", "one\ntwo")).expect_err("expected a refusal");
     assert!(error.to_string().contains("refused the line"), "{error}");
     assert!(asks.drain_wired().is_empty());
 }
@@ -618,16 +641,16 @@ fn what_is_asked_about_an_agent_is_answered_with_what_came_of_it() {
     asks.on_project(&project.display().to_string())
         .expect("expected the record to be written");
     asks.agents_answered_by(std::sync::Arc::new(AnswersAboutAgents));
-    let window = window_of(std::process::id()).expect("expected the window to be written down");
+    let window = std::process::id();
+    let claude = crate::api::AgentKind::Claude;
 
     assert_eq!(
-        super::start_agent(&window, "fix-the-races", crate::api::AgentKind::Claude)
-            .expect("expected a start"),
+        super::start_agent(window, &project, "fix-the-races", claude).expect("expected a start"),
         "fix-the-races claude - 1"
     );
-    super::tell(&window, "terminal-a", "hello").expect("expected the line to be taken");
+    super::tell(window, "terminal-a", "hello").expect("expected the line to be taken");
     assert_eq!(
-        super::shown(&window, "terminal-a", crate::terminal::Shown::Screen)
+        super::shown(window, "terminal-a", crate::terminal::Shown::Screen)
             .expect("expected the screen"),
         "the screen of terminal-a\n"
     );
@@ -647,17 +670,18 @@ fn what_a_window_could_not_do_about_an_agent_is_refused_with_the_reason() {
     asks.on_project(&project.display().to_string())
         .expect("expected the record to be written");
     asks.agents_answered_by(std::sync::Arc::new(AnswersAboutAgents));
-    let window = window_of(std::process::id()).expect("expected the window to be written down");
+    let window = std::process::id();
 
-    let error = super::start_agent(&window, "fix-the-races", crate::api::AgentKind::Codex)
-        .expect_err("expected a refusal");
+    let error =
+        super::start_agent(window, &project, "fix-the-races", crate::api::AgentKind::Codex)
+            .expect_err("expected a refusal");
     assert!(
         error
             .to_string()
             .contains("refused: Codex is not installed here"),
         "{error}"
     );
-    let error = super::tell(&window, "terminal-nobody", "hello").expect_err("expected a refusal");
+    let error = super::tell(window, "terminal-nobody", "hello").expect_err("expected a refusal");
     assert!(
         error
             .to_string()
@@ -736,7 +760,7 @@ fn what_is_asked_about_an_agent_is_refused_by_a_window_that_answers_nothing_abou
 /// `moon launch`, over the real socket and with a real program: a window among others starts
 /// nothing and says why; a window that is its machine's session starts the line of shell in
 /// the folder asked from, each quoted word one argument, and answers a start that failed with
-/// what the program said; and a `moon serve` answers a launch and nothing else.
+/// what the program said; and a `moon serve` answers a launch, and nothing a window opens.
 #[test]
 fn a_launch_is_answered_with_how_the_start_went_by_a_moon_that_starts_programs() {
     use crate::display::started::OnThisScreen;
@@ -780,4 +804,54 @@ fn a_launch_is_answered_with_how_the_start_went_by_a_moon_that_starts_programs()
     )
     .expect("expected an answer");
     assert!(matches!(answer, Answer::Refused { .. }), "got {answer:?}");
+}
+
+/// A `moon serve` holds shells as a window's moon does, and answers for them over its socket
+/// once it has said which they are: a line is typed into the shell it names and sent, what
+/// the shell shows is read back, and a shell it does not hold is its refusal.
+#[test]
+fn a_server_tells_and_shows_the_shells_it_holds() {
+    use std::{
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    use crate::{display::started::OnThisScreen, server::profiles::Profiles, terminal::Shown};
+
+    let folder = temporary_project("served");
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let terminal_id = state
+        .terminals
+        .spawn(crate::terminal::TerminalSpec::shell(folder.clone(), None, None))
+        .expect("expected a shell");
+    let server = ServerAsks::listen(Arc::new(OnThisScreen)).expect("expected a socket");
+    let moon = std::process::id();
+
+    let error = super::tell(moon, &terminal_id, "echo hello").expect_err("expected a refusal");
+    assert!(
+        error.to_string().contains("answers nothing about agents"),
+        "{error}"
+    );
+
+    let profiles = Profiles::kept_at(&folder.join("secret")).expect("expected profiles");
+    server.shells_held_by(state.clone(), profiles);
+    super::tell(moon, &terminal_id, "echo told-$((6 * 7))").expect("expected the line taken");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let screen = super::shown(moon, &terminal_id, Shown::Screen).expect("expected a screen");
+        if screen.contains("told-42") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "never showed the line:\n{screen}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let error = super::tell(moon, "terminal-nobody", "hello").expect_err("expected a refusal");
+    assert!(
+        error
+            .to_string()
+            .contains("refused: unknown terminal terminal-nobody"),
+        "{error}"
+    );
+    state.terminals.remove(&terminal_id);
 }

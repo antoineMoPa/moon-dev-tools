@@ -20,8 +20,8 @@ const HOME_MARK: &str = "~";
 /// `crate::native::file_picker`.
 ///
 /// The folder is named the way a person types one: from `/`, or from `~` for the home of
-/// whoever this server runs as - which only this side can say where is. Anything else is
-/// refused rather than read against the folder this process happens to be running in.
+/// whoever the listing is for - see [`home`] - which only this side can say where is. Anything
+/// else is refused rather than read against the folder this process happens to be running in.
 pub(crate) fn list_folder(path: &str) -> Result<FolderListing> {
     let folder = folder_named(path)?
         .canonicalize()
@@ -58,7 +58,7 @@ pub(crate) fn list_folder(path: &str) -> Result<FolderListing> {
     Ok(FolderListing { folder, entries })
 }
 
-/// The folder a typed path names, with `~` read as this account's home.
+/// The folder a typed path names, with `~` read as the home of whoever is listing.
 fn folder_named(path: &str) -> Result<PathBuf> {
     let named = Path::new(path);
     if named.is_absolute() {
@@ -67,10 +67,20 @@ fn folder_named(path: &str) -> Result<PathBuf> {
     let Ok(under_home) = named.strip_prefix(HOME_MARK) else {
         bail!("{path} is not a folder named from / or from ~");
     };
+    Ok(home()?.join(under_home))
+}
+
+/// The home `~` stands for: that of this thread's current user, on a server that
+/// gives each person a Unix user - the server's own is root's there, which nobody else lists -
+/// and that of the account this server runs as everywhere else.
+fn home() -> Result<PathBuf> {
+    if let Some(person) = crate::unix_users::current_user() {
+        return Ok(person.unix_user.home);
+    }
     let home = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
         .context("this server's account has no home folder for ~ to stand for")?;
-    Ok(PathBuf::from(home).join(under_home))
+    Ok(PathBuf::from(home))
 }
 
 /// Open a session on the project holding a file, and say what the file is called inside it -
@@ -86,7 +96,7 @@ pub(crate) fn place_file(state: &AppState, path: &str) -> Result<FilePlaced> {
 pub(crate) fn place_file_for_profile(
     state: &AppState,
     path: &str,
-    namespace: Option<String>,
+    owner: Option<crate::api::SessionOwner>,
 ) -> Result<FilePlaced> {
     let named = Path::new(path);
     if !named.is_absolute() {
@@ -118,7 +128,7 @@ pub(crate) fn place_file_for_profile(
             diff_target: None,
             active_commit: None,
         },
-        namespace,
+        owner,
     )?;
     let project = crate::api::with_session(state, &opened.session_id, |session| {
         Ok(session.repo_path.clone())

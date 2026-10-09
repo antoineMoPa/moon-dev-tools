@@ -6,7 +6,7 @@
 //!
 //! - With no tag in front it is a broadcast, kept in `.moontasks/messageboard.txt` for every
 //!   agent to read - see [`broadcasts`].
-//! - Starting with `@handle` it is a direct message: the window holding that task's agent
+//! - Starting with `@handle` it is a direct message: the moon holding that task's agent
 //!   types it into the agent's shell - see [`direct`], and `crate::terminal` for the typing.
 //!
 //! A [handle](handles) is the front of a task's folder name, which is what an agent is tagged
@@ -52,6 +52,20 @@ pub(crate) fn logged_line(sender: &str, recipient: &str, message: &str) -> Strin
     format!("@{sender} → @{recipient}: {message}")
 }
 
+/// A line's text, saying whose agent it is from: on a server that gives each person a Unix
+/// user the agents of a board are several people's, and the handle of a task does not say
+/// whose. `None` is every other moon, where the text is carried as it was written.
+///
+/// Said in the text rather than beside the handle, so a line still reads `@handle: text`.
+/// That is the shape every moon holds the broadcasts' file to - see [`broadcasts`] - and the
+/// handle is still what an answer is tagged with.
+pub(crate) fn from_the_agent_of(github_login: Option<&str>, message: &str) -> String {
+    match github_login {
+        Some(login) => format!("({login}'s agent) {message}"),
+        None => message.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +90,16 @@ mod tests {
         ] {
             assert!(one_line(refused).is_err(), "{refused:?} should be refused");
         }
+    }
+
+    /// Whose agent a line is from is part of its text, so the line is still one every moon
+    /// reads back - and on a moon with nobody to name it is the text alone.
+    #[test]
+    fn a_line_says_whose_agent_it_is_from_in_its_text() {
+        assert_eq!(from_the_agent_of(None, "in src/cli"), "in src/cli");
+        let said = from_the_agent_of(Some("Antoine-MP"), "in src/cli");
+        assert_eq!(said, "(Antoine-MP's agent) in src/cli");
+        assert_eq!(one_line(&said).expect("expected a line"), said);
     }
 
     #[test]

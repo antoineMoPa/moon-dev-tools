@@ -512,7 +512,7 @@ impl Backend for LocalBackend {
     }
 
     fn lsp_working(&self, session_id: &str) -> Result<Vec<LspWork>> {
-        Ok(crate::lsp::working(&self.state, session_id))
+        crate::lsp::working(&self.state, session_id)
     }
 
     fn lsp_did_open(&self, session_id: &str, file_path: &str, text: &str) -> Result<()> {
@@ -538,11 +538,7 @@ impl Backend for LocalBackend {
     }
 
     fn lsp_trigger_characters(&self, session_id: &str, file_path: &str) -> Result<Vec<char>> {
-        Ok(crate::lsp::trigger_characters(
-            &self.state,
-            session_id,
-            file_path,
-        ))
+        crate::lsp::trigger_characters(&self.state, session_id, file_path)
     }
 
     fn lsp_completion(

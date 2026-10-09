@@ -40,7 +40,10 @@ pub(crate) struct TaskView {
     pub(crate) entered_column_at_unix: Option<u64>,
     /// The task folder itself, so the board can offer it to a shell or a file browser.
     pub(crate) dir_path: String,
-    /// The repo the task's agents work in, which is the repo the board belongs to.
+    /// The folder the task's agents and shells are started in, and that its `review` opens:
+    /// the one this window is open on. That is the repo the board belongs to, except for a
+    /// person in a work tree of their own on a board several people share, whose board is
+    /// the checkout's - see `board_checkout` in the store.
     pub(crate) repo_path: String,
     /// What the card is marked with, in the spelling the store keeps - see
     /// [`store::tag_of`].
@@ -68,7 +71,7 @@ pub(crate) struct TaskView {
 pub(crate) struct BoardTaskView {
     pub(crate) id: String,
     pub(crate) title: String,
-    /// The repo the board task's agents work in, which is the repo the board belongs to.
+    /// The folder the board task's agents work in - see [`TaskView::repo_path`].
     pub(crate) repo_path: String,
     pub(crate) resources: Vec<TaskResourceView>,
 }
@@ -115,7 +118,9 @@ pub(crate) struct TaskResourceView {
     pub(crate) agent: AgentKind,
     pub(crate) label: String,
     /// The file a linked file opens, relative to the repo root. `Some` for a file, and for a
-    /// visualization: its copy in the task's folder.
+    /// visualization: its copy in the task's folder - named in full where that folder is not
+    /// under [`TaskView::repo_path`], which is a window open on a work tree of the board's
+    /// checkout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_path: Option<String>,
     /// The process a run is going in when that is not a shell of this moon: another moon's -
@@ -143,6 +148,17 @@ pub(crate) struct TaskResourceView {
     /// been told its session id when it started.
     pub(crate) resumable: bool,
     pub(crate) started_at_unix: u64,
+    /// The GitHub login of whoever started the run, on a server that gives each person a Unix
+    /// user: the run is theirs - it runs as them and is resumed as them, whoever asks - and
+    /// the card says so. `None` everywhere else, and for a shell or a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) started_by: Option<String>,
+    /// The git work tree the run was started in, by its path, for the card to say: on a board
+    /// several people share, a person may work in a work tree of their own - see
+    /// `board_checkout` in the store. `None` for a run in the checkout the board is in, and
+    /// for a shell or a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) work_tree: Option<String>,
 }
 
 /// One repo a task's `request_for_review.txt` asks to have looked at, as the board draws it.
@@ -219,7 +235,8 @@ pub(crate) struct StartResourceRequest {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StartFolder {
-    /// The repo the board is over.
+    /// The repo the window is open on: the one the board is over, or a person's own work tree
+    /// of it.
     Repo,
     /// The task's own folder under `.moontasks`.
     TaskFolder,

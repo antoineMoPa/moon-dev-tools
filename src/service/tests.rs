@@ -356,7 +356,7 @@ fn browser_profiles_keep_review_state_and_workspace_shells_separate() {
                 diff_target: None,
                 active_commit: None,
             },
-            Some(namespace.to_string()),
+            Some(namespace.into()),
         )
         .unwrap()
         .session_id

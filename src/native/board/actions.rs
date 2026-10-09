@@ -77,6 +77,9 @@ pub(crate) enum BoardAction {
         listed: String,
     },
     Start(String, StartResourceRequest),
+    /// Open a shell with this command line typed into it and sent: what logs a person in to
+    /// an agent - see [`crate::native::agent_logins`].
+    RunInShell(String),
     Resume(String, String),
     /// Open the modal that lists the agents' own sessions, for this task.
     OpenAttachPicker {
@@ -337,6 +340,7 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 backend.delete_task(&session_id, &task_id)
             });
         }
+        BoardAction::RunInShell(command) => app.run_in_shell(command),
         BoardAction::Start(task_id, request) => {
             // The shell it starts in is what the user wants to look at, so it opens with it.
             let for_pane = task_id.clone();

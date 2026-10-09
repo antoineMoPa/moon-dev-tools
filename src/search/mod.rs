@@ -17,7 +17,7 @@ pub(crate) mod file_names;
 use std::{
     io::{BufRead, BufReader, Read},
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -79,11 +79,11 @@ fn stream(
     args: &[&str],
     on_lines: &mut dyn FnMut(Vec<String>) -> Flow,
 ) -> Result<Ended> {
-    let mut child = Command::new(SEARCHER)
+    // Run as whoever is searching, and looked for where they installed it: a window opened
+    // from a launcher has a bare PATH, without the `/opt/homebrew/bin` `ag` was put in - see
+    // [`crate::shell_path::installed_tool`].
+    let mut child = crate::shell_path::installed_tool(SEARCHER)?
         .current_dir(repo_path)
-        // A window opened from a launcher has a bare PATH, without the `/opt/homebrew/bin`
-        // the user installed `ag` into - see [`crate::shell_path`].
-        .env("PATH", crate::shell_path::installed_tools_path())
         .args(REPO_ARGS)
         .args(NEVER_SEARCHED.iter().flat_map(|name| ["--ignore", name]))
         .args(scope_args(scope))

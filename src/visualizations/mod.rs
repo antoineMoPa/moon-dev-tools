@@ -80,7 +80,26 @@ pub(crate) fn title_of(fragment_path: &Path) -> String {
 pub(crate) fn codex_home() -> PathBuf {
     match std::env::var_os("CODEX_HOME") {
         Some(codex_home) if !codex_home.is_empty() => PathBuf::from(codex_home),
-        _ => PathBuf::from(std::env::var_os("HOME").expect("HOME is set for a user's process"))
-            .join(".codex"),
+        _ => codex_home_in(Path::new(
+            &std::env::var_os("HOME").expect("HOME is set for a user's process"),
+        )),
+    }
+}
+
+/// Where the Codex of the Unix user with this home keeps them. A person's Codex is started
+/// without the server's `CODEX_HOME`, so it is always the one in their home.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn codex_home_in(home: &Path) -> PathBuf {
+    home.join(".codex")
+}
+
+/// Where the Codex of whoever owns this home keeps them: a run's Codex is its owner's - see
+/// [`crate::agent_sessions::AgentHome`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn codex_home_of(home: &crate::agent_sessions::AgentHome) -> PathBuf {
+    use crate::agent_sessions::AgentHome;
+    match home {
+        AgentHome::OfTheServer => codex_home(),
+        AgentHome::Of(person) => codex_home_in(&person.unix_user.home),
     }
 }

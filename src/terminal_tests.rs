@@ -19,6 +19,7 @@ fn a_commit_run_is_told_which_terminal_to_ask_for_a_passphrase_on() {
             owner: Some("commit:test".to_string()),
             name: None,
             type_ahead: Some("printf %s \"[$GPG_TTY]\"\r".to_string()),
+            runs_as: None,
         })
         .expect("expected the shell to start");
     let session = registry.get(&terminal_id).expect("expected the session");
@@ -97,6 +98,7 @@ fn type_ahead_is_typed_into_the_shell_and_left_unsent() {
             owner: None,
             name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
+            runs_as: None,
         })
         .expect("expected a shell");
     let session = registry.get(&terminal_id).expect("expected the shell");
@@ -155,6 +157,7 @@ fn a_reply_to_the_program_is_not_somebody_typing() {
             owner: None,
             name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
+            runs_as: None,
         })
         .expect("expected a shell");
     let session = registry.get(&terminal_id).expect("expected the shell");
@@ -214,6 +217,7 @@ pub(super) fn spawn_fake_claude(registry: &Arc<TerminalRegistry>, script: &str) 
             owner: None,
             name: None,
             type_ahead: None,
+            runs_as: None,
         })
         .expect("expected a shell")
 }
@@ -407,6 +411,7 @@ fn a_plain_shell_that_exits_nonzero_is_still_reaped() {
             owner: None,
             name: None,
             type_ahead: None,
+            runs_as: None,
         })
         .expect("expected a shell");
     let session = registry.get(&terminal_id).expect("expected the shell");
@@ -442,6 +447,7 @@ fn a_shell_someone_has_typed_into_is_left_alone() {
             owner: None,
             name: None,
             type_ahead: Some("moonreview-typed-this".to_string()),
+            runs_as: None,
         })
         .expect("expected a shell");
     let session = registry.get(&terminal_id).expect("expected the shell");
@@ -589,6 +595,7 @@ fn a_shell_starts_under_the_name_it_was_given() {
             owner: Some("write-the-parser".to_string()),
             name: Some("claude - 2".to_string()),
             type_ahead: None,
+            runs_as: None,
         })
         .expect("expected a shell");
     let shell = registry
@@ -674,6 +681,7 @@ fn renaming_a_tasks_run_writes_the_name_on_the_task() {
             owner: Some(crate::moontasks::store::run_owner(&repo_path, TASK)),
             name: Some("claude - 1".to_string()),
             type_ahead: None,
+            runs_as: None,
         })
         .expect("expected a shell");
     fixture.write(

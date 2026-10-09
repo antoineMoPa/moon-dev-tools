@@ -1,15 +1,15 @@
-//! Reading the sessions from where each agent keeps them.
+//! Reading the sessions from where each agent keeps them: under the home of whoever is asking
+//! - see [`super::homes`].
 
 use std::{
     io::BufRead,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use super::AgentSessionView;
+use super::{AgentHome, AgentSessionView};
 use crate::api::{AgentAvailability, AgentKind, AppState};
 
 /// How many sessions each agent contributes. The modal is for finding the one that was just
@@ -26,34 +26,38 @@ const TITLE_MAX_CHARS: usize = 80;
 /// every repo's sessions in one tree, so the newest files are read until enough match.
 const CODEX_FILE_SCAN_CAP: usize = 200;
 
-/// The recent sessions of every installed agent, for the repo this review session is on.
+/// The recent sessions of every agent the asking person has installed, for the repo this
+/// review session is on. Theirs alone: a session is attached by starting the agent on it,
+/// which is started as them.
 pub(crate) fn list_for_session(
     state: &AppState,
     session_id: &str,
 ) -> Result<Vec<AgentSessionView>> {
     let repo_path =
         crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set, so there is nowhere to read agent sessions from")?;
-    list_recent(&repo_path, &home, state.agent_availability)
+    let home = AgentHome::of_session(state, session_id)?;
+    let availability = super::availability_in(state, &home)?;
+    home.reading(|| list_recent(&repo_path, &home, availability))?
 }
 
 /// The recent sessions of every installed agent, newest first across all of them.
 fn list_recent(
     repo_path: &Path,
-    home: &Path,
+    home: &AgentHome,
     availability: AgentAvailability,
 ) -> Result<Vec<AgentSessionView>> {
+    let home_dir = home
+        .dir()
+        .context("HOME is not set, so there is nowhere to read agent sessions from")?;
     let mut sessions = Vec::new();
     if availability.claude {
-        sessions.extend(claude_sessions(repo_path, home)?);
+        sessions.extend(claude_sessions(repo_path, &home_dir)?);
     }
     if availability.codex {
-        sessions.extend(codex_sessions(repo_path, home)?);
+        sessions.extend(codex_sessions(repo_path, &home_dir)?);
     }
     if availability.opencode {
-        sessions.extend(opencode_sessions(repo_path)?);
+        sessions.extend(opencode_sessions(repo_path, home)?);
     }
     sessions.sort_by(|a, b| b.updated_at_unix.cmp(&a.updated_at_unix));
     Ok(sessions)
@@ -294,11 +298,13 @@ struct OpenCodeSessionRow {
     directory: String,
 }
 
-fn opencode_sessions(repo_path: &Path) -> Result<Vec<AgentSessionView>> {
-    let output = Command::new("opencode")
+/// OpenCode is asked for its sessions rather than read, and answers with those of the user it
+/// is run as: so it is run as the owner of the home, on the `PATH` the availability check
+/// found it on.
+fn opencode_sessions(repo_path: &Path, home: &AgentHome) -> Result<Vec<AgentSessionView>> {
+    let output = home
+        .command("opencode")?
         .args(["session", "list", "--format", "json"])
-        // The PATH the availability check found opencode on - see [`crate::shell_path`].
-        .env("PATH", crate::shell_path::installed_tools_path())
         .output()
         .context("failed to run opencode session list")?;
     if !output.status.success() {

@@ -9,6 +9,11 @@
 //! The copy is what is shown from then on, the pane beside the running agent included, so a
 //! visualization has one pane whether it was opened by the agent or from the task. A fragment
 //! the agent rewrites is copied again.
+//!
+//! Where each person has a Unix user, the Codex home is the one of whoever started the run -
+//! see [`AgentHome`] - and the copy is how everybody else gets to see what it shows: the
+//! fragment is read out of that home, and the copy is written by whoever is asking, like
+//! everything else of the project's.
 
 use std::{fs, path::Path};
 
@@ -16,6 +21,7 @@ use anyhow::{Context, Result};
 
 use super::VisualizationView;
 use crate::{
+    agent_sessions::AgentHome,
     api::{AgentKind, AppState},
     moontasks::{
         TaskResourceKind,
@@ -26,24 +32,38 @@ use crate::{
 /// The folder of a task a visualization is kept in.
 pub(crate) const TASK_VISUALIZATIONS_DIR: &str = "visualizations";
 
-/// Every visualization the server's terminals have announced, with the ones a task's run
-/// announced kept on that task and answered by their copy.
+/// Every visualization the server's terminals have announced that whoever is asking may see,
+/// with the ones a task's run announced kept on that task and answered by their copy.
 pub(crate) fn announced(state: &AppState, session_id: &str) -> Result<Vec<VisualizationView>> {
-    let repo_path =
-        crate::api::with_session(state, session_id, |session| Ok(session.repo_path.clone()))?;
-    state
-        .terminals
-        .visualizations()
-        .into_iter()
-        .map(|view| keep_on_task(state, &repo_path, view))
-        .collect()
+    // The checkout the board is in, which is not the session's own folder for a person in a
+    // work tree of theirs.
+    let repo_path = store::board_checkout(&crate::api::with_session(
+        state,
+        session_id,
+        |session| Ok(session.repo_path.clone()),
+    )?)?;
+    let asking = AgentHome::of_session(state, session_id)?;
+    let mut views = Vec::new();
+    for (home, view) in state.terminals.visualizations()? {
+        match task_keeping(state, &repo_path, &view)? {
+            Some(task_id) => {
+                views.push(keep_in_task_folder(&repo_path, &task_id, &home, view)?);
+            }
+            // Kept on no task of this board, it is only in the Codex home of whoever's run
+            // announced it, and is theirs alone to look at.
+            None if home.has_the_owner_of(&asking) => views.push(view),
+            None => {}
+        }
+    }
+    Ok(views)
 }
 
-fn keep_on_task(
+/// The task of this board a visualization is kept on: the one whose run announced it.
+fn task_keeping(
     state: &AppState,
     repo_path: &Path,
-    view: VisualizationView,
-) -> Result<VisualizationView> {
+    view: &VisualizationView,
+) -> Result<Option<String>> {
     // A server holds the shells of every repo it reviews; a task of another one is kept when
     // that repo's window asks.
     let Some(task_id) = state
@@ -51,19 +71,19 @@ fn keep_on_task(
         .owner(&view.terminal_id)
         .and_then(|owner| store::task_owning(repo_path, &owner))
     else {
-        return Ok(view);
+        return Ok(None);
     };
-    if !store::task_dir(repo_path, &task_id)?.is_dir() {
-        return Ok(view);
-    }
-    keep_in_task_folder(repo_path, &task_id, view)
+    Ok(store::task_dir(repo_path, &task_id)?
+        .is_dir()
+        .then_some(task_id))
 }
 
 /// Copy the fragment into the task's folder when the copy is missing or older, put it on the
-/// task, and answer the view as the copy.
+/// task, and answer the view as the copy. `home` is the one the fragment is in.
 fn keep_in_task_folder(
     repo_path: &Path,
     task_id: &str,
+    home: &AgentHome,
     view: VisualizationView,
 ) -> Result<VisualizationView> {
     let task_dir = store::task_dir(repo_path, task_id)?;
@@ -73,14 +93,22 @@ fn keep_in_task_folder(
         .expect("an announced fragment is a file in its thread's folder");
     let copy_path = task_dir.join(TASK_VISUALIZATIONS_DIR).join(file_name);
 
-    if is_stale(fragment_path, &copy_path)? {
+    // Read as somebody who may read that home, and written as this thread is: for whoever is
+    // asking, so the copy is theirs and the project's group's, and never the server's own.
+    let rewritten = home.reading(|| match is_stale(fragment_path, &copy_path)? {
+        true => fs::read(fragment_path)
+            .map(Some)
+            .with_context(|| format!("failed to read {}", view.fragment_path)),
+        false => Ok(None),
+    })??;
+    if let Some(fragment) = rewritten {
         fs::create_dir_all(
             copy_path
                 .parent()
                 .expect("the copy is inside the task folder"),
         )
         .with_context(|| format!("failed to make the folder for {}", copy_path.display()))?;
-        fs::copy(fragment_path, &copy_path)
+        fs::write(&copy_path, fragment)
             .with_context(|| format!("failed to keep {} on the task", view.fragment_path))?;
         record_on_task(repo_path, task_id, &copy_path)?;
     }
@@ -132,15 +160,22 @@ fn record_on_task(repo_path: &Path, task_id: &str, copy_path: &Path) -> Result<(
         terminal_owner: None,
         agent_session_id: None,
         started_at_unix: store::now_unix(),
+        started_by: None,
+        work_tree: None,
     });
     store::write_task(repo_path, task_id, &metadata)
 }
 
 /// Whether a path is a visualization kept in one of the repo's task folders - the other kind of
-/// path a page is built from, besides a Codex thread's fragment.
-pub(crate) fn is_task_copy(repo_path: &Path, fragment_path: &Path) -> bool {
+/// path a page is built from, besides a Codex thread's fragment. `folder` is the one the
+/// session asking is open on, and the task folders are its board's - see
+/// [`store::board_checkout`].
+pub(crate) fn is_task_copy(folder: &Path, fragment_path: &Path) -> bool {
+    let Ok(repo_path) = store::board_checkout(folder) else {
+        return false;
+    };
     let (Ok(tasks_root), Ok(fragment_path)) = (
-        fs::canonicalize(store::tasks_root(repo_path)),
+        fs::canonicalize(store::tasks_root(&repo_path)),
         fs::canonicalize(fragment_path),
     ) else {
         return false;

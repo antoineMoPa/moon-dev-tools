@@ -100,6 +100,14 @@ pub(crate) fn dispatch_key(hunk_id: &str, entry: &AnchoredComment) -> String {
 }
 
 pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
+    // The agent runs as whoever sent it the comments. That is this thread's current user,
+    // and the thread started here has none until it is handed them - see
+    // [`crate::unix_users::carried`]. Only the agent is run as them: the rest of the thread's
+    // work is on what the server itself keeps of the dispatch.
+    let run_agent_for_the_sender = crate::unix_users::carried({
+        let job = job.clone();
+        move || run_agent_dispatch(&job)
+    });
     thread::spawn(move || {
         let _ = with_session(&state, &job.session_id, |session| {
             for target in &job.targets {
@@ -124,7 +132,9 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
             job.repo_path.display(),
             job.targets.len(),
         );
-        let result = run_agent_dispatch(&job);
+        // A thread that could not work as the sender has run no agent, and the dispatch
+        // fails saying so.
+        let result = run_agent_for_the_sender().and_then(|ran| ran);
         let canceled = job.cancel_token.load(Ordering::SeqCst);
         match &result {
             Ok(detail) => append_to_agent_log(&job.log, &format!("\n[moonreview] {detail}\n")),

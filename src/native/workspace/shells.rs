@@ -125,8 +125,8 @@ impl App {
     }
 
     /// A shell on the window's repo with a command line typed into it and sent: what an
-    /// extension's `open_shell` asks for. It goes where shells go, beside the others.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// extension's `open_shell` asks for, and what logs a person in to an agent - see
+    /// [`crate::native::agent_logins`]. It goes where shells go, beside the others.
     pub(crate) fn run_in_shell(&mut self, command: String) {
         let session_id = self.model.root_session_id.clone();
         let started = session_id.clone();

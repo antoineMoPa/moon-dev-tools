@@ -133,6 +133,13 @@ pub(crate) struct User {
     pub(crate) kicked: bool,
     /// Whether this is the user asking for the list.
     pub(crate) you: bool,
+    /// The GitHub login this key or browser signed in with, when it has.
+    #[serde(default)]
+    pub(crate) github_login: Option<String>,
+    /// The Unix user that person's shells and agents run as, on a server that gives each
+    /// person one - see [`crate::unix_users`].
+    #[serde(default)]
+    pub(crate) unix_user: Option<String>,
 }
 
 /// What the server has seen of one user.
@@ -242,16 +249,24 @@ impl Users {
         let mut users: Vec<User> = shared
             .seen
             .iter()
-            .map(|(id, seen)| User {
-                id: id.clone(),
-                kind: id.kind(),
-                ip: seen.ip,
-                user_agent: seen.user_agent.clone(),
-                first_seen: seen.first_seen,
-                last_seen: seen.last_seen,
-                requests: seen.requests,
-                kicked: shared.kicked.contains(id),
-                you: id == asker,
+            .map(|(id, seen)| {
+                let (github_login, unix_user) = match self.profiles.signed_in_as(id) {
+                    Some((login, unix_user)) => (Some(login), unix_user),
+                    None => (None, None),
+                };
+                User {
+                    github_login,
+                    unix_user,
+                    id: id.clone(),
+                    kind: id.kind(),
+                    ip: seen.ip,
+                    user_agent: seen.user_agent.clone(),
+                    first_seen: seen.first_seen,
+                    last_seen: seen.last_seen,
+                    requests: seen.requests,
+                    kicked: shared.kicked.contains(id),
+                    you: id == asker,
+                }
             })
             .collect();
         users.sort_by(|one, other| {
@@ -368,28 +383,74 @@ pub(super) async fn list(
     })
 }
 
-/// `POST /api/users/{id}/kick`: refuse that user from here on.
+fn server_error(error: anyhow::Error) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}\n"))
+}
+
+/// `POST /api/users/{id}/kick`: refuse that user from here on. On a server that gives each
+/// person a Unix user, everything running as theirs is ended with it - see
+/// [`end_everything_of`].
 pub(super) async fn kick(
     State(users): State<Users>,
+    State(state): State<crate::api::AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let user: UserId = id
         .parse()
         .map_err(|error| (StatusCode::BAD_REQUEST, format!("{error}\n")))?;
+    // Read before the kick, which forgets who this user signed in as.
+    let person = match crate::unix_users::each_person_has_one() {
+        true => users.profiles.person(&user).map_err(server_error)?,
+        false => None,
+    };
     users
         .kick(&user)
         .map_err(|error| (StatusCode::NOT_FOUND, format!("{error:#}\n")))?;
+    if let Some(person) = person {
+        end_everything_of_off_the_async_workers(state, vec![person])
+            .await
+            .map_err(server_error)?;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// End what is running as each of these people: the shells and agents the server holds for
+/// them, the way closing their tabs would, their language servers and their display, and
+/// then whatever else runs as their Unix user - a program an agent left behind.
+fn end_everything_of(
+    state: &crate::api::AppState,
+    people: &[crate::unix_users::Person],
+) -> Result<()> {
+    for person in people {
+        state.terminals.remove_run_as(&person.unix_user);
+        state.lsp.end_for(&person.unix_user);
+        state.display.end_for(&person.unix_user);
+        crate::unix_users::end_processes_of(&person.unix_user)?;
+    }
+    Ok(())
+}
+
+/// Ending a shell waits on it for a few seconds, which no async worker is held for.
+async fn end_everything_of_off_the_async_workers(
+    state: crate::api::AppState,
+    people: Vec<crate::unix_users::Person>,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || end_everything_of(&state, &people)).await?
 }
 
 /// `POST /api/users/kick-all`: a new secret, so no key or login there was works any more -
 /// the asker's included, which is the point: the asker makes itself a new key on the machine.
 pub(super) async fn kick_everyone(
     State(users): State<Users>,
+    State(state): State<crate::api::AppState>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    users
-        .kick_everyone()
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}\n")))?;
+    users.kick_everyone().map_err(server_error)?;
+    if crate::unix_users::each_person_has_one() {
+        let people = users.profiles.people().map_err(server_error)?;
+        end_everything_of_off_the_async_workers(state, people)
+            .await
+            .map_err(server_error)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

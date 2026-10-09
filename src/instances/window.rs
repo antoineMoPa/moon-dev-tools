@@ -27,8 +27,8 @@ use std::{
 use anyhow::{Context, Result};
 
 use super::{
-    Answer, Ask, Instance, StartsApplications, launched, listen_on_own_socket, read_ask,
-    remove_records, write_answer, write_record,
+    Answer, Ask, Instance, StartsApplications, answered, launched, listen_on_own_socket,
+    read_ask, remove_records, write_answer, write_record,
 };
 use crate::{api::AgentKind, terminal::Shown};
 
@@ -429,7 +429,8 @@ fn answer(
             // Taken out of the lock before the start, which is waited on.
             let applications = applications.lock().expect("the applications lock").clone();
             match applications {
-                Some(applications) => launched(applications.as_ref(), &command, &folder),
+                // A window's shells are its own user's, so nobody in particular asks.
+                Some(applications) => launched(applications.as_ref(), None, &command, &folder),
                 None => Answer::Refused {
                     reason: STARTS_NO_PROGRAMS.to_string(),
                 },
@@ -480,9 +481,7 @@ fn answer_about_agents(
             reason: "this window answers nothing about agents".to_string(),
         };
     };
-    ask(agents.as_ref()).unwrap_or_else(|error| Answer::Refused {
-        reason: format!("{error:#}"),
-    })
+    answered(ask(agents.as_ref()))
 }
 
 /// Why this window will not type a line of the wire into a shell, or `None` when it will.
@@ -498,7 +497,16 @@ fn wire_refusal(
                 .to_string(),
         });
     }
-    // Every part of what is typed and written down, held to a line of text.
+    not_a_line_of_the_wire(sender, recipient, message)
+}
+
+/// Why what arrived is no line of the wire, or `None` when it is one: every part of what is
+/// typed and written down, held to a line of text.
+pub(super) fn not_a_line_of_the_wire(
+    sender: &str,
+    recipient: &str,
+    message: &str,
+) -> Option<Answer> {
     [sender, recipient, message]
         .into_iter()
         .find_map(|part| crate::moontasks::wire::one_line(part).err())

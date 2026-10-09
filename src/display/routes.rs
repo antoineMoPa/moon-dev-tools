@@ -1,4 +1,7 @@
 //! Desktop routes - the HTTP and websocket routes a window uses to reach the server's desktop.
+//!
+//! Each answers about the desktop of whoever asks - see [`asking`]: on a server that gives
+//! each person a Unix user that is their own desktop, and nobody else's is reached from here.
 
 #[cfg(target_os = "linux")]
 use axum::response::IntoResponse;
@@ -12,17 +15,31 @@ use crate::{
         AppError, AppState,
         display::{DisplayView, StartApplicationRequest},
     },
-    server::users::{UserId, Users},
+    server::{
+        profiles::Profiles,
+        users::{UserId, Users},
+    },
+    unix_users::Person,
 };
 
+/// The person a request is from, on a server that gives each person a Unix user, whose
+/// desktop is the one the request is about. Nobody anywhere else, where the server has the
+/// one desktop.
+fn asking(profiles: &Profiles, user: &UserId) -> anyhow::Result<Option<Person>> {
+    Ok(profiles.session_owner(user)?.person)
+}
+
 /// `POST /api/session/{session_id}/display/applications`: an application started on the
-/// server's desktop, in the session's repo - and the desktop started for it, when there was
-/// none.
+/// desktop of whoever asks, in the session's repo - and the desktop started for it, when
+/// there was none.
 pub(crate) async fn start_application(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    State(profiles): State<Profiles>,
+    Extension(user): Extension<UserId>,
     Json(asked): Json<StartApplicationRequest>,
 ) -> Result<Json<DisplayView>, AppError> {
+    let person = asking(&profiles, &user)?;
     let folder =
         crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
     crate::api::mark_activity(&state.last_activity);
@@ -31,6 +48,7 @@ pub(crate) async fn start_application(
     // `Running::start_application`.
     let display = tokio::task::spawn_blocking(move || {
         state.display.start_application(
+            person.as_ref(),
             &asked.command,
             &folder,
             [asked.width, asked.height],
@@ -41,21 +59,31 @@ pub(crate) async fn start_application(
     Ok(Json(display))
 }
 
-/// `GET /api/display`: the server's desktop, when one is running - which is how a window
-/// that did not start it knows there is one to show.
-pub(crate) async fn shown(State(state): State<AppState>) -> Json<Option<DisplayView>> {
-    Json(state.display.shown())
+/// `GET /api/display`: the desktop of whoever asks, when one is running - which is how a
+/// window that did not start it knows there is one to show.
+pub(crate) async fn shown(
+    State(state): State<AppState>,
+    State(profiles): State<Profiles>,
+    Extension(user): Extension<UserId>,
+) -> Result<Json<Option<DisplayView>>, AppError> {
+    let person = asking(&profiles, &user)?;
+    Ok(Json(state.display.shown(person.as_ref())?))
 }
 
-/// `DELETE /api/display`: the desktop ended, and every application on it.
-pub(crate) async fn end(State(state): State<AppState>) -> &'static str {
-    state.display.end();
-    "ok"
+/// `DELETE /api/display`: the desktop of whoever asks ended, and every application on it.
+pub(crate) async fn end(
+    State(state): State<AppState>,
+    State(profiles): State<Profiles>,
+    Extension(user): Extension<UserId>,
+) -> Result<&'static str, AppError> {
+    let person = asking(&profiles, &user)?;
+    state.display.end(person.as_ref())?;
+    Ok("ok")
 }
 
-/// `GET /api/display/socket`: what is drawn on the desktop, down; what the person watching
-/// does, up. Admitted once, as it opens, and hung up when its user is kicked - as a shell's
-/// socket is, see `crate::terminal::routes`.
+/// `GET /api/display/socket`: what is drawn on the desktop of whoever asks, down; what the
+/// person watching does, up. Admitted once, as it opens, and hung up when its user is kicked -
+/// as a shell's socket is, see `crate::terminal::routes`.
 #[cfg(target_os = "linux")]
 pub(crate) async fn socket(
     State(state): State<AppState>,
@@ -63,7 +91,11 @@ pub(crate) async fn socket(
     Extension(user): Extension<UserId>,
     upgrade: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
-    let running = state.display.get().ok_or_else(nothing_running)?;
+    let person = asking(&users.profiles, &user)?;
+    let running = state
+        .display
+        .running(person.as_ref())?
+        .ok_or_else(nothing_running)?;
     let last_activity = std::sync::Arc::clone(&state.last_activity);
     Ok(upgrade.on_upgrade(move |socket| async move {
         if let Err(error) = watching::watch(socket, running, users, user, last_activity).await {

@@ -445,3 +445,59 @@ fn users_lists_who_is_in_the_server_and_kicks_the_one_selected() {
     assert_eq!(refused.status(), reqwest::StatusCode::UNAUTHORIZED);
     assert!(heard.shows("this pane"), "the pane's own key is still in");
 }
+
+/// Who a user is goes in columns of its own, which are only there on a server that knows:
+/// read off what the server's own list is written as, so the two cannot drift apart.
+#[test]
+fn users_shows_the_github_login_and_unix_user_of_a_user_who_signed_in() {
+    use std::io::{Read, Write};
+
+    use crate::server::users::{User, UserId, UserKind, UserList};
+
+    // Arrange: a stand-in for the server, answering every request with one signed-in user.
+    let listing = serde_json::to_string(&UserList {
+        users: vec![User {
+            id: UserId::BrowserSession("1".to_string()),
+            kind: UserKind::Browser,
+            ip: [127, 0, 0, 1].into(),
+            user_agent: None,
+            first_seen: 0,
+            last_seen: 0,
+            requests: 1,
+            kicked: false,
+            you: false,
+            github_login: Some("alice".to_string()),
+            unix_user: Some("moon-alice".to_string()),
+        }],
+    })
+    .expect("a list of users is written as JSON");
+    let server = std::net::TcpListener::bind("127.0.0.1:0").expect("failed to listen");
+    let server_url = format!("http://{}", server.local_addr().expect("a bound address"));
+    std::thread::spawn(move || {
+        for asked in server.incoming() {
+            let mut asked = asked.expect("failed to accept");
+            let _ = asked.read(&mut [0; 4096]);
+            let _ = write!(
+                asked,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+                 connection: close\r\n\r\n{listing}",
+                listing.len()
+            );
+        }
+    });
+
+    // Act
+    let running = start_against(
+        named("users").expect("users is shipped"),
+        &std::env::temp_dir(),
+        system_path(),
+        server_url,
+    );
+
+    // Assert
+    let mut heard = Heard::default();
+    heard.until(&running, |heard| heard.shows("moon-alice"));
+    for shown in ["github", "alice", "unix user"] {
+        assert!(heard.shows(shown), "no {shown:?} in {:?}", heard.texts());
+    }
+}

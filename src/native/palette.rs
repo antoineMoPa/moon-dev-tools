@@ -127,6 +127,8 @@ pub(crate) enum CommandAction {
     Split(DropSide),
     /// Run one of the project's own commands in a shell of its own.
     RunProject(ProjectCommand),
+    /// Open a shell with this command line typed into it and sent.
+    RunInShell(String),
     /// Put this window's project down and go back to its launch screen, to open another.
     SwitchProject,
     /// The space at this place in the list comes to the front.

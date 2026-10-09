@@ -35,7 +35,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
-    agent::{agent_is_available, agent_options},
+    agent::agent_is_available,
     api::{
         AgentKind, AppState, CommitHistoryPayload, CommitView, DiffTarget, HunkView,
         OpenSessionRequest, PatchPayload, RepoSession, RepoStatusView, ReviewTarget, SessionOpened,
@@ -125,8 +125,12 @@ pub(crate) fn open_session(state: &AppState, request: OpenSessionRequest) -> Res
 pub(crate) fn open_session_for_profile(
     state: &AppState,
     request: OpenSessionRequest,
-    namespace: Option<String>,
+    owner: Option<crate::api::SessionOwner>,
 ) -> Result<SessionOpened> {
+    let (namespace, person) = match owner {
+        Some(owner) => (Some(owner.namespace), owner.person),
+        None => (None, None),
+    };
     let repo_path = project_root(PathBuf::from(request.repo_path))?;
     let diff_target = request.diff_target.unwrap_or_default();
     let active_commit = request
@@ -156,12 +160,14 @@ pub(crate) fn open_session_for_profile(
             session.repo_path = repo_path;
             session.diff_target = diff_target;
             session.active_commit = active_commit;
+            session.person = person;
         }
         None => {
             guard.sessions.insert(
                 session_id.clone(),
                 RepoSession {
                     namespace,
+                    person,
                     repo_path,
                     diff_target,
                     active_commit,
@@ -232,7 +238,7 @@ fn read_git_review(target: &ReviewTarget) -> Result<GitReview> {
 }
 
 pub(crate) fn session_state(state: &AppState, session_id: &str) -> Result<SessionPayload> {
-    let available_agents = agent_options(state.agent_availability);
+    let available_agents = crate::agent_sessions::agent_options_for(state, session_id)?;
     // Git runs between two short holds of the lock rather than under one long one: what the
     // review is of is read off the session, git is asked about it, and the answer is put
     // against the session's comments and dispatches once it is back. Every other call the
@@ -426,8 +432,10 @@ pub(crate) fn commit_history(
 }
 
 pub(crate) fn update_agent(state: &AppState, session_id: &str, agent: AgentKind) -> Result<()> {
+    // Asked before the session is held: it reads the session itself.
+    let availability = crate::agent_sessions::availability_for(state, session_id)?;
     crate::api::with_session(state, session_id, |session| {
-        if !agent_is_available(state.agent_availability, agent) {
+        if !agent_is_available(availability, agent) {
             bail!("selected agent is not available");
         }
         session.selected_agent = agent;

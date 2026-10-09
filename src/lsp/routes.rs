@@ -32,7 +32,7 @@ pub(crate) async fn working(
 ) -> Result<Json<LspWorkPayload>, AppError> {
     crate::api::mark_activity(&state.last_activity);
     Ok(Json(LspWorkPayload {
-        working: super::working(&state, &session_id),
+        working: super::working(&state, &session_id)?,
     }))
 }
 
@@ -45,7 +45,7 @@ pub(crate) async fn triggers(
 ) -> Result<Json<LspTriggersPayload>, AppError> {
     crate::api::mark_activity(&state.last_activity);
     Ok(Json(LspTriggersPayload {
-        triggers: super::trigger_characters(&state, &session_id, &query.file_path),
+        triggers: super::trigger_characters(&state, &session_id, &query.file_path)?,
     }))
 }
 

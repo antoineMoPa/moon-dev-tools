@@ -1,10 +1,15 @@
 //! Running desktop - holds the Xvfb display `moon_display` started and the applications started
 //! on it, and broadcasts its patches to every watcher.
+//!
+//! A desktop that is one person's - see [`KeptTo`] - is started as them and kept to them: its
+//! X server and every application on it run as their Unix user, and X lets onto it only who
+//! shows a cookie that is in a file of their home.
 
 use std::{
     collections::HashMap,
-    os::unix::process::CommandExt,
-    path::Path,
+    io::Write,
+    os::unix::{fs::OpenOptionsExt, process::CommandExt},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Condvar, Mutex},
     thread,
@@ -14,7 +19,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use tokio::sync::{broadcast, watch};
 
-use crate::api::display::{DisplayInput, DisplayPatch, DisplayView};
+use crate::{
+    api::display::{DisplayInput, DisplayPatch, DisplayView},
+    unix_users::Person,
+};
 
 use super::started::{self, Ended, Said, Started};
 
@@ -32,8 +40,71 @@ const EMPTY_FOR: Duration = Duration::from_secs(5);
 /// Chromium, which asks GTK - and Qt. Whole numbers, which is all GTK takes.
 const SCALED_BY: &[&str] = &["GDK_SCALE", "QT_SCALE_FACTOR"];
 
+/// Where the authority file of a person's desktop is, under their home: beside what else
+/// moon keeps there. One file, since a person has one desktop.
+const AUTHORITY_UNDER_HOME: &str = ".moonreview/display.Xauthority";
+
+/// Only its owner reads an authority file: whoever reads the cookie in it is let onto the
+/// desktop.
+const ONLY_ITS_OWNER: u32 = 0o600;
+
+/// The variables of the server's own environment an application of a person's is started
+/// with, beside moon's: the locale its text is read and written in. A person's application
+/// is handed nothing else of the server's - see `UnixUser::command`.
+const LOCALE_VARIABLES: &[&str] = &["LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES"];
+
+/// The one person a desktop is kept to, on a server that gives each person a Unix user.
+struct KeptTo {
+    /// Who the X server and every application run as.
+    person: Person,
+    /// The file the cookie is in, which is theirs alone to read: what the X server is
+    /// started with as `-auth`, and their applications with as `XAUTHORITY`.
+    authority: PathBuf,
+}
+
+impl KeptTo {
+    /// Make up the cookie of a desktop of `person` and write its authority file, as them:
+    /// in their home, which only they write in.
+    ///
+    /// The file of the desktop they had before is replaced rather than written over. It is
+    /// left behind when the desktop ends, letting whoever reads it onto a server that is
+    /// gone.
+    fn with_a_new_cookie(person: &Person) -> Result<(Self, moon_display::Cookie)> {
+        let mut cookie = moon_display::Cookie::default();
+        getrandom_03::fill(&mut cookie).expect("the OS has no randomness to make a cookie from");
+        let authority = person.unix_user.home.join(AUTHORITY_UNDER_HOME);
+        crate::unix_users::as_user(person, || write_only_its_owner_reads(&authority, &cookie))?
+            .with_context(|| format!("failed to write {}", authority.display()))?;
+        Ok((
+            Self {
+                person: person.clone(),
+                authority,
+            },
+            cookie,
+        ))
+    }
+}
+
+/// Write the authority file of `cookie` at `file`, new, for its owner alone to read.
+fn write_only_its_owner_reads(file: &Path, cookie: &moon_display::Cookie) -> std::io::Result<()> {
+    std::fs::create_dir_all(file.parent().expect("an authority file is in a folder"))?;
+    match std::fs::remove_file(file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(ONLY_ITS_OWNER)
+        .open(file)?
+        .write_all(&moon_display::authority_of(cookie))
+}
+
 pub(super) struct Running {
     pub(super) view: DisplayView,
+    /// Whose desktop this is, when it is one person's. `None` is the desktop of a server
+    /// that runs everything as its own user, which X keeps nobody of the machine from.
+    kept_to: Option<KeptTo>,
     /// The scale the desktop's applications draw at: the one of the window that started it.
     /// The desktop's own, since two applications on one screen at two scales is no screen.
     scale: u8,
@@ -70,18 +141,32 @@ impl Occupied {
 
 impl Running {
     /// Start the desktop, with a view of `view`, applications drawn at `scale`, and nothing
-    /// on it yet.
-    pub(super) fn start(view: [u16; 2], scale: u8) -> Result<Arc<Self>> {
-        let (display, events) = moon_display::Display::start(moon_display::Size {
+    /// on it yet - as `person` and kept to them, when it is one person's.
+    pub(super) fn start(view: [u16; 2], scale: u8, person: Option<&Person>) -> Result<Arc<Self>> {
+        let view = moon_display::Size {
             width: view[0],
             height: view[1],
-        })?;
+        };
+        let (kept_to, (display, events)) = match person {
+            None => (None, moon_display::Display::start(view)?),
+            Some(person) => {
+                let (kept_to, cookie) = KeptTo::with_a_new_cookie(person)?;
+                let private = moon_display::Private {
+                    shell: person.unix_user.command("sh")?,
+                    authority: kept_to.authority.clone(),
+                    cookie,
+                };
+                let started = moon_display::Display::start_private(view, private)?;
+                (Some(kept_to), started)
+            }
+        };
         let (patches, _) = broadcast::channel(PATCHES_KEPT);
         let (over, _) = watch::channel(false);
         let running = Arc::new(Self {
             view: DisplayView {
                 name: display.name(),
             },
+            kept_to,
             scale,
             display: Mutex::new(Some(display)),
             occupied: Mutex::default(),
@@ -128,25 +213,23 @@ impl Running {
     /// socket is opened only after it and carries display patches and clipboard replies,
     /// rather than application launch failures.
     pub(super) fn start_application(self: &Arc<Self>, command: &str, folder: &Path) -> Result<()> {
-        let program = Started::start(
-            Command::new("sh")
-                .arg("-c")
-                .arg(command)
-                .current_dir(folder)
-                .env("DISPLAY", &self.view.name)
-                .envs(SCALED_BY.iter().map(|read| (read, self.scale.to_string())))
-                // A session of another kind would be found first by a toolkit that looks for
-                // one.
-                .env_remove("WAYLAND_DISPLAY")
-                // The command is found where a shell tab of this server would find it, so
-                // that the browser started from the menu is the one typed there by name.
-                .env("PATH", crate::shell_path::installed_tools_path())
-                .process_group(0)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null()),
-            Said::KeptOnly,
-        )
-        .with_context(|| format!("`{command}` would not start"))?;
+        let program = self
+            .shell()
+            .and_then(|mut shell| {
+                Started::start(
+                    shell
+                        .arg("-c")
+                        .arg(command)
+                        .current_dir(folder)
+                        .env("DISPLAY", &self.view.name)
+                        .envs(SCALED_BY.iter().map(|read| (read, self.scale.to_string())))
+                        .process_group(0)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null()),
+                    Said::KeptOnly,
+                )
+            })
+            .with_context(|| format!("`{command}` would not start"))?;
         let group = program.id();
         // Held from here until this is waiting below, so that neither a window opening nor
         // the program ending in between goes unheard.
@@ -182,6 +265,41 @@ impl Running {
         match ended.and_then(|ended| ended.failure_of(command)) {
             Some(failure) => bail!(failure),
             None => Ok(()),
+        }
+    }
+
+    /// `sh`, as whoever the applications of this desktop run as, with what of its
+    /// environment says who that is.
+    fn shell(&self) -> Result<Command> {
+        match &self.kept_to {
+            None => {
+                let mut shell = Command::new("sh");
+                shell
+                    // A session of another kind would be found first by a toolkit that looks
+                    // for one.
+                    .env_remove("WAYLAND_DISPLAY")
+                    // The command is found where a shell tab of this server would find it,
+                    // so that the browser started from the menu is the one typed there by
+                    // name.
+                    .env("PATH", crate::shell_path::installed_tools_path());
+                Ok(shell)
+            }
+            // As the person, found on their login `PATH`, and shown the way onto their
+            // desktop.
+            Some(kept_to) => {
+                let mut shell = kept_to.person.unix_user.command("sh")?;
+                let locale = LOCALE_VARIABLES
+                    .iter()
+                    .filter_map(|variable| Some((variable, std::env::var_os(variable)?)));
+                shell.env("XAUTHORITY", &kept_to.authority).envs(locale);
+                // A server whose own environment names no locale starts its shells in this
+                // one - see `crate::shell_locale` - and a person's applications read text
+                // the same way.
+                if let Some(lang) = crate::shell_locale::shell_lang() {
+                    shell.env("LANG", lang);
+                }
+                Ok(shell)
+            }
         }
     }
 

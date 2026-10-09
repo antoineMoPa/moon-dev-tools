@@ -65,17 +65,7 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
         display: Arc::default(),
-        // The servers are told they are talking to this application rather than to the
-        // client crate they are reached through: `clientInfo` is what a server writes into
-        // its log, and a report about rust-analyzer under a review is only findable if the
-        // log says which program was asking.
-        lsp: Arc::new(
-            moon_lsp::LspRegistry::new(crate::shell_path::installed_tools_path().to_string())
-                .identifying_as(moon_lsp::ClientIdentity::new(
-                    "moonreview",
-                    env!("CARGO_PKG_VERSION"),
-                )),
-        ),
+        lsp: Arc::new(crate::lsp::LanguageServers::new()),
         settings_path: crate::settings::path(),
     }
 }
@@ -498,14 +488,24 @@ fn protected_routes() -> Router<Served> {
 /// for a window's `--pass-key`, is `moon generate-pass-key`'s to print, on purpose.
 pub(crate) async fn run_server() -> Result<()> {
     let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let project_folder = match repo_started_in() {
+        Some(repo) => repo,
+        None => std::env::current_dir().context("failed to read the folder moon was started in")?,
+    };
+    crate::unix_users::decide_for_this_server(
+        profiles::people_sign_in_with_github(),
+        &project_folder,
+    )?;
     let state = build_state(Arc::clone(&last_activity));
     let users = Users::for_this_machine()?;
     let listener = bind().await?;
-    // Where a `moon launch` typed in one of this server's shells reaches it, kept until the
-    // server ends. Not fatal: the server works, `moon launch` just cannot reach this one.
+    // Where a `moon launch`, a `moon agent tell` or a tagged `moon wire post` typed in one of
+    // this server's shells reaches it, kept until the server ends. Not fatal: the server
+    // works, those commands just cannot reach this one.
     let _shell_asks = crate::instances::server::ServerAsks::listen(Arc::new(state.clone()))
+        .inspect(|asks| asks.shells_held_by(state.clone(), users.profiles.clone()))
         .inspect_err(|error| {
-            eprintln!("[moonreview] `moon launch` cannot reach this server: {error}")
+            eprintln!("[moonreview] the `moon` typed in a shell cannot reach this server: {error}")
         });
 
     let ticket = users.keys().login_ticket(SERVE_TICKET_LIFETIME);
@@ -575,10 +575,11 @@ pub(crate) async fn serve_on(
     listener: tokio::net::TcpListener,
     idle_shutdown: Option<Arc<Mutex<Instant>>>,
 ) -> Result<()> {
+    let terminals = Arc::clone(&state.terminals);
     let service = router(state, users).into_make_service_with_connect_info::<SocketAddr>();
     match idle_shutdown {
         Some(last_activity) => axum::serve(listener, service)
-            .with_graceful_shutdown(shutdown_signal(last_activity))
+            .with_graceful_shutdown(shutdown_signal(last_activity, terminals))
             .await
             .context("server failed"),
         None => axum::serve(listener, service)
@@ -587,7 +588,53 @@ pub(crate) async fn serve_on(
     }
 }
 
-async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
+/// How long people are given between being told the server is stopping and it stopping, on
+/// a server that gives each person a Unix user: a stop there ends everyone's agents, and this
+/// is the time to let one finish its sentence or to shout at whoever is restarting.
+const STOP_WARNING: Duration = Duration::from_secs(30);
+
+/// Wait for the signal a server is stopped with. A server that gives each person a Unix user
+/// listens for the `SIGTERM` a service manager restarts it with as well; any other server
+/// leaves that signal ending it at once, as it always has.
+async fn stop_asked_for() {
+    let interrupted = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            eprintln!("[moonreview] failed to listen for shutdown signal: {error}");
+        }
+    };
+    if !crate::unix_users::each_person_has_one() {
+        return interrupted.await;
+    }
+    let mut terminated =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("a process can listen for SIGTERM");
+    tokio::select! {
+        _ = interrupted => {}
+        _ = terminated.recv() => {}
+    }
+}
+
+/// Tell everyone looking at a shell that the server is stopping, and give them
+/// [`STOP_WARNING`] - or until whoever is stopping it asks a second time.
+async fn warn_of_the_stop(terminals: &crate::terminal::TerminalRegistry) {
+    let seconds = STOP_WARNING.as_secs();
+    eprintln!(
+        "[moonreview] stopping in {seconds} seconds, which ends everyone's agents; \
+         interrupt again to stop now"
+    );
+    terminals.say_in_every_shell(&format!(
+        "moon serve is stopping in {seconds} seconds, and this shell with it"
+    ));
+    tokio::select! {
+        _ = tokio::time::sleep(STOP_WARNING) => {}
+        _ = stop_asked_for() => {}
+    }
+}
+
+async fn shutdown_signal(
+    last_activity: Arc<Mutex<Instant>>,
+    terminals: Arc<crate::terminal::TerminalRegistry>,
+) {
     loop {
         let idle_for = last_activity
             .lock()
@@ -611,14 +658,59 @@ async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
                     return;
                 }
             }
-            result = tokio::signal::ctrl_c() => {
-                if let Err(error) = result {
-                    eprintln!("[moonreview] failed to listen for shutdown signal: {error}");
+            _ = stop_asked_for() => {
+                if crate::unix_users::each_person_has_one() {
+                    warn_of_the_stop(&terminals).await;
                 }
                 return;
             }
         }
     }
+}
+
+/// Do a request's work for the person its session belongs to, off the async workers: what it
+/// writes is written as them, and the git it runs, runs as them - see
+/// [`crate::unix_users::as_user`]. On a server that gives nobody a Unix user it is the same
+/// work on the same kind of thread, done as the server.
+///
+/// Every route that reads or changes a project does its work through this. The work is
+/// synchronous, start to end: a current user is a thread's, and is not carried across an
+/// await.
+pub(crate) async fn for_person_of<T: Send + 'static>(
+    state: &AppState,
+    session_id: &str,
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T, crate::api::AppError> {
+    for_person(crate::api::person_of(state, session_id)?, work).await
+}
+
+/// [`for_person_of`] as a session's route asks for it: the route gives up the state and the
+/// session id it was asked with, and the work is handed both back.
+pub(crate) async fn session_work<T: Send + 'static>(
+    state: AppState,
+    session_id: String,
+    work: impl FnOnce(&AppState, &str) -> Result<T> + Send + 'static,
+) -> Result<T, crate::api::AppError> {
+    // The work keeps its own copies, since it outlives the borrow the lookup is made with.
+    let (asked_of, asked_about) = (state.clone(), session_id.clone());
+    for_person_of(&asked_of, &asked_about, move || work(&state, &session_id)).await
+}
+
+/// [`for_person_of`] for a request that has no session yet - one that opens a session, or
+/// lists a folder to find a project in. `person` is who the request was let in as - see
+/// [`profiles::Profiles::session_owner`] - which is nobody on a server that gives nobody a
+/// Unix user.
+pub(crate) async fn for_person<T: Send + 'static>(
+    person: Option<crate::unix_users::Person>,
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T, crate::api::AppError> {
+    let person = crate::unix_users::user_to_work_as(person)?;
+    let done = tokio::task::spawn_blocking(move || match &person {
+        Some(person) => crate::unix_users::as_user(person, work)?,
+        None => work(),
+    })
+    .await??;
+    Ok(done)
 }
 
 fn mark_activity(state: &AppState) {

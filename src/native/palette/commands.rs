@@ -6,6 +6,7 @@ use egui_frames::DropSide;
 use crate::{
     api::AgentKind,
     native::{
+        agent_logins,
         app::App,
         bindings::{self, Action},
         panes::{OpenPaneRequest, PaneKind},
@@ -571,14 +572,33 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         })
         .unwrap_or_default();
 
+    // An agent the person is not logged in to says so and opens all the same, with the shell
+    // that logs them in as the command after it - see `agent_logins`.
+    let log_in_commands = agent_logins::log_in_commands(app);
     for (kind, title, description) in AGENT_COMMANDS {
-        if available.contains(kind) {
+        if !available.contains(kind) {
+            continue;
+        }
+        let log_in_command = log_in_commands
+            .iter()
+            .find(|(of, _)| of == kind)
+            .map(|(_, command)| command.clone());
+        commands.push(Command {
+            title: (*title).to_string(),
+            description: match log_in_command {
+                None => (*description).to_string(),
+                Some(_) => format!("{description} - {}", agent_logins::NOT_LOGGED_IN),
+            },
+            action: CommandAction::OpenPane(OpenPaneRequest::Terminal {
+                command: Some(*kind),
+            }),
+            shortcut: None,
+        });
+        if let Some(command) = log_in_command {
             commands.push(Command {
-                title: (*title).to_string(),
-                description: (*description).to_string(),
-                action: CommandAction::OpenPane(OpenPaneRequest::Terminal {
-                    command: Some(*kind),
-                }),
+                title: format!("log in to {title}"),
+                description: format!("Open a shell with `{command}` typed into it"),
+                action: CommandAction::RunInShell(command),
                 shortcut: None,
             });
         }

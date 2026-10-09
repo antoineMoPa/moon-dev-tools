@@ -429,8 +429,60 @@ fn draw_resource(
                     ));
                 }
             }
+            // Last, in whatever room the name and the marks have left between them - and
+            // never while the row holds the question of closing it, which returned above.
+            draw_started_by(ui, resource, palette);
         });
     });
+}
+
+/// The least room a run's row has to have left for it to say whose the run is: under this
+/// there is the cut-off mark and nothing of the login before it.
+const ROOM_TO_SAY_WHOSE: f32 = 36.0;
+
+/// Whose a run is and the work tree it went in, as its row says them: the login, and the
+/// folder's own name when the run did not go in the checkout the board is in. `None` on a run
+/// that says neither, which is every run of a server where nobody has a Unix user.
+fn started_by_mark(resource: &TaskResourceView) -> Option<String> {
+    let whose = resource
+        .started_by
+        .as_deref()
+        .map(|login| format!("@{login}"));
+    let where_it_went = resource.work_tree.as_deref().map(|work_tree| {
+        let folder = std::path::Path::new(work_tree)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| work_tree.to_string());
+        format!("in {folder}")
+    });
+    let said: Vec<String> = whose.into_iter().chain(where_it_went).collect();
+    (!said.is_empty()).then(|| said.join(" "))
+}
+
+/// What a run's row says between its name and its marks, in the quiet ink: who started it,
+/// and the work tree it went in. Cut off to the room the row has left, with the whole of it
+/// on the hover; a row with no room says it on the hover of nothing, and the task's pane has
+/// the room.
+fn draw_started_by(ui: &mut Ui, resource: &TaskResourceView, palette: &Palette) {
+    let Some(mark) = started_by_mark(resource) else {
+        return;
+    };
+    if ui.available_width() < ROOM_TO_SAY_WHOSE {
+        return;
+    }
+    let mut hover = Vec::new();
+    if let Some(started_by) = resource.started_by.as_deref() {
+        hover.push(format!(
+            "Started by {started_by}: it runs as them, and resumes as them whoever asks"
+        ));
+    }
+    if let Some(work_tree) = resource.work_tree.as_deref() {
+        hover.push(format!("It ran in the work tree {work_tree}"));
+    }
+    ui.add(
+        egui::Label::new(RichText::new(mark).size(SMALL_SIZE).color(palette.muted)).truncate(),
+    )
+    .on_hover_text(hover.join("\n"));
 }
 
 /// How far a row's fill reaches past its contents on either side.
@@ -587,6 +639,8 @@ mod tests {
             attention: None,
             resumable: true,
             started_at_unix: 0,
+            started_by: None,
+            work_tree: None,
         }
     }
 
@@ -613,6 +667,27 @@ mod tests {
         assert_eq!(activity_of(&asking), Activity::Attention);
         asking.running = false;
         assert_eq!(activity_of(&asking), Activity::Ended);
+    }
+
+    /// Whose a run is and where it went are said together, and not at all by a run of a
+    /// server where nobody has a Unix user.
+    #[test]
+    fn a_run_says_who_started_it_and_the_work_tree_it_went_in() {
+        let run = |started_by: Option<&str>, work_tree: Option<&str>| TaskResourceView {
+            started_by: started_by.map(str::to_string),
+            work_tree: work_tree.map(str::to_string),
+            ..run(false, None)
+        };
+
+        assert_eq!(started_by_mark(&run(None, None)), None);
+        assert_eq!(
+            started_by_mark(&run(Some("alice"), None)).as_deref(),
+            Some("@alice")
+        );
+        assert_eq!(
+            started_by_mark(&run(Some("alice"), Some("/home/moon-alice/wt"))).as_deref(),
+            Some("@alice in wt")
+        );
     }
 
     #[test]

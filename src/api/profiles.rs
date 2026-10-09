@@ -12,8 +12,23 @@ pub(crate) struct ProfileView {
     pub profile_namespace: String,
     pub id: Option<String>,
     pub login: Option<String>,
+    /// The Unix user this person's shells and agents run as, on a server that gives each
+    /// person one.
+    #[serde(default)]
+    pub unix_user: Option<String>,
+    /// Whether this server lets nobody past the Account pane before they sign in.
+    #[serde(default)]
+    pub sign_in_required: bool,
     pub device_flow: bool,
     pub layout: Option<Layout>,
+}
+impl ProfileView {
+    /// Whether the Account pane's sign-in is all a window may show: the server lets nobody
+    /// further before they sign in, and whoever this is has not. Everything else it could ask
+    /// for would be refused.
+    pub(crate) fn only_sign_in_is_offered(&self) -> bool {
+        self.sign_in_required && self.login.is_none()
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct DeviceView {
@@ -132,6 +147,23 @@ mod tests {
         );
         assert_eq!(explicit.repo, home);
         assert!(explicit.layout.is_none());
+    }
+    #[test]
+    fn only_the_sign_in_is_offered_until_someone_signs_in_where_that_is_required() {
+        let seen_by = |sign_in_required: bool, login: Option<&str>| ProfileView {
+            profile_namespace: "browser:1".into(),
+            id: login.map(|_| "42".into()),
+            login: login.map(Into::into),
+            unix_user: login.filter(|_| sign_in_required).map(|login| format!("moon-{login}")),
+            sign_in_required,
+            device_flow: true,
+            layout: None,
+        };
+        assert!(seen_by(true, None).only_sign_in_is_offered());
+        assert!(!seen_by(true, Some("alice")).only_sign_in_is_offered());
+        // A server that runs everyone as itself is used without an account, as it always was.
+        assert!(!seen_by(false, None).only_sign_in_is_offered());
+        assert!(!seen_by(false, Some("alice")).only_sign_in_is_offered());
     }
     #[test]
     fn autosaves_coalesce_without_overtaking_identity_changes() {

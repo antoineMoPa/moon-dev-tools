@@ -170,6 +170,10 @@ pub(crate) struct TerminalSpec {
     /// lost rather than acted on, which is what makes typing at a program that has not said it
     /// is ready acceptable.
     pub(crate) type_ahead: Option<String>,
+    /// The person the program is started for, on a server that gives each person a Unix user:
+    /// it runs as theirs - see [`crate::unix_users`]. `None` is the server's own user, which
+    /// such a server refuses.
+    pub(crate) runs_as: Option<crate::unix_users::Person>,
 }
 
 impl TerminalSpec {
@@ -187,6 +191,7 @@ impl TerminalSpec {
             owner: None,
             name,
             type_ahead: None,
+            runs_as: None,
         }
     }
 
@@ -266,6 +271,8 @@ pub(crate) struct TerminalSession {
     /// asked of [`TerminalSession::child`], whose lock is held for as long as a wait on the
     /// program takes - see [`failure_notice`].
     child_pid: Option<u32>,
+    /// The person the program was started for - see [`TerminalSpec::runs_as`].
+    runs_as: Option<crate::unix_users::Person>,
     /// What a Codex in this terminal has shown - see [`crate::visualizations`]. `None` for any
     /// other program.
     visualizations: Option<Mutex<crate::visualizations::rollout::CodexRollouts>>,

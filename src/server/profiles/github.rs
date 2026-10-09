@@ -99,6 +99,7 @@ async fn verify(token: String) -> Result<Account> {
         login: identity.login,
         email,
         token,
+        unix_user: None,
         layout: None,
         windows: Default::default(),
     })

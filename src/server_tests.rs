@@ -404,6 +404,44 @@ fn an_unknown_session_is_refused_rather_than_panicking() {
     );
 }
 
+/// The picker's two routes have no session to work for, and work for whoever was let in:
+/// on a server that gives nobody a Unix user that is the server itself, as it always was.
+#[test]
+fn a_folder_is_listed_and_a_file_placed_for_whoever_was_let_in() {
+    use crate::api::folders::{EntryKind, FilePlaced, FolderEntry, FolderListing};
+
+    let served = serve("picker");
+    let folder = served.root.canonicalize().expect("the fixture resolves");
+
+    let listing: FolderListing = served
+        .client
+        .get(format!("{}/api/folder", served.base_url))
+        .query(&[("path", folder.display().to_string())])
+        .send()
+        .expect("failed to list the folder")
+        .error_for_status()
+        .expect("the server refused to list the folder")
+        .json()
+        .expect("failed to decode the listing");
+    assert!(listing.entries.contains(&FolderEntry {
+        name: "a.txt".to_string(),
+        kind: EntryKind::File,
+    }));
+
+    let placed: FilePlaced = served
+        .client
+        .post(format!("{}/api/session/place-file", served.base_url))
+        .json(&serde_json::json!({ "path": folder.join("a.txt") }))
+        .send()
+        .expect("failed to place the file")
+        .error_for_status()
+        .expect("the server refused to place the file")
+        .json()
+        .expect("failed to decode the placement");
+    assert_eq!(placed.file_path, "a.txt");
+    assert_eq!(placed.project, folder.display().to_string());
+}
+
 /// A file of the repo goes on a card by the path the file pane opens it with, and comes off
 /// again the way a run does. Only a file that is there right now is taken: the card is a way
 /// back to the file, and a link to nothing is worse than none.

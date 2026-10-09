@@ -626,7 +626,6 @@ impl Backend for RemoteBackend {
         )
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn run_in_shell(&self, session_id: &str, command: &str) -> Result<String> {
         let opened: TerminalOpened = self.post_json(
             &format!("/api/session/{session_id}/run-in-shell"),

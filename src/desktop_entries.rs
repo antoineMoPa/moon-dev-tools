@@ -13,6 +13,9 @@
 //! [`Backend::installed_applications`](crate::backend::Backend::installed_applications), and
 //! a server off Linux answers that it is not on Linux rather than with an empty list.
 //!
+//! On a server that gives each person a Unix user - see [`crate::unix_users`] - the list is
+//! the person's who asks, as the desktop is: read with their home and their `PATH`, as them.
+//!
 //! The files are read each time a window asks. There are a few dozen of them, of a few
 //! kilobytes each, and a package installed since the last time is then on the list without
 //! anything having to watch the folders.
@@ -22,11 +25,12 @@ mod entry;
 #[cfg(any(target_os = "linux", test))]
 mod folders;
 
-use axum::{Json, extract::State};
+use axum::{Extension, Json, extract::State};
 
-use crate::api::{
-    AppError, AppState,
-    applications::InstalledApplications,
+use crate::{
+    api::{AppError, AppState, applications::InstalledApplications},
+    server::{profiles::Profiles, users::UserId},
+    unix_users::Person,
 };
 
 /// What of the server's environment decides which entries a menu offers, and how they read.
@@ -48,9 +52,50 @@ struct Session {
 #[cfg(target_os = "linux")]
 const MESSAGES_LOCALE_VARIABLES: [&str; 3] = ["LC_ALL", "LC_MESSAGES", "LANG"];
 
-/// The applications installed on this machine that a menu offers, sorted by name.
+/// The applications installed on this machine that a menu of the server's own user offers,
+/// sorted by name.
 #[cfg(target_os = "linux")]
 pub(crate) fn installed() -> InstalledApplications {
+    use std::env;
+
+    offered_to(&Whose {
+        home: env::var_os("HOME"),
+        data_home: env::var_os("XDG_DATA_HOME"),
+        path: env::var_os("PATH").unwrap_or_default(),
+    })
+}
+
+/// The applications a menu of `person` offers: the entries of their own home before the
+/// machine's, and the programs those name looked for on their login `PATH`.
+///
+/// Read on a thread working as them - see [`crate::unix_users::as_user`] - since their
+/// home is theirs alone to read.
+#[cfg(target_os = "linux")]
+fn installed_for(person: &Person) -> anyhow::Result<InstalledApplications> {
+    let whose = Whose {
+        home: Some(person.unix_user.home.clone().into_os_string()),
+        // `XDG_DATA_HOME` is what a login of theirs says, and the server is none: their
+        // entries are read from where they are when it says nothing, under their home.
+        data_home: None,
+        path: person.unix_user.login_path()?.into(),
+    };
+    crate::unix_users::as_user(person, || offered_to(&whose))
+}
+
+/// Whose menu is read: what of their own environment decides where their entries are, and
+/// which of the programs those name are installed for them.
+#[cfg(target_os = "linux")]
+struct Whose {
+    home: Option<std::ffi::OsString>,
+    data_home: Option<std::ffi::OsString>,
+    path: std::ffi::OsString,
+}
+
+/// What a menu offers `whose` it is. The rest is the machine's, and read from the server's
+/// own environment for everyone: the desktop the session calls itself, the locale, and the
+/// folders the system's entries are in.
+#[cfg(target_os = "linux")]
+fn offered_to(whose: &Whose) -> InstalledApplications {
     use std::env;
 
     let session = Session {
@@ -64,11 +109,11 @@ pub(crate) fn installed() -> InstalledApplications {
             .iter()
             .filter_map(|variable| env::var(variable).ok())
             .find(|locale| !locale.is_empty()),
-        path: env::var_os("PATH").unwrap_or_default(),
+        path: whose.path.clone(),
     };
     let folders = folders::entries_folders(
-        env::var_os("HOME"),
-        env::var_os("XDG_DATA_HOME"),
+        whose.home.clone(),
+        whose.data_home.clone(),
         env::var_os("XDG_DATA_DIRS"),
     );
     InstalledApplications::Listed(folders::offered_in(&folders, &session))
@@ -81,11 +126,25 @@ pub(crate) fn installed() -> InstalledApplications {
     InstalledApplications::NotOnLinux
 }
 
+#[cfg(not(target_os = "linux"))]
+fn installed_for(_person: &Person) -> anyhow::Result<InstalledApplications> {
+    Ok(InstalledApplications::NotOnLinux)
+}
+
 /// `GET /api/applications`: the applications installed on the server, for a window on
-/// another machine to offer.
+/// another machine to offer - those of whoever asks, on a server that gives each person a
+/// Unix user.
 pub(crate) async fn listed(
     State(state): State<AppState>,
+    State(profiles): State<Profiles>,
+    Extension(user): Extension<UserId>,
 ) -> Result<Json<InstalledApplications>, AppError> {
     crate::api::mark_activity(&state.last_activity);
-    Ok(Json(tokio::task::spawn_blocking(installed).await?))
+    let person = profiles.session_owner(&user)?.person;
+    let installed = tokio::task::spawn_blocking(move || match &person {
+        Some(person) => installed_for(person),
+        None => Ok(installed()),
+    })
+    .await??;
+    Ok(Json(installed))
 }
