@@ -255,6 +255,7 @@ everything runs as the server's user, as before.
 - Install `moon` and the agents where everyone can run them, such as `/usr/local/bin`.
   Each person logs their own agent in, from a shell.
 - It keeps logins apart, not people: everyone on the server can read and change the project.
+- A snap (Chromium on Ubuntu) only starts for a user with a systemd session: `loginctl enable-linger moon-<github login>`.
 - Stopping the server ends everyone's agents. It warns every shell and waits 30 seconds first.
 
 It is the same window as `--remote`, shells included - the same terminal, Ghostty's VT engine

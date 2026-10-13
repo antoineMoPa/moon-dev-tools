@@ -198,7 +198,7 @@ pub(crate) fn become_and_run(words: &[String]) -> Result<Infallible> {
         "{name} is root, which nobody's program runs as"
     );
 
-    let runtime_dir = runtime_dir_of(&user)?;
+    let runtime_dir = user.runtime_dir()?;
     hand_over_the_terminal(&user)?;
     switch_to(&user)?;
     // SAFETY: sets this process's own mask, and cannot fail.
@@ -221,22 +221,27 @@ pub(crate) fn become_and_run(words: &[String]) -> Result<Infallible> {
     Err(failed).with_context(|| format!("failed to run {program} as {name}"))
 }
 
-/// The user's runtime directory, made when the machine has not made one: a server starts a
-/// person's processes without a login, which is what makes it on a machine with logind.
-fn runtime_dir_of(user: &UnixUser) -> Result<PathBuf> {
-    let dir = PathBuf::from(RUNTIME_DIRS).join(user.uid.to_string());
-    if dir.is_dir() {
-        return Ok(dir);
+impl UnixUser {
+    /// The user's runtime directory, made when the machine has not made one: a server starts
+    /// a person's processes without a login, which is what makes it on a machine with logind.
+    ///
+    /// Asked as root, which is who makes a folder in [`RUNTIME_DIRS`]: by the server being
+    /// itself, and by this executable before it becomes the user.
+    pub(crate) fn runtime_dir(&self) -> Result<PathBuf> {
+        let dir = PathBuf::from(RUNTIME_DIRS).join(self.uid.to_string());
+        if dir.is_dir() {
+            return Ok(dir);
+        }
+        std::fs::create_dir_all(RUNTIME_DIRS)
+            .with_context(|| format!("failed to make {RUNTIME_DIRS}"))?;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&dir)
+            .with_context(|| format!("failed to make {}", dir.display()))?;
+        std::os::unix::fs::chown(&dir, Some(self.uid), Some(self.gid))
+            .with_context(|| format!("failed to give {} to {}", dir.display(), self.name))?;
+        Ok(dir)
     }
-    std::fs::create_dir_all(RUNTIME_DIRS)
-        .with_context(|| format!("failed to make {RUNTIME_DIRS}"))?;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&dir)
-        .with_context(|| format!("failed to make {}", dir.display()))?;
-    std::os::unix::fs::chown(&dir, Some(user.uid), Some(user.gid))
-        .with_context(|| format!("failed to give {} to {}", dir.display(), user.name))?;
-    Ok(dir)
 }
 
 /// Give the terminal this process is on to the user, as a login does. The pty was opened by

@@ -48,11 +48,15 @@ const ANOTHER_PERSONS_SESSION: &str = "that session is another person's\n";
 /// What a pass key alone reaches on a server that gives each person a Unix user: the check of
 /// the key itself, and the Account pane's sign-in. Everything else waits for the sign-in,
 /// since everything else is done as somebody.
+///
+/// The disconnect is among them for an account that signed in while the server gave nobody a
+/// Unix user: it is connected and has not signed in - see `Profiles::has_signed_in`.
 const ROUTES_BEFORE_SIGN_IN: &[&str] = &[
     "/api/pass-key",
     "/api/me",
     "/api/me/github/device",
     "/api/me/github/poll",
+    "/api/me/disconnect",
 ];
 
 /// Apply to the entire router, including login, errors and redirects. The browser must not

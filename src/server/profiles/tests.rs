@@ -540,6 +540,30 @@ fn personal_shell_commits_keep_identity_isolated_without_credentials() {
     fs::remove_dir_all(profiles.path.parent().unwrap()).unwrap();
 }
 
+/// An account that signed in while the server gave nobody a Unix user, on the same server run
+/// as root: it is connected and has no Unix user. The Account pane offers it the sign-in,
+/// which is what gives it one, rather than the disconnect alone.
+#[test]
+fn an_account_from_before_people_had_unix_users_is_offered_the_sign_in_again() {
+    let profiles = fixture();
+    profiles.connect(&user("a"), account("1")).unwrap();
+
+    let seen = profiles.view_where(&user("a"), true);
+    assert_eq!(seen.id.as_deref(), Some("github:1"));
+    assert_eq!(seen.unix_user, None);
+    assert!(!seen.has_signed_in());
+    assert!(seen.only_sign_in_is_offered());
+
+    // Signing in again records the Unix user, and with it they are in.
+    let mut signed_in_again = account("1");
+    signed_in_again.unix_user = Some("moon-person1".into());
+    profiles.record(&user("a"), signed_in_again).unwrap();
+    let seen = profiles.view_where(&user("a"), true);
+    assert_eq!(seen.unix_user.as_deref(), Some("moon-person1"));
+    assert!(seen.has_signed_in());
+    fs::remove_dir_all(profiles.path.parent().unwrap()).unwrap();
+}
+
 /// The guard on the switch: a server that is not root gives nobody a Unix user, whoever signs
 /// in, and what a signed-in person starts runs as the server's own user - see
 /// `crate::unix_users`.

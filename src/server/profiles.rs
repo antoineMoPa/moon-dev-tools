@@ -59,6 +59,13 @@ struct Account {
     windows: HashMap<String, Layout>,
 }
 
+impl Account {
+    /// See [`Profiles::has_signed_in`].
+    fn has_signed_in_where(&self, each_person_has_a_unix_user: bool) -> bool {
+        self.unix_user.is_some() || !each_person_has_a_unix_user
+    }
+}
+
 pub(super) use crate::api::profiles::{Layout, ProfileView};
 
 impl Profiles {
@@ -171,6 +178,12 @@ impl Profiles {
     }
 
     fn view(&self, user: &UserId) -> ProfileView {
+        self.view_where(user, crate::unix_users::each_person_has_one())
+    }
+
+    /// [`Profiles::view`], on a server that gives each person a Unix user or on one that
+    /// gives nobody one.
+    fn view_where(&self, user: &UserId, each_person_has_a_unix_user: bool) -> ProfileView {
         let account = self.account(user);
         ProfileView {
             profile_namespace: account
@@ -180,10 +193,10 @@ impl Profiles {
             // Signed in is what the window goes by to offer more than the sign-in pane.
             login: account
                 .as_ref()
-                .filter(|_| self.has_signed_in(user))
+                .filter(|a| a.has_signed_in_where(each_person_has_a_unix_user))
                 .map(|a| a.login.clone()),
             unix_user: account.as_ref().and_then(|a| a.unix_user.clone()),
-            sign_in_required: crate::unix_users::each_person_has_one(),
+            sign_in_required: each_person_has_a_unix_user,
             layout: account.and_then(|a| a.layout),
             device_flow: github::client_id().is_some(),
         }
@@ -230,7 +243,7 @@ impl Profiles {
     /// server ran as another user, and signs in again to be given its own.
     pub(crate) fn has_signed_in(&self, user: &UserId) -> bool {
         self.account(user).is_some_and(|account| {
-            account.unix_user.is_some() || !crate::unix_users::each_person_has_one()
+            account.has_signed_in_where(crate::unix_users::each_person_has_one())
         })
     }
 

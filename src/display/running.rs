@@ -3,7 +3,7 @@
 //!
 //! A desktop that is one person's - see [`KeptTo`] - is started as them and kept to them: its
 //! X server and every application on it run as their Unix user, and X lets onto it only who
-//! shows a cookie that is in a file of their home.
+//! shows a cookie that is in a file of their runtime directory.
 
 use std::{
     collections::HashMap,
@@ -40,9 +40,13 @@ const EMPTY_FOR: Duration = Duration::from_secs(5);
 /// Chromium, which asks GTK - and Qt. Whole numbers, which is all GTK takes.
 const SCALED_BY: &[&str] = &["GDK_SCALE", "QT_SCALE_FACTOR"];
 
-/// Where the authority file of a person's desktop is, under their home: beside what else
-/// moon keeps there. One file, since a person has one desktop.
-const AUTHORITY_UNDER_HOME: &str = ".moonreview/display.Xauthority";
+/// The authority file of a person's desktop, in their runtime directory: `/run/user/<uid>`,
+/// which is theirs alone. One file, since a person has one desktop.
+///
+/// There and by this name because of snaps. A snap is confined, and of the places an
+/// authority file could be it may read this one and `~/.Xauthority`: a file in a hidden
+/// folder of the home is refused it, and Chromium as a snap then finds no display.
+const AUTHORITY_IN_RUNTIME_DIR: &str = ".Xauthority";
 
 /// Only its owner reads an authority file: whoever reads the cookie in it is let onto the
 /// desktop.
@@ -64,7 +68,7 @@ struct KeptTo {
 
 impl KeptTo {
     /// Make up the cookie of a desktop of `person` and write its authority file, as them:
-    /// in their home, which only they write in.
+    /// in their runtime directory, which only they write in.
     ///
     /// The file of the desktop they had before is replaced rather than written over. It is
     /// left behind when the desktop ends, letting whoever reads it onto a server that is
@@ -72,7 +76,10 @@ impl KeptTo {
     fn with_a_new_cookie(person: &Person) -> Result<(Self, moon_display::Cookie)> {
         let mut cookie = moon_display::Cookie::default();
         getrandom_03::fill(&mut cookie).expect("the OS has no randomness to make a cookie from");
-        let authority = person.unix_user.home.join(AUTHORITY_UNDER_HOME);
+        let authority = person
+            .unix_user
+            .runtime_dir()?
+            .join(AUTHORITY_IN_RUNTIME_DIR);
         crate::unix_users::as_user(person, || write_only_its_owner_reads(&authority, &cookie))?
             .with_context(|| format!("failed to write {}", authority.display()))?;
         Ok((
@@ -87,7 +94,6 @@ impl KeptTo {
 
 /// Write the authority file of `cookie` at `file`, new, for its owner alone to read.
 fn write_only_its_owner_reads(file: &Path, cookie: &moon_display::Cookie) -> std::io::Result<()> {
-    std::fs::create_dir_all(file.parent().expect("an authority file is in a folder"))?;
     match std::fs::remove_file(file) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
         _ => {}

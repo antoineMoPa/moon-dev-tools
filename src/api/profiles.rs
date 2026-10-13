@@ -27,7 +27,16 @@ impl ProfileView {
     /// further before they sign in, and whoever this is has not. Everything else it could ask
     /// for would be refused.
     pub(crate) fn only_sign_in_is_offered(&self) -> bool {
-        self.sign_in_required && self.login.is_none()
+        self.sign_in_required && !self.has_signed_in()
+    }
+    /// Whether whoever this is has signed in to this server, which is what the Account pane
+    /// goes by to offer the sign-in or the disconnect. The server names a login only then.
+    ///
+    /// Not whether an account is connected - `id`: an account that signed in while the server
+    /// gave nobody a Unix user is still connected to one that now does, and signs in again to
+    /// be given its own.
+    pub(crate) fn has_signed_in(&self) -> bool {
+        self.login.is_some()
     }
 }
 #[derive(Clone, Serialize, Deserialize)]

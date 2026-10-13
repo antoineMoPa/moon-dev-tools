@@ -122,14 +122,14 @@ fn draw_account_window(ctx: &egui::Context, account: &Account, open: Option<&mut
                     ui.label("Working…");
                 }
                 ui.add_enabled_ui(!state.busy, |ui| {
-                    if state.profile.id.is_some() {
+                    if state.profile.has_signed_in() {
                         ui.add_space(12.);
                         if ui.button("Disconnect GitHub").clicked() {
                             action = Some(Action::Disconnect);
                         }
                         ui.add_space(12.);
                     }
-                    if state.profile.id.is_none() && state.device.is_none() {
+                    if !state.profile.has_signed_in() && state.device.is_none() {
                         ui.add_space(12.);
                         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                             if ui
