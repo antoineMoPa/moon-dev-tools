@@ -131,6 +131,12 @@ pub(crate) struct Model {
     /// would put the row back for a tick: the read carries the count it started under, and
     /// is dropped if the count has moved on - see `App::poll_review_requests`.
         pub(crate) review_request_amendments: u64,
+    /// The review session of each repo a task's combined review shows, by repo path - see
+    /// [`crate::native::review::task_review`]. A session lives as long as the server that made
+    /// it, so that pane names its task rather than its sessions, and finds them here.
+    pub(crate) review_sessions_of_repos: HashMap<String, String>,
+    /// The repos whose session has been asked for and not answered yet, so each is asked once.
+    pub(crate) opening_review_sessions: std::collections::HashSet<String>,
     /// The shells the server says have something running in them, as of the last poll. What
     /// quitting would interrupt is these rather than every open shell, so this is what the
     /// quit warning is about - see `App::quit_would_kill_shells`.

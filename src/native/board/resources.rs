@@ -70,14 +70,29 @@ pub(crate) fn draw_list(
 
     // Under the runs and the files, because a review is asked for once the rest has happened -
     // and in the order the task's file lists them, which is the order they are to be deployed.
-    for request in app
+    let requests: Vec<&ReviewRequestView> = app
         .model
         .review_requests
         .iter()
         .filter(|request| request.task_id == task.id)
-    {
+        .collect();
+    let pending: Vec<&ReviewRequestView> = requests
+        .iter()
+        .copied()
+        .filter(|request| request.pending())
+        .collect();
+    // Over the repos it covers, once there is more than one of them to go through. The rows of
+    // the repos one at a time step back behind it, since going through them all at once is the
+    // quicker way.
+    let reviews_all = pending.len() > 1;
+    if reviews_all {
         rows.place(ui, |ui| {
-            draw_review_request(ui, request, card, palette, actions)
+            draw_review_all(ui, task, &pending, card, palette, actions)
+        });
+    }
+    for request in requests {
+        rows.place(ui, |ui| {
+            draw_review_request(ui, request, reviews_all, card, palette, actions)
         });
     }
 }
@@ -85,6 +100,9 @@ pub(crate) fn draw_list(
 /// How far the line under a pending review is indented, so it starts under the words rather
 /// than under the dot.
 const BRANCH_LINE_INDENT: f32 = 12.0;
+/// How opaque a pending repo's row is under the row that reviews them all, until the pointer is
+/// on it.
+const STEPPED_BACK_OPACITY: f32 = 0.5;
 /// How much of a branch name that line shows. A branch made for a task can run to a slug and a
 /// uuid, which would set the width of every card on the board; the front of it is what says
 /// which branch it is, and the whole of it is on the row's hover. As much as fits a card at the
@@ -105,15 +123,12 @@ const BRANCH_NAME_CHARS: usize = 38;
 fn draw_review_request(
     ui: &mut Ui,
     request: &ReviewRequestView,
+    stepped_back: bool,
     card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
 ) {
-    // Three ways to be finished with: the repo has nothing left to commit, which the board can
-    // see for itself; someone crossed the line off - work that is committed and pushed and wants
-    // no more looking at, which it cannot; or the card was moved to the column that finishes a
-    // task, which finishes everything it was still asking for at once.
-    let pending = !request.done && !request.task_finished && request.changed_files > 0;
+    let pending = request.pending();
 
     // Kept back so the fill can be painted behind contents that have not been drawn yet: how
     // tall the row is is only known once they have been.
@@ -122,10 +137,20 @@ fn draw_review_request(
     // Where the branch was drawn under the name, for a line that named one: the pointer is told
     // about the branch there, and about the commit everywhere else on the row.
     let mut branch_line: Option<Rect> = None;
+    let row_id = ui.make_persistent_id(("review-request", &request.task_id, request.index));
+    // Whether the pointer is on the row is known once it is drawn, so the last frame's answer
+    // says whether to draw it faded.
+    let hovered = ui
+        .ctx()
+        .read_response(row_id)
+        .is_some_and(|row| row.hovered());
 
     let drawn = ui.scope_builder(
         UiBuilder::new().layout(UiLayout::top_down(Align::Min)),
         |ui| {
+            if stepped_back && !hovered {
+                ui.multiply_opacity(STEPPED_BACK_OPACITY);
+            }
             ui.horizontal(|ui| {
                 ui.add_space(ROW_INSET);
                 ui.set_min_height(ui.spacing().interact_size.y);
@@ -171,11 +196,7 @@ fn draw_review_request(
     // The whole of what was drawn is one target, taken after it so it covers both lines - which
     // puts it over the name as well, so the pointer on the name is on the row.
     let rect = drawn.response.rect;
-    let row = ui.interact(
-        rect,
-        ui.make_persistent_id(("review-request", &request.task_id, request.index)),
-        Sense::click(),
-    );
+    let row = ui.interact(rect, row_id, Sense::click());
     if row.hovered() && ui.is_rect_visible(rect) {
         ui.painter().set(
             fill,
@@ -253,6 +274,55 @@ fn draw_review_request(
             request.repo_path.clone(),
             request.name.clone(),
         ));
+    }
+}
+
+/// The row that opens every pending review of the task as one diff, rather than a tab per repo
+/// to click through one at a time.
+fn draw_review_all(
+    ui: &mut Ui,
+    task: RunsOf<'_>,
+    pending: &[&ReviewRequestView],
+    card: &mut Controls,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    let changed_files: usize = pending.iter().map(|request| request.changed_files).sum();
+    let fill = ui.painter().add(egui::Shape::Noop);
+    let drawn = ui.horizontal(|ui| {
+        ui.add_space(ROW_INSET);
+        ui.set_min_height(ui.spacing().interact_size.y);
+        running_dot(ui, true, palette);
+        let name = widgets::quiet_button(ui, &format!("review all {} repos", pending.len()));
+        ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+            ui.add_space(ROW_INSET);
+            ui.label(
+                RichText::new(changes_label(changed_files))
+                    .size(SMALL_SIZE)
+                    .color(palette.muted),
+            );
+        });
+        name
+    });
+    let row = ui
+        .interact(
+            drawn.response.rect,
+            ui.make_persistent_id(("review-all", task.id)),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open the changes of every pending repo, one after the other in one diff");
+    if row.hovered() && ui.is_rect_visible(row.rect) {
+        ui.painter().set(
+            fill,
+            egui::epaint::RectShape::filled(row.rect, CornerRadius::same(3), palette.row_hover_bg),
+        );
+    }
+    if card.pressed(&drawn.inner) | card.pressed(&row) {
+        actions.push(BoardAction::OpenTaskReview {
+            task_id: task.id.to_string(),
+            title: task.title.to_string(),
+        });
     }
 }
 

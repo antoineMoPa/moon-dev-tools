@@ -9,6 +9,7 @@ pub(crate) mod image_diff;
 pub(crate) mod minimap;
 pub(crate) mod search;
 pub(crate) mod sidebar;
+pub(crate) mod task_review;
 
 use egui::{RichText, Ui};
 

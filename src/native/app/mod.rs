@@ -338,6 +338,8 @@ impl App {
                 placing_reopened: None,
                 command_launcher: None,
                                 review_request_amendments: 0,
+                review_sessions_of_repos: HashMap::new(),
+                opening_review_sessions: Default::default(),
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),
                 shells_wanting_attention: Vec::new(),

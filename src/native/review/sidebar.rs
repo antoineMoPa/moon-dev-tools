@@ -57,6 +57,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                 &files,
                 read_only,
                 is_commit_review,
+                None,
                 palette,
             );
             ui.add_space(10.0);
@@ -75,6 +76,34 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         });
 }
 
+/// The files section alone, for a list that shows several repos' files one under the other -
+/// see [`crate::native::review::task_review`]. Two repos can have a file at the same path, so
+/// the staging dots there are told apart by the session as well.
+pub(crate) fn draw_files_of(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    let (payload, asked_staging) = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| Some((review.payload.clone()?, review.asked_file_staging.clone())))
+        .expect("a repo's files are listed once its diff has arrived");
+    let mut files = build_sidebar_files(&payload);
+    wear_asked_staging(&asked_staging, &mut files);
+    draw_files_section(
+        app,
+        ui,
+        session_id,
+        &files,
+        payload.read_only,
+        payload.active_commit.is_some(),
+        Some(session_id),
+        palette,
+    );
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "two call sites; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_files_section(
     app: &mut App,
     ui: &mut Ui,
@@ -82,6 +111,7 @@ fn draw_files_section(
     files: &[SidebarFile],
     read_only: bool,
     is_commit_review: bool,
+    dot_salt: Option<&str>,
     palette: &Palette,
 ) {
     // What the whole review adds up to, at the head of the file list.
@@ -135,6 +165,7 @@ fn draw_files_section(
                 file,
                 read_only,
                 is_commit_review,
+                dot_salt,
                 palette,
             );
         }
@@ -208,6 +239,11 @@ fn set_file_staging(app: &mut App, session_id: &str, file_path: &str, stage: boo
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; the alternative is a \
+    parameter struct that only exists to be destructured immediately"
+)]
 fn draw_file_row(
     app: &mut App,
     ui: &mut Ui,
@@ -215,6 +251,7 @@ fn draw_file_row(
     file: &SidebarFile,
     read_only: bool,
     is_commit_review: bool,
+    dot_salt: Option<&str>,
     palette: &Palette,
 ) {
     let width = ui.available_width();
@@ -230,7 +267,11 @@ fn draw_file_row(
     let dot_center = egui::pos2(rect.min.x + 6.0, rect.center().y);
     let dot_hit = egui::Rect::from_center_size(dot_center, vec2(13.0, ROW_HEIGHT));
     let dot_response = can_stage.then(|| {
-        let response = ui.interact(dot_hit, stage_dot_id(&file.file_path), Sense::click());
+        let dot_id = match dot_salt {
+            None => stage_dot_id(&file.file_path),
+            Some(salt) => stage_dot_id(&file.file_path).with(salt),
+        };
+        let response = ui.interact(dot_hit, dot_id, Sense::click());
         let hint = match file.status {
             FileStageStatus::Staged => "click to unstage the whole file",
             _ => "click to stage the whole file",

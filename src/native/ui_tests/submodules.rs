@@ -358,3 +358,75 @@ fn the_submodule_hub_marks_an_unpushed_submodule_and_opens_a_shell_in_it() {
         "the shell button should have opened one shell"
     );
 }
+
+/// A task that changed several repos offers them as one diff: a row over its pending reviews
+/// opens a pane with every repo's hunks one under the other, so nothing has to be clicked
+/// through a repo at a time.
+#[test]
+fn a_task_with_several_pending_reviews_opens_them_as_one_diff() {
+    let fixture = seeded_fixture("task-review-all");
+    add_submodule(&fixture, "crates/dirty", &["new.rs"]);
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        "crates/dirty/ // fix: the submodule\n. // chore: take the module forward\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let in_front = Arc::new(Mutex::new(None::<crate::native::panes::PaneKind>));
+    let in_front_in_ui = Arc::clone(&in_front);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            *in_front_in_ui.lock().expect("poisoned") = app
+                .front_pane
+                .and_then(|id| app.model.layout.pane(id))
+                .map(|pane| pane.kind());
+        });
+
+    let row = "review all 2 repos";
+    assert!(
+        wait_for_labels(&mut harness, &[row]),
+        "the card should offer every pending review at once"
+    );
+    harness.get_by_label(row).click();
+    assert!(
+        super::settle(&mut harness, || *in_front.lock().expect("poisoned")
+            == Some(crate::native::panes::PaneKind::TaskReview)),
+        "the row should open the task's combined review"
+    );
+    // A file of each repo, in the one pane: the submodule's new file and the root's.
+    assert!(
+        wait_for_labels(&mut harness, &["new.rs", "src/extra.rs"]),
+        "the combined review should show the changes of both repos"
+    );
+}
+
+/// Step the window until every one of `labels` is on screen, for up to the time `settle` gives.
+fn wait_for_labels(harness: &mut Harness<'_>, labels: &[&str]) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        harness.step();
+        if labels
+            .iter()
+            .all(|label| harness.query_all_by_label(label).next().is_some())
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}

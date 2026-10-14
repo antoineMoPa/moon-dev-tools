@@ -106,6 +106,8 @@ pub(crate) enum BoardAction {
     },
     /// Open the review of what the task has changed.
     OpenReview(String, String),
+    /// Open every repo the task still has pending reviews in, as one diff.
+    OpenTaskReview { task_id: String, title: String },
     /// Change one line of a task's `request_for_review.txt`: take it out, or cross it off. The
     /// file is the list, so both are written to it rather than kept beside it.
     AmendReviewRequest {
@@ -627,6 +629,12 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 move |backend| backend.amend_review_request(&session_id, &task_id, index, amend),
                 |model, result| model.report(result, "could not change the review request"),
             );
+        }
+        BoardAction::OpenTaskReview { task_id, title } => {
+            app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::TaskReview {
+                task_id,
+                title,
+            }));
         }
         BoardAction::OpenReview(repo_path, title) => {
             app.pending_action = Some(CommandAction::OpenPane(OpenPaneRequest::ReviewRepo {

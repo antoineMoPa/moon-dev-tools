@@ -24,6 +24,7 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PaneKind {
     Review,
+    TaskReview,
     Agents,
     Terminal,
     File,
@@ -59,6 +60,12 @@ pub(crate) enum Pane {
     /// submodules are further reviews, each with its own session and its own tab title.
     Review {
         session_id: String,
+        title: String,
+    },
+    /// Every repo a task asked to have reviewed and that still has changes, one after the other
+    /// in a single diff - see [`crate::native::review::task_review`].
+    TaskReview {
+        task_id: String,
         title: String,
     },
     Agents,
@@ -163,6 +170,7 @@ impl Pane {
     pub(crate) fn kind(&self) -> PaneKind {
         match self {
             Self::Review { .. } => PaneKind::Review,
+            Self::TaskReview { .. } => PaneKind::TaskReview,
             Self::Agents => PaneKind::Agents,
             Self::Terminal { .. } => PaneKind::Terminal,
             Self::File { .. } => PaneKind::File,
@@ -184,6 +192,7 @@ impl Pane {
     pub(crate) fn tab_title(&self) -> String {
         match self {
             Self::Review { title, .. } => title.clone(),
+            Self::TaskReview { title, .. } => format!("review of {title}"),
             Self::Agents => "comment agents".to_string(),
             Self::Terminal { command, .. } => match command {
                 Some(AgentKind::Claude) => "claude".to_string(),
@@ -226,11 +235,11 @@ impl Pane {
     }
 
     /// The moontasks task this pane is working in, if it is one of a task's: its shell, a file
-    /// opened from its card, or the pane of what it can start.
+    /// opened from its card, the pane of what it can start, or the review of all its repos.
     pub(crate) fn task_id(&self) -> Option<&str> {
         match self {
             Self::Terminal { task_id, .. } | Self::File { task_id, .. } => task_id.as_deref(),
-            Self::Start { task_id, .. } => Some(task_id),
+            Self::Start { task_id, .. } | Self::TaskReview { task_id, .. } => Some(task_id),
             _ => None,
         }
     }
@@ -255,6 +264,10 @@ impl Pane {
         match self {
             Self::Review { session_id, title } => Some(OpenPaneRequest::Review {
                 session_id: session_id.clone(),
+                title: title.clone(),
+            }),
+            Self::TaskReview { task_id, title } => Some(OpenPaneRequest::TaskReview {
+                task_id: task_id.clone(),
                 title: title.clone(),
             }),
             Self::Terminal {
@@ -326,6 +339,10 @@ pub(crate) enum OpenPaneRequest {
     /// the session gets created on the way to the pane.
     ReviewRepo {
         repo_path: String,
+        title: String,
+    },
+    TaskReview {
+        task_id: String,
         title: String,
     },
     Agents,
@@ -583,6 +600,10 @@ impl PaneView<Pane> for App {
                 let session_id = session_id.clone();
                 self.apply_review_find(pane_id, &session_id);
                 review::draw(self, ui, &session_id);
+            }
+            Pane::TaskReview { task_id, .. } => {
+                let task_id = task_id.clone();
+                review::task_review::draw(self, ui, &task_id);
             }
             Pane::Agents => review::draw_agents(self, ui),
             Pane::Terminal { terminal_id, .. } => {

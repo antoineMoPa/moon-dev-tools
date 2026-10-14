@@ -83,6 +83,18 @@ impl App {
                     },
                 );
             }
+            OpenPaneRequest::TaskReview { task_id, title } => {
+                if let Some((pane, _)) = self.model.layout.find_pane(
+                    |pane| matches!(pane, Pane::TaskReview { task_id: open, .. } if *open == task_id),
+                ) {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Review, active_frame);
+                self.model
+                    .layout
+                    .add_pane(frame, Pane::TaskReview { task_id, title }, None);
+            }
             OpenPaneRequest::Agents => {
                 if let Some((pane, _)) = self
                     .model

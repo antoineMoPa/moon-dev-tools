@@ -20,7 +20,7 @@ use std::sync::Arc;
 use egui::{CornerRadius, Rect, RichText, Sense, Stroke, Ui, vec2};
 
 use crate::{
-    api::HunkView,
+    api::{HunkView, SessionPayload},
     native::{
         app::App,
         model::ScrollTo,
@@ -139,10 +139,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     else {
         return;
     };
-    let read_only = payload.read_only;
-    let is_commit_review = payload.active_commit.is_some();
-    let preview_limit = payload.patch_preview_line_limit;
-
     // A review of one unchanged file has nothing to diff, so the file opens in a tab of its
     // own - `moonreview package.json` on a file nobody has touched is a request to read it.
     if payload.hunks.is_empty()
@@ -151,16 +147,12 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
         app.open_file_pane(session_id, path);
     }
 
-    let hunks: Vec<&HunkView> = payload.hunks.iter().collect();
-    if hunks.is_empty() {
+    if payload.hunks.is_empty() {
         draw_empty(ui, palette);
         return;
     }
 
     copy_selected_lines(app, ui, session_id);
-
-    let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
-    let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
 
     let scroll_target = app.model.review(session_id).scroll_to.take();
 
@@ -190,46 +182,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
                 .review(session_id)
                 .minimap
                 .start(ui.cursor().min.y);
-            if read_only {
-                draw_section(
-                    app,
-                    ui,
-                    session_id,
-                    if is_commit_review { "commit" } else { "diff" },
-                    &hunks,
-                    read_only,
-                    preview_limit,
-                    scroll_target.as_ref(),
-                    palette,
-                );
-                return;
-            }
-
-            draw_section(
+            draw_sections(
                 app,
                 ui,
                 session_id,
-                "unstaged",
-                &unstaged,
-                read_only,
-                preview_limit,
+                &payload,
                 scroll_target.as_ref(),
                 palette,
             );
-            if !staged.is_empty() {
-                ui.add_space(12.0);
-                draw_section(
-                    app,
-                    ui,
-                    session_id,
-                    "staged",
-                    &staged,
-                    read_only,
-                    preview_limit,
-                    scroll_target.as_ref(),
-                    palette,
-                );
-            }
         });
 
     app.model.review(session_id).minimap.scrolled = Scrolled {
@@ -239,6 +199,94 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
     };
 
     finish_line_sweep(app, ui, session_id);
+}
+
+/// A review's hunks laid down in `ui` where it stands, with no scroll area of their own: how a
+/// pane showing several reviews one under the other draws each of them - see
+/// [`crate::native::review::task_review`]. The review's minimap is kept as it was, because the
+/// cards land in another pane's scroll area and the map is of the review's own pane.
+pub(crate) fn draw_in_place(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+    crate::native::definition::follow_in_review(app, session_id);
+    let payload = app
+        .model
+        .review_ref(session_id)
+        .and_then(|review| review.payload.as_ref().map(Arc::clone))
+        .expect("a review is drawn in place once its diff has arrived");
+
+    copy_selected_lines(app, ui, session_id);
+    let scroll_target = app.model.review(session_id).scroll_to.take();
+    let minimap = std::mem::take(&mut app.model.review(session_id).minimap);
+    draw_sections(
+        app,
+        ui,
+        session_id,
+        &payload,
+        scroll_target.as_ref(),
+        palette,
+    );
+    app.model.review(session_id).minimap = minimap;
+    finish_line_sweep(app, ui, session_id);
+}
+
+/// A review's hunks under their headings: the whole diff of a commit, or what is unstaged and
+/// then what is staged.
+fn draw_sections(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    payload: &SessionPayload,
+    scroll_target: Option<&ScrollTo>,
+    palette: &Palette,
+) {
+    let read_only = payload.read_only;
+    let preview_limit = payload.patch_preview_line_limit;
+    let hunks: Vec<&HunkView> = payload.hunks.iter().collect();
+    if read_only {
+        let title = match payload.active_commit.is_some() {
+            true => "commit",
+            false => "diff",
+        };
+        draw_section(
+            app,
+            ui,
+            session_id,
+            title,
+            &hunks,
+            read_only,
+            preview_limit,
+            scroll_target,
+            palette,
+        );
+        return;
+    }
+
+    let unstaged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| !hunk.staged).collect();
+    let staged: Vec<&HunkView> = hunks.iter().copied().filter(|hunk| hunk.staged).collect();
+    draw_section(
+        app,
+        ui,
+        session_id,
+        "unstaged",
+        &unstaged,
+        read_only,
+        preview_limit,
+        scroll_target,
+        palette,
+    );
+    if !staged.is_empty() {
+        ui.add_space(12.0);
+        draw_section(
+            app,
+            ui,
+            session_id,
+            "staged",
+            &staged,
+            read_only,
+            preview_limit,
+            scroll_target,
+            palette,
+        );
+    }
 }
 
 /// When the button comes up after a sweep, the run is settled: the sweep is over and the

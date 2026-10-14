@@ -208,6 +208,17 @@ pub(crate) struct ReviewRequestView {
     pub(crate) written_at_unix: u64,
 }
 
+impl ReviewRequestView {
+    /// Whether the repo still wants looking at. Three ways to be finished with: the repo has
+    /// nothing left to commit, which the board can see for itself; someone crossed the line off
+    /// - work that is committed and pushed and wants no more looking at, which it cannot; or the
+    /// card was moved to the column that finishes a task, which finishes everything it was still
+    /// asking for at once.
+    pub(crate) fn pending(&self) -> bool {
+        !self.done && !self.task_finished && self.changed_files > 0
+    }
+}
+
 /// What starting a task's resource asked for.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub(crate) struct StartResourceRequest {
