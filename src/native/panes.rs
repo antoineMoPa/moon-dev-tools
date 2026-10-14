@@ -13,7 +13,9 @@ use crate::{
     native::{
         app::App,
         bindings::{self, Action},
-        commit_pane, review,
+        commit_pane,
+        model::Stage,
+        review,
         theme::{self, Palette, ThemeMode},
         widgets,
     },
@@ -652,6 +654,12 @@ impl PaneView<Pane> for App {
     }
 
     fn empty_frame_ui(&mut self, ui: &mut Ui, _frame: FrameId) {
+        // Before a project is open, the one frame there is holds the launch screen.
+        match self.model.stage {
+            Stage::Prompt { .. } => return self.draw_prompt(ui),
+            Stage::Opening => return self.draw_opening(ui),
+            Stage::Ready => {}
+        }
         let palette = self.palette_of();
         ui.painter().text(
             ui.max_rect().center(),

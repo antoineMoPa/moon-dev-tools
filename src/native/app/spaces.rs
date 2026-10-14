@@ -6,10 +6,11 @@
 //! project they are on. The one in front is `self`; the others are parked, boxed, in
 //! [`Spaces`], and nothing of theirs is drawn or polled until they come forward again. A space
 //! nobody has been to is not an app at all - [`Slot::Untouched`] - and costs nothing: it is
-//! built, on the project of the space it is reached from, the first time it is gone to. Going
-//! to one swaps it with `self`, the way [`App::switch_project`] swaps `self` with a fresh
-//! window - which is why what belongs to the window rather than to a space is handed across
-//! in [`App::take_window_from`], the same list for both.
+//! built the first time it is gone to, on its launch screen, which asks which project it is
+//! for inside the window's tab strip and status bar. One left on its launch screen goes back
+//! to untouched. Going to one swaps it with `self`, the way [`App::switch_project`] swaps
+//! `self` with a fresh window - which is why what belongs to the window rather than to a space
+//! is handed across in [`App::take_window_from`], the same list for both.
 //!
 //! A space holds its own set of panes, and pane ids are only unique within one set, so
 //! nothing of one space can be told apart from another's while they share a map. Keeping each
@@ -19,10 +20,7 @@ use std::sync::Arc;
 
 use egui_frames::Layout;
 
-use crate::{
-    api::OpenSessionRequest,
-    native::{Launch, panes::Pane, workspace_color::WorkspaceColor},
-};
+use crate::native::{Launch, model::Stage, panes::Pane, workspace_color::WorkspaceColor};
 
 use super::App;
 
@@ -34,7 +32,7 @@ pub(super) enum Slot {
     /// The space in front: the [`App`] this is a field of.
     Front,
     Parked(Box<App>),
-    /// Never gone to, so nothing of it exists yet.
+    /// Never gone to, or left on its launch screen, so nothing of it exists.
     Untouched,
 }
 
@@ -109,8 +107,7 @@ impl<'a> SpaceView<'a> {
 }
 
 impl App {
-    /// Every space in list order, the one in front included. A space nobody has been to is
-    /// shown as the project of the one in front, which is the project it will open on.
+    /// Every space in list order, the one in front included.
     pub(crate) fn space_views(&self) -> Vec<SpaceView<'_>> {
         self.spaces
             .slots
@@ -119,35 +116,28 @@ impl App {
                 Slot::Front => SpaceView::of(self),
                 Slot::Parked(parked) => SpaceView::of(parked),
                 Slot::Untouched => SpaceView {
+                    color: WorkspaceColor::default(),
+                    project_path: None,
                     arrangement: None,
                     wants_attention: false,
-                    ..SpaceView::of(self)
                 },
             })
             .collect()
     }
 
-    /// The space this one opens as, when nobody has been to it: on the project of the space it
-    /// is reached from, which is what a second window on the same work is.
+    /// The space this one opens as, when nobody has been to it: its launch screen, asking
+    /// which project it is for.
     fn build_untouched_space(&self, ctx: &egui::Context) -> App {
-        let open = self
-            .model
-            .project_path
-            .clone()
-            .map(|repo_path| OpenSessionRequest {
-                repo_path,
-                diff_target: None,
-                active_commit: None,
-            });
         let mut built = App::new(
             ctx.clone(),
             Launch {
                 backend: Arc::clone(self.backend()),
-                open,
+                open: None,
                 frame: self.frame,
             },
         );
-        // The review opens on a later frame, so this is set before it asks.
+        // The shells of a project already open in another space are that space's tabs: taken
+        // up here as well, they would be one shell drawn in two places.
         built.model.adopts_shells_on_open = false;
         built
     }
@@ -177,7 +167,11 @@ impl App {
         std::mem::swap(self, &mut *arriving);
         // `arriving` is now the space that was in front.
         self.take_window_from(&mut arriving);
-        slots[leaving] = Slot::Parked(arriving);
+        // A launch screen has nothing to keep: the space is as good as never gone to.
+        slots[leaving] = match arriving.model.stage {
+            Stage::Prompt { .. } => Slot::Untouched,
+            Stage::Opening | Stage::Ready => Slot::Parked(arriving),
+        };
         self.spaces = Spaces {
             slots,
             front: index,

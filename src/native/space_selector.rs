@@ -118,11 +118,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
             ui.painter()
                 .circle_filled(rect.right_top() + vec2(-1.0, 1.0), 3.0, palette.warn);
         }
-        let response = response.on_hover_text(if space.is_untouched() {
-            format!("space {}: empty - opens on {}", index + 1, space.name())
-        } else {
-            format!("space {}: {}", index + 1, space.name())
-        });
+        let response = response.on_hover_text(format!("space {}: {}", index + 1, space.name()));
 
         // A hold that has not moved lifts the square.
         if lifted.is_none() && response.is_pointer_button_down_on() {

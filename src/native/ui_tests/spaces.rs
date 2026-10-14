@@ -24,10 +24,11 @@ struct Seen {
     project_path: Option<String>,
     /// The names the selector's list would give the spaces.
     names: Vec<String>,
+    untouched: Vec<bool>,
 }
 
 #[test]
-fn a_space_nobody_has_been_to_opens_on_the_project_in_front() {
+fn a_space_nobody_has_been_to_opens_on_its_launch_screen() {
     let fixture = seeded_fixture("spaces");
     let repo_path = fixture.root.display().to_string();
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
@@ -61,29 +62,40 @@ fn a_space_nobody_has_been_to_opens_on_the_project_in_front() {
                 ready: on_review,
                 project_path: app.model.project_path.clone(),
                 names: app.space_views().iter().map(|space| space.name()).collect(),
+                untouched: app.space_views().iter().map(|space| space.is_untouched()).collect(),
             };
         });
 
     step_until(&mut harness, || seen(&watched).ready, "the review never finished loading");
     let start = seen(&watched);
     assert_eq!(start.count, 4, "a window starts with four spaces");
-    assert_eq!(start.names, vec!["repo"; 4], "each opens on the project in front");
+    assert_eq!(start.names, vec!["repo", "empty", "empty", "empty"]);
     harness.run_steps(3);
     // A split in the first space, so its preview has more than one block to show.
     *asked.lock().expect("the ask") = Some(CommandAction::Split(egui_frames::DropSide::Right));
     harness.run_steps(30);
 
-    // Act: go to a space nobody has been to. It opens on the same project, with no launch
-    // screen in between.
+    // Act: go to a space nobody has been to. It opens on its launch screen, on no project.
     *asked.lock().expect("the ask") = Some(CommandAction::GoToSpace(1));
-    step_until(&mut harness, || seen(&watched).front == 1 && seen(&watched).ready, "the second space did not open");
+    step_until(&mut harness, || seen(&watched).front == 1, "the second space did not open");
+    harness.run_steps(3);
     let second = seen(&watched);
-    assert!(!second.on_launch_screen);
-    assert_eq!(second.project_path.as_deref(), Some(repo_path.as_str()));
+    assert!(second.on_launch_screen);
+    assert_eq!(second.project_path, None);
+    if let Ok(directory) = std::env::var("MOON_SPACES_SNAPSHOT_DIR") {
+        harness
+            .render()
+            .expect("the window renders")
+            .save(std::path::Path::new(&directory).join("empty-space.png"))
+            .expect("the picture is written");
+    }
 
-    // Act: back to the first, which is where it was left.
+    // Act: back to the first, which is where it was left. The second was left on its launch
+    // screen, so it is untouched again.
     *asked.lock().expect("the ask") = Some(CommandAction::GoToSpace(0));
     step_until(&mut harness, || seen(&watched).front == 0 && seen(&watched).ready, "the first space did not come back");
+    assert_eq!(seen(&watched).untouched, vec![false, true, true, true]);
+    assert_eq!(seen(&watched).project_path.as_deref(), Some(repo_path.as_str()));
     harness.run_steps(3);
     if let Ok(directory) = std::env::var("MOON_SPACES_SNAPSHOT_DIR") {
         harness
@@ -115,11 +127,6 @@ fn a_space_nobody_has_been_to_opens_on_the_project_in_front() {
     harness.run_steps(3);
     assert_eq!(seen(&watched).front, 3, "the held space should have moved to the last place");
 
-    // Act: the second is emptied, and is untouched again.
-    *asked.lock().expect("the ask") = Some(CommandAction::CloseSpaceAt(0));
-    harness.run_steps(3);
-    assert_eq!(seen(&watched).count, 4, "the list keeps its four spaces");
-
     // The only space in use cannot be emptied: that is closing the window.
     *asked.lock().expect("the ask") = Some(CommandAction::CloseSpaceAt(3));
     harness.run_steps(3);
@@ -129,7 +136,8 @@ fn a_space_nobody_has_been_to_opens_on_the_project_in_front() {
 
     // Next wraps round the four: after the last comes the first.
     *asked.lock().expect("the ask") = Some(CommandAction::NextSpace);
-    step_until(&mut harness, || seen(&watched).front == 0 && seen(&watched).ready, "next did not wrap");
+    step_until(&mut harness, || seen(&watched).front == 0 && seen(&watched).on_launch_screen, "next did not wrap");
+    assert_eq!(seen(&watched).count, 4, "the list keeps its four spaces");
 }
 
 fn seen(seen: &Arc<Mutex<Seen>>) -> Seen {

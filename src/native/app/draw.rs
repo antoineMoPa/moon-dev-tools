@@ -28,7 +28,9 @@ const LOGO_POINTS: f32 = 80.0;
 const LOGO_GAP: f32 = 8.0;
 
 impl App {
-    pub(super) fn draw_prompt(&mut self, ui: &mut Ui) {
+    /// The launch screen, asking which project the space is for. Drawn in the body of the
+    /// workspace's one empty frame, so the tab strip and the status bar stay round it.
+    pub(crate) fn draw_prompt(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
         // A repo on this machine is pointed at. One on the far side of a remote connection can
         // be typed out as well: its path is often already on the clipboard.
@@ -37,89 +39,87 @@ impl App {
         let mut pick_folder = false;
 
         let frame = self.frame;
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                // The logo is drawn above where the heading used to start, so the prompt and
-                // the recent projects under it stay where they were in the window.
-                ui.add_space((ui.available_height() * 0.28 - LOGO_POINTS - LOGO_GAP).max(0.0));
-                // The window's own logo, drawn from the 256px asset: at 80 points it covers
-                // 160 pixels on a Retina display, and the 128px one would be upscaled there.
-                ui.add(
-                    egui::Image::new(logos::logo_image_source(frame, 256))
-                        .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
-                );
-                ui.add_space(LOGO_GAP);
-                ui.label(RichText::new(frame.command()).size(22.0).strong());
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!("connected to {}", self.model.connection))
-                        .color(palette.muted),
-                );
-                ui.add_space(18.0);
+        ui.vertical_centered(|ui| {
+            // The logo is drawn above where the heading used to start, so the prompt and
+            // the recent projects under it stay where they were in the window.
+            ui.add_space((ui.available_height() * 0.28 - LOGO_POINTS - LOGO_GAP).max(0.0));
+            // The window's own logo, drawn from the 256px asset: at 80 points it covers
+            // 160 pixels on a Retina display, and the 128px one would be upscaled there.
+            ui.add(
+                egui::Image::new(logos::logo_image_source(frame, 256))
+                    .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
+            );
+            ui.add_space(LOGO_GAP);
+            ui.label(RichText::new(frame.command()).size(22.0).strong());
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!("connected to {}", self.model.connection))
+                    .color(palette.muted),
+            );
+            ui.add_space(18.0);
 
-                let Stage::Prompt { repo_path, error } = &mut self.model.stage else {
-                    return;
+            let Stage::Prompt { repo_path, error } = &mut self.model.stage else {
+                return;
+            };
+            ui.label(RichText::new(frame.asks_for_repo(picks_folders)).color(palette.muted));
+            ui.add_space(6.0);
+
+            // Browsing for the repo is the whole of it on this machine, so there is
+            // nothing to type there.
+            let typed = (!picks_folders).then(|| {
+                let entry = ui.add_sized(
+                    vec2(460.0, 24.0),
+                    egui::TextEdit::singleline(repo_path).hint_text("/home/you/project"),
+                );
+                let submitted =
+                    entry.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+                (repo_path.trim().to_string(), submitted)
+            });
+
+            if let Some(error) = error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(error.clone()).color(palette.warn));
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                const BUTTON: egui::Vec2 = egui::vec2(120.0, 24.0);
+                // One button where the repo is browsed for, and two where its path is
+                // typed: the one that opens what was typed, and the picker's beside it.
+                let buttons = match &typed {
+                    None => BUTTON.x,
+                    Some(_) => 2.0 * BUTTON.x + ui.spacing().item_spacing.x,
                 };
-                ui.label(RichText::new(frame.asks_for_repo(picks_folders)).color(palette.muted));
-                ui.add_space(6.0);
+                ui.add_space((ui.available_width() - buttons).max(0.0) / 2.0);
 
-                // Browsing for the repo is the whole of it on this machine, so there is
-                // nothing to type there.
-                let typed = (!picks_folders).then(|| {
-                    let entry = ui.add_sized(
-                        vec2(460.0, 24.0),
-                        egui::TextEdit::singleline(repo_path).hint_text("/home/you/project"),
-                    );
-                    let submitted =
-                        entry.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                    (repo_path.trim().to_string(), submitted)
-                });
-
-                if let Some(error) = error {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(error.clone()).color(palette.warn));
-                }
-
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    const BUTTON: egui::Vec2 = egui::vec2(120.0, 24.0);
-                    // One button where the repo is browsed for, and two where its path is
-                    // typed: the one that opens what was typed, and the picker's beside it.
-                    let buttons = match &typed {
-                        None => BUTTON.x,
-                        Some(_) => 2.0 * BUTTON.x + ui.spacing().item_spacing.x,
-                    };
-                    ui.add_space((ui.available_width() - buttons).max(0.0) / 2.0);
-
-                    match &typed {
-                        None => {
-                            pick_folder = widgets::clickable(
-                                ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
-                            )
-                            .clicked();
-                        }
-                        Some((path, submitted)) => {
-                            let go = widgets::clickable(ui.add_enabled(
-                                !path.is_empty(),
-                                egui::Button::new(frame.opens_button()).min_size(BUTTON),
-                            ))
-                            .clicked();
-                            if (go || *submitted) && !path.is_empty() {
-                                open_path = Some(path.clone());
-                            }
-                            // The window's picker, which lists the far machine's folders.
-                            pick_folder = widgets::clickable(
-                                ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
-                            )
-                            .clicked();
-                        }
+                match &typed {
+                    None => {
+                        pick_folder = widgets::clickable(
+                            ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
+                        )
+                        .clicked();
                     }
-                });
-
-                if let Some(recent) = draw_recent_projects(ui, self.model.settings.as_ref(), &palette) {
-                    open_path = Some(recent);
+                    Some((path, submitted)) => {
+                        let go = widgets::clickable(ui.add_enabled(
+                            !path.is_empty(),
+                            egui::Button::new(frame.opens_button()).min_size(BUTTON),
+                        ))
+                        .clicked();
+                        if (go || *submitted) && !path.is_empty() {
+                            open_path = Some(path.clone());
+                        }
+                        // The window's picker, which lists the far machine's folders.
+                        pick_folder = widgets::clickable(
+                            ui.add(egui::Button::new(frame.picker_button()).min_size(BUTTON)),
+                        )
+                        .clicked();
+                    }
                 }
             });
+
+            if let Some(recent) = draw_recent_projects(ui, self.model.settings.as_ref(), &palette) {
+                open_path = Some(recent);
+            }
         });
 
         // Both deferred: each takes `self`.
@@ -131,27 +131,26 @@ impl App {
         }
     }
 
-    pub(super) fn draw_opening(&mut self, ui: &mut Ui) {
+    /// The project being opened, in the same place as the launch screen it replaces.
+    pub(crate) fn draw_opening(&mut self, ui: &mut Ui) {
         let palette = self.palette_of();
         let ctx = ui.ctx().clone();
         let frame = self.frame;
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                // Same subtraction as the launch screen this replaces, so the name and the
-                // spinner stay put as one screen gives way to the other.
-                ui.add_space((ui.available_height() * 0.4 - LOGO_POINTS - LOGO_GAP).max(0.0));
-                ui.add(
-                    egui::Image::new(logos::logo_image_source(frame, 256))
-                        .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
-                );
-                ui.add_space(LOGO_GAP);
-                ui.label(RichText::new(frame.command()).size(20.0).strong());
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.add_space((ui.available_width() - 140.0).max(0.0) / 2.0);
-                    ui.spinner();
-                    ui.label(RichText::new(frame.opening()).color(palette.muted));
-                });
+        ui.vertical_centered(|ui| {
+            // Same subtraction as the launch screen this replaces, so the name and the
+            // spinner stay put as one screen gives way to the other.
+            ui.add_space((ui.available_height() * 0.4 - LOGO_POINTS - LOGO_GAP).max(0.0));
+            ui.add(
+                egui::Image::new(logos::logo_image_source(frame, 256))
+                    .fit_to_exact_size(vec2(LOGO_POINTS, LOGO_POINTS)),
+            );
+            ui.add_space(LOGO_GAP);
+            ui.label(RichText::new(frame.command()).size(20.0).strong());
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 140.0).max(0.0) / 2.0);
+                ui.spinner();
+                ui.label(RichText::new(frame.opening()).color(palette.muted));
             });
         });
         ctx.request_repaint_after(Duration::from_millis(80));
@@ -385,23 +384,18 @@ impl App {
             self.apply_menu_actions(picked);
         }
 
-        match self.model.stage {
-            Stage::Prompt { .. } => {
-                self.apply_launch_screen_shortcuts(ctx);
-                self.draw_prompt(ui);
-                crate::native::file_picker::draw(self, ctx);
-                // No status bar in front of a prompt, so nothing to stand clear of.
-                self.draw_toasts(ctx, 0.0);
-                return;
-            }
-            Stage::Opening => {
-                self.apply_launch_screen_shortcuts(ctx);
-                self.draw_opening(ui);
-                // Nor while a project is opening: the bar comes with the workspace.
-                self.draw_toasts(ctx, 0.0);
-                return;
-            }
-            Stage::Ready => {}
+        // Before a project is open the workspace is its one empty frame, with the launch screen
+        // drawn in it - see `empty_frame_ui` - so the tab strip, the status bar and the spaces
+        // in it are where they are once one is.
+        if !matches!(self.model.stage, Stage::Ready) {
+            self.apply_launch_screen_shortcuts(ctx);
+            self.draw_status_bar(ui);
+            self.draw_workspace(ui);
+            crate::native::file_picker::draw(self, ctx);
+            #[cfg(target_os = "macos")]
+            self.drag_window_by_strip(ctx);
+            self.draw_toasts(ctx, crate::native::status_bar::BAR_HEIGHT);
+            return;
         }
 
         // The system's bar on macOS; a browser's window draws its own below, once the frame

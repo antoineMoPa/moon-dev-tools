@@ -33,6 +33,7 @@ use crate::{
     native::{
         app::App,
         command_launcher::Asked,
+        model::Stage,
         panes::{OpenPaneRequest, Pane},
         theme::{Palette, SMALL_SIZE},
     },
@@ -102,6 +103,9 @@ impl App {
 
         match pressed {
             StripPress::Nothing => {}
+            // The launch screen is the workspace's one empty frame, and a tab would put it out
+            // of sight with nothing of the workspace drawn to close the tab again.
+            StripPress::Strip if !matches!(self.model.stage, Stage::Ready) => {}
             StripPress::Strip => {
                 // Deferred like every other pane the window opens from inside a draw: the
                 // tree holding the panes is being drawn right now.

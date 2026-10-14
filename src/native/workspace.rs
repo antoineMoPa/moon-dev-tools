@@ -18,6 +18,7 @@ use crate::{
     cli::Frame,
     native::{
         app::App,
+        model::Stage,
         panes::{Pane, PaneKind},
         theme,
     },
@@ -169,6 +170,9 @@ impl App {
         self.follow_task_in_front();
         self.stamp_tab_shortcuts(ui.ctx());
         *self.frames.style_mut() = self.palette_of().frames_style();
+        // A new tab is a shell in the project, and the launch screen has none yet.
+        self.frames
+            .set_new_tab_button(matches!(self.model.stage, Stage::Ready));
         if in_a_phone_window(ui.ctx()) {
             // The hamburger at the top right lists the tabs, so the strip is just the one in
             // front, big enough to read and to close with a thumb.
