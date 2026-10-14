@@ -68,6 +68,7 @@ mod tests {
             remote_task_tracker_url: String::new(),
             resources: Vec::new(),
             made_by: None,
+            appears_on: None,
         };
         (title.to_string(), metadata)
     }

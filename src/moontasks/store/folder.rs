@@ -200,6 +200,15 @@ pub(crate) struct TaskMetadata {
     /// gives each person a Unix user. `None` everywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) made_by: Option<String>,
+    /// The day the card shows up on the board, for one made ahead of time with
+    /// `moon tasks new --appears-on`: before then the board leaves it out - see
+    /// [`crate::moontasks::appears_on`]. `None` for a card that is shown from the start.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::moontasks::appears_on::in_metadata"
+    )]
+    pub(crate) appears_on: Option<time::Date>,
 }
 
 impl TaskMetadata {
@@ -481,6 +490,19 @@ pub(crate) fn create_task(
     status: &ColumnId,
     joins: ColumnEnd,
 ) -> Result<String> {
+    create_task_appearing_on(repo_path, title, status, joins, None)
+}
+
+/// [`create_task`] for a card the board leaves out until `appears_on` - see
+/// [`TaskMetadata::appears_on`]. Written with its day in one go, so no reading of the board
+/// catches it shown in between.
+pub(crate) fn create_task_appearing_on(
+    repo_path: &Path,
+    title: &str,
+    status: &ColumnId,
+    joins: ColumnEnd,
+    appears_on: Option<time::Date>,
+) -> Result<String> {
     let title = title.trim();
     if title.is_empty() {
         bail!("a task needs a title");
@@ -509,6 +531,7 @@ pub(crate) fn create_task(
         remote_task_tracker_url: String::new(),
         resources: Vec::new(),
         made_by: crate::unix_users::person_this_is_done_for(),
+        appears_on,
     };
     write_task(repo_path, &task_id, &metadata)?;
     ensure_notes_file(repo_path, &task_id)?;
@@ -540,6 +563,7 @@ pub(crate) fn create_board_task(repo_path: &Path) -> Result<()> {
         remote_task_tracker_url: String::new(),
         resources: Vec::new(),
         made_by: None,
+        appears_on: None,
     };
     write_task(repo_path, BOARD_TASK_ID, &metadata)?;
     ensure_notes_file(repo_path, BOARD_TASK_ID)

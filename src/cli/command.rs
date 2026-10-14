@@ -76,6 +76,8 @@ pub(super) enum MoonCommand {
     /// task folder it made is printed, which is what the caller wanted it for.
     NewTask {
         title: String,
+        /// The day the board starts showing it, for a card made ahead of time.
+        appears_on: Option<time::Date>,
     },
     /// The cards of that board, printed column by column.
     ListTasks,
@@ -170,7 +172,7 @@ pub(crate) fn run() -> Result<()> {
             Ok(())
         }
         MoonCommand::Licenses => print_licenses(),
-        MoonCommand::NewTask { title } => tasks::new_task(&title),
+        MoonCommand::NewTask { title, appears_on } => tasks::new_task(&title, appears_on),
         MoonCommand::ListTasks => tasks::list_tasks(),
         MoonCommand::MoveTask { column } => tasks::move_task(&column),
         MoonCommand::Wire(command) => wire::run(command),
@@ -576,7 +578,7 @@ lunar local dev tools.
 
 Usage:
 {windows}
-  {PROGRAM} tasks new <title>
+  {PROGRAM} tasks new [--appears-on <yyyy-mm-dd>] <title>
   {PROGRAM} tasks list                show the board's cards
   {PROGRAM} tasks move <column>       move this shell's task to a column
   {PROGRAM} wire post <one line>      tell the board's other agents
@@ -597,6 +599,7 @@ Usage:
 Examples:
   {PROGRAM} tasks
   {PROGRAM} tasks new \"fix the races\"
+  {PROGRAM} tasks new --appears-on 2026-11-02 \"renew the certificate\"
   {PROGRAM} wire post \"rewriting src/cli\"
   {PROGRAM} agent tell fix-the-races \"start with the tests\"
   {PROGRAM} review src/main.rs

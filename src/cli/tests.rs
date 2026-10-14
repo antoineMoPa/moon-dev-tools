@@ -536,7 +536,8 @@ fn the_board_makes_a_card_from_the_command_line() {
         )
         .expect("expected it to parse"),
         MoonCommand::NewTask {
-            title: "fix the races".to_string()
+            title: "fix the races".to_string(),
+            appears_on: None
         }
     );
     assert_eq!(
@@ -552,13 +553,55 @@ fn the_board_makes_a_card_from_the_command_line() {
         )
         .expect("expected it to parse"),
         MoonCommand::NewTask {
-            title: "fix the races".to_string()
+            title: "fix the races".to_string(),
+            appears_on: None
         }
     );
 
     let error = parse_command(None, vec!["tasks".to_string(), "new".to_string()])
         .expect_err("a card with no title is refused");
     assert!(error.to_string().contains("title"), "{error}");
+
+    // A card made ahead of time, wherever the option is put.
+    let parse =
+        |args: &[&str]| parse_command(None, args.iter().map(|arg| arg.to_string()).collect());
+    let appearing = MoonCommand::NewTask {
+        title: "renew the certificate".to_string(),
+        appears_on: Some(
+            time::Date::from_calendar_date(2026, time::Month::November, 2).expect("expected a day"),
+        ),
+    };
+    assert_eq!(
+        parse(&[
+            "tasks",
+            "new",
+            "--appears-on",
+            "2026-11-02",
+            "renew the certificate"
+        ])
+        .expect("expected it to parse"),
+        appearing
+    );
+    assert_eq!(
+        parse(&[
+            "tasks",
+            "new",
+            "renew",
+            "the",
+            "certificate",
+            "--appears-on",
+            "2026-11-02"
+        ])
+        .expect("expected it to parse"),
+        appearing
+    );
+    for refused in [
+        &["tasks", "new", "renew", "--appears-on"][..],
+        &["tasks", "new", "renew", "--appears-on", "next week"][..],
+        &["tasks", "new", "renew", "--on", "2026-11-02"][..],
+    ] {
+        parse(refused).expect_err("expected a refusal");
+    }
 
     // The other two windows have no such word: `moon review new` is a path called `new`.
     assert_eq!(

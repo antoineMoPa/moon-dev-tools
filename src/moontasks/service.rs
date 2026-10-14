@@ -30,7 +30,7 @@ use crate::{
     api::{AgentKind, AppState},
     moontasks::{
         BoardTaskView, CreateTaskRequest, ReviewRequestView, TaskResourceView, TaskView,
-        agent_launch, column_sort, remote_tracker,
+        agent_launch, appears_on, column_sort, remote_tracker,
         review_request::{self, Amend},
         store::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
@@ -88,6 +88,11 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
             store::write_task(&repo_path, &task_id, metadata)?;
         }
     }
+
+    // A card made ahead of time is left out until its day, after it has kept its place among
+    // the others: it shows up where that place has come to be.
+    let today = appears_on::today_here();
+    read.retain(|(_, metadata)| !appears_on::still_to_come(metadata.appears_on, today));
 
     // Read once for the whole board rather than once a run.
     let open = OpenSessions::of_runs(read.iter().flat_map(|(_, metadata)| &metadata.resources))?;

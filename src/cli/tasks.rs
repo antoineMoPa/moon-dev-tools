@@ -15,12 +15,13 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use time::Date;
 
 use super::{MoonCommand, PROGRAM, task_shell::TaskOfShell};
 use crate::{
     git::project_root,
     moontasks::{
-        ColumnEnd, TASK_DIR_ENV_VAR, service,
+        ColumnEnd, TASK_DIR_ENV_VAR, appears_on, service,
         store::{self, BoardColumn},
         wire::handles,
     },
@@ -64,20 +65,40 @@ pub(super) fn parse(command: CardCommand, words: &[String]) -> Result<MoonComman
     }
 }
 
-/// `moon tasks new <title>`. The title is the whole of the rest, joined, so it needs no
-/// quoting - though it usually gets some.
+/// `moon tasks new [--appears-on <day>] <title>`. The title is the whole of the rest, joined,
+/// so it needs no quoting - though it usually gets some. `--appears-on 2026-11-02` makes a card
+/// the board leaves out until that day - see [`crate::moontasks::appears_on`].
 fn parse_new(args: &[String]) -> Result<MoonCommand> {
-    if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
-        bail!("`{PROGRAM} tasks new` takes the card's title and no options, not {option}");
+    let mut appears_on = None;
+    let mut title_words = Vec::new();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            APPEARS_ON_OPTION => {
+                let day = words.next().with_context(|| {
+                    format!(
+                        "`{APPEARS_ON_OPTION}` needs a day, e.g. `{APPEARS_ON_OPTION} 2026-11-02`"
+                    )
+                })?;
+                appears_on = Some(appears_on::parse_day(day)?);
+            }
+            option if option.starts_with('-') => bail!(
+                "`{PROGRAM} tasks new` takes the card's title and `{APPEARS_ON_OPTION} <day>`, not {option}"
+            ),
+            _ => title_words.push(word.as_str()),
+        }
     }
-    let title = args.join(" ");
+    let title = title_words.join(" ");
     if title.trim().is_empty() {
         bail!(
             "`{PROGRAM} tasks new` needs the card's title, e.g. `{PROGRAM} tasks new \"fix the races\"`"
         );
     }
-    Ok(MoonCommand::NewTask { title })
+    Ok(MoonCommand::NewTask { title, appears_on })
 }
+
+/// The option of `moon tasks new` that holds a card back until a day.
+const APPEARS_ON_OPTION: &str = "--appears-on";
 
 /// `moon tasks move <column>`. The column's name is the whole of the rest, joined, so
 /// `IN PROGRESS` needs no quoting - and it is kept as it was typed, for the board to be held
@@ -98,8 +119,9 @@ fn parse_move(args: &[String]) -> Result<MoonCommand> {
 /// Make a card on the board of the repo this shell is in and print the folder it was given.
 ///
 /// It joins the top of the board's first column, which is where the board itself puts a card
-/// nobody said anything else about: the leftmost column is the one work starts in.
-pub(super) fn new_task(title: &str) -> Result<()> {
+/// nobody said anything else about: the leftmost column is the one work starts in. A card with
+/// a day to appear on is out of the board's sight until then, and takes that place all the same.
+pub(super) fn new_task(title: &str, appears_on: Option<Date>) -> Result<()> {
     let repo_path = repo_of_this_shell()?;
     let board = store::read_board(&repo_path);
     let column = board
@@ -109,7 +131,8 @@ pub(super) fn new_task(title: &str) -> Result<()> {
         .id
         .clone();
 
-    let task_id = store::create_task(&repo_path, title, &column, ColumnEnd::Top)?;
+    let task_id =
+        store::create_task_appearing_on(&repo_path, title, &column, ColumnEnd::Top, appears_on)?;
     println!("{}", store::task_dir(&repo_path, &task_id)?.display());
     Ok(())
 }
@@ -123,7 +146,10 @@ fn repo_of_this_shell() -> Result<PathBuf> {
 }
 
 pub(super) fn list_tasks() -> Result<()> {
-    print!("{}", list(&repo_of_this_shell()?)?);
+    print!(
+        "{}",
+        list(&repo_of_this_shell()?, appears_on::today_here())?
+    );
     Ok(())
 }
 
@@ -132,14 +158,21 @@ pub(super) fn list_tasks() -> Result<()> {
 /// `new` prints and what an agent works from, and the card's title.
 ///
 /// A column's name starts its line and a card's is set in from it, so the two are told
-/// apart by `grep`. A column with no cards is still named.
-fn list(repo_path: &Path) -> Result<String> {
+/// apart by `grep`. A column with no cards is still named. A card the board leaves out until a
+/// day still to come is listed all the same, with the day after its title.
+fn list(repo_path: &Path, today: Date) -> Result<String> {
     let mut columns: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for (column, cards) in service::cards_by_column(repo_path)? {
         let mut listed = Vec::new();
         for (task_id, metadata) in cards {
             let folder = store::task_dir(repo_path, &task_id)?;
-            listed.push((folder.display().to_string(), metadata.title));
+            let title = match metadata.appears_on {
+                Some(day) if appears_on::still_to_come(Some(day), today) => {
+                    format!("{}  (appears on {day})", metadata.title)
+                }
+                _ => metadata.title,
+            };
+            listed.push((folder.display().to_string(), title));
         }
         columns.push((column.label, listed));
     }
@@ -290,13 +323,47 @@ mod tests {
         let widest = folder(&races).len();
 
         assert_eq!(
-            list(&repo).expect("expected the list"),
+            list(&repo, appears_on::today_here()).expect("expected the list"),
             format!(
                 "TODO\n  {}  Fix the races\nIN PROGRESS\nDONE\nlater\n  {:<widest$}  Step 2\n  {:<widest$}  Step 10\n",
                 folder(&races),
                 folder(&step_2),
                 folder(&step_10),
             )
+        );
+    }
+
+    /// A card made ahead of time is listed from the start, with its day until that day comes.
+    #[test]
+    fn a_card_still_to_come_is_listed_with_its_day() {
+        let repo = board("appears-on");
+        let day = appears_on::parse_day("2026-11-02").expect("expected a day");
+        let renew = store::create_task_appearing_on(
+            &repo,
+            "Renew the certificate",
+            &ColumnId::new("big"),
+            ColumnEnd::Top,
+            Some(day),
+        )
+        .expect("expected the card to be made");
+        let folder = store::task_dir(&repo, &renew)
+            .expect("expected the task's folder")
+            .display()
+            .to_string();
+        let listed_on = |today: &str| {
+            list(&repo, appears_on::parse_day(today).expect("expected a day"))
+                .expect("expected the list")
+        };
+
+        assert_eq!(
+            listed_on("2026-11-01"),
+            format!(
+                "TODO\n  {folder}  Renew the certificate  (appears on 2026-11-02)\nIN PROGRESS\nDONE\nlater\n"
+            )
+        );
+        assert_eq!(
+            listed_on("2026-11-02"),
+            format!("TODO\n  {folder}  Renew the certificate\nIN PROGRESS\nDONE\nlater\n")
         );
     }
 

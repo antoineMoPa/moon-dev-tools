@@ -3,6 +3,9 @@
 //! [`store`] is the `.moontasks` folder on disk and [`service`] is everything the board
 //! do to it.
 
+// The day a card made ahead of time shows up on, which the server reads the board against.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod appears_on;
 pub(crate) mod column_sort;
 pub(crate) mod remote_tracker;
 pub(crate) mod review_request;

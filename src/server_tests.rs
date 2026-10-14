@@ -1,6 +1,7 @@
 //! The HTTP contract a remote window reviews through: the routes it calls over the network,
 //! which a change made only against the in-process backend would otherwise break unnoticed.
 
+mod appears_on;
 mod auth;
 mod board_task;
 mod columns;

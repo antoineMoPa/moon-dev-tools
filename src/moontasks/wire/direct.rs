@@ -102,6 +102,7 @@ mod tests {
                 ),
             ],
             made_by: None,
+            appears_on: None,
         };
 
         assert_eq!(

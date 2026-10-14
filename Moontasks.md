@@ -214,12 +214,14 @@ delete `.moontasks/.gitignore` and commit the folder; it will not come back.
 
 ```bash
 moon tasks new "fix the races"
+moon tasks new --appears-on 2026-11-02 "renew the certificate"
 moon tasks list
 moon tasks move IN PROGRESS
 ```
 
-`list` prints the board's columns by name and, under each, its cards: the task's folder and
-its title. `move` is run from a task's shell and moves that task's card to the column the
+`--appears-on` keeps the card off the board until that day; it is `"appears_on"` in its
+`metadata.json`. `list` prints the board's columns by name and, under each, its cards: the
+task's folder and its title, and the day of a card still to come. `move` is run from a task's shell and moves that task's card to the column the
 board shows under that name.
 
 ## The wire

@@ -371,6 +371,7 @@ fn a_finished_agent_is_cleared_without_moving_its_task() {
             work_tree: None,
         }],
         made_by: None,
+        appears_on: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -410,6 +411,7 @@ fn a_finished_agent_leaves_a_task_where_the_user_put_it() {
             work_tree: None,
         }],
         made_by: None,
+        appears_on: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -450,6 +452,7 @@ fn a_run_held_by_another_running_moon_is_left_alone_until_that_moon_exits() {
             work_tree: None,
         }],
         made_by: None,
+        appears_on: None,
     };
     let state = crate::server::build_state(std::sync::Arc::new(std::sync::Mutex::new(
         std::time::Instant::now(),
@@ -559,6 +562,7 @@ fn run_of_session(session_id: &str) -> TaskMetadata {
             work_tree: None,
         }],
         made_by: None,
+        appears_on: None,
     }
 }
 
