@@ -57,6 +57,8 @@ pub(super) enum RowKind {
     /// Pick the name typed on the line as a file of the folder listed. `replaces` when a file
     /// of that name is already there.
     NewName { replaces: bool },
+    /// Make a folder of the name typed on the line, in the folder listed, and pick it.
+    NewFolder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,7 +127,16 @@ pub(super) fn rows_for(purpose: &PickPurpose, listing: &FolderListing, typed: &s
                 hidden: false,
             });
         }
-        Picks::File | Picks::Folder | Picks::NewName => {}
+        Picks::NewFolder
+            if !typed.is_empty() && !listing.entries.iter().any(|entry| entry.name == typed) =>
+        {
+            rows.push(Row {
+                kind: RowKind::NewFolder,
+                name: typed.to_string(),
+                hidden: false,
+            });
+        }
+        Picks::File | Picks::Folder | Picks::NewName | Picks::NewFolder => {}
     }
     if !narrows && parent_line(&listing.folder).is_some() {
         rows.push(Row::about_the_folder(RowKind::Up));
@@ -180,6 +191,7 @@ pub(super) fn title_of(row: &Row) -> String {
         RowKind::ThisFolder => "open this folder".to_string(),
         RowKind::NewName { replaces: false } => format!("save as {}", row.name),
         RowKind::NewName { replaces: true } => format!("replace {}", row.name),
+        RowKind::NewFolder => format!("create {}{SEPARATOR}", row.name),
     }
 }
 
@@ -192,6 +204,8 @@ pub(super) enum Picks {
     Folder,
     /// A name for a file, in a folder that is there.
     NewName,
+    /// A name for a folder nothing is at yet, in a folder that is there.
+    NewFolder,
 }
 
 #[cfg(test)]
@@ -307,6 +321,27 @@ mod tests {
         );
         // A folder's own name goes into it rather than being saved over it.
         assert_eq!(titles(&rows_for(&purpose, &listing, "src")), ["src/"]);
+    }
+
+    /// A new project's folder: a name nothing has is offered to be made, and one already there
+    /// is not - an existing folder is opened, not started over.
+    #[test]
+    fn a_new_folder_is_offered_only_under_a_free_name() {
+        let listing = listing(
+            "/code",
+            &[("moon", EntryKind::Folder), ("notes.md", EntryKind::File)],
+        );
+        let purpose = PickPurpose::NewProjectFolder;
+
+        assert_eq!(
+            titles(&rows_for(&purpose, &listing, "sun")),
+            ["create sun/"]
+        );
+        assert_eq!(titles(&rows_for(&purpose, &listing, "moon")), ["moon/"]);
+        assert_eq!(
+            titles(&rows_for(&purpose, &listing, "notes.md")),
+            Vec::<String>::new()
+        );
     }
 
     fn file_purpose() -> PickPurpose {

@@ -32,6 +32,12 @@ pub(crate) enum EntryKind {
     File,
 }
 
+/// The folder a project started from nothing is made at - an absolute path nothing is at yet.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct NewProjectFolderRequest {
+    pub(crate) path: String,
+}
+
 /// The file to place - see [`FilePlaced`]. An absolute path of the server's disk.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]

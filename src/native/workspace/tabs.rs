@@ -87,9 +87,7 @@ impl App {
             if self.model.restart_on_shell_exit.as_deref() == Some(terminal_id.as_str()) {
                 self.model.restart_on_shell_exit = None;
             }
-            self.terminals.remove(&terminal_id);
-            self.model.terminal_names.remove(&terminal_id);
-            self.terminal_errors.remove(&terminal_id);
+            self.let_go_of_shell(&terminal_id);
             if self
                 .model
                 .renaming_tab

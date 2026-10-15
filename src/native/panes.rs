@@ -474,6 +474,18 @@ impl PaneView<Pane> for App {
             self.read_terminal_name(terminal_id);
         }
         let title = match pane {
+            // The one tab tasks' agents are shown in, and the one their shells are, named after
+            // the one in it now.
+            Pane::Terminal {
+                task_id: Some(_),
+                command: Some(_),
+                ..
+            } => format!("Agent - {}", self.shell_tab_title(pane)),
+            Pane::Terminal {
+                task_id: Some(_),
+                command: None,
+                ..
+            } => format!("Shell - {}", self.shell_tab_title(pane)),
             Pane::Terminal { .. } => self.shell_tab_title(pane),
             // The task's title as the board has it now, so a task renamed after its start
             // window opened is renamed on the tab too.

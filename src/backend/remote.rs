@@ -145,6 +145,15 @@ impl Backend for RemoteBackend {
         self.get(&format!("/api/folder?path={encoded}"))
     }
 
+    fn create_project_folder(&self, path: &str) -> Result<()> {
+        self.post(
+            "/api/folder/new-project",
+            &crate::api::folders::NewProjectFolderRequest {
+                path: path.to_string(),
+            },
+        )
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn place_file(&self, path: &str) -> Result<crate::api::folders::FilePlaced> {
         self.post_json(

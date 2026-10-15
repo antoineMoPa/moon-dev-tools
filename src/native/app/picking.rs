@@ -19,6 +19,13 @@ impl App {
     /// the next one is usually a sibling. The pick goes to [`App::open_picked_folder`] when
     /// it is made.
     pub(super) fn pick_repo_folder(&mut self) {
+        let folder = self.folder_beside_the_last_project();
+        self.ask_for_a_pick(PickPurpose::RepoFolder, &folder);
+    }
+
+    /// The folder holding the last project opened, where the next one is usually found or
+    /// made; home when there is none.
+    fn folder_beside_the_last_project(&self) -> String {
         let beside_the_last_project = self
             .model
             .settings
@@ -30,11 +37,31 @@ impl App {
                 recent.parent().unwrap_or(recent).to_path_buf()
             });
 
-        let folder = match &beside_the_last_project {
+        match &beside_the_last_project {
             Some(folder) => folder.display().to_string(),
             None => file_picker::HOME.to_string(),
-        };
-        self.ask_for_a_pick(PickPurpose::RepoFolder, &folder);
+        }
+    }
+
+    /// Ask where a project started from nothing goes, beside the last project like a pick of
+    /// one to open. The folder is made when it is named - see [`App::create_project`].
+    pub(super) fn pick_new_project_folder(&mut self) {
+        let folder = self.folder_beside_the_last_project();
+        self.ask_for_a_pick(PickPurpose::NewProjectFolder, &folder);
+    }
+
+    /// Make the new project's folder and its git repo, then open the window on it.
+    pub(crate) fn create_project(&mut self, repo_path: String) {
+        self.model.stage = Stage::Opening;
+        let made = repo_path.clone();
+        self.open_review_made_by(
+            OpenSessionRequest {
+                repo_path,
+                diff_target: None,
+                active_commit: None,
+            },
+            move |backend| backend.create_project_folder(&made),
+        );
     }
 
     /// Open the window on a folder: the one picked, typed, or clicked among the recent ones on

@@ -537,6 +537,55 @@ fn a_recent_project_opens_from_the_middle_of_its_row() {
     );
 }
 
+/// New project on the launch screen makes the folder named, with a git repo in it, and opens
+/// the window on it.
+#[test]
+fn a_new_project_is_made_and_opened_from_the_launch_screen() {
+    let enclosing =
+        std::env::temp_dir().join(format!("moonreview-ui-{}-new-project", std::process::id()));
+    let _ = fs::remove_dir_all(&enclosing);
+    fs::create_dir_all(&enclosing).expect("failed to create the enclosing folder");
+    let folder = enclosing.join("sun");
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let mut app = App::new(
+        egui::Context::default(),
+        Launch {
+            backend: Arc::new(LocalBackend::new(state)),
+            open: None,
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let mut asked = false;
+    let opened_on = Arc::new(Mutex::new(None));
+    let opened_in_ui = Arc::clone(&opened_on);
+    let made = folder.display().to_string();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .build_ui(move |ui| {
+            if !asked && matches!(app.model.stage, crate::native::model::Stage::Prompt { .. }) {
+                app.create_project(made.clone());
+                asked = true;
+            }
+            app.draw(ui);
+            if matches!(app.model.stage, crate::native::model::Stage::Ready) {
+                *opened_in_ui.lock().expect("poisoned") = app.model.project_path.clone();
+            }
+        });
+
+    let opened = super::settle(&mut harness, || {
+        opened_on.lock().expect("poisoned").is_some()
+    });
+    let _ = fs::remove_dir_all(&enclosing);
+    assert!(opened, "expected the window to open on the new project");
+    assert_eq!(
+        *opened_on.lock().expect("poisoned"),
+        Some(folder.display().to_string())
+    );
+}
+
 /// A shell and a board need no repo, so a window opened on a plain folder opens on that
 /// folder rather than stopping to ask for a repo that is not the point.
 #[test]

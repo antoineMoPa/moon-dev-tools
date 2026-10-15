@@ -204,6 +204,10 @@ fn protected_routes() -> Router<Served> {
         // like every route here, and no more than a logged-in window's shell tab shows it -
         // see `folder_routes`. It lists; reading and writing stay with the session routes.
         .route("/api/folder", get(folder_routes::list_folder))
+        .route(
+            "/api/folder/new-project",
+            post(folder_routes::create_project_folder),
+        )
         .route("/api/session/{session_id}/state", get(session_state))
         .route(
             "/api/session/{session_id}/submodules",

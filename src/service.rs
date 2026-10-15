@@ -19,7 +19,7 @@ pub(crate) use files::{
     blame_session_file, create_session_file, find_session_files, search_session_contents,
     session_file, session_file_at, write_session_file,
 };
-pub(crate) use folders::{list_folder, place_file, place_file_for_profile};
+pub(crate) use folders::{create_project_folder, list_folder, place_file, place_file_for_profile};
 pub(crate) use staging::{
     discard_hunk, discard_hunks, stage_all, stage_file, stage_hunk, stage_selection, unstage_file,
     unstage_hunk,

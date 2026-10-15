@@ -97,6 +97,14 @@ impl App {
         );
     }
 
+    /// Drop this window's view of a shell - its emulator, name and error - leaving the shell
+    /// itself to whoever ends it.
+    pub(crate) fn let_go_of_shell(&mut self, terminal_id: &str) {
+        self.terminals.remove(terminal_id);
+        self.model.terminal_names.remove(terminal_id);
+        self.terminal_errors.remove(terminal_id);
+    }
+
     /// Turn shells that finished attaching into live panes. They arrive from a worker thread,
     /// because a remote one opens a socket; the emulator itself is `!Send`, so it is built here.
     pub(crate) fn drain_attachments(&mut self) {

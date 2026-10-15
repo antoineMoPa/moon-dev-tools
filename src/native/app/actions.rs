@@ -32,12 +32,26 @@ const PROJECT_SAVE: &str = "project-save";
 
 impl App {
     pub(super) fn open_review(&mut self, open: OpenSessionRequest) {
+        self.open_review_made_by(open, |_| Ok(()));
+    }
+
+    /// The same, with `make` run on the backend first to make what is opened - a new
+    /// project's folder - so a folder that cannot be made is said on the launch screen the way
+    /// one that cannot be opened is.
+    pub(super) fn open_review_made_by(
+        &mut self,
+        open: OpenSessionRequest,
+        make: impl Fn(&dyn crate::backend::Backend) -> anyhow::Result<()> + Send + 'static,
+    ) {
         let frame = self.frame;
         // Only remembered once the review is actually open: a path that turns out not to be a
         // repo has no business on the launch screen's list.
         let repo_path = open.repo_path.clone();
         self.tasks.spawn(
-            move |backend| backend.open_session(open.clone()),
+            move |backend| {
+                make(backend)?;
+                backend.open_session(open.clone())
+            },
             move |model, result| match result {
                 Ok(opened) => {
                     model.root_session_id = opened.session_id.clone();

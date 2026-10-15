@@ -37,6 +37,9 @@ pub(crate) const HOME: &str = "~";
 pub(crate) enum PickPurpose {
     /// The folder a window opens on, asked for by its launch screen.
     RepoFolder,
+    /// Where a project started from nothing goes and what its folder is called, asked for by
+    /// the launch screen's New project.
+    NewProjectFolder,
     // The two below are the file tabs' own, which a browser's window does not open by picking
     // yet: its File menu has neither item.
     /// A file to read and edit in a tab.
@@ -57,6 +60,7 @@ impl PickPurpose {
     fn picks(&self) -> Picks {
         match self {
             Self::RepoFolder => Picks::Folder,
+            Self::NewProjectFolder => Picks::NewFolder,
             #[cfg(not(target_arch = "wasm32"))]
             Self::FileToEdit => Picks::File,
             #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +71,7 @@ impl PickPurpose {
     /// The name a new file is offered under, for the one purpose that names one.
     fn suggested_name(&self) -> Option<&str> {
         match self {
-            Self::RepoFolder => None,
+            Self::RepoFolder | Self::NewProjectFolder => None,
             #[cfg(not(target_arch = "wasm32"))]
             Self::FileToEdit => None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -79,6 +83,7 @@ impl PickPurpose {
     fn asks(&self) -> &'static str {
         match self {
             Self::RepoFolder => "Choose a folder to open",
+            Self::NewProjectFolder => "Name the new project's folder",
             #[cfg(not(target_arch = "wasm32"))]
             Self::FileToEdit => "Open a file to edit",
             #[cfg(not(target_arch = "wasm32"))]
@@ -216,6 +221,7 @@ struct Pick {
 fn picked(app: &mut App, purpose: PickPurpose, pick: Pick) {
     match purpose {
         PickPurpose::RepoFolder => app.open_picked_folder(pick.path),
+        PickPurpose::NewProjectFolder => app.create_project(pick.path),
         #[cfg(not(target_arch = "wasm32"))]
         PickPurpose::FileToEdit => app.open_picked_file(std::path::PathBuf::from(pick.path)),
         #[cfg(not(target_arch = "wasm32"))]

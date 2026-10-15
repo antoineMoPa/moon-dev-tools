@@ -137,6 +137,10 @@ impl Backend for LocalBackend {
         service::list_folder(folder)
     }
 
+    fn create_project_folder(&self, path: &str) -> Result<()> {
+        service::create_project_folder(path)
+    }
+
     fn place_file(&self, path: &str) -> Result<crate::api::folders::FilePlaced> {
         service::place_file(&self.state, path)
     }

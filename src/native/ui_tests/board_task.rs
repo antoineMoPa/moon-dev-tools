@@ -108,3 +108,51 @@ fn a_shell_started_over_the_columns_is_the_boards_own() {
     // Its row over the columns: named after the board task, the way a task's shell is after its task.
     assert!(harness.query_by_label("board shell - 1").is_some());
 }
+
+/// A second task's agent opened from the board takes the place of the first in the one Agent
+/// tab, rather than opening a tab of its own - and tasks' plain shells share a Shell tab the
+/// same way, beside it.
+#[test]
+fn task_agents_share_one_agent_tab_and_shells_one_shell_tab() {
+    let fixture = seeded_fixture("one-agent-tab");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let mut asked = 0;
+    let shells: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let shells_in_ui = Arc::clone(&shells);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui(move |ui| {
+            if asked < 4 && matches!(app.model.stage, crate::native::model::Stage::Ready) {
+                asked += 1;
+                let runs_an_agent = asked % 2 == 1;
+                app.open_pane(crate::native::panes::OpenPaneRequest::AttachTerminal {
+                    terminal_id: format!(
+                        "{}-{asked}",
+                        if runs_an_agent { "agent" } else { "shell" }
+                    ),
+                    command: runs_an_agent.then_some(crate::api::AgentKind::Claude),
+                    task_id: Some(format!("task-{asked}")),
+                });
+            }
+            app.draw(ui);
+            *shells_in_ui.lock().expect("poisoned") = app
+                .model
+                .layout
+                .panes()
+                .filter_map(|(_, pane)| match pane {
+                    Pane::Terminal { terminal_id, .. } => Some(terminal_id.clone()),
+                    _ => None,
+                })
+                .collect();
+        });
+
+    assert!(
+        settle(&mut harness, || {
+            let mut open = shells.lock().expect("poisoned").clone();
+            open.sort();
+            open == vec!["agent-3".to_string(), "shell-4".to_string()]
+        }),
+        "one Agent tab and one Shell tab, each showing the one opened last, got {:?}",
+        shells.lock().expect("poisoned")
+    );
+}

@@ -37,6 +37,7 @@ impl App {
         let picks_folders = self.backend().reads_this_machine();
         let mut open_path = None;
         let mut pick_folder = false;
+        let mut new_project = false;
 
         let frame = self.frame;
         ui.vertical_centered(|ui| {
@@ -84,12 +85,13 @@ impl App {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 const BUTTON: egui::Vec2 = egui::vec2(120.0, 24.0);
-                // One button where the repo is browsed for, and two where its path is
-                // typed: the one that opens what was typed, and the picker's beside it.
-                let buttons = match &typed {
-                    None => BUTTON.x,
-                    Some(_) => 2.0 * BUTTON.x + ui.spacing().item_spacing.x,
+                // The picker's button and New project's where the repo is browsed for, and
+                // the one that opens what was typed before them where its path is typed.
+                let count = match &typed {
+                    None => 2.0,
+                    Some(_) => 3.0,
                 };
+                let buttons = count * BUTTON.x + (count - 1.0) * ui.spacing().item_spacing.x;
                 ui.add_space((ui.available_width() - buttons).max(0.0) / 2.0);
 
                 match &typed {
@@ -115,6 +117,10 @@ impl App {
                         .clicked();
                     }
                 }
+                // A folder made where the picker says, with a git repo in it, and opened.
+                new_project =
+                    widgets::clickable(ui.add(egui::Button::new("New project…").min_size(BUTTON)))
+                        .clicked();
             });
 
             if let Some(recent) = draw_recent_projects(ui, self.model.settings.as_ref(), &palette) {
@@ -125,6 +131,9 @@ impl App {
         // Both deferred: each takes `self`.
         if pick_folder {
             self.pick_repo_folder();
+        }
+        if new_project {
+            self.pick_new_project_folder();
         }
         if let Some(repo_path) = open_path {
             self.open_picked_folder(repo_path);

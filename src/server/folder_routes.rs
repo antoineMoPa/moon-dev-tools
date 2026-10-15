@@ -12,7 +12,7 @@ use axum::{
 use crate::{
     api::{
         AppError, AppState, FolderQuery,
-        folders::{FilePlaced, FolderListing, PlaceFileRequest},
+        folders::{FilePlaced, FolderListing, NewProjectFolderRequest, PlaceFileRequest},
     },
     service,
 };
@@ -37,6 +37,23 @@ pub(super) async fn list_folder(
     let person = profiles.session_owner(&user)?.person;
     let listing = for_person(person, move || service::list_folder(&query.path)).await?;
     Ok(Json(listing))
+}
+
+/// `POST /api/folder/new-project`: a new folder with a git repo in it, for the launch screen's
+/// New project. Made as whoever the request was let in as, so the folder is theirs.
+pub(super) async fn create_project_folder(
+    State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
+    Json(request): Json<NewProjectFolderRequest>,
+) -> Result<(), AppError> {
+    mark_activity(&state);
+    let person = profiles.session_owner(&user)?.person;
+    for_person(person, move || {
+        service::create_project_folder(&request.path)
+    })
+    .await?;
+    Ok(())
 }
 
 /// `POST /api/session/place-file`: a session on the project holding a file, and the file's

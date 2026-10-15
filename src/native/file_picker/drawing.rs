@@ -213,6 +213,10 @@ fn act_on(app: &mut App, row: Row) {
             path: rows::join(&folder, &row.name),
             is_there: replaces,
         },
+        RowKind::NewFolder => super::Pick {
+            path: rows::join(&folder, &row.name),
+            is_there: false,
+        },
     };
     let picker = app.model.file_picker.take().expect("just borrowed");
     super::picked(app, picker.purpose, pick);
@@ -317,7 +321,9 @@ fn draw_row(
     let mut text_width = rect.width() - 2.0 * ROW_PADDING;
     let means = match row.kind {
         RowKind::Up => rows::parent_line(folder),
-        RowKind::ThisFolder | RowKind::NewName { .. } => Some(rows::folder_line(folder)),
+        RowKind::ThisFolder | RowKind::NewName { .. } | RowKind::NewFolder => {
+            Some(rows::folder_line(folder))
+        }
         RowKind::Folder | RowKind::File => None,
     };
     if let Some(means) = means {

@@ -191,6 +191,16 @@ impl App {
                     |pane| matches!(pane, Pane::Terminal { terminal_id: open, .. } if *open == terminal_id),
                 ) {
                     Some((pane, _)) => self.model.layout.focus_pane(pane),
+                    // A task's agent goes into the one Agent tab, and a task's plain shell into
+                    // the one Shell tab - the board task's as well as a card's. What was there
+                    // before is let go of rather than ended: they are switched between from
+                    // their tasks on the board, not by finding their tab.
+                    None if task_id.is_some()
+                        && let Some(task_tab) = self.task_shell_tab(command.is_some()) =>
+                    {
+                        self.show_in_task_tab(task_tab, terminal_id.clone(), command, task_id);
+                        self.attach_terminal(&terminal_id);
+                    }
                     None => {
                         // A task's shell is one of that task's tabs, so it goes where the rest
                         // of them go: the column beside the board. Left to `WithOtherShells` it
@@ -481,6 +491,61 @@ impl App {
             }
             None => add_right_column(&mut self.model.layout, self.model.columns_fit, pane),
         }
+    }
+
+    /// The tab tasks' agents are shown in, or the one their plain shells are: the first shell
+    /// tab that belongs to a task and runs an agent, or does not.
+    fn task_shell_tab(&self, runs_an_agent: bool) -> Option<PaneId> {
+        self.model
+            .layout
+            .find_pane(|pane| {
+                matches!(
+                    pane,
+                    Pane::Terminal {
+                        task_id: Some(_),
+                        command,
+                        ..
+                    } if command.is_some() == runs_an_agent
+                )
+            })
+            .map(|(pane, _)| pane)
+    }
+
+    /// Put another task's agent or shell in the Agent or Shell tab and bring it forward. The
+    /// one shown there before keeps running on the server, as it does when its tab is closed.
+    fn show_in_task_tab(
+        &mut self,
+        task_tab: PaneId,
+        terminal_id: String,
+        command: Option<crate::api::AgentKind>,
+        task_id: Option<String>,
+    ) {
+        let shown = Pane::Terminal {
+            terminal_id,
+            command,
+            task_id,
+        };
+        let Some(Pane::Terminal {
+            terminal_id: replaced,
+            ..
+        }) = self
+            .model
+            .layout
+            .pane_mut(task_tab)
+            .map(|pane| std::mem::replace(pane, shown))
+        else {
+            panic!("the Agent and Shell tabs are a task's shells");
+        };
+        if self
+            .model
+            .renaming_tab
+            .as_ref()
+            .is_some_and(|rename| rename.pane_id == task_tab)
+        {
+            self.model.renaming_tab = None;
+        }
+        self.let_go_of_shell(&replaced);
+        self.model.layout.focus_pane(task_tab);
     }
 
     /// The start window open on this task, if one is.

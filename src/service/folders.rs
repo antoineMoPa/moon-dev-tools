@@ -58,6 +58,19 @@ pub(crate) fn list_folder(path: &str) -> Result<FolderListing> {
     Ok(FolderListing { folder, entries })
 }
 
+/// Make the folder of a project started from nothing, and a git repo in it, for the launch
+/// screen's New project. The path is absolute; its parent has to be there, and nothing at the
+/// path itself - an existing folder is opened, not started over.
+pub(crate) fn create_project_folder(path: &str) -> Result<()> {
+    let folder = Path::new(path);
+    if !folder.is_absolute() {
+        bail!("{path} is not an absolute path");
+    }
+    fs::create_dir(folder).map_err(|error| anyhow!("{path} cannot be made: {error}"))?;
+    crate::git::run_git_no_output(folder, &["init"])
+        .with_context(|| format!("{path} was made, but git init failed in it"))
+}
+
 /// The folder a typed path names, with `~` read as the home of whoever is listing.
 fn folder_named(path: &str) -> Result<PathBuf> {
     let named = Path::new(path);
@@ -212,5 +225,19 @@ mod tests {
             format!("{error}").contains("cannot be listed"),
             "got {error}"
         );
+    }
+
+    /// A new project's folder is made with a git repo in it, and one already there is refused
+    /// rather than started over.
+    #[test]
+    fn a_new_project_folder_is_a_repo_and_is_never_made_twice() {
+        let folder = scratch_folder("new-project").join("sun");
+        let path = folder.display().to_string();
+
+        create_project_folder(&path).expect("expected the folder to be made");
+
+        assert!(crate::git::is_git_repo(&folder));
+        let error = create_project_folder(&path).expect_err("expected a refusal");
+        assert!(format!("{error}").contains("cannot be made"), "got {error}");
     }
 }
