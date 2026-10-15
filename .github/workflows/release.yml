@@ -47,9 +47,17 @@ jobs:
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git submodule update --init --recursive
-      - name: Check the tag is the crate's version
-        if: matrix.target != inputs.local_target && !inputs.build_only
-        run: test "$GITHUB_REF" = "refs/tags/v$(bash scripts/_internal/version.sh)"
+      - name: Read the version
+        id: version
+        if: matrix.target != inputs.local_target
+        env:
+          BUILD_ONLY: ${{ inputs.build_only }}
+        run: |
+          tag="v$(bash scripts/_internal/version.sh)"
+          if [ "$BUILD_ONLY" != true ]; then
+            test "$GITHUB_REF" = "refs/tags/$tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Install Rust
         if: matrix.target != inputs.local_target
         run: |
@@ -66,7 +74,9 @@ jobs:
         if: matrix.target != inputs.local_target
         with:
           name: moonreview-${{ matrix.target }}
-          path: target/release-artifacts/*/moonreview-${{ matrix.target }}.tar.gz*
+          # The folder named in full, so the artifact holds the files without it, and the upload
+          # job can hand them to the release as they are.
+          path: target/release-artifacts/${{ steps.version.outputs.tag }}/moonreview-${{ matrix.target }}.tar.gz*
           if-no-files-found: error
           retention-days: 7
   upload:
