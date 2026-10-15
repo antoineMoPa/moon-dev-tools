@@ -20,6 +20,7 @@ if ! git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>
     exit 1
 fi
 
+gh auth status
 git push --dry-run --follow-tags
 
 # The release version is the crate's, so the bump is a commit on Cargo.toml and its lockfile
@@ -34,5 +35,9 @@ git commit -am "v$NEXT_VERSION"
 git tag -a "v$NEXT_VERSION" -m "v$NEXT_VERSION"
 
 git push --follow-tags
+# A draft until bin-release.sh has every target's archive on it, so install.sh, which reads the
+# latest release, never meets one with an archive missing.
+gh release create "v$NEXT_VERSION" --verify-tag --draft --title "v$NEXT_VERSION" \
+    --notes "moon dev tools $NEXT_VERSION"
 bash scripts/_internal/clean-builds-of-package.sh
 bash scripts/bin-release.sh

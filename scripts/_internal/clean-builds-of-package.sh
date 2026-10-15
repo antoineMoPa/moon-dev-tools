@@ -21,8 +21,6 @@ BUILDS=(
     "--release"
     "--target-dir target/web-build --target $WASM_TARGET"
     "--target-dir target/web-build --target $WASM_TARGET --release"
-    "--target-dir target/docker-linux --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --release"
-    "--target-dir target/docker-linux/web-build --target $WASM_TARGET --release"
 )
 
 for build in "${BUILDS[@]}"; do

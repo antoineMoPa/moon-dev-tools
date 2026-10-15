@@ -1,0 +1,89 @@
+# Release - builds the targets scripts/bin-release.sh did not build on the machine publishing,
+# and uploads them to that version's draft release.
+name: Release
+run-name: Release ${{ github.ref_name }} (built locally ${{ inputs.local_target }})
+on:
+  workflow_dispatch:
+    inputs:
+      build_only:
+        description: Build the archives as workflow artifacts, without uploading to a release
+        type: boolean
+        default: false
+      local_target:
+        description: Target the publishing machine already built and uploaded
+        required: true
+        type: choice
+        options:
+          - aarch64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          # 22.04 for its older glibc (2.35), which the executable then asks no newer than.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        if: matrix.target != inputs.local_target
+        with:
+          persist-credentials: false
+      # .gitmodules names the submodules by SSH, which a runner has no key for. They are public.
+      - name: Check out submodules
+        if: matrix.target != inputs.local_target
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive
+      - name: Check the tag is the crate's version
+        if: matrix.target != inputs.local_target && !inputs.build_only
+        run: test "$GITHUB_REF" = "refs/tags/v$(bash scripts/_internal/version.sh)"
+      - name: Install Rust
+        if: matrix.target != inputs.local_target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update --target wasm32-unknown-unknown
+          rustup default 1.95.0
+      - uses: mlugg/setup-zig@v2
+        if: matrix.target != inputs.local_target
+        with:
+          version: 0.15.2
+      - name: Build and package
+        if: matrix.target != inputs.local_target
+        run: bash scripts/_internal/build-release.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        if: matrix.target != inputs.local_target
+        with:
+          name: moonreview-${{ matrix.target }}
+          path: target/release-artifacts/*/moonreview-${{ matrix.target }}.tar.gz*
+          if-no-files-found: error
+          retention-days: 7
+  upload:
+    if: ${{ !inputs.build_only }}
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
+          gh release upload "$GITHUB_REF_NAME" release-artifacts/* --clobber

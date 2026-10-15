@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "THIRD_PARTY_LICENSES.txt"
 ROOT_PACKAGE = "moon-review"
 
-# The targets the release is built for - see scripts/_internal/build-release.sh.
+# The targets the release is built for - see .github/workflows/release.yml.
 RELEASE_TARGETS = [
     "aarch64-apple-darwin",
     "x86_64-unknown-linux-gnu",
