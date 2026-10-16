@@ -202,9 +202,18 @@ fn the_cross_on_the_status_bar_puts_the_message_away_without_opening_the_log() {
     // Act: a click on the cross, at the right end of the strip - in from the window's edge by
     // its 8 point border, the strip's 10 point margin and half the 12 point cross, and up by
     // the border and half the 24 point strip - and left of the squares of the four spaces,
-    // which take the very end. The toast saying the same thing stands above
-    // the strip, so it is not what takes the click.
-    click_at(&mut harness, egui::pos2(WINDOW.x - 24.0 - SPACE_SQUARES_WIDTH, WINDOW.y - 20.0));
+    // which take the very end, and of the gap kept before them. The toast saying the same
+    // thing stands above the strip, so it is not what takes the click.
+    click_at(
+        &mut harness,
+        egui::pos2(
+            WINDOW.x
+                - 24.0
+                - SPACE_SQUARES_WIDTH
+                - crate::native::status_bar::GAP_BEFORE_SPACES,
+            WINDOW.y - 20.0,
+        ),
+    );
     harness.run_steps(3);
 
     // Assert

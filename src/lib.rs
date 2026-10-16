@@ -11,6 +11,8 @@
 // left in keep their server halves in submodules gated the same way.
 #[cfg(not(target_arch = "wasm32"))]
 mod agent;
+#[cfg(not(target_arch = "wasm32"))]
+mod agent_programs;
 mod agent_sessions;
 mod api;
 pub(crate) mod attention;
@@ -35,6 +37,8 @@ mod moontasks;
 #[cfg(not(target_arch = "wasm32"))]
 mod moved_hunks;
 mod native;
+#[cfg(not(target_arch = "wasm32"))]
+mod opencode;
 #[cfg(not(target_arch = "wasm32"))]
 mod pass_keys;
 mod project;

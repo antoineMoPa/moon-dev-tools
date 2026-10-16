@@ -59,6 +59,16 @@ pub(crate) struct Settings {
     /// entry for, or a line of shell of one's own.
     #[serde(default)]
     pub(crate) applications: Vec<Application>,
+    /// The model each agent is run with, for every job moon hands it - comments on a review
+    /// and the commit pane's message alike. Kept per agent because a model is one agent's
+    /// name for it: the one picked for Claude means nothing to Codex when the selector moves
+    /// on to it.
+    ///
+    /// An agent with no entry is told no model and runs with its own default - for
+    /// `opencode`, the one it was last set to on this machine. Picking another is the way out
+    /// when that one is not on the person's plan.
+    #[serde(default)]
+    pub(crate) agent_models: BTreeMap<AgentKind, String>,
 }
 
 /// A program with windows, as the person wrote it for the `moon` menu.
@@ -80,6 +90,11 @@ pub(crate) enum SettingsChange {
         project_path: String,
         color: WorkspaceColor,
     },
+    /// The model `agent` runs with, `None` for its own default.
+    SelectAgentModel {
+        agent: AgentKind,
+        model: Option<String>,
+    },
 }
 
 impl Settings {
@@ -97,7 +112,28 @@ impl Settings {
                 project_path,
                 color,
             } => self.mark_workspace(&project_path, color),
+            SettingsChange::SelectAgentModel { agent, model } => {
+                self.select_agent_model(agent, model)
+            }
         }
+    }
+
+    /// The model `agent` runs with, `None` when it runs with its own default.
+    pub(crate) fn agent_model(&self, agent: AgentKind) -> Option<&str> {
+        self.agent_models.get(&agent).map(String::as_str)
+    }
+
+    /// Going back to the agent's default takes the entry out rather than writing `null` into
+    /// it: the map is the picks somebody made.
+    fn select_agent_model(&mut self, agent: AgentKind, model: Option<String>) -> bool {
+        if self.agent_model(agent) == model.as_deref() {
+            return false;
+        }
+        match model {
+            Some(model) => self.agent_models.insert(agent, model),
+            None => self.agent_models.remove(&agent),
+        };
+        true
     }
 
     /// Put a project at the head of the recent list. Opening one that is already there moves
@@ -339,12 +375,13 @@ mod tests {
             recent_projects: Vec::new(),
             workspace_colors: BTreeMap::new(),
             applications: Vec::new(),
+            agent_models: BTreeMap::new(),
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[]}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[],"agent_models":{}}"#
         );
     }
 
@@ -418,6 +455,25 @@ mod tests {
             encoded,
             r#"{"mark_workspace":{"project_path":"/repos/one","color":"teal"}}"#
         );
+    }
+
+    /// Back to the default takes the pick out of the file.
+    #[test]
+    fn a_model_is_kept_per_agent_and_the_default_leaves_no_entry() {
+        let mut settings = Settings::default();
+
+        assert!(settings.apply(SettingsChange::SelectAgentModel {
+            agent: AgentKind::Claude,
+            model: Some("sonnet".to_string()),
+        }));
+        assert_eq!(settings.agent_model(AgentKind::Claude), Some("sonnet"));
+        assert_eq!(settings.agent_model(AgentKind::Codex), None);
+
+        assert!(settings.apply(SettingsChange::SelectAgentModel {
+            agent: AgentKind::Claude,
+            model: None,
+        }));
+        assert!(settings.agent_models.is_empty());
     }
 
     #[test]

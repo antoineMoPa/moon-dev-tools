@@ -150,7 +150,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 let can_ask = !running
                     && !writing_message
                     && state.as_ref().is_some_and(|state| {
-                        !state.staged_files.is_empty() && state.opencode_installed
+                        !state.staged_files.is_empty() && state.message_agent_installed
                     });
                 let use_ai =
                     widgets::clickable(ui.add_enabled(can_ask, egui::Button::new("Use AI")));
@@ -159,7 +159,8 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, session_id: &str
                 }
                 if !can_ask && !running && !writing_message {
                     use_ai.on_disabled_hover_text(
-                        "needs a staged change and opencode installed to write a message",
+                        "needs a staged change, and an installed agent picked in Settings, to \
+                         write a message",
                     );
                 }
 

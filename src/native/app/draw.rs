@@ -273,6 +273,9 @@ impl App {
                 MenuAction::OpenProject => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
                 }
+                MenuAction::OpenSettings => {
+                    CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Settings)
+                }
                 MenuAction::SwitchProject => CommandAction::SwitchProject,
                 MenuAction::OpenReview => {
                     self.open_root_review();

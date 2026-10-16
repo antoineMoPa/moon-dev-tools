@@ -173,7 +173,7 @@ pub(crate) struct ReviewCommentView {
     pub(crate) jumpable: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum AgentKind {
     #[default]

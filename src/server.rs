@@ -10,7 +10,7 @@ pub(crate) mod users;
 mod web_page;
 
 use board_routes::{
-    amend_review_request, change_settings, list_review_requests, settings,
+    amend_review_request, change_settings, list_review_requests, opencode_models, settings,
     add_column, attach_task_resource, board_task, create_task, delete_column, delete_task,
     delete_task_resource, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_wire, open_work_log, place_column, place_tasks,
@@ -276,6 +276,7 @@ fn protected_routes() -> Router<Served> {
         )
         .route("/api/session/{session_id}/board-task", get(board_task))
         .route("/api/settings", get(settings).post(change_settings))
+        .route("/api/opencode-models", get(opencode_models))
         .route(
             "/api/session/{session_id}/review-requests",
             get(list_review_requests),

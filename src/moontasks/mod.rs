@@ -198,6 +198,11 @@ pub(crate) struct ReviewRequestView {
     /// left to commit; it cannot tell that work already committed and pushed is finished with, so
     /// that is said from the row's menu and written on the line.
     pub(crate) done: bool,
+    /// Whether a commit with the line's subject is one of the last on the branch it is reviewed
+    /// on. The line asked for that commit and it has been made: work done in the repo since is
+    /// another commit, which its line - or `[Use AI]` - writes the message of.
+    #[serde(default)]
+    pub(crate) committed: bool,
     /// Whether the task this line is on has been moved to the column that finishes a task - see
     /// [`crate::moontasks::store::CLOSES_REVIEWS_IN`]. Finishing the card finishes its reviews
     /// without crossing a single line off, so this is read off where the card sits rather than
@@ -212,13 +217,13 @@ pub(crate) struct ReviewRequestView {
 }
 
 impl ReviewRequestView {
-    /// Whether the repo still wants looking at. Three ways to be finished with: the repo has
-    /// nothing left to commit, which the board can see for itself; someone crossed the line off
-    /// - work that is committed and pushed and wants no more looking at, which it cannot; or the
-    /// card was moved to the column that finishes a task, which finishes everything it was still
-    /// asking for at once.
+    /// Whether the repo still wants looking at. Four ways to be finished with: the repo has
+    /// nothing left to commit, which the board can see for itself; the commit the line wrote has
+    /// been made, which it can too; someone crossed the line off - work that is committed and
+    /// pushed and wants no more looking at, which it cannot; or the card was moved to the column
+    /// that finishes a task, which finishes everything it was still asking for at once.
     pub(crate) fn pending(&self) -> bool {
-        !self.done && !self.task_finished && self.changed_files > 0
+        !self.done && !self.committed && !self.task_finished && self.changed_files > 0
     }
 }
 

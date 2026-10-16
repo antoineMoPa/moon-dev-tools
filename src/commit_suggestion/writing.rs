@@ -1,4 +1,4 @@
-//! Asking `opencode` for the message, and reading its answer.
+//! Asking the person's agent for the message, and reading its answer.
 
 use std::{
     io::{Read, Write},
@@ -11,7 +11,11 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use super::CommitSuggestion;
-use crate::git;
+use crate::{
+    agent_programs::{answer_args, program_of},
+    api::AgentKind,
+    git,
+};
 
 /// How much of the staged diff the prompt carries. A commit of a whole vendored directory runs
 /// to megabytes, which is a slow read for an answer no better than the one the first pages give
@@ -26,7 +30,7 @@ const ANSWER_LIMIT: Duration = Duration::from_secs(180);
 /// How often the run is asked whether it is done, while it is inside that limit.
 const ANSWER_POLL: Duration = Duration::from_millis(100);
 
-/// How much of what `opencode` printed goes in an error. Enough to show what went wrong, and
+/// How much of what the agent printed goes in an error. Enough to show what went wrong, and
 /// not the whole of a help page or a stack of JSON: the error is read on one line of the pane.
 const ERROR_DETAIL_LIMIT: usize = 300;
 
@@ -35,8 +39,9 @@ const ERROR_DETAIL_LIMIT: usize = 300;
 const SUBJECT_LABEL: &str = "commit:";
 const PARAGRAPH_LABEL: &str = "pr_paragraph:";
 
-/// Write a message for what this review has staged. Blocking: `opencode` is a program that
-/// reads a diff and thinks about it, so this is called from a worker thread.
+/// Write a message for what this review has staged, with the agent and model the person
+/// picked - see [`crate::settings::Settings::selected_agent`]. Blocking: an agent is a program
+/// that reads a diff and thinks about it, so this is called from a worker thread.
 pub(crate) fn suggest_commit_message(
     state: &crate::api::AppState,
     session_id: &str,
@@ -68,9 +73,15 @@ pub(crate) fn suggest_commit_message(
         bail!("the staged diff is empty");
     }
 
+    let settings = crate::settings::served(state);
+    let agent = settings.selected_agent;
+    if agent == AgentKind::None {
+        bail!("no agent is picked to write the message");
+    }
     let prompt = build_prompt(&repo_path, name_status.trim_end(), &diff);
-    let raw = run_opencode(&repo_path, &prompt)?;
-    parse_suggestion(&raw)
+    let program = program_of(agent).program;
+    let raw = run_agent(&repo_path, &prompt, agent, settings.agent_model(agent))?;
+    parse_suggestion(&raw, program)
 }
 
 /// The diff as the prompt carries it, and whether it had to be cut to get there.
@@ -118,56 +129,67 @@ fn build_prompt(repo_root: &Path, name_status: &str, diff: &str) -> String {
     prompt
 }
 
-/// Ask `opencode` in the repo, and answer with everything it printed. The prompt goes in on
-/// stdin rather than on the command line: a staged diff is far longer than a command line is
-/// allowed to be.
+/// Ask `agent` in the repo, and answer with everything it printed. The prompt goes in on stdin
+/// rather than on the command line: a staged diff is far longer than a command line is allowed
+/// to be. Its command line is the one [`crate::agent_programs`] has for answering a prompt, with
+/// no tools or permissions: a message read off a diff needs none.
 ///
-/// It runs as whoever asked for the message, with the model and the login of their own
-/// `opencode` - see [`crate::shell_path::installed_tool`].
-fn run_opencode(repo_root: &Path, prompt: &str) -> Result<String> {
-    let mut child = crate::shell_path::installed_tool("opencode")?
-        // No model of our own: whichever one `opencode` is set up to use is the one the user
-        // has already chosen, signed into and paid for, and naming another here would be a
-        // model that is not there on some other machine.
-        .arg("run")
-        .arg("--dir")
-        .arg(repo_root)
+/// It runs as whoever asked for the message, with the login of their own agent - see
+/// [`crate::shell_path::installed_tool`] - and with `model` when they picked one on the
+/// settings page.
+fn run_agent(
+    repo_root: &Path,
+    prompt: &str,
+    agent: AgentKind,
+    model: Option<&str>,
+) -> Result<String> {
+    let program = program_of(agent).program;
+    let mut child = crate::shell_path::installed_tool(program)?
+        // No model of moon's own: with none picked, whichever one the agent is set up to use
+        // is the one the user has already chosen, signed into and paid for, and a default
+        // named here would be a model that is not there on some other machine. The pick is
+        // for when that one is not on their plan.
+        // The repo is the working directory: `opencode run` 2.x has no `--dir` and refuses it.
+        .args(answer_args(agent, model))
         .current_dir(repo_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("failed to start opencode")?;
+        .with_context(|| format!("failed to start {program}"))?;
 
     child
         .stdin
         .take()
-        .expect("opencode was spawned with a piped stdin")
+        .expect("the agent was spawned with a piped stdin")
         .write_all(prompt.as_bytes())
-        .context("failed to write the prompt to opencode")?;
+        .with_context(|| format!("failed to write the prompt to {program}"))?;
 
     // Both pipes are drained while the run goes: a run that filled one and blocked on it would
     // never reach the exit this waits for.
     let stdout_pipe = child
         .stdout
         .take()
-        .expect("opencode was spawned with a piped stdout");
+        .expect("the agent was spawned with a piped stdout");
     let stderr_pipe = child
         .stderr
         .take()
-        .expect("opencode was spawned with a piped stderr");
+        .expect("the agent was spawned with a piped stderr");
     let reading_stdout = thread::spawn(move || read_all(stdout_pipe));
     let reading_stderr = thread::spawn(move || read_all(stderr_pipe));
 
     let deadline = Instant::now() + ANSWER_LIMIT;
     let status = loop {
-        match child.try_wait().context("failed to wait for opencode")? {
+        match child
+            .try_wait()
+            .with_context(|| format!("failed to wait for {program}"))?
+        {
             Some(status) => break status,
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
                 bail!(
-                    "opencode did not answer within {} seconds",
+                    "{program} did not answer within {} seconds",
                     ANSWER_LIMIT.as_secs()
                 );
             }
@@ -177,20 +199,20 @@ fn run_opencode(repo_root: &Path, prompt: &str) -> Result<String> {
 
     let printed = reading_stdout
         .join()
-        .expect("the thread reading opencode's output did not panic");
+        .expect("the thread reading the agent's output did not panic");
     let complained = reading_stderr
         .join()
-        .expect("the thread reading opencode's errors did not panic");
+        .expect("the thread reading the agent's errors did not panic");
     if !status.success() {
-        // An `opencode` that cannot reach the model - no login for the provider, a model it
-        // does not know - says so on stderr and ends on a status.
+        // An agent that cannot reach the model - no login for the provider, a model it does
+        // not know - says so on stderr and ends on a status.
         let detail = if complained.trim().is_empty() {
             &printed
         } else {
             &complained
         };
         bail!(
-            "opencode failed (status {}): {}",
+            "{program} failed (status {}): {}",
             status.code().unwrap_or(-1),
             on_one_line(detail, ERROR_DETAIL_LIMIT)
         );
@@ -218,7 +240,7 @@ fn on_one_line(text: &str, limit: usize) -> String {
     line
 }
 
-/// What `opencode` prints is coloured, and a colour is a run of characters the parser would
+/// What an agent prints can be coloured, and a colour is a run of characters the parser would
 /// otherwise read as part of a line. This takes them back out.
 fn without_ansi_escapes(line: &str) -> String {
     let mut plain = String::with_capacity(line.len());
@@ -241,7 +263,7 @@ fn without_ansi_escapes(line: &str) -> String {
 
 /// Read the two labelled lines back out of what the agent printed. Anything else it printed -
 /// a banner, a blank line, a stray sentence - is not part of the message and is passed over.
-fn parse_suggestion(raw: &str) -> Result<CommitSuggestion> {
+fn parse_suggestion(raw: &str, program: &str) -> Result<CommitSuggestion> {
     let mut subject = None;
     let mut paragraph = None;
 
@@ -258,15 +280,15 @@ fn parse_suggestion(raw: &str) -> Result<CommitSuggestion> {
     }
 
     let (Some(subject), Some(paragraph)) = (subject, paragraph) else {
-        // Which is also where an `opencode` that ended well without running the model lands -
+        // Which is also where an agent that ended well without running the model lands -
         // one that printed its own help over an argument it did not know, say.
         bail!(
-            "opencode did not answer with a `{SUBJECT_LABEL}` and a `{PARAGRAPH_LABEL}` line: {}",
+            "{program} did not answer with a `{SUBJECT_LABEL}` and a `{PARAGRAPH_LABEL}` line: {}",
             on_one_line(raw, ERROR_DETAIL_LIMIT)
         );
     };
     if subject.is_empty() {
-        bail!("opencode answered with an empty commit subject");
+        bail!("{program} answered with an empty commit subject");
     }
     Ok(CommitSuggestion { subject, paragraph })
 }
@@ -281,7 +303,7 @@ mod tests {
         let raw = "\u{1b}[0m\n> build · gpt-5.6-luna\n\u{1b}[0mcommit: fix: stop the poll running twice\n\npr_paragraph: The pane asked the backend on every frame.\n";
 
         // Act
-        let suggestion = parse_suggestion(raw).expect("expected a suggestion");
+        let suggestion = parse_suggestion(raw, "opencode").expect("expected a suggestion");
 
         // Assert
         assert_eq!(suggestion.subject, "fix: stop the poll running twice");
@@ -301,7 +323,8 @@ mod tests {
         let raw = "commit: feat: add a thing";
 
         // Act
-        let error = parse_suggestion(raw).expect_err("expected the missing line to be refused");
+        let error =
+            parse_suggestion(raw, "opencode").expect_err("expected the missing line to be refused");
 
         // Assert
         assert!(
@@ -318,7 +341,8 @@ mod tests {
         let raw = format!("Options:\n{}", "  --flag  what the flag does\n".repeat(200));
 
         // Act
-        let error = parse_suggestion(&raw).expect_err("expected a help page to be refused");
+        let error =
+            parse_suggestion(&raw, "opencode").expect_err("expected a help page to be refused");
 
         // Assert
         let said = error.to_string();

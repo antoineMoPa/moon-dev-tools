@@ -37,6 +37,8 @@ pub(crate) enum PaneKind {
     Commit,
     Submodules,
     Project,
+    /// The person's own settings - see [`crate::native::settings_pane`].
+    Settings,
     /// Every message the window has posted, the way emacs keeps a `*Messages*` buffer.
     Messages,
     /// A pane a script draws - see [`crate::extensions`]. Not in a browser, where there is no
@@ -122,6 +124,9 @@ pub(crate) enum Pane {
     Submodules,
     /// The two commands the Project menu runs, and where they are set.
     Project,
+    /// The person's own settings, the ones `~/.moonreview/settings.json` keeps for every
+    /// project - see [`crate::native::settings_pane`].
+    Settings,
     /// Everything the window has said, with the time it said it - what a click on the status
     /// bar opens. See [`crate::native::messages`].
     Messages,
@@ -181,6 +186,7 @@ impl Pane {
             Self::Commit { .. } => PaneKind::Commit,
             Self::Submodules => PaneKind::Submodules,
             Self::Project => PaneKind::Project,
+            Self::Settings => PaneKind::Settings,
             Self::Messages => PaneKind::Messages,
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { .. } => PaneKind::Extension,
@@ -224,6 +230,7 @@ impl Pane {
             Self::Commit { .. } => "commit".to_string(),
             Self::Submodules => "submodules".to_string(),
             Self::Project => "project".to_string(),
+            Self::Settings => "settings".to_string(),
             Self::Messages => "messages".to_string(),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { name } => name.clone(),
@@ -313,6 +320,7 @@ impl Pane {
             }),
             Self::Submodules => Some(OpenPaneRequest::Submodules),
             Self::Project => Some(OpenPaneRequest::Project),
+            Self::Settings => Some(OpenPaneRequest::Settings),
             Self::Messages => Some(OpenPaneRequest::Messages),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { name } => Some(OpenPaneRequest::Extension { name: name.clone() }),
@@ -420,6 +428,8 @@ pub(crate) enum OpenPaneRequest {
     Submodules,
     /// The two commands the Project menu runs, and where they are set.
     Project,
+    /// The person's own settings.
+    Settings,
     /// Everything the window has said.
     Messages,
     /// One of the extensions, by name.
@@ -655,6 +665,7 @@ impl PaneView<Pane> for App {
             }
             Pane::Submodules => crate::native::submodules::draw(self, ui),
             Pane::Project => crate::native::project_pane::draw(self, ui),
+            Pane::Settings => crate::native::settings_pane::draw(self, ui),
             Pane::Messages => crate::native::messages::draw(self, ui),
             #[cfg(not(target_arch = "wasm32"))]
             Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),

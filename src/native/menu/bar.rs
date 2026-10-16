@@ -103,6 +103,7 @@ fn menus(
         ui.menu_button("Applications", |ui| {
             super::applications::draw(ui, applications, picked);
         });
+        item(ui, "Settings…", None, MenuAction::OpenSettings, picked);
     });
     // Opening the menu asks the server again for what it has installed, so that a package
     // installed since the window opened is listed.

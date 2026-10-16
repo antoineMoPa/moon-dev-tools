@@ -40,6 +40,7 @@ mod open_from_shell;
 mod palette;
 mod palette_long_rows;
 mod project;
+mod settings_pane;
 mod review_header;
 mod review_minimap;
 mod review_phone;

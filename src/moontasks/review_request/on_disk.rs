@@ -56,8 +56,9 @@ repos/flux_capacitor/
 ```
 
 The order is the deploy order, top to bottom. A line whose repo has nothing left to commit reads
-as done on the board, so the list ticks itself off as the person works down it. Take a line out
-when it no longer needs saying.
+as done on the board, so the list ticks itself off as the person works down it. So does a line
+whose commit has been made: if you go on working in that repo afterwards, write its line again
+with a subject and paragraph for the new work. Take a line out when it no longer needs saying.
 
 A line starting `x ` has been crossed off by the person - work that is committed and wants no
 more looking at. Leave those alone; they are their record, not yours. Moving the card to the
@@ -73,6 +74,10 @@ const BRANCH_MARK: char = '#';
 /// crosses one off. Written by the person, from the row's menu - the board can tell that a repo
 /// has nothing left to commit, but not that work already committed and pushed is finished with.
 const DONE_MARK: &str = "x ";
+/// How far back a branch's history is read for a commit made with a line's subject. A line is
+/// committed and then left in its file while the work goes on, so its commit is one of the last
+/// few on the branch - not one from months ago.
+const COMMITTED_LOOKBACK: &str = "30";
 
 /// One line of the file: a repo to review, and what to commit there.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -216,10 +221,15 @@ fn view_of(
         name,
         path,
         changed_files,
+        recent_subjects,
     } = reviewed
         .entry((request.path_under_repo.clone(), request.branch.clone()))
         .or_insert_with(|| reviewed_by(repo_path, &request))
         .clone();
+    let committed = request
+        .suggestion
+        .as_ref()
+        .is_some_and(|suggestion| recent_subjects.contains(&suggestion.subject));
 
     ReviewRequestView {
         task_id: task_id.to_string(),
@@ -227,6 +237,7 @@ fn view_of(
         path_under_repo: request.path_under_repo,
         changed_files,
         done: request.done,
+        committed,
         task_finished,
         written_at_unix,
         repo_path: path.display().to_string(),
@@ -236,12 +247,15 @@ fn view_of(
     }
 }
 
-/// The work a line is about: where it is, what to call it, and how much of it is uncommitted.
+/// The work a line is about: where it is, what to call it, how much of it is uncommitted, and
+/// the subjects of the last commits made there.
 #[derive(Clone)]
 struct Reviewed {
     name: String,
     path: PathBuf,
     changed_files: usize,
+    /// Newest first, [`COMMITTED_LOOKBACK`] of them - what says a line's commit has been made.
+    recent_subjects: Vec<String>,
 }
 
 /// Find the work a line names, which is what git is asked for a row.
@@ -267,8 +281,20 @@ fn reviewed_by(repo_path: &Path, request: &ReviewRequest) -> Reviewed {
         // what the agent asked for, and it should not read as dealt with because nothing could
         // be read there.
         changed_files: crate::git::changed_file_count(&path).unwrap_or(1),
+        recent_subjects: recent_subjects_of(&path),
         path,
     }
+}
+
+/// The subjects of the last commits on the branch a working copy is on. None for a path that is
+/// not a repo, or a repo with no commit yet: nothing has been committed there to match a line.
+fn recent_subjects_of(path: &Path) -> Vec<String> {
+    crate::git::run_git(
+        path,
+        &["log", "-n", COMMITTED_LOOKBACK, "--format=%s", "HEAD"],
+    )
+    .map(|log| log.lines().map(str::to_string).collect())
+    .unwrap_or_default()
 }
 
 /// Where the work a line names actually is - which is what its review, its commit and its push
@@ -904,6 +930,7 @@ mod tests {
             suggestion: None,
             changed_files: 1,
             done: false,
+            committed: false,
             task_finished: false,
             written_at_unix: 0,
         };

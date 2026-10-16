@@ -6,7 +6,12 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::{CommitAction, CommitState, StagedFile};
-use crate::{api::FileChangeKind, git, shell_quoting::single_quoted};
+use crate::{
+    agent_programs::program_of,
+    api::{AgentKind, FileChangeKind},
+    git,
+    shell_quoting::single_quoted,
+};
 
 /// The status letters `git status --porcelain` reports for the index, and what each one is a
 /// change of. `--no-renames` is what keeps a rename off this list: it is reported as the
@@ -57,8 +62,13 @@ fn run_files_dir() -> std::path::PathBuf {
 const SHELL_WENT_AWAY: i32 = -1;
 
 /// `pathspec` is what the review is pointed at, when it is pointed at part of the repo: the
-/// pane must not offer to commit changes the review beside it does not show.
-pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Result<CommitState> {
+/// pane must not offer to commit changes the review beside it does not show. `message_agent`
+/// is the agent that would write the message, which the pane is told is installed or not.
+pub(crate) fn read_commit_state(
+    repo_path: &Path,
+    pathspec: Option<&str>,
+    message_agent: AgentKind,
+) -> Result<CommitState> {
     let branch_name = git::current_branch_name(repo_path)?;
     let on_default_branch = match &branch_name {
         Some(branch) => git::is_default_branch(repo_path, branch)?,
@@ -82,7 +92,10 @@ pub(crate) fn read_commit_state(repo_path: &Path, pathspec: Option<&str>) -> Res
         staged_files,
         unstaged_count,
         gh_installed: crate::agent::command_exists("gh")?,
-        opencode_installed: crate::agent::command_exists("opencode")?,
+        message_agent_installed: match message_agent {
+            AgentKind::None => false,
+            agent => crate::agent::command_exists(program_of(agent).program)?,
+        },
     })
 }
 
@@ -261,7 +274,8 @@ pub(crate) fn commit_state(state: &crate::api::AppState, session_id: &str) -> Re
     if !crate::git::is_git_repo(&repo_path) {
         bail!("{} is not a git repository", repo_path.display());
     }
-    read_commit_state(&repo_path, pathspec.as_deref())
+    let message_agent = crate::settings::served(state).selected_agent;
+    read_commit_state(&repo_path, pathspec.as_deref(), message_agent)
 }
 
 /// The repo a review is of, and the part of it the review is pointed at.
@@ -307,7 +321,9 @@ pub(crate) fn start_commit_run_personal(
 ) -> Result<String> {
     crate::api::ensure_session_is_writable(state, session_id)?;
     let (repo_path, pathspec) = repo_of(state, session_id)?;
-    let command = command_for(action, &read_commit_state(&repo_path, pathspec.as_deref())?)?;
+    // What the run does is the repo's alone; the agent that writes messages has no say in it.
+    let repo_state = read_commit_state(&repo_path, pathspec.as_deref(), AgentKind::None)?;
+    let command = command_for(action, &repo_state)?;
 
     // Whatever the last run left behind is not this run's answer, and a message left from a
     // commit that is over must not be what the next one takes.
@@ -422,7 +438,7 @@ mod tests {
             behind: 0,
             unstaged_count: 0,
             gh_installed: true,
-            opencode_installed: true,
+            message_agent_installed: true,
             staged_files: (0..staged)
                 .map(|index| StagedFile {
                     file_path: format!("file{index}.rs"),
@@ -724,7 +740,8 @@ mod tests {
         std::fs::write(root.join("first.txt"), "one\n").expect("failed to write");
         git::run_git_no_output(&root, &["add", "first.txt"]).expect("failed to stage");
 
-        let state = read_commit_state(&root, None).expect("expected a commit state");
+        let state =
+            read_commit_state(&root, None, AgentKind::None).expect("expected a commit state");
 
         assert_eq!(state.branch_name.as_deref(), Some("main"));
         assert_eq!(state.upstream_ref, None);

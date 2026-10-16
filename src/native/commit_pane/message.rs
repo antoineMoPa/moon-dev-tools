@@ -105,10 +105,11 @@ impl App {
     /// often it is work already committed and merged: the branch is checked out nowhere any
     /// more, so the line resolves back onto the main checkout, where the next piece of work is
     /// now being written - and the message for the finished branch would land on it. A line
-    /// crossed off by hand is finished with too, whatever branch it names.
+    /// crossed off by hand is finished with too, whatever branch it names, and so is one whose
+    /// commit has been made: what is staged now is the work after it.
     fn requested_commit_of(&self, session_id: &str) -> Option<&ReviewRequestView> {
         let request = self.requested_review_of(session_id)?;
-        if request.done {
+        if request.done || request.committed {
             return None;
         }
         match &request.branch {

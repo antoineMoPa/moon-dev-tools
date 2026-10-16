@@ -353,6 +353,19 @@ impl App {
                 let frame = self.frame_for(PaneKind::Submodules, active_frame);
                 self.model.layout.add_pane(frame, Pane::Submodules, None);
             }
+            OpenPaneRequest::Settings => {
+                // One settings page a window: the settings are one file.
+                if let Some((pane, _)) = self
+                    .model
+                    .layout
+                    .find_pane(|pane| pane.kind() == PaneKind::Settings)
+                {
+                    self.model.layout.focus_pane(pane);
+                    return;
+                }
+                let frame = self.frame_for(PaneKind::Settings, active_frame);
+                self.model.layout.add_pane(frame, Pane::Settings, None);
+            }
             OpenPaneRequest::Messages => {
                 // One log a window: asking again brings it forward rather than opening a
                 // second copy of the same list.

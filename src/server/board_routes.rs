@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path as AxumPath, State},
 };
 
@@ -94,6 +94,19 @@ pub(super) async fn amend_review_request(
 pub(super) async fn settings(State(state): State<AppState>) -> Json<crate::settings::Settings> {
     mark_activity(&state);
     Json(crate::settings::served(&state))
+}
+
+/// The models `opencode` can run with, for the settings page. Asked as whoever the request
+/// was let in as: the list is what their own `opencode` is logged in to.
+pub(super) async fn opencode_models(
+    State(state): State<AppState>,
+    State(profiles): State<super::profiles::Profiles>,
+    Extension(user): Extension<super::users::UserId>,
+) -> Result<Json<Vec<String>>, AppError> {
+    mark_activity(&state);
+    let person = profiles.session_owner(&user)?.person;
+    let models = super::for_person(person, crate::opencode::models).await?;
+    Ok(Json(models))
 }
 
 pub(super) async fn change_settings(

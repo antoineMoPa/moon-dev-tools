@@ -306,6 +306,9 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// This server's `settings.json`, which every window on it shares - see [`crate::settings`].
     fn settings(&self) -> Result<Settings>;
     fn change_settings(&self, change: SettingsChange) -> Result<()>;
+    /// The models `opencode` can run with, as `provider/model`, for the settings page to pick
+    /// from - see [`crate::settings::Settings::agent_models`].
+    fn opencode_models(&self) -> Result<Vec<String>>;
 
     /// The two commands the Project menu runs, out of the reviewed repo's own file.
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig>;

@@ -224,6 +224,33 @@ fn a_commit_asked_for_on_another_branch_stays_out_of_the_box() {
     // and why it is not in the box.
 }
 
+/// A line whose commit has been made keeps its message to itself.
+///
+/// The line is committed and left in its task's file while the agent goes on working in the
+/// repo, and what it stages next is another commit. Putting the line's message in the box again
+/// - which a freshly opened window would, having never put it there - would be offering the
+/// commit already made for work it does not describe.
+#[test]
+fn a_commit_already_made_stays_out_of_the_box() {
+    let fixture = seeded_fixture("commit-message-already-made");
+    fixture.checkout_branch("ship-it");
+    fixture.write("extra.txt", "the module\n");
+    fixture.commit(
+        "feat: add the extra module\n\nThe fixture gains a module the review is of.",
+    );
+    fixture.write("later.txt", "the work after it\n");
+    a_task_asking_for_review(&fixture, "deploy-the-thing-1111", IN_HAND, REQUESTED_LINE);
+
+    let (mut harness, watched) = commit_pane_over_the_board(&fixture);
+    wait_for_the_repo_to_be_read(&mut harness, &watched);
+
+    assert_eq!(
+        watched.message().as_deref(),
+        Some(""),
+        "a commit already made should not be offered for the work after it"
+    );
+}
+
 /// The commit that lands in the box is the one written for the branch the repo is on.
 ///
 /// Several tasks name the same repo, and a line naming a branch that is checked out nowhere

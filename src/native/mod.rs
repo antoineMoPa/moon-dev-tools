@@ -60,6 +60,7 @@ pub(crate) mod panes;
 #[cfg(not(target_arch = "wasm32"))]
 mod programs;
 pub(crate) mod project_pane;
+pub(crate) mod settings_pane;
 pub(crate) mod renaming;
 pub(crate) mod review;
 pub(crate) mod signature;

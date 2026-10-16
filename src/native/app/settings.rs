@@ -44,6 +44,16 @@ impl App {
         );
     }
 
+    /// Pick the model `agent` runs with, or `None` for its own default - see
+    /// [`crate::settings::Settings::agent_models`].
+    pub(crate) fn select_agent_model(
+        &mut self,
+        agent: crate::api::AgentKind,
+        model: Option<String>,
+    ) {
+        self.change_settings(SettingsChange::SelectAgentModel { agent, model });
+    }
+
     /// Mark this window's project with a color, and keep `settings.json` in step.
     ///
     /// A window that is on no project yet - the launch screen - has nothing to mark: the

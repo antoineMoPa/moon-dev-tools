@@ -268,6 +268,11 @@ enum StripPress {
     Command(Asked),
 }
 
+/// The room between the strip that opens the log and the space squares at its end, which
+/// belongs to neither: without it, a press meant for a square that lands a little short of one
+/// opens the log.
+pub(crate) const GAP_BEFORE_SPACES: f32 = 20.0;
+
 /// Draw the strip and answer what was pressed on it. A `line` of `None` is a strip with
 /// nothing on it, which is still there to be hovered and clicked.
 fn draw_line(
@@ -276,9 +281,20 @@ fn draw_line(
     palette: &Palette,
     spaces: impl FnOnce(&mut Ui),
 ) -> StripPress {
-    let hovered = ui.rect_contains_pointer(ui.max_rect());
+    // The squares first, at the right end, so the strip that opens the log can stop short of
+    // them: a press that just misses a square is not a press on the strip.
+    let mut squares = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(ui.max_rect())
+            .layout(egui::Layout::right_to_left(Align::Center)),
+    );
+    spaces(&mut squares);
+    let mut strip = ui.max_rect();
+    strip.max.x = squares.min_rect().min.x - GAP_BEFORE_SPACES;
+
+    let hovered = ui.rect_contains_pointer(strip);
     let response = ui.interact(
-        ui.max_rect(),
+        strip,
         ui.id().with("status-bar"),
         // Click only: the strip is read and pressed, and it never asks for the keyboard the
         // editor or the shell above it is holding.
@@ -286,7 +302,7 @@ fn draw_line(
     );
     if hovered {
         ui.painter()
-            .rect_filled(ui.max_rect(), CornerRadius::ZERO, palette.row_hover_bg);
+            .rect_filled(strip, CornerRadius::ZERO, palette.row_hover_bg);
     }
     // No line of its own along the top: the workspace above already ends in its own border,
     // and a second one drawn inside this strip's margin reads as a double edge rather than as
@@ -295,31 +311,36 @@ fn draw_line(
     // Right to left, so the cross beside a message takes its place at the end first and the
     // line is cut to what is left of the strip rather than pushing the cross off it.
     let dismissed = ui
-        .with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            // The outermost, so the squares are always in the same place on the screen.
-            spaces(ui);
-            let dismissed = match line {
-                Some(StatusLine::Said { .. }) => crate::native::widgets::close_button(ui, palette)
-                    .on_hover_text("Dismiss")
-                    .clicked(),
-                _ => false,
-            };
-            ui.with_layout(
-                egui::Layout::left_to_right(Align::Center),
-                |ui| match line {
-                    None => {}
-                    Some(StatusLine::Working { work, others }) => {
-                        draw_working(ui, work, *others, palette)
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(strip)
+                .layout(egui::Layout::right_to_left(Align::Center)),
+            |ui| {
+                let dismissed = match line {
+                    Some(StatusLine::Said { .. }) => {
+                        crate::native::widgets::close_button(ui, palette)
+                            .on_hover_text("Dismiss")
+                            .clicked()
                     }
-                    Some(StatusLine::Said {
-                        text,
-                        failed,
-                        at_unix,
-                    }) => draw_said(ui, text, *failed, *at_unix, palette),
-                },
-            );
-            dismissed
-        })
+                    _ => false,
+                };
+                ui.with_layout(
+                    egui::Layout::left_to_right(Align::Center),
+                    |ui| match line {
+                        None => {}
+                        Some(StatusLine::Working { work, others }) => {
+                            draw_working(ui, work, *others, palette)
+                        }
+                        Some(StatusLine::Said {
+                            text,
+                            failed,
+                            at_unix,
+                        }) => draw_said(ui, text, *failed, *at_unix, palette),
+                    },
+                );
+                dismissed
+            },
+        )
         .inner;
 
     let _ = crate::native::widgets::clickable(response.clone())

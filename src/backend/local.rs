@@ -322,6 +322,10 @@ impl Backend for LocalBackend {
         Ok(crate::settings::served(&self.state))
     }
 
+    fn opencode_models(&self) -> Result<Vec<String>> {
+        crate::opencode::models()
+    }
+
     fn change_settings(&self, change: SettingsChange) -> Result<()> {
         crate::settings::change(&self.state, change)
     }

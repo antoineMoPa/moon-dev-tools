@@ -264,6 +264,17 @@ pub(crate) fn commands_for(app: &App) -> Vec<Command> {
         CommandAction::OpenPane(OpenPaneRequest::Project),
         None,
     ));
+    commands.push(single_pane_command(
+        app.model
+            .layout
+            .find_pane(|pane| pane.kind() == PaneKind::Settings)
+            .is_some(),
+        "settings",
+        "Open your settings: which agent and model each AI job runs with",
+        "Bring the settings forward",
+        CommandAction::OpenPane(OpenPaneRequest::Settings),
+        None,
+    ));
     // Aimed at the review being read rather than at the window's own: a changed submodule is a
     // review of its own repo, with its own branch to commit, and committing while reading one
     // means that repo. The repo is named on the item, so the list says which one it will be.

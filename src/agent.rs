@@ -16,11 +16,14 @@ use std::os::unix::process::CommandExt;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
+    agent_programs::model_args,
     api::{AgentKind, AgentLog, append_to_agent_log},
     comments::DispatchJob,
 };
 
-pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
+/// `model` is the one the person picked for this job's agent, `None` for
+/// the agent's own default - see [`crate::settings::Settings::agent_models`].
+pub(crate) fn run_agent_dispatch(job: &DispatchJob, model: Option<&str>) -> Result<String> {
     if job.cancel_token.load(Ordering::SeqCst) {
         bail!("agent dispatch stopped");
     }
@@ -28,10 +31,10 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
     let prompt = build_agent_prompt(job);
     match job.agent {
         AgentKind::None => Ok(String::new()),
-        AgentKind::Claude => run_claude(prompt, job),
-        AgentKind::Codex => run_codex(prompt, job),
-        AgentKind::OpenCode => run_opencode(prompt, job),
-        AgentKind::Pi => run_pi(prompt, job),
+        AgentKind::Claude => run_claude(prompt, job, model),
+        AgentKind::Codex => run_codex(prompt, job, model),
+        AgentKind::OpenCode => run_opencode(prompt, job, model),
+        AgentKind::Pi => run_pi(prompt, job, model),
     }
 }
 
@@ -82,11 +85,12 @@ fn build_agent_prompt(job: &DispatchJob) -> String {
     prompt
 }
 
-fn run_claude(prompt: String, job: &DispatchJob) -> Result<String> {
+fn run_claude(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<String> {
     let mut command = crate::shell_path::installed_tool("claude")?;
     command
         .current_dir(&job.repo_path)
-        .args(["-p", "--permission-mode", "bypassPermissions"]);
+        .args(["-p", "--permission-mode", "bypassPermissions"])
+        .args(model_args(AgentKind::Claude, model));
     configure_agent_command(&mut command);
     let output = command
         .spawn()
@@ -103,11 +107,14 @@ fn run_claude(prompt: String, job: &DispatchJob) -> Result<String> {
     summarize_agent_output("Claude", output)
 }
 
-fn run_codex(prompt: String, job: &DispatchJob) -> Result<String> {
+fn run_codex(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<String> {
     let mut command = crate::shell_path::installed_tool("codex")?;
+    // The `-` that reads the prompt from stdin is the last argument, after the model.
     command
         .current_dir(&job.repo_path)
-        .args(["exec", "--full-auto", "-"]);
+        .args(["exec", "--full-auto"])
+        .args(model_args(AgentKind::Codex, model))
+        .arg("-");
     configure_agent_command(&mut command);
     let output = command
         .spawn()
@@ -124,11 +131,12 @@ fn run_codex(prompt: String, job: &DispatchJob) -> Result<String> {
     summarize_agent_output("Codex", output)
 }
 
-fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
+fn run_opencode(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<String> {
     let mut command = crate::shell_path::installed_tool("opencode")?;
     command
         .current_dir(&job.repo_path)
         .args(["run", "--dangerously-skip-permissions"])
+        .args(model_args(AgentKind::OpenCode, model))
         .arg(prompt);
     configure_agent_command(&mut command);
     let output = command
@@ -146,9 +154,12 @@ fn run_opencode(prompt: String, job: &DispatchJob) -> Result<String> {
     summarize_agent_output("OpenCode", output)
 }
 
-fn run_pi(prompt: String, job: &DispatchJob) -> Result<String> {
+fn run_pi(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<String> {
     let mut command = crate::shell_path::installed_tool("pi")?;
-    command.current_dir(&job.repo_path).arg("--print");
+    command
+        .current_dir(&job.repo_path)
+        .arg("--print")
+        .args(model_args(AgentKind::Pi, model));
     configure_agent_command(&mut command);
     let output = command
         .spawn()

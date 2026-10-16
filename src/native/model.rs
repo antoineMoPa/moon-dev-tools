@@ -271,6 +271,8 @@ pub(crate) struct Model {
     /// or that still has something running in it, is not one to type a build into, and the
     /// next command opens a shell of its own.
     pub(crate) project_shell: Option<String>,
+    /// What the settings page holds between frames - see [`crate::native::settings_pane`].
+    pub(crate) settings_page: crate::native::settings_pane::SettingsPage,
 }
 
 /// What the configuration pane holds, mid-edit: the two commands as text, and the

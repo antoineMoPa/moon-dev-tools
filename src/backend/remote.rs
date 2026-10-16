@@ -424,6 +424,10 @@ impl Backend for RemoteBackend {
         self.post("/api/settings", &change)
     }
 
+    fn opencode_models(&self) -> Result<Vec<String>> {
+        self.get("/api/opencode-models")
+    }
+
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {
         self.get(&format!("/api/session/{session_id}/project"))
     }

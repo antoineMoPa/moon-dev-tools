@@ -87,6 +87,8 @@ pub(crate) enum MenuAction {
     RunProject(crate::project::ProjectCommand),
     /// Open the pane those commands are set in.
     OpenProject,
+    /// Open the person's own settings, the ones kept for every project.
+    OpenSettings,
     /// Put this window's project down and go back to its launch screen, to open another.
     SwitchProject,
     /// Open another window of one of the three programs, on its launch screen.
@@ -145,6 +147,7 @@ mod platform {
         /// One per command the Project menu runs, in the order the menu has them.
         project_commands: Vec<(MenuId, ProjectCommand)>,
         open_project: MenuId,
+        open_settings: MenuId,
         switch_project: MenuId,
         /// One per program that is installed, in [`NEW_WINDOW_FRAMES`] order.
         new_windows: Vec<(MenuId, Frame)>,
@@ -164,10 +167,18 @@ mod platform {
 
             // macOS expects the first submenu to be the application menu, and it is what
             // gives the window a real Quit item.
+            // Where a macOS program keeps its settings, and on the chord they have everywhere.
+            let open_settings = MenuItem::new(
+                "Settings…",
+                true,
+                Some(Accelerator::new(Some(Modifiers::META), Code::Comma)),
+            );
             let app_menu = Submenu::new("Moonreview", true);
             app_menu
                 .append_items(&[
                     &PredefinedMenuItem::about(None, None),
+                    &PredefinedMenuItem::separator(),
+                    &open_settings,
                     &PredefinedMenuItem::separator(),
                     &install_launchers,
                     &PredefinedMenuItem::separator(),
@@ -451,6 +462,7 @@ mod platform {
                     .map(|(item, which)| (item.id().clone(), *which))
                     .collect(),
                 open_project: open_project.id().clone(),
+                open_settings: open_settings.id().clone(),
                 switch_project: switch_project.id().clone(),
                 new_windows: new_windows
                     .iter()
@@ -519,6 +531,8 @@ mod platform {
                     MenuAction::OpenSubmodules
                 } else if event.id == self.open_project {
                     MenuAction::OpenProject
+                } else if event.id == self.open_settings {
+                    MenuAction::OpenSettings
                 } else if event.id == self.switch_project {
                     MenuAction::SwitchProject
                 } else if let Some((_, which)) =

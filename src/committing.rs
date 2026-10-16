@@ -51,9 +51,10 @@ pub(crate) struct CommitState {
     /// Whether `gh` is installed on this machine, which is what the pull request button needs:
     /// without it there is nothing to offer.
     pub(crate) gh_installed: bool,
-    /// Whether `opencode` is installed, which is what writes the suggested message. Without it
-    /// the pane never asks for one, rather than asking and showing what went wrong.
-    pub(crate) opencode_installed: bool,
+    /// Whether the agent the person picked to write the suggested message is installed - see
+    /// [`crate::settings::Settings::selected_agent`]. `false` when they picked none. Without
+    /// one the pane never asks for a message, rather than asking and showing what went wrong.
+    pub(crate) message_agent_installed: bool,
 }
 
 /// What the pane can ask for.

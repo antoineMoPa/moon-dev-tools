@@ -104,9 +104,12 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
     // and the thread started here has none until it is handed them - see
     // [`crate::unix_users::carried`]. Only the agent is run as them: the rest of the thread's
     // work is on what the server itself keeps of the dispatch.
+    let model = crate::settings::served(&state)
+        .agent_model(job.agent)
+        .map(str::to_string);
     let run_agent_for_the_sender = crate::unix_users::carried({
         let job = job.clone();
-        move || run_agent_dispatch(&job)
+        move || run_agent_dispatch(&job, model.as_deref())
     });
     thread::spawn(move || {
         let _ = with_session(&state, &job.session_id, |session| {
