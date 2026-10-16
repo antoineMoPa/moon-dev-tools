@@ -2,13 +2,13 @@
 
 use super::cards::{
     CARD_SPACING, card_drag_id, column_cards, draw_card, draw_empty_slot, draw_pending_card,
-    place_in,
 };
+use super::placing::{self, place_in};
 
 use egui::{Align, CornerRadius, Layout as UiLayout, RichText, ScrollArea, Ui, vec2};
 
 use crate::{
-    moontasks::{BoardColumn, ColumnEnd, ColumnId},
+    moontasks::{BoardColumn, ColumnEnd, ColumnId, sub_tasks},
     native::{
         app::App,
         model::{PendingPlace, TaskLanding},
@@ -19,6 +19,51 @@ use crate::{
 use super::{BoardAction, COLUMN_WIDTH, cards, columns, day_lines, days_work, filter, gesture};
 
 use super::marks::plus_button;
+
+/// How far a sub-task is drawn in from either edge of the column, under its card.
+const SUB_TASK_INDENT: i8 = 8;
+
+/// How much of a card's height, at its top and at its bottom, a drop goes beside the card
+/// rather than onto it. The middle between the two is the card taking the drop as its
+/// sub-tasks.
+const BESIDE_A_CARD: f32 = 0.25;
+
+/// A card a drop could be aimed at, where it is laid out.
+struct Slot {
+    rect: egui::Rect,
+    id: String,
+    /// The card it is drawn under, as its sub-task.
+    under: Option<String>,
+}
+
+/// Where a drop at height `y` lands among `cards`: how many of them are above it, and the card
+/// it goes under.
+///
+/// Held over the middle of a card, it goes under that card - after the sub-tasks it already
+/// has - or, for a sub-task, after it and under the same card: sub-tasks go one deep. Held
+/// between two cards, it goes there, and under the card of the one below if that is a
+/// sub-task: in among a card's sub-tasks is one of them.
+fn landing_among(cards: &[Slot], y: f32) -> (usize, Option<String>) {
+    let onto = cards.iter().position(|card| {
+        let beside = card.rect.height() * BESIDE_A_CARD;
+        (card.rect.top() + beside..=card.rect.bottom() - beside).contains(&y)
+    });
+    if let Some(at) = onto {
+        let card = &cards[at];
+        return match &card.under {
+            Some(parent) => (at + 1, Some(parent.clone())),
+            None => {
+                let its_sub_tasks = cards[at + 1..]
+                    .iter()
+                    .take_while(|other| other.under.as_ref() == Some(&card.id))
+                    .count();
+                (at + 1 + its_sub_tasks, Some(card.id.clone()))
+            }
+        };
+    }
+    let at = cards.iter().filter(|card| card.rect.center().y < y).count();
+    (at, cards.get(at).and_then(|below| below.under.clone()))
+}
 
 pub(super) fn draw_column(
     app: &mut App,
@@ -31,6 +76,11 @@ pub(super) fn draw_column(
     let status = column.id.clone();
     let carrying = app.model.board.carrying.clone();
     let tasks = column_cards(app, &status);
+    // The card each one is drawn under, as its sub-task.
+    let under: Vec<Option<String>> = sub_tasks::drawn_under_ids(&tasks)
+        .into_iter()
+        .map(|parent| parent.map(str::to_string))
+        .collect();
     // The dated lines a column of finished work draws between its days - see `day_lines`.
     let mut lines_between_days =
         day_lines::drawn_in(column).then(day_lines::DayLines::starting_now);
@@ -79,7 +129,7 @@ pub(super) fn draw_column(
             // Where a drop would land, counted against the cards it would be put among - so the
             // slot the dragged card is standing in is taken back out of the reckoning, and moving
             // the pointer over a card cannot bounce between two answers.
-            let mut cards: Vec<egui::Rect> = Vec::new();
+            let mut cards: Vec<Slot> = Vec::new();
             let mut slot = 0.0;
             // The column's own buttons - the `+` at either end of it. A press on one of them
             // is theirs, the way a card's buttons are the card's.
@@ -142,7 +192,20 @@ pub(super) fn draw_column(
                                 day_lines::draw(ui, palette, line);
                                 ui.add_space(CARD_SPACING);
                             }
-                            let card = draw_card(app, ui, task, origin, palette, actions);
+                            let card = match &under[cards_above] {
+                                Some(_) => {
+                                    egui::Frame::new()
+                                        .inner_margin(egui::Margin::symmetric(
+                                            SUB_TASK_INDENT,
+                                            0,
+                                        ))
+                                        .show(ui, |ui| {
+                                            draw_card(app, ui, task, origin, palette, actions)
+                                        })
+                                        .inner
+                                }
+                                None => draw_card(app, ui, task, origin, palette, actions),
+                            };
                             // A card being carried is the space being held for the drop rather
                             // than a place the drop could be aimed at, so it is counted out of
                             // the slots and its height taken back off the cards below it. The
@@ -155,7 +218,11 @@ pub(super) fn draw_column(
                                     }
                                     slot += card.height() + CARD_SPACING;
                                 }
-                                None => cards.push(card.translate(vec2(0.0, -slot))),
+                                None => cards.push(Slot {
+                                    rect: card.translate(vec2(0.0, -slot)),
+                                    id: task.id.clone(),
+                                    under: under[cards_above].clone(),
+                                }),
                             }
                             ui.add_space(CARD_SPACING);
                         }
@@ -224,34 +291,32 @@ pub(super) fn draw_column(
             let landing = over
                 .then(|| ui.ctx().pointer_interact_pos())
                 .flatten()
-                .map(|pointer| {
-                    cards
-                        .iter()
-                        .filter(|card| card.center().y < pointer.y)
-                        .count()
-                });
+                .map(|pointer| landing_among(&cards, pointer.y));
             if over {
                 zone.frame.fill = palette.control_active_bg;
                 zone.frame.stroke = egui::Stroke::new(1.0, palette.accent);
             }
             zone.paint(ui);
 
-            let (Some(at), Some(carrying)) = (landing, carrying) else {
+            let (Some((at, parent)), Some(carrying)) = (landing, carrying) else {
                 return;
             };
             // A column that takes arrivals to one end takes them there while they are still in
             // the air: the gap opens at that end however far down the column they are held, so
             // what is shown is where they are going rather than somewhere they will not stay.
-            let at = match arrivals_end(app, &status, &carrying.task_ids) {
-                Some(ColumnEnd::Top) => 0,
-                Some(ColumnEnd::Bottom) => cards.len(),
-                None => at,
-            };
+            // Cards going under another card go under it wherever the column takes arrivals.
+            let at =
+                match arrivals_end(app, &status, &carrying.task_ids).filter(|_| parent.is_none()) {
+                    Some(ColumnEnd::Top) => 0,
+                    Some(ColumnEnd::Bottom) => cards.len(),
+                    None => at,
+                };
             // Read by the next frame, which draws the cards in this slot rather than in the
             // ones they were picked up from.
             app.model.board.landing = Some(TaskLanding {
                 status: status.clone(),
                 index: at,
+                parent: parent.clone(),
             });
             if !ui.input(|input| input.pointer.any_released()) {
                 return;
@@ -260,13 +325,13 @@ pub(super) fn draw_column(
             // The cards are already drawn where they landed, and they are the marked ones -
             // which is how a run let go of between two others is picked back out.
             app.model.board.landing = None;
-            if cards::sort_of(&app.model.board.columns, &status).is_some() {
+            if parent.is_none() && cards::sort_of(&app.model.board.columns, &status).is_some() {
                 arrive_in_column(app, &status, &carrying.task_ids, actions);
                 return;
             }
             // `at` counts the cards the filter is showing; the place they are going to is a
             // place in the column itself.
-            let into = cards::column_index_of(
+            let into = placing::column_index_of(
                 &app.model.board.tasks,
                 &filter::Filter::of(&app.model.board.filter),
                 &status,
@@ -277,23 +342,34 @@ pub(super) fn draw_column(
             // server that will put them there - so the board works out the same place now.
             // Without this the drop would be drawn where it landed and held there for ever,
             // because the answer it is waiting to agree with never comes.
-            let into = arrivals_place(app, &status, &carrying.task_ids).unwrap_or(into);
+            let into = match parent {
+                Some(_) => into,
+                None => arrivals_place(app, &status, &carrying.task_ids).unwrap_or(into),
+            };
             // The board is redrawn from the server's answer, which is a worker thread and a
             // poll away: the move is made here as well, and held over every answer until one of
             // them agrees, so the cards stay where they were put rather than springing back and
             // landing a second time.
-            app.model.board.pending_place = Some(PendingPlace {
-                task_ids: carrying.task_ids.clone(),
-                status: status.clone(),
-                index: into,
-            });
-            place_in(
+            let parents = place_in(
                 &mut app.model.board.tasks,
                 &carrying.task_ids,
                 &status,
                 into,
+                parent.as_deref(),
             );
-            actions.push(BoardAction::Place(carrying.task_ids, status.clone(), into));
+            app.model.board.pending_place = Some(PendingPlace {
+                task_ids: carrying.task_ids.clone(),
+                status: status.clone(),
+                index: into,
+                parent: parent.clone(),
+                parents,
+            });
+            actions.push(BoardAction::Place(
+                carrying.task_ids,
+                status.clone(),
+                into,
+                parent,
+            ));
         },
     )
     .response
@@ -316,6 +392,8 @@ pub(super) fn arrive_in_column(
     task_ids: &[String],
     actions: &mut Vec<BoardAction>,
 ) {
+    // A card's sub-tasks go where it goes.
+    let task_ids = &sub_tasks::with_sub_tasks(&app.model.board.tasks, task_ids);
     let arriving = app
         .model
         .board
@@ -333,14 +411,22 @@ pub(super) fn arrive_in_column(
             .filter(|task| task.status == *status && !task_ids.contains(&task.id))
             .count()
     });
+    let parents = place_in(&mut app.model.board.tasks, task_ids, status, into, None);
     app.model.board.pending_place = Some(PendingPlace {
         task_ids: task_ids.to_vec(),
         status: status.clone(),
         index: into,
+        parent: None,
+        parents,
     });
-    place_in(&mut app.model.board.tasks, task_ids, status, into);
     crate::moontasks::column_sort::arrange(&app.model.board.columns, &mut app.model.board.tasks);
-    actions.push(BoardAction::Place(task_ids.to_vec(), status.clone(), into));
+    sub_tasks::under_their_parents(&mut app.model.board.tasks);
+    actions.push(BoardAction::Place(
+        task_ids.to_vec(),
+        status.clone(),
+        into,
+        None,
+    ));
 }
 
 /// Which end a column insists cards go to, if it insists at all and if these cards are

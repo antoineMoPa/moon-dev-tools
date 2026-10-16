@@ -244,8 +244,16 @@ impl Backend for LocalBackend {
         task_ids: &[String],
         status: ColumnId,
         position: usize,
+        parent: Option<String>,
     ) -> Result<()> {
-        moontasks::service::place_tasks(&self.state, session_id, task_ids, status, position)
+        moontasks::service::place_tasks(
+            &self.state,
+            session_id,
+            task_ids,
+            status,
+            position,
+            parent.as_deref(),
+        )
     }
 
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()> {

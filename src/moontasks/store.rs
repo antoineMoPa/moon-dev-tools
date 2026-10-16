@@ -11,6 +11,11 @@ mod folder;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use folder::*;
+// Which cards are sub-tasks of which: symlinks in a card's folder - see `sub_task_links`.
+#[cfg(not(target_arch = "wasm32"))]
+mod sub_task_links;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use sub_task_links::*;
 
 use serde::{Deserialize, Serialize};
 use web_time::{SystemTime, UNIX_EPOCH};

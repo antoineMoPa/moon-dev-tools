@@ -464,7 +464,7 @@ fn accept_notes(editor: &mut TaskEditor, notes: &str) {
 /// to draw about a task nobody has heard of, and the read is a moment away.
 ///
 /// A task the board did have and no longer has has been deleted, and that closes the tab rather
-/// than leaving it standing here - see [`crate::native::board::cards::accept_board`].
+/// than leaving it standing here - see [`crate::native::board::placing::accept_board`].
 fn draw_while_the_board_is_read(ui: &mut Ui, palette: &Palette) {
     ui.label(
         RichText::new("reading the board…")

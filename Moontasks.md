@@ -11,6 +11,7 @@ on it in the repo.
 | `⌘F` on the board | put the keyboard in that box; Escape empties it |
 | `board … [start]` over the columns | start an agent or a shell that is the board's own rather than a card's - to work on the board itself, or on something no card is about. What it started is listed before it the way a card lists its runs: click one to bring its tab back, `stop` and `resume` an agent, the mark at the end closes it. Closing the tab leaves it running |
 | drag a card | move it between columns, and put it where you drop it: the cards make room as you go and the column keeps that order |
+| drop a card onto the middle of another | make it that card's sub-task, linked from that card's `subtasks` folder: drawn under it, set in 8px from both edges of the column, and moved with it to other columns. Dropped among sub-tasks it joins them; dropped anywhere else it is a card of its own again |
 | `cmd+click` a card | mark it, or take the mark off - anywhere on the card, buttons and all |
 | `shift+click` a card | mark the run of cards between it and the last one clicked |
 | Escape, or a click on the board beside the cards | let the marks go |

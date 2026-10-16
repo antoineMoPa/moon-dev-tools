@@ -521,6 +521,7 @@ fn a_task_finished_from_another_moon_keeps_the_run_that_moon_holds() {
         std::slice::from_ref(&task_id),
         ColumnId::new(store::RELEASES_SHELLS_IN),
         0,
+        None,
     )
     .expect("expected the move");
 

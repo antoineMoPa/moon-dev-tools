@@ -223,7 +223,7 @@ impl App {
                     Ok((columns, tasks, board_task)) => {
                         model.board.error = None;
                         board::columns::accept_columns(model, columns);
-                        board::cards::accept_board(model, tasks);
+                        board::placing::accept_board(model, tasks);
                         model.board.board_task = Some(board_task);
                     }
                     Err(error) => model.board.error = Some(format!("{error}")),

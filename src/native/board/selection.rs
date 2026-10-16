@@ -10,9 +10,12 @@ use egui::Modifiers;
 
 use std::collections::HashSet;
 
-use crate::native::{
-    board::filter::Filter,
-    model::{BoardState, Carrying},
+use crate::{
+    moontasks::sub_tasks,
+    native::{
+        board::filter::Filter,
+        model::{BoardState, Carrying},
+    },
 };
 
 pub(crate) fn is_marked(board: &BoardState, task_id: &str) -> bool {
@@ -162,14 +165,16 @@ pub(crate) fn carried_by(board: &mut BoardState, primary: &str, modifiers: Modif
     }
     pages_of_cards_let_go(board, was_marked);
 
+    let marked: Vec<String> = board
+        .tasks
+        .iter()
+        .filter(|task| is_marked(board, &task.id))
+        .map(|task| task.id.clone())
+        .collect();
     Carrying {
         primary: primary.to_string(),
-        task_ids: board
-            .tasks
-            .iter()
-            .filter(|task| is_marked(board, &task.id))
-            .map(|task| task.id.clone())
-            .collect(),
+        // A card's sub-tasks go where it goes, so they are carried with it.
+        task_ids: sub_tasks::with_sub_tasks(&board.tasks, &marked),
     }
 }
 
@@ -192,6 +197,7 @@ mod tests {
                     repo_path: String::new(),
                     tags: Vec::new(),
                     remote_task_tracker_url: String::new(),
+                    parent: None,
                     notes: String::new(),
                 attachments: Vec::new(),
                     resources: Vec::new(),

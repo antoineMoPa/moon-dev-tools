@@ -26,8 +26,9 @@ pub(crate) enum BoardAction {
     /// Say no to the task being written: the cross on the empty card standing for it.
     CancelNewTask,
     /// Cards let go of in a column, at the place among its cards they were dropped - one for
-    /// an ordinary drag, the whole run of marks for a drag made with several.
-    Place(Vec<String>, ColumnId, usize),
+    /// an ordinary drag, the whole run of marks for a drag made with several - and the card
+    /// they were dropped onto, which they become sub-tasks of.
+    Place(Vec<String>, ColumnId, usize, Option<String>),
     /// A column let go of on the board, at the place among the others it was dropped.
     PlaceColumn(ColumnId, usize),
     /// A column named in the new-column box: what it is called, and how many columns are to
@@ -323,9 +324,17 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 },
             );
         }
-        BoardAction::Place(task_ids, status, position) => {
+        BoardAction::Place(task_ids, status, position, parent) => {
             app.tasks.spawn(
-                move |backend| backend.place_tasks(&session_id, &task_ids, status.clone(), position),
+                move |backend| {
+                    backend.place_tasks(
+                        &session_id,
+                        &task_ids,
+                        status.clone(),
+                        position,
+                        parent.clone(),
+                    )
+                },
                 |model, result| {
                     // A move the server would not make is not one to keep drawing.
                     if result.is_err() {

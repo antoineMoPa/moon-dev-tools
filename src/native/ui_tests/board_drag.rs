@@ -532,3 +532,69 @@ fn a_drag_that_began_on_no_card_carries_nothing() {
         "and a press on the board beside the cards lets the marks go"
     );
 }
+
+/// A card let go of over the middle of another goes under it as its sub-task: drawn under it,
+/// set in from both edges of the column - and linked from that card's `subtasks` folder, so
+/// the board read back from disk has it there too.
+#[test]
+fn a_card_dropped_onto_another_becomes_its_sub_task() {
+    use crate::native::board::cards::card_drag_id;
+
+    let (mut harness, seen, repo) = board_of("board-sub-task", &[]);
+    let read = || seen.lock().expect("poisoned").clone();
+    let card_of = |harness: &Harness<'_>, task_id: &str| {
+        harness
+            .ctx
+            .read_response(card_drag_id(task_id))
+            .expect("expected the card to have been drawn")
+            .rect
+    };
+
+    let parent = card_of(&harness, "write-the-parser-1111");
+    let next = title_of(&harness, "fix-the-login-page-2222");
+    // Halfway between the first card's title and the second's: the middle of the first card.
+    let onto = egui::pos2(parent.center().x, (parent.top() + next.y) / 2.0);
+    let from = title_of(&harness, "drop-the-old-api-3333");
+    drag_like_a_hand(&mut harness, from, onto, egui::Modifiers::NONE);
+
+    let under = || read().parent_of("drop-the-old-api-3333");
+    let wanted = Some("write-the-parser-1111");
+    assert!(
+        settle(&mut harness, || under().as_deref() == wanted),
+        "the card should be under the one it was dropped onto, got {:?}",
+        read().parents
+    );
+    harness.run_steps(12);
+    let order: Vec<String> = read().columns.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(
+        order,
+        [
+            "write-the-parser-1111",
+            "drop-the-old-api-3333",
+            "fix-the-login-page-2222"
+        ],
+        "and drawn right under it"
+    );
+    assert_eq!(
+        card_of(&harness, "drop-the-old-api-3333").left()
+            - card_of(&harness, "write-the-parser-1111").left(),
+        8.0,
+        "set in from the column's left edge"
+    );
+    assert_eq!(
+        card_of(&harness, "write-the-parser-1111").right()
+            - card_of(&harness, "drop-the-old-api-3333").right(),
+        8.0,
+        "and from its right edge"
+    );
+    // Written down as a link in the card's `subtasks` folder that opens the sub-task's own -
+    // by the server, on a worker thread the board does not wait for.
+    let link = repo
+        .root
+        .join(".moontasks/write-the-parser-1111/subtasks/drop-the-old-api-3333");
+    assert!(
+        settle(&mut harness, || link.join("metadata.json").is_file()),
+        "expected {} to link to the sub-task",
+        link.display()
+    );
+}

@@ -180,6 +180,7 @@ mod tests {
             repo_path: String::new(),
             tags: Vec::new(),
             remote_task_tracker_url: String::new(),
+            parent: None,
             notes: String::new(),
                 attachments: Vec::new(),
             resources: Vec::new(),

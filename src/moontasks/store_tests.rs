@@ -589,3 +589,31 @@ fn a_submodule_is_no_work_tree_and_a_git_file_naming_nothing_is_refused() {
 
     fs::remove_dir_all(parent).expect("failed to remove the test repo");
 }
+
+/// A sub-task is a link in its card's `subtasks` folder, read back as the card it is under -
+/// and the folder goes once its last link does.
+#[test]
+fn a_sub_task_is_a_link_in_its_cards_folder() {
+    let repo = temp_repo("sub-task-links");
+    let todo = ColumnId::new("todo");
+    let parent = create_task(&repo, "Parent", &todo, ColumnEnd::Bottom).expect("expected a task");
+    let child = create_task(&repo, "Child", &todo, ColumnEnd::Bottom).expect("expected a task");
+
+    link_sub_task(&repo, &parent, &child).expect("expected the link");
+    let link = tasks_root(&repo)
+        .join(&parent)
+        .join(SUB_TASKS_DIR_NAME)
+        .join(&child);
+    assert!(
+        link.join(METADATA_FILE_NAME).is_file(),
+        "the link should open the sub-task's own folder"
+    );
+    assert_eq!(
+        parents_by_link(&repo).expect("expected the links read"),
+        std::collections::HashMap::from([(child.clone(), parent.clone())])
+    );
+
+    unlink_sub_task(&repo, &parent, &child).expect("expected the link removed");
+    assert!(parents_by_link(&repo).expect("expected the links read").is_empty());
+    assert!(!tasks_root(&repo).join(&parent).join(SUB_TASKS_DIR_NAME).exists());
+}

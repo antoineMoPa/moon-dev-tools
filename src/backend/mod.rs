@@ -195,13 +195,15 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn create_task(&self, session_id: &str, request: &CreateTaskRequest) -> Result<TaskView>;
     /// Put tasks in a column, at a place among the cards already there, which is what a
     /// drag on the board does, and the only way a card moves. More than one is a card
-    /// dragged with others selected, which land as a run in the order they were in.
+    /// dragged with others selected, which land as a run in the order they were in. `parent`
+    /// is the card they were dropped onto, which they become sub-tasks of.
     fn place_tasks(
         &self,
         session_id: &str,
         task_ids: &[String],
         status: ColumnId,
         position: usize,
+        parent: Option<String>,
     ) -> Result<()>;
     fn delete_task(&self, session_id: &str, task_id: &str) -> Result<()>;
     /// Start a shell or an agent in a task, and answer with the shell it runs in.

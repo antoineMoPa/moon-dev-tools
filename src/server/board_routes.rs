@@ -290,6 +290,7 @@ pub(super) async fn place_tasks(
             &request.task_ids,
             request.status,
             request.position,
+            request.parent.as_deref(),
         )
     })
     .await?;

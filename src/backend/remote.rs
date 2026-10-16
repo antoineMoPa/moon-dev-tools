@@ -325,6 +325,7 @@ impl Backend for RemoteBackend {
         task_ids: &[String],
         status: ColumnId,
         position: usize,
+        parent: Option<String>,
     ) -> Result<()> {
         self.post(
             &format!("/api/session/{session_id}/tasks/placement"),
@@ -332,6 +333,7 @@ impl Backend for RemoteBackend {
                 task_ids: task_ids.to_vec(),
                 status,
                 position,
+                parent,
             },
         )
     }

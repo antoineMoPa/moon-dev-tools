@@ -19,6 +19,7 @@ pub(crate) mod header;
 mod board_task;
 pub(crate) mod marks;
 pub(crate) mod motion;
+pub(crate) mod placing;
 pub(crate) mod resources;
 pub(crate) mod selection;
 pub(crate) mod start;

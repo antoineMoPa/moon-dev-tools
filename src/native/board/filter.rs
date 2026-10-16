@@ -142,6 +142,7 @@ mod tests {
             repo_path: String::new(),
             tags: Vec::new(),
             remote_task_tracker_url: String::new(),
+            parent: None,
             notes: notes.to_string(),
             attachments: Vec::new(),
             resources: Vec::new(),
@@ -180,6 +181,7 @@ mod tests {
         let task = TaskView {
             tags: vec!["needs-tests".to_string()],
             remote_task_tracker_url: String::new(),
+            parent: None,
             ..task("Write the parser", "")
         };
 

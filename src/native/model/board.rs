@@ -189,6 +189,12 @@ pub(crate) struct PendingPlace {
     pub(crate) task_ids: Vec<String>,
     pub(crate) status: crate::moontasks::ColumnId,
     pub(crate) index: usize,
+    /// The card they were dropped onto, which they become sub-tasks of.
+    pub(crate) parent: Option<String>,
+    /// The card each of `task_ids` is under once it has landed, which is how an answer that
+    /// has them in the right place but not yet under the right card is told from one that
+    /// has caught up.
+    pub(crate) parents: Vec<Option<String>>,
 }
 
 /// The same, for a column dragged to another place on the board.
@@ -203,6 +209,9 @@ pub(crate) struct PendingColumnPlace {
 pub(crate) struct TaskLanding {
     pub(crate) status: crate::moontasks::ColumnId,
     pub(crate) index: usize,
+    /// The card they would become sub-tasks of: the one they are held over the middle of, or
+    /// the one whose sub-tasks they are held among.
+    pub(crate) parent: Option<String>,
 }
 
 /// A column's heading, open for editing after a double click.

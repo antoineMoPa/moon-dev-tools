@@ -229,6 +229,7 @@ fn move_card(column: &str, task_dir: Option<OsString>) -> Result<String> {
         std::slice::from_ref(&task.task_id),
         column.id.clone(),
         BOTTOM_OF_THE_COLUMN,
+        None,
     )?;
     Ok(format!("moved @{handle} to {}\n", column.label))
 }

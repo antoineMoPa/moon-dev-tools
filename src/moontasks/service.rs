@@ -35,6 +35,7 @@ use crate::{
         store::{
             self, BoardConfig, ColumnEnd, ColumnId, TaskMetadata, TaskResource, TaskResourceKind,
         },
+        sub_tasks,
     },
     terminal::TerminalRegistry,
 };
@@ -96,12 +97,14 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
 
     // Read once for the whole board rather than once a run.
     let open = OpenSessions::of_runs(read.iter().flat_map(|(_, metadata)| &metadata.resources))?;
+    let parents = store::parents_by_link(&repo_path)?;
     let mut tasks: Vec<_> = read
         .iter()
         .map(|(task_id, metadata)| {
+            let parent = parents.get(task_id).cloned();
             (
                 place_of(metadata),
-                view_of(state, &repo_path, &works_in, task_id, metadata, &open),
+                view_of(state, &repo_path, &works_in, task_id, metadata, parent, &open),
             )
         })
         .collect();
@@ -112,7 +115,28 @@ pub(crate) fn list_tasks(state: &AppState, session_id: &str) -> Result<Vec<TaskV
     // And a column that keeps an order of its own is read out in that one instead - see
     // [`column_sort`]. The places are left as they are underneath, for when it no longer does.
     column_sort::arrange(&store::read_board(&repo_path).columns, &mut tasks);
+    sub_tasks::under_their_parents(&mut tasks);
     Ok(tasks)
+}
+
+/// A card as the server reads it off disk, with the card it is a sub-task of - see
+/// [`store::parents_by_link`].
+struct CardOnDisk {
+    id: String,
+    metadata: TaskMetadata,
+    parent: Option<String>,
+}
+
+impl sub_tasks::Card for CardOnDisk {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn parent(&self) -> Option<&str> {
+        self.parent.as_deref()
+    }
+    fn column(&self) -> &ColumnId {
+        self.metadata.column()
+    }
 }
 
 /// What a card is sorted by inside its column: where it was put, and - for cards off a board
@@ -127,15 +151,26 @@ fn place_of(metadata: &TaskMetadata) -> (u32, u64) {
 /// lands rather than where it was aimed: a number past the end puts them at the bottom. More
 /// than one task is a card dragged with others selected - they land as a run, in the order
 /// the board already had them.
+///
+/// The sub-tasks of a card that moves move with it, and `parent` is the card they were
+/// dropped onto, which they become sub-tasks of - see [`sub_tasks`].
 pub(crate) fn place_tasks(
     state: &AppState,
     session_id: &str,
     task_ids: &[String],
     status: ColumnId,
     position: usize,
+    parent: Option<&str>,
 ) -> Result<()> {
     let repo_path = repo_of(state, session_id)?;
-    place_tasks_in_repo(&state.terminals, &repo_path, task_ids, status, position)
+    place_tasks_in_repo(
+        &state.terminals,
+        &repo_path,
+        task_ids,
+        status,
+        position,
+        parent,
+    )
 }
 
 /// [`place_tasks`] for a caller with the board's repo in hand and no session on it, which is
@@ -150,20 +185,71 @@ pub(crate) fn place_tasks_in_repo(
     task_ids: &[String],
     status: ColumnId,
     position: usize,
+    parent: Option<&str>,
 ) -> Result<()> {
     let board = store::read_board(repo_path);
     if !board.has(&status) {
         bail!("{status} is not a column of this board");
     }
+    for task_id in task_ids {
+        if store::read_task(repo_path, task_id)?.status.is_none() {
+            bail!("{task_id} is the board task, which is on no column");
+        }
+    }
 
-    let mut moving: Vec<(String, TaskMetadata)> = Vec::new();
+    // Every card, in the order the board draws them, which is what says whose sub-tasks
+    // are whose.
+    let mut parents = store::parents_by_link(repo_path)?;
+    let mut cards: Vec<CardOnDisk> = store::list_task_ids(repo_path)?
+        .into_iter()
+        .filter_map(|id| {
+            let metadata = store::read_task(repo_path, &id).ok()?;
+            metadata.status.as_ref()?;
+            let parent = parents.remove(&id);
+            Some(CardOnDisk {
+                id,
+                metadata,
+                parent,
+            })
+        })
+        .collect();
+    cards.sort_by_key(|card| place_of(&card.metadata));
+    sub_tasks::under_their_parents(&mut cards);
+    if let Some(parent) = parent {
+        let Some(parent_card) = cards.iter().find(|card| card.id == parent) else {
+            bail!("{parent} is no card of this board");
+        };
+        if task_ids.iter().any(|id| id == parent) {
+            bail!("{parent} cannot be put under itself");
+        }
+        if parent_card.parent.is_some() {
+            bail!("{parent} is a sub-task, which takes no sub-tasks of its own");
+        }
+        if *parent_card.metadata.column() != status {
+            bail!("{parent} is not in {status}");
+        }
+    }
+    let task_ids = sub_tasks::with_sub_tasks(&cards, task_ids);
+    let task_ids = task_ids.as_slice();
+
+    let mut moving: Vec<CardOnDisk> = Vec::new();
     // Whether any of them is arriving from another column, which is what the column's own
     // `arrivals` end is about: cards shuffled about within a column go where they were put.
     let mut arriving = false;
     for task_id in task_ids {
         let mut metadata = store::read_task(repo_path, task_id)?;
-        if metadata.status.is_none() {
-            bail!("{task_id} is the board task, which is on no column");
+        let was_under = cards
+            .iter()
+            .find(|card| card.id == *task_id)
+            .and_then(|card| card.parent.clone());
+        let goes_under = sub_tasks::parent_after_move(was_under.as_deref(), parent, task_ids);
+        if goes_under != was_under {
+            if let Some(was_under) = &was_under {
+                store::unlink_sub_task(repo_path, was_under, task_id)?;
+            }
+            if let Some(goes_under) = &goes_under {
+                store::link_sub_task(repo_path, goes_under, task_id)?;
+            }
         }
         release_a_finished_task(
             terminals,
@@ -178,22 +264,22 @@ pub(crate) fn place_tasks_in_repo(
             metadata.status = Some(status.clone());
             metadata.entered_column_at_unix = Some(store::now_unix());
         }
-        moving.push((task_id.clone(), metadata));
+        moving.push(CardOnDisk {
+            id: task_id.clone(),
+            metadata,
+            parent: goes_under,
+        });
     }
     // The order they were in before the drag, which is the order they keep: the board hands
     // them over that way, and a board read another way round would otherwise reorder them.
-    moving.sort_by_key(|(_, metadata)| place_of(metadata));
+    moving.sort_by_key(|card| place_of(&card.metadata));
+    sub_tasks::under_their_parents(&mut moving);
 
     // The cards already in that column, in the order the board draws them.
-    let mut column: Vec<(String, TaskMetadata)> = store::list_task_ids(repo_path)?
+    let mut column: Vec<CardOnDisk> = cards
         .into_iter()
-        .filter(|other| !task_ids.contains(other))
-        .filter_map(|other| {
-            let metadata = store::read_task(repo_path, &other).ok()?;
-            (metadata.status.as_ref() == Some(&status)).then_some((other, metadata))
-        })
+        .filter(|card| !task_ids.contains(&card.id) && *card.metadata.column() == status)
         .collect();
-    column.sort_by_key(|(_, metadata)| place_of(metadata));
     // A column that says which end arrivals go to takes them there instead of where the drop
     // landed - see [`store::BoardColumn::arrivals`].
     let at = match board.arrivals_end(&status).filter(|_| arriving) {
@@ -204,8 +290,10 @@ pub(crate) fn place_tasks_in_repo(
     for (offset, moved) in moving.into_iter().enumerate() {
         column.insert(at + offset, moved);
     }
+    // Numbered in the order the board draws them, so a sub-task's number is under its card's.
+    sub_tasks::under_their_parents(&mut column);
 
-    for (index, (id, mut metadata)) in column.into_iter().enumerate() {
+    for (index, CardOnDisk { id, mut metadata, .. }) in column.into_iter().enumerate() {
         let position = index as u32;
         // A card that moved is written whatever its number came out as - it is one whose
         // column may have changed.
@@ -448,6 +536,7 @@ fn view_of(
     works_in: &Path,
     task_id: &str,
     metadata: &TaskMetadata,
+    parent: Option<String>,
     open: &OpenSessions,
 ) -> TaskView {
     TaskView {
@@ -463,6 +552,7 @@ fn view_of(
         repo_path: works_in.display().to_string(),
         tags: metadata.tags.clone(),
         remote_task_tracker_url: metadata.remote_task_tracker_url.clone(),
+        parent,
         notes: store::read_notes(repo_path, task_id),
         attachments: store::read_attachments(repo_path, task_id),
         resources: resources_of(state, repo_path, works_in, task_id, metadata, open),
@@ -589,6 +679,8 @@ pub(crate) fn create_task(
         &works_in,
         &task_id,
         &metadata,
+        // A card just made is under no other.
+        None,
         &OpenSessions::of_runs(&metadata.resources)?,
     ))
 }
@@ -647,6 +739,13 @@ pub(crate) fn delete_task(state: &AppState, session_id: &str, task_id: &str) -> 
     state
         .terminals
         .remove_owned_by(&store::run_owner(&repo_path, task_id));
+    // Out of its card's sub-tasks, and its own sub-tasks let go of: they are ordinary cards
+    // now, rather than links into a folder kept with the deleted ones.
+    for (child, parent) in store::parents_by_link(&repo_path)? {
+        if child == task_id || parent == task_id {
+            store::unlink_sub_task(&repo_path, &parent, &child)?;
+        }
+    }
     store::delete_task(&repo_path, task_id)
 }
 

@@ -113,7 +113,7 @@ pub(super) fn ordered_columns(app: &App, dragged: Option<&ColumnId>) -> Vec<Boar
 }
 
 /// Move a column on the board being drawn, ahead of the server being told about it - the same
-/// reasoning [`super::place_in`] has for cards.
+/// reasoning [`super::placing::place_in`] has for cards.
 pub(crate) fn place_column_in(columns: &mut Vec<BoardColumn>, column_id: &ColumnId, index: usize) {
     let Some(at) = columns.iter().position(|column| column.id == *column_id) else {
         return;

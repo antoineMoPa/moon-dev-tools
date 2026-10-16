@@ -9,6 +9,7 @@ pub(crate) mod appears_on;
 pub(crate) mod column_sort;
 pub(crate) mod remote_tracker;
 pub(crate) mod review_request;
+pub(crate) mod sub_tasks;
 // The board's folder is read and written by the server - see `store`.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod service;
@@ -56,6 +57,10 @@ pub(crate) struct TaskView {
     /// none - see [`remote_tracker`].
     #[serde(default)]
     pub(crate) remote_task_tracker_url: String,
+    /// The card this one is a sub-task of, read off the links in that card's `subtasks`
+    /// folder - see [`sub_tasks`].
+    #[serde(default)]
+    pub(crate) parent: Option<String>,
     /// The whole of the task's `notes.md`, empty while nothing has been written in it. The
     /// card draws its first lines as the task's description, and typing there writes it back.
     pub(crate) notes: String,
@@ -346,6 +351,10 @@ pub(crate) struct TaskPlacementRequest {
     pub(crate) task_ids: Vec<String>,
     pub(crate) status: ColumnId,
     pub(crate) position: usize,
+    /// The card they were dropped onto, or among the sub-tasks of, which they become
+    /// sub-tasks of - see [`sub_tasks`].
+    #[serde(default)]
+    pub(crate) parent: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

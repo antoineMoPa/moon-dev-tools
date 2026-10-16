@@ -395,6 +395,8 @@ const CARDS: [(&str, &str, u64); 3] = [
 #[derive(Clone, Default)]
 struct Seen {
     columns: Vec<(String, String)>,
+    /// The card each card is a sub-task of.
+    parents: Vec<(String, Option<String>)>,
     marked: Vec<String>,
     /// Whether any task's own page is open, and the tasks whose pages those are.
     page_open: bool,
@@ -408,6 +410,13 @@ impl Seen {
             .find(|(id, _)| id == task_id)
             .map(|(_, status)| status.clone())
             .unwrap_or_default()
+    }
+
+    fn parent_of(&self, task_id: &str) -> Option<String> {
+        self.parents
+            .iter()
+            .find(|(id, _)| id == task_id)
+            .and_then(|(_, parent)| parent.clone())
     }
 }
 
@@ -459,6 +468,13 @@ fn board_of(name: &str, notes_on: &[&str]) -> (Harness<'static>, Arc<Mutex<Seen>
                 .tasks
                 .iter()
                 .map(|task| (task.id.clone(), task.status.to_string()))
+                .collect();
+            seen.parents = app
+                .model
+                .board
+                .tasks
+                .iter()
+                .map(|task| (task.id.clone(), task.parent.clone()))
                 .collect();
             seen.marked = marked_tasks(&app);
             seen.pages_open = CARDS
