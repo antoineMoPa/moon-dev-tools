@@ -2843,6 +2843,7 @@ dependencies = [
  "moon_display",
  "moon_launcher",
  "moon_lsp",
+ "moon_toggle_switch",
  "muda",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
@@ -2895,6 +2896,13 @@ dependencies = [
  "lsp-types",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "moon_toggle_switch"
+version = "0.1.0"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

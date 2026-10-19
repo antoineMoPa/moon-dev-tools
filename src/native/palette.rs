@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// What the palette's query is picking.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PaletteMode {
     /// Something the window can do, out of the list below.
     Commands,

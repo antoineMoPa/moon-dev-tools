@@ -1,4 +1,5 @@
-//! Drawing the palette: the query box over the list, the scope it searches, and a row.
+//! Drawing the palette: the query box over the list, the switch between its two searches
+//! and the scope they search, and a row.
 
 use egui::{
     Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind,
@@ -30,6 +31,16 @@ pub(super) const ROW_HEIGHT: f32 = 34.0;
 /// The gap between a row's edge and what is written in it.
 const ROW_PADDING: f32 = 9.0;
 
+/// The gap between the query line's edge and what is typed in it.
+const LINE_PADDING: i8 = 7;
+
+/// The two searches as the switch at the end of the line words them, in the order they sit
+/// there from the left: what the finder reads by, and what the content search reads.
+const SEARCH_SWITCH: [(PaletteMode, &str); 2] = [
+    (PaletteMode::Files, "files"),
+    (PaletteMode::Contents, "content"),
+];
+
 /// Which end of a text is kept when it is wider than the room it has.
 #[derive(Clone, Copy)]
 pub(in crate::native) enum Kept {
@@ -58,6 +69,18 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if pressed_outside(ctx, app.model.palette.rect) {
         app.model.palette.dismiss();
         return;
+    }
+    // Tab flips the switch at the end of the line, when there is one. Taken out of the
+    // input, so the text box does not hand the keyboard on - it would only ask for it back.
+    if has_search_switch(app)
+        && ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, Key::Tab)
+                | input.consume_key(egui::Modifiers::SHIFT, Key::Tab)
+        })
+    {
+        app.model
+            .palette
+            .switch_search(other_search(app.model.palette.mode));
     }
     match app.model.palette.mode {
         PaletteMode::Commands
@@ -117,17 +140,37 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     ui.set_width(floating_width(screen));
 
                     let hint = hint_of(app);
+                    // The line makes room at its end for the switch, when it has one: what is
+                    // typed stops short of the switch rather than running under it.
+                    let switch_width = search_switch_width(ui, &palette);
+                    let line_end = if has_search_switch(app) {
+                        i8::try_from((f32::from(LINE_PADDING) + switch_width).ceil() as i32)
+                            .expect("the search switch is wider than a line's margin can be")
+                    } else {
+                        LINE_PADDING
+                    };
                     let entry = ui.add(
                         egui::TextEdit::singleline(&mut app.model.palette.query)
                             .hint_text(hint)
                             .desired_width(f32::INFINITY)
-                            .margin(egui::Margin::symmetric(7, 5)),
+                            .margin(egui::Margin {
+                                left: LINE_PADDING,
+                                right: line_end,
+                                top: 5,
+                                bottom: 5,
+                            }),
                     );
                     entry.request_focus();
                     // Opened on a name to type over, which is selected so the first key typed
                     // replaces it - see `PaletteState::show_rename`.
                     if std::mem::take(&mut app.model.palette.select_query) {
                         select_all(ui.ctx(), entry.id, &app.model.palette.query);
+                    }
+                    if has_search_switch(app)
+                        && let Some(to) =
+                            draw_search_switch(ui, entry.rect, app.model.palette.mode, &palette)
+                    {
+                        app.model.palette.switch_search(to);
                     }
                     if matches!(
                         app.model.palette.mode,
@@ -245,6 +288,74 @@ fn draw_scope_box(ui: &mut egui::Ui, scope: &mut SearchScope, palette: &Palette)
     if ui.checkbox(&mut included, label).changed() {
         *scope = SearchScope::including_ignored(included);
     }
+}
+
+/// The search the switch is not on: the one Tab switches to.
+fn other_search(mode: PaletteMode) -> PaletteMode {
+    match mode {
+        PaletteMode::Files => PaletteMode::Contents,
+        PaletteMode::Contents => PaletteMode::Files,
+        PaletteMode::Commands
+        | PaletteMode::Rename
+        | PaletteMode::Places
+        | PaletteMode::CodeActions => {
+            unreachable!("only the two searches have the switch")
+        }
+    }
+}
+
+/// Whether the line ends in the switch between the two searches: it does on either of them,
+/// except when the finder is picking a file for a task's card, which a line of text is not.
+fn has_search_switch(app: &App) -> bool {
+    matches!(
+        app.model.palette.mode,
+        PaletteMode::Files | PaletteMode::Contents
+    ) && app.model.palette.files_link_to_task.is_none()
+}
+
+/// The switch's lettering: a size under the small one, so the switch sits inside the line
+/// rather than filling it.
+const SWITCH_FONT_SIZE: f32 = SMALL_SIZE - 2.0;
+
+/// The switch between the two searches, on `mode`, in the palette's colours: the track a
+/// tinted ground and the thumb the panel's own, told apart on either theme.
+fn search_switch(
+    mode: PaletteMode,
+    palette: &Palette,
+) -> moon_toggle_switch::ToggleSwitch<'static, PaletteMode> {
+    moon_toggle_switch::ToggleSwitch::new(&SEARCH_SWITCH, mode).style(
+        moon_toggle_switch::ToggleSwitchStyle {
+            track: palette.batch_bg,
+            thumb: palette.panel,
+            ink: palette.ink,
+            muted: palette.muted,
+            font: egui::FontId::proportional(SWITCH_FONT_SIZE),
+            padding: vec2(4.0, 2.0),
+        },
+    )
+}
+
+/// How wide the switch is, for the line to leave it room.
+fn search_switch_width(ui: &egui::Ui, palette: &Palette) -> f32 {
+    search_switch(PaletteMode::Files, palette).size(ui).x
+}
+
+/// The switch at the end of the line, so a name typed into the finder can be looked for in
+/// the files' text instead without typing it again - Tab flips it too. Drawn over the end
+/// of the line, in the room the line's margin left it. The search clicked, if it is the
+/// other one.
+fn draw_search_switch(
+    ui: &mut egui::Ui,
+    line: egui::Rect,
+    mode: PaletteMode,
+    palette: &Palette,
+) -> Option<PaletteMode> {
+    let width = search_switch_width(ui, palette);
+    let room = egui::Rect::from_min_max(
+        egui::pos2(line.max.x - f32::from(LINE_PADDING) - width, line.min.y),
+        line.max,
+    );
+    search_switch(mode, palette).show_in(ui, room)
 }
 
 /// Select the whole of the palette's line.

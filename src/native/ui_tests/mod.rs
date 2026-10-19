@@ -39,6 +39,7 @@ mod layout;
 mod open_from_shell;
 mod palette;
 mod palette_long_rows;
+mod palette_search_switch;
 mod project;
 mod settings_pane;
 mod review_header;

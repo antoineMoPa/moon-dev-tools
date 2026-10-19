@@ -110,6 +110,27 @@ impl PaletteState {
         self.search_session_id = search_session_id;
     }
 
+    /// Turn the file finder into the content search, or back, keeping what is typed: the
+    /// switch at the end of the line, which Tab flips too. Both lists are dropped, the one being left too - a
+    /// search it still had running stops once the other starts, and a list cut short that
+    /// way would pass for the whole answer on the way back. The search of the mode switched
+    /// to starts on the next frame, from the query as it stands.
+    pub(crate) fn switch_search(&mut self, to: crate::native::palette::PaletteMode) {
+        assert!(
+            matches!(
+                to,
+                crate::native::palette::PaletteMode::Files
+                    | crate::native::palette::PaletteMode::Contents
+            ),
+            "the line only switches between the two searches"
+        );
+        self.mode = to;
+        self.stop_searches();
+        self.files = crate::native::palette::Search::default();
+        self.contents = crate::native::palette::Search::default();
+        self.highlighted = 0;
+    }
+
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
     /// measured against, and a search still out is nobody's to wait for.
     pub(crate) fn dismiss(&mut self) {

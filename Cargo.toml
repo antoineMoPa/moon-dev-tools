@@ -26,6 +26,7 @@ egui_frames = { version = "0.4", path = "crates/egui_frames", features = ["serde
 egui_tty = { version = "0.2", path = "crates/egui_tty" }
 egui_moon_editor = { version = "0.1", path = "crates/egui_moon_editor", features = ["serde"] }
 egui_moon_code_ide = { version = "0.1", path = "crates/egui_moon_code_ide" }
+moon_toggle_switch = { version = "0.1", path = "crates/moon_toggle_switch" }
 futures = "0.3.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 moon_lsp = { version = "0.1", path = "crates/moon_lsp" }

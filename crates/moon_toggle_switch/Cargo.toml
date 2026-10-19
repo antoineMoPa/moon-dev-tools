@@ -1,0 +1,22 @@
+[package]
+name = "moon_toggle_switch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A pill-shaped segmented switch for egui: one track, a word per choice, a thumb under the chosen one"
+authors = ["Antoine M-P"]
+license = "MIT"
+readme = "README.md"
+keywords = ["egui", "gui", "switch", "toggle", "segmented"]
+categories = ["gui"]
+
+[workspace]
+
+[dependencies]
+egui = "0.36"
+
+[dev-dependencies]
+egui_kittest = "0.36"
+
+[lints.rust]
+missing_docs = "warn"
