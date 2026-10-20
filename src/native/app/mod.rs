@@ -340,6 +340,7 @@ impl App {
                 command_launcher: None,
                                 review_request_amendments: 0,
                 review_sessions_of_repos: HashMap::new(),
+                task_review_minimaps: HashMap::new(),
                 opening_review_sessions: Default::default(),
                 submodule_filter_focus: false,
                 shells_running_a_command: Vec::new(),

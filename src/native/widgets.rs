@@ -328,6 +328,24 @@ pub(crate) fn by_directory<T>(
     grouped
 }
 
+/// `+12 −3`: how many lines a diff puts in and takes out, each left out when it is none. It
+/// reads in that order in a layout running either way.
+pub(crate) fn line_counts(ui: &mut Ui, added: usize, removed: usize, size: f32, palette: &Palette) {
+    let mut counts = [('+', added, palette.added), ('−', removed, palette.removed)];
+    if ui.layout().prefer_right_to_left() {
+        counts.reverse();
+    }
+    for (sign, count, ink) in counts {
+        if count > 0 {
+            ui.label(
+                RichText::new(format!("{sign}{}", grouped(count)))
+                    .size(size)
+                    .color(ink),
+            );
+        }
+    }
+}
+
 /// `1,234` - thousands separated, so large diff counts stay readable.
 pub(crate) fn grouped(value: usize) -> String {
     let digits = value.to_string();

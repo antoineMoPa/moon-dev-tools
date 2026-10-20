@@ -284,14 +284,20 @@ impl Minimap {
         });
     }
 
-    /// Fold the map again, from the cards the diff just reported.
-    fn fold(&mut self, app: &App, session_id: &str, strip: Rect, row_pitch: f32, inks: Inks) {
-        let hunks: HashMap<u64, &HunkView> = app
-            .model
-            .review_ref(session_id)
-            .map(|review| review.hunks())
-            .unwrap_or_default()
+    /// Fold the map again, from the cards the diff just reported. `session_ids` are the
+    /// reviews whose hunks the cards are of.
+    fn fold(
+        &mut self,
+        app: &App,
+        session_ids: &[&str],
+        strip: Rect,
+        row_pitch: f32,
+        inks: Inks,
+    ) {
+        let hunks: HashMap<u64, &HunkView> = session_ids
             .iter()
+            .filter_map(|session_id| app.model.review_ref(session_id))
+            .flat_map(|review| review.hunks())
             .map(|hunk| (hash_of(&hunk.id), hunk))
             .collect();
 
@@ -335,10 +341,10 @@ impl Minimap {
 /// diff is drawn: what it asks for is where the diff then scrolls to, on this same frame.
 /// Answers where the strip is, for [`paint`].
 pub(crate) fn take_press(app: &mut App, ui: &Ui, session_id: &str) -> Rect {
-    let strip = ui.max_rect();
-    let minimap = &mut app.model.review(session_id).minimap;
-    minimap.asked = minimap.map.scroll_asked(ui, strip_id(session_id), strip);
-    strip
+    app.model
+        .review(session_id)
+        .minimap
+        .take_press(ui, strip_id(session_id))
 }
 
 /// Paint the strip, after the diff has been drawn and has reported where everything is.
@@ -354,26 +360,61 @@ pub(crate) fn paint(
     // Taken out while it is folded: that reads the app's own caches, which cannot be read
     // while the review that holds this is borrowed to change it.
     let mut minimap = std::mem::take(&mut app.model.review(session_id).minimap);
-    let inks = Inks::of(palette, style);
-    let scrolled = minimap.scrolled;
-    if !same_cards(&minimap.folded_cards, &minimap.cards)
-        || minimap.folded_inks != inks
-        || minimap.folded_hunks_drawn_differently != app.hunks_drawn_differently
-        || !minimap
-            .map
-            .is_folded_for(scrolled.content_height, strip.height())
-    {
-        minimap.fold(app, session_id, strip, row_pitch(ui), inks);
-    }
-    minimap.map.paint(
+    minimap.paint(
+        app,
         ui,
         strip_id(session_id),
+        &[session_id],
         strip,
-        style.minimap_slider_ink,
-        scrolled.offset,
-        scrolled.view_height,
+        style,
+        palette,
     );
     app.model.review(session_id).minimap = minimap;
+}
+
+impl Minimap {
+    /// [`take_press`] for a map of any pane, whose strip is the widget `id`.
+    pub(crate) fn take_press(&mut self, ui: &Ui, id: egui::Id) -> Rect {
+        let strip = ui.max_rect();
+        self.asked = self.map.scroll_asked(ui, id, strip);
+        strip
+    }
+
+    /// [`paint`] for a map of any pane, of the hunks of the reviews `session_ids`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "two call sites, each with all of these at hand"
+    )]
+    pub(crate) fn paint(
+        &mut self,
+        app: &App,
+        ui: &Ui,
+        id: egui::Id,
+        session_ids: &[&str],
+        strip: Rect,
+        style: &EditorStyle,
+        palette: &Palette,
+    ) {
+        let inks = Inks::of(palette, style);
+        let scrolled = self.scrolled;
+        if !same_cards(&self.folded_cards, &self.cards)
+            || self.folded_inks != inks
+            || self.folded_hunks_drawn_differently != app.hunks_drawn_differently
+            || !self
+                .map
+                .is_folded_for(scrolled.content_height, strip.height())
+        {
+            self.fold(app, session_ids, strip, row_pitch(ui), inks);
+        }
+        self.map.paint(
+            ui,
+            id,
+            strip,
+            style.minimap_slider_ink,
+            scrolled.offset,
+            scrolled.view_height,
+        );
+    }
 }
 
 #[cfg(test)]

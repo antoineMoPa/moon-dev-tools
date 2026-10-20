@@ -135,6 +135,9 @@ pub(crate) struct Model {
     /// [`crate::native::review::task_review`]. A session lives as long as the server that made
     /// it, so that pane names its task rather than its sessions, and finds them here.
     pub(crate) review_sessions_of_repos: HashMap<String, String>,
+    /// The minimap of each task's combined review, by task id: one map down the whole scroll,
+    /// across the reviews of every repo in it.
+    pub(crate) task_review_minimaps: HashMap<String, crate::native::review::minimap::Minimap>,
     /// The repos whose session has been asked for and not answered yet, so each is asked once.
     pub(crate) opening_review_sessions: std::collections::HashSet<String>,
     /// The shells the server says have something running in them, as of the last poll. What

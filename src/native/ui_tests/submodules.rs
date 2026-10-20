@@ -413,6 +413,16 @@ fn a_task_with_several_pending_reviews_opens_them_as_one_diff() {
         wait_for_labels(&mut harness, &["new.rs", "src/extra.rs"]),
         "the combined review should show the changes of both repos"
     );
+    // The submodule's one line and the root's twelve, in the header over both.
+    assert!(
+        wait_for_labels(&mut harness, &["+13"]),
+        "the header should add up the lines of every repo"
+    );
+    let strip = crate::native::review::task_review::strip_id("deploy-the-thing-1111");
+    assert!(
+        harness.ctx.read_response(strip).is_some(),
+        "the combined review should have a minimap down its scroll"
+    );
 }
 
 /// Step the window until every one of `labels` is on screen, for up to the time `settle` gives.

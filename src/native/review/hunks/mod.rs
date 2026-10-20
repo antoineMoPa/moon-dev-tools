@@ -26,7 +26,7 @@ use crate::{
         model::ScrollTo,
         review::diff::DiffLine,
         review::image_diff,
-        review::minimap::{CardBeingDrawn, Scrolled},
+        review::minimap::{CardBeingDrawn, Minimap, Scrolled},
         theme::{CODE_SIZE, Palette, SMALL_SIZE},
         widgets,
     },
@@ -203,9 +203,15 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palet
 
 /// A review's hunks laid down in `ui` where it stands, with no scroll area of their own: how a
 /// pane showing several reviews one under the other draws each of them - see
-/// [`crate::native::review::task_review`]. The review's minimap is kept as it was, because the
-/// cards land in another pane's scroll area and the map is of the review's own pane.
-pub(crate) fn draw_in_place(app: &mut App, ui: &mut Ui, session_id: &str, palette: &Palette) {
+/// [`crate::native::review::task_review`]. The cards land in that pane's scroll area, so they
+/// are reported to `minimap`, that pane's map, and the review's own map is kept as it was.
+pub(crate) fn draw_in_place(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    minimap: &mut Minimap,
+    palette: &Palette,
+) {
     crate::native::definition::follow_in_review(app, session_id);
     let payload = app
         .model
@@ -215,7 +221,7 @@ pub(crate) fn draw_in_place(app: &mut App, ui: &mut Ui, session_id: &str, palett
 
     copy_selected_lines(app, ui, session_id);
     let scroll_target = app.model.review(session_id).scroll_to.take();
-    let minimap = std::mem::take(&mut app.model.review(session_id).minimap);
+    std::mem::swap(minimap, &mut app.model.review(session_id).minimap);
     draw_sections(
         app,
         ui,
@@ -224,7 +230,7 @@ pub(crate) fn draw_in_place(app: &mut App, ui: &mut Ui, session_id: &str, palett
         scroll_target.as_ref(),
         palette,
     );
-    app.model.review(session_id).minimap = minimap;
+    std::mem::swap(minimap, &mut app.model.review(session_id).minimap);
     finish_line_sweep(app, ui, session_id);
 }
 

@@ -118,20 +118,7 @@ fn draw_files_section(
     let added: usize = files.iter().map(|file| file.added_line_count).sum();
     let removed: usize = files.iter().map(|file| file.removed_line_count).sum();
     widgets::section_header(ui, "files", palette, |ui| {
-        if removed > 0 {
-            ui.label(
-                RichText::new(format!("−{}", widgets::grouped(removed)))
-                    .size(SMALL_SIZE - 1.0)
-                    .color(palette.removed),
-            );
-        }
-        if added > 0 {
-            ui.label(
-                RichText::new(format!("+{}", widgets::grouped(added)))
-                    .size(SMALL_SIZE - 1.0)
-                    .color(palette.added),
-            );
-        }
+        widgets::line_counts(ui, added, removed, SMALL_SIZE - 1.0, palette);
     });
     ui.add_space(3.0);
 

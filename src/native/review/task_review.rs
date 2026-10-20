@@ -21,7 +21,11 @@ use crate::{
     native::{
         app::App,
         model::ScrollTo,
-        review::{hunks, sidebar},
+        review::{
+            hunks,
+            minimap::{self, Minimap, Scrolled},
+            sidebar,
+        },
         submodules::changes_label,
         theme::{Palette, SMALL_SIZE},
         widgets,
@@ -88,6 +92,31 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
             .show(ui, |ui| draw_repo_list(app, ui, &repos, &palette));
     }
 
+    // One map down the whole scroll, as a single review's pane has down its own - see
+    // [`crate::native::review::draw`] for why it is a panel, and why it is pressed before the
+    // diff is drawn and painted after. Each repo's cards are reported to it as it is drawn.
+    let minimap_beside = minimap::fits_beside(ui.available_width())
+        && repos.iter().any(|repo| {
+            repo.payload
+                .as_ref()
+                .is_some_and(|payload| !payload.hunks.is_empty())
+        });
+    let mut map = app
+        .model
+        .task_review_minimaps
+        .remove(task_id)
+        .unwrap_or_default();
+    let style = palette.editor_style();
+    let strip = minimap_beside.then(|| {
+        egui::Panel::right(egui::Id::new(("task-review-minimap", task_id)))
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(style.minimap_width)
+            .frame(egui::Frame::new().fill(palette.bg))
+            .show(ui, |ui| map.take_press(ui, strip_id(task_id)))
+            .inner
+    });
+
     egui::CentralPanel::default()
         .frame(
             egui::Frame::new()
@@ -95,16 +124,49 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
                 .inner_margin(egui::Margin::symmetric(8, 6)),
         )
         .show(ui, |ui| {
-            egui::ScrollArea::vertical()
+            let mut scroll_area = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .id_salt(("task-review-diff", task_id))
-                .show(ui, |ui| {
-                    for repo in &repos {
-                        draw_repo(app, ui, repo, &palette);
-                        ui.add_space(18.0);
-                    }
-                });
+                .id_salt(("task-review-diff", task_id));
+            if let Some(offset) = map.asked.take() {
+                scroll_area = scroll_area.vertical_scroll_offset(offset);
+            }
+            let scrolled = scroll_area.show(ui, |ui| {
+                map.start(ui.cursor().min.y);
+                for repo in &repos {
+                    draw_repo(app, ui, repo, &mut map, &palette);
+                    ui.add_space(18.0);
+                }
+            });
+            map.scrolled = Scrolled {
+                offset: scrolled.state.offset.y,
+                content_height: scrolled.content_size.y,
+                view_height: scrolled.inner_rect.height(),
+            };
         });
+
+    if let Some(strip) = strip {
+        let session_ids: Vec<&str> = repos
+            .iter()
+            .filter_map(|repo| repo.session_id.as_deref())
+            .collect();
+        map.paint(
+            app,
+            ui,
+            strip_id(task_id),
+            &session_ids,
+            strip,
+            &style,
+            &palette,
+        );
+    }
+    app.model
+        .task_review_minimaps
+        .insert(task_id.to_string(), map);
+}
+
+/// The minimap strip's widget id, derived from the task so the tests can find it.
+pub(crate) fn strip_id(task_id: &str) -> egui::Id {
+    egui::Id::new(("moonreview-task-minimap", task_id))
 }
 
 /// Ask the server for the session of each repo that has none yet. Asking for a session of a
@@ -166,6 +228,14 @@ fn repo_under_review(app: &App, request: ReviewRequestView) -> RepoUnderReview {
 
 fn draw_header(ui: &mut Ui, repos: &[RepoUnderReview], palette: &Palette) {
     let changed_files: usize = repos.iter().map(|repo| repo.request.changed_files).sum();
+    // The lines of the repos whose diff has arrived: the size of the whole review at a glance.
+    let hunks = repos
+        .iter()
+        .filter_map(|repo| repo.payload.as_ref())
+        .flat_map(|payload| &payload.hunks);
+    let (added, removed) = hunks.fold((0, 0), |(added, removed), hunk| {
+        (added + hunk.added_line_count, removed + hunk.removed_line_count)
+    });
     ui.horizontal(|ui| {
         ui.label(RichText::new("all pending reviews").strong().color(palette.ink));
         ui.label(
@@ -177,6 +247,7 @@ fn draw_header(ui: &mut Ui, repos: &[RepoUnderReview], palette: &Palette) {
             .size(SMALL_SIZE)
             .color(palette.muted),
         );
+        widgets::line_counts(ui, added, removed, SMALL_SIZE, palette);
     });
 }
 
@@ -212,7 +283,13 @@ fn draw_repo_list(app: &mut App, ui: &mut Ui, repos: &[RepoUnderReview], palette
 }
 
 /// One repo: a bar naming it, and its diff under the bar.
-fn draw_repo(app: &mut App, ui: &mut Ui, repo: &RepoUnderReview, palette: &Palette) {
+fn draw_repo(
+    app: &mut App,
+    ui: &mut Ui,
+    repo: &RepoUnderReview,
+    map: &mut Minimap,
+    palette: &Palette,
+) {
     egui::Frame::new()
         .fill(palette.header_bg)
         .inner_margin(egui::Margin::symmetric(8, 5))
@@ -251,7 +328,9 @@ fn draw_repo(app: &mut App, ui: &mut Ui, repo: &RepoUnderReview, palette: &Palet
     ui.add_space(6.0);
 
     match (&repo.session_id, &repo.payload, &repo.error) {
-        (Some(session_id), Some(_), _) => hunks::draw_in_place(app, ui, session_id, palette),
+        (Some(session_id), Some(_), _) => {
+            hunks::draw_in_place(app, ui, session_id, map, palette)
+        }
         (_, _, Some(error)) => {
             ui.label(RichText::new(error).color(palette.warn));
         }
