@@ -11,7 +11,7 @@ use crate::{
     moontasks::{BoardColumn, ColumnEnd, ColumnId, sub_tasks},
     native::{
         app::App,
-        model::{PendingPlace, TaskLanding},
+        model::{Dwelling, PendingPlace, TaskLanding},
         theme::{Palette, SMALL_SIZE},
     },
 };
@@ -28,41 +28,69 @@ const SUB_TASK_INDENT: i8 = 8;
 /// sub-tasks.
 const BESIDE_A_CARD: f32 = 0.25;
 
+/// How long a card being carried has to be held over the middle of another card before the
+/// drop goes under it as a sub-task. Passing over a card on the way elsewhere is not that.
+pub(super) const SUB_TASK_DWELL_SECONDS: f64 = 0.8;
+
 /// A card a drop could be aimed at, where it is laid out.
 struct Slot {
     rect: egui::Rect,
+    /// Where it is drawn, which `rect` is not while cards are being carried out of the column.
+    drawn: egui::Rect,
     id: String,
     /// The card it is drawn under, as its sub-task.
     under: Option<String>,
 }
 
-/// Where a drop at height `y` lands among `cards`: how many of them are above it, and the card
-/// it goes under.
+/// Where a drop at height `y` lands among `cards`.
+struct Landing {
+    /// How many of the cards are above it.
+    at: usize,
+    /// The card it goes under, as that card's sub-task.
+    parent: Option<String>,
+    /// The card the pointer is over the middle of, whether or not it has been held there long
+    /// enough to take the drop as its sub-task.
+    over_middle_of: Option<usize>,
+}
+
+/// Where a drop at height `y` lands among `cards`.
 ///
-/// Held over the middle of a card, it goes under that card - after the sub-tasks it already
-/// has - or, for a sub-task, after it and under the same card: sub-tasks go one deep. Held
+/// Held over the middle of a card for [`SUB_TASK_DWELL_SECONDS`] - `dwelt_on` is the card it
+/// has been held over that long - it goes under that card, after the sub-tasks it already has,
+/// or, for a sub-task, after it and under the same card: sub-tasks go one deep. Otherwise, and
 /// between two cards, it goes there, and under the card of the one below if that is a
 /// sub-task: in among a card's sub-tasks is one of them.
-fn landing_among(cards: &[Slot], y: f32) -> (usize, Option<String>) {
-    let onto = cards.iter().position(|card| {
+fn landing_among(cards: &[Slot], y: f32, dwelt_on: Option<&str>) -> Landing {
+    let over_middle_of = cards.iter().position(|card| {
         let beside = card.rect.height() * BESIDE_A_CARD;
         (card.rect.top() + beside..=card.rect.bottom() - beside).contains(&y)
     });
-    if let Some(at) = onto {
+    if let Some(at) = over_middle_of
+        && dwelt_on == Some(cards[at].id.as_str())
+    {
         let card = &cards[at];
-        return match &card.under {
-            Some(parent) => (at + 1, Some(parent.clone())),
+        let (after, parent) = match &card.under {
+            Some(parent) => (at + 1, parent.clone()),
             None => {
                 let its_sub_tasks = cards[at + 1..]
                     .iter()
                     .take_while(|other| other.under.as_ref() == Some(&card.id))
                     .count();
-                (at + 1 + its_sub_tasks, Some(card.id.clone()))
+                (at + 1 + its_sub_tasks, card.id.clone())
             }
+        };
+        return Landing {
+            at: after,
+            parent: Some(parent),
+            over_middle_of,
         };
     }
     let at = cards.iter().filter(|card| card.rect.center().y < y).count();
-    (at, cards.get(at).and_then(|below| below.under.clone()))
+    Landing {
+        at,
+        parent: cards.get(at).and_then(|below| below.under.clone()),
+        over_middle_of,
+    }
 }
 
 pub(super) fn draw_column(
@@ -220,6 +248,7 @@ pub(super) fn draw_column(
                                 }
                                 None => cards.push(Slot {
                                     rect: card.translate(vec2(0.0, -slot)),
+                                    drawn: card,
                                     id: task.id.clone(),
                                     under: under[cards_above].clone(),
                                 }),
@@ -288,17 +317,64 @@ pub(super) fn draw_column(
                 egui::LayerId::new(egui::Order::Tooltip, card_drag_id(&carrying.primary))
             });
             let over = ghost.is_some() && pointer_over(ui, &response, ghost);
-            let landing = over
+            let now = ui.input(|input| input.time);
+            let pointer = over
                 .then(|| ui.ctx().pointer_interact_pos())
-                .flatten()
-                .map(|pointer| landing_among(&cards, pointer.y));
+                .flatten();
+            // Which card the pointer has been over the middle of, and since when: read from the
+            // cards as they were laid out, ignoring any card the dwell has already opened up.
+            let dwelt_on = app
+                .model
+                .board
+                .dwelling
+                .as_ref()
+                .filter(|dwell| now - dwell.since >= SUB_TASK_DWELL_SECONDS)
+                .map(|dwell| dwell.card.clone());
+            let landing = pointer.map(|pointer| landing_among(&cards, pointer.y, dwelt_on.as_deref()));
+            let over_card = landing
+                .as_ref()
+                .and_then(|landing| landing.over_middle_of)
+                .map(|at| cards[at].id.clone());
+            match (&over_card, &app.model.board.dwelling) {
+                (Some(card), Some(dwell)) if dwell.card == *card => {
+                    let waiting = SUB_TASK_DWELL_SECONDS - (now - dwell.since);
+                    if waiting > 0.0 {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_secs_f64(waiting));
+                    }
+                }
+                (Some(card), _) => {
+                    app.model.board.dwelling = Some(Dwelling {
+                        card: card.clone(),
+                        since: now,
+                    });
+                    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(
+                        SUB_TASK_DWELL_SECONDS,
+                    ));
+                }
+                (None, _) if over => app.model.board.dwelling = None,
+                (None, _) => {}
+            }
             if over {
                 zone.frame.fill = palette.control_active_bg;
                 zone.frame.stroke = egui::Stroke::new(1.0, palette.accent);
             }
             zone.paint(ui);
+            // The card the drop would go under, outlined white once it has been held over long
+            // enough.
+            if let Some(Landing { parent: Some(parent), .. }) = &landing
+                && dwelt_on.as_ref() == Some(parent)
+                && let Some(card) = cards.iter().find(|card| card.id == *parent)
+            {
+                ui.painter().rect_stroke(
+                    card.drawn,
+                    CornerRadius::same(6),
+                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                    egui::StrokeKind::Outside,
+                );
+            }
 
-            let (Some((at, parent)), Some(carrying)) = (landing, carrying) else {
+            let (Some(Landing { at, parent, .. }), Some(carrying)) = (landing, carrying) else {
                 return;
             };
             // A column that takes arrivals to one end takes them there while they are still in
@@ -325,6 +401,7 @@ pub(super) fn draw_column(
             // The cards are already drawn where they landed, and they are the marked ones -
             // which is how a run let go of between two others is picked back out.
             app.model.board.landing = None;
+            app.model.board.dwelling = None;
             if parent.is_none() && cards::sort_of(&app.model.board.columns, &status).is_some() {
                 arrive_in_column(app, &status, &carrying.task_ids, actions);
                 return;

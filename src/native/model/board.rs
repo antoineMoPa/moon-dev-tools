@@ -110,6 +110,9 @@ pub(crate) struct BoardState {
     /// the next one, which is what lets the board draw the card where it is going instead of
     /// where it came from.
     pub(crate) landing: Option<TaskLanding>,
+    /// The card the dragged ones have been held over the middle of, and since when: held there
+    /// long enough, they go under it as sub-tasks.
+    pub(crate) dwelling: Option<Dwelling>,
     /// A drop the server has not confirmed yet, kept so every board read until then can be
     /// answered with the card where it was put. Without it a read that was already on its way
     /// when the card was dropped puts it back where it came from for a moment.
@@ -201,6 +204,13 @@ pub(crate) struct PendingPlace {
 pub(crate) struct PendingColumnPlace {
     pub(crate) column_id: crate::moontasks::ColumnId,
     pub(crate) index: usize,
+}
+
+/// A card the dragged ones are being held over the middle of, and the egui time they got there.
+#[derive(Clone)]
+pub(crate) struct Dwelling {
+    pub(crate) card: String,
+    pub(crate) since: f64,
 }
 
 /// The place a dragged card would take: a column, and how many of that column's other cards

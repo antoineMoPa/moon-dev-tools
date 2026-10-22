@@ -156,16 +156,9 @@ fn draw_review_request(
                 ui.set_min_height(ui.spacing().interact_size.y);
                 running_dot(ui, pending, palette);
 
-                let name = match pending {
-                    true => widgets::quiet_button(ui, &format!("pending {} review", request.name)),
-                    false => widgets::quiet_button_colored(
-                        ui,
-                        &format!("{} reviewed", request.name),
-                        palette.muted,
-                    ),
-                };
-                opens |= card.pressed(&name);
-
+                // The count is laid out first, from the right, and the name takes what is
+                // left and is cut short to it: a long name drawn whole would push the count
+                // past the edge of the card.
                 ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
                     ui.add_space(ROW_INSET);
                     ui.label(
@@ -173,6 +166,20 @@ fn draw_review_request(
                             .size(SMALL_SIZE)
                             .color(palette.muted),
                     );
+                    ui.with_layout(UiLayout::left_to_right(Align::Center), |ui| {
+                        let name = match pending {
+                            true => widgets::quiet_button_cut_to_row(
+                                ui,
+                                &format!("pending {} review", request.name),
+                            ),
+                            false => widgets::quiet_button_colored_cut_to_row(
+                                ui,
+                                &format!("{} reviewed", request.name),
+                                palette.muted,
+                            ),
+                        };
+                        opens |= card.pressed(&name);
+                    });
                 });
             });
 

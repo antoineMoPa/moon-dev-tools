@@ -24,12 +24,7 @@ use crate::api::AgentKind;
 /// that can name files to load as instructions. Typing it at them is not an option - an
 /// agent's box does not exist yet when the run begins, and what is typed then is dropped.
 ///
-/// The card's title is typed into its box a moment after it starts - see
-/// [`crate::terminal::TerminalSpec::type_ahead`] - so the conversation opens with something
-/// written and nothing sent. That is a convenience and nothing rests on it: OpenCode's TUI
-/// takes the terminal over a second or so in and drops whatever was typed before then, which
-/// is exactly why the brief goes through the environment instead. That is a keystroke short of firing the job off, and the
-/// keystroke is the person's.
+/// Nothing is typed into the agent's box when it starts: it waits there for the person.
 ///
 /// An argument whose placeholder has nothing to fill it takes the flag in front of it with it,
 /// so an agent that cannot be told its session id is simply run without one.

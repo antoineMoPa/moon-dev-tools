@@ -119,6 +119,11 @@ pub(crate) fn quiet_button_cut_to_row(ui: &mut Ui, text: &str) -> Response {
     clickable(ui.add(egui::Button::new(text).frame(false).truncate()))
 }
 
+/// [`quiet_button_cut_to_row`] in a colour of its own.
+pub(crate) fn quiet_button_colored_cut_to_row(ui: &mut Ui, text: &str, ink: Color32) -> Response {
+    clickable(ui.add(egui::Button::new(RichText::new(text).color(ink)).frame(false).truncate()))
+}
+
 /// A framed button in [`SMALL_SIZE`] text: the action rows of an extension pane and of the
 /// task pane are made of these, so an action reads the same on either.
 pub(crate) fn small_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {

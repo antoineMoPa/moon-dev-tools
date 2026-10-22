@@ -25,8 +25,8 @@ pub(crate) struct WindowAgents {
 
 impl AgentAsks for WindowAgents {
     /// The agent comes up in the repo, as one started from the card does, but unattended:
-    /// nobody is at the window to send the card's title or to say the folder is trusted, and
-    /// the next thing a shell that started an agent does is tell it something.
+    /// nobody is at the window to say the folder is trusted, and the next thing a shell that
+    /// started an agent does is tell it something.
     ///
     /// The session is the one on the board's repo and the whole of its working tree - the
     /// same one however many times it is opened, and the window's own when it was opened on

@@ -13,7 +13,7 @@ use egui_kittest::Harness;
 use crate::native::theme::ThemeMode;
 
 use super::{
-    app_for, board_of, click_like_a_hand, drag_from_to, drag_like_a_hand, notes_of,
+    app_for, board_of, click_like_a_hand, drag_from_to, drag_like_a_hand, drag_like_a_hand_holding, notes_of,
     press_modifiers, seeded_fixture, settle, title_of,
 };
 
@@ -533,7 +533,8 @@ fn a_drag_that_began_on_no_card_carries_nothing() {
     );
 }
 
-/// A card let go of over the middle of another goes under it as its sub-task: drawn under it,
+/// A card held over the middle of another for a moment and let go of goes under it as its
+/// sub-task: drawn under it,
 /// set in from both edges of the column - and linked from that card's `subtasks` folder, so
 /// the board read back from disk has it there too.
 #[test]
@@ -555,7 +556,7 @@ fn a_card_dropped_onto_another_becomes_its_sub_task() {
     // Halfway between the first card's title and the second's: the middle of the first card.
     let onto = egui::pos2(parent.center().x, (parent.top() + next.y) / 2.0);
     let from = title_of(&harness, "drop-the-old-api-3333");
-    drag_like_a_hand(&mut harness, from, onto, egui::Modifiers::NONE);
+    drag_like_a_hand_holding(&mut harness, from, onto, egui::Modifiers::NONE, 60);
 
     let under = || read().parent_of("drop-the-old-api-3333");
     let wanted = Some("write-the-parser-1111");
@@ -596,5 +597,23 @@ fn a_card_dropped_onto_another_becomes_its_sub_task() {
         settle(&mut harness, || link.join("metadata.json").is_file()),
         "expected {} to link to the sub-task",
         link.display()
+    );
+}
+
+/// A card let go of over the middle of another with no pause there is dropped beside it, as it
+/// is anywhere else in the column: passing over a card is not a request to nest under it.
+#[test]
+fn a_card_passed_quickly_over_another_does_not_become_its_sub_task() {
+    let (mut harness, seen, _repo) = board_of("board-sub-task-quick", &[]);
+    let parent = title_of(&harness, "write-the-parser-1111");
+    let next = title_of(&harness, "fix-the-login-page-2222");
+    let onto = egui::pos2(parent.x, (parent.y + next.y) / 2.0);
+    let from = title_of(&harness, "drop-the-old-api-3333");
+    drag_like_a_hand_holding(&mut harness, from, onto, egui::Modifiers::NONE, 0);
+    harness.run_steps(12);
+    assert_eq!(
+        seen.lock().expect("poisoned").parent_of("drop-the-old-api-3333"),
+        None,
+        "no parent without the pause"
     );
 }

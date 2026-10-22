@@ -7,7 +7,7 @@ mod review;
 
 pub(crate) use board::{
     AttachPicker, BoardState, CardMenu, Carrying, ColumnRename, OpenedFile, OpenedShell,
-    PendingCard, PendingColumnPlace, PendingPlace, TabRename, TaskDraft, TaskEditor, TaskLanding,
+    Dwelling, PendingCard, PendingColumnPlace, PendingPlace, TabRename, TaskDraft, TaskEditor, TaskLanding,
     TaskRename,
 };
 pub(crate) use palette::PaletteState;

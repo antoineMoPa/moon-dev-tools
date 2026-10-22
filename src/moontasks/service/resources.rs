@@ -11,7 +11,7 @@ use crate::{
     api::{AgentKind, AppState},
     moontasks::{
         AttachResourceRequest, StartFolder, StartResourceRequest, agent_launch,
-        store::{self, TaskMetadata, TaskResource, TaskResourceKind},
+        store::{self, ColumnId, TaskMetadata, TaskResource, TaskResourceKind},
     },
     terminal::{TerminalProgram, TerminalSpec},
     unix_users::Person,
@@ -69,16 +69,6 @@ pub(crate) fn start_resource(
         StartFolder::TaskFolder => task_dir.clone(),
     };
 
-    // An agent comes up with the card's title already written in its box, waiting on the
-    // Enter that sends it. It is still the person who starts the work - the title is a card's
-    // name and rarely the whole of what is wanted - but the common case, where it is, is one
-    // keystroke away. A task's plain shell gets nothing typed at it, and neither does an
-    // agent of the board task: it has no card, so no title that could be what is wanted.
-    let type_ahead = (request.kind == TaskResourceKind::Agent
-        && metadata.status.is_some()
-        && !request.unattended)
-        .then(|| metadata.title.clone());
-
     let terminal_id = state.terminals.spawn(TerminalSpec {
         cwd,
         program,
@@ -86,7 +76,7 @@ pub(crate) fn start_resource(
         env,
         owner: Some(store::run_owner(&repo_path, task_id)),
         name: Some(name.clone()),
-        type_ahead,
+        type_ahead: None,
         runs_as: person.clone(),
     })?;
     // Before the shell's id is written down or answered with, so nothing is told to it first.
@@ -112,9 +102,45 @@ pub(crate) fn start_resource(
             work_tree: store::work_tree_apart_from(&repo_path, &works_in),
         });
         store::write_task(&repo_path, task_id, &metadata)?;
+        move_to_in_progress(state, &repo_path, task_id, &metadata)?;
     }
 
     Ok(terminal_id)
+}
+
+/// The column a card goes to as soon as an agent is started on it.
+const IN_PROGRESS_COLUMN: &str = "in_progress";
+/// The column a card that is finished is in, which an agent started on it again does not take
+/// it out of.
+const DONE_COLUMN: &str = "done";
+
+/// Put the card of a task an agent was just started on in the board's in-progress column,
+/// at the bottom of it. A card already there or in done stays put, and so does one on a board
+/// that has no such column; the board task is on no column and has nowhere to move.
+fn move_to_in_progress(
+    state: &AppState,
+    repo_path: &Path,
+    task_id: &str,
+    metadata: &TaskMetadata,
+) -> Result<()> {
+    let in_progress = ColumnId::new(IN_PROGRESS_COLUMN);
+    let Some(status) = &metadata.status else {
+        return Ok(());
+    };
+    if *status == in_progress
+        || *status == ColumnId::new(DONE_COLUMN)
+        || !store::read_board(repo_path).has(&in_progress)
+    {
+        return Ok(());
+    }
+    super::place_tasks_in_repo(
+        &state.terminals,
+        repo_path,
+        std::slice::from_ref(&task_id.to_string()),
+        in_progress,
+        usize::MAX,
+        None,
+    )
 }
 
 /// Start a past agent run again where it left off.

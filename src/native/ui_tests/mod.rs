@@ -668,6 +668,17 @@ fn drag_like_a_hand(
     to: egui::Pos2,
     modifiers: egui::Modifiers,
 ) {
+    drag_like_a_hand_holding(harness, from, to, modifiers, 8);
+}
+
+/// [`drag_like_a_hand`], held `held_for` frames where it ends before it is let go of.
+fn drag_like_a_hand_holding(
+    harness: &mut Harness<'_>,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    modifiers: egui::Modifiers,
+    held_for: usize,
+) {
     harness
         .input_mut()
         .events
@@ -691,7 +702,7 @@ fn drag_like_a_hand(
     }
     // A few frames held where it ends: the slot a card is over is worked out at the end of a
     // frame and taken up by the next, and the cards making room for it walk there.
-    harness.run_steps(8);
+    harness.run_steps(held_for);
 
     harness.input_mut().events.push(egui::Event::PointerButton {
         pos: to,

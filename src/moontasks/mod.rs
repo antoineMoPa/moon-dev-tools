@@ -241,12 +241,10 @@ pub(crate) struct StartResourceRequest {
     /// The folder it comes up in.
     pub(crate) opens_in: StartFolder,
     /// Whether nobody is at the window for the agent as it comes up, which is what
-    /// `moon agent start` says. Two things a person would have done are then done or left out
-    /// for them. The card's title is not written in the agent's box for them to send: the
-    /// line the agent is told next would be typed on the end of it. And an agent asking
-    /// whether it trusts a folder it has not been run in is told that it does - see `trust`
-    /// in [`crate::terminal`] - since starting it there is what said so, and the Enter after
-    /// that line would otherwise be the answer.
+    /// `moon agent start` says. An agent asking whether it trusts a folder it has not been run
+    /// in is then told that it does - see `trust` in [`crate::terminal`] - since starting it
+    /// there is what said so, and the Enter after the line it is told next would otherwise be
+    /// the answer.
     #[serde(default)]
     pub(crate) unattended: bool,
 }
