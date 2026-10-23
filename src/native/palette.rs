@@ -275,19 +275,18 @@ pub(crate) fn ranked(commands: Vec<Command>, query: &str) -> Vec<Command> {
 /// What the palette is offering under the query: the commands that match it, or the files.
 fn rows_for(app: &App) -> Vec<Command> {
     match app.model.palette.mode {
-        PaletteMode::Commands => ranked(commands_for(app), &app.model.palette.query),
+        PaletteMode::Commands => ranked(commands_for(app), app.model.palette.query()),
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
         PaletteMode::Rename => rename_rows(app),
-        PaletteMode::Places => filter(place_rows(app), &app.model.palette.query),
-        PaletteMode::CodeActions => filter(code_action_rows(app), &app.model.palette.query),
+        PaletteMode::Places => filter(place_rows(app), app.model.palette.query()),
+        PaletteMode::CodeActions => filter(code_action_rows(app), app.model.palette.query()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::commands::work_log_commands;
-    use super::drawing::{ROW_HEIGHT, rows_height_of};
     use super::*;
 
     fn command(title: &str, description: &str) -> Command {
@@ -331,15 +330,6 @@ mod tests {
 
         let titles: Vec<&str> = matches.iter().map(|row| row.title.as_str()).collect();
         assert_eq!(titles[0], "open file", "the rows were {titles:?}");
-    }
-
-    /// Three rows want three rows' height and the two gaps between them, and one row wants
-    /// no gap at all.
-    #[test]
-    fn the_rows_height_counts_the_gaps_between_the_rows() {
-        assert_eq!(rows_height_of(3, 4.0), 3.0 * ROW_HEIGHT + 8.0);
-        assert_eq!(rows_height_of(1, 4.0), ROW_HEIGHT);
-        assert_eq!(rows_height_of(0, 4.0), 0.0);
     }
 
     #[test]

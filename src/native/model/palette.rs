@@ -3,7 +3,9 @@
 
 /// The command palette, and the query typed into it.
 pub(crate) struct PaletteState {
-    pub(crate) open: bool,
+    /// The query line and the list under it: what is typed, the row the keyboard is on, and
+    /// where the box drew - see `egui_command_palette`.
+    pub(crate) input: egui_command_palette::CommandPalette,
     /// Whether the query is picking a command or naming a file of the repo.
     pub(crate) mode: crate::native::palette::PaletteMode,
     /// What the file finder has found for the query it last searched for.
@@ -23,30 +25,35 @@ pub(crate) struct PaletteState {
     /// started on and reads this from its thread: once it is no longer the latest - a key
     /// typed since, the palette put away - nobody wants what it finds, and it stops.
     pub(crate) latest_search: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    pub(crate) query: String,
     /// The task the file finder is picking a file for, while it is: the file chosen is put on
     /// that task's card and then opened, rather than only opened. `None` is the plain finder.
     pub(crate) files_link_to_task: Option<String>,
-    pub(crate) highlighted: usize,
-    /// The query the highlight was picked under. A keystroke changes which commands are on
-    /// the list, so a highlight from before it means nothing - Enter should run the first
-    /// match of what is on screen now, not whichever row the old highlight lands on.
-    pub(crate) highlight_query: String,
-    /// Where the palette drew last frame. A press outside it puts the palette away, and that
-    /// has to be known before this frame draws - the box takes the keyboard when it draws, and
-    /// a click meant for a shell would lose it again.
-    pub(crate) rect: Option<egui::Rect>,
-    /// Whether the line is to be selected whole on the next frame it draws: set when the
-    /// palette opens on a name to type over, so the first key typed replaces it.
-    pub(crate) select_query: bool,
     /// The places the palette is listing, while it is - see [`crate::native::places`].
     pub(crate) places: Option<crate::native::places::FoundPlaces>,
 }
 
 impl PaletteState {
+    pub(crate) fn is_open(&self) -> bool {
+        self.input.is_open()
+    }
+
+    pub(crate) fn query(&self) -> &str {
+        self.input.query()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn highlighted(&self) -> usize {
+        self.input.highlighted()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rect(&self) -> Option<egui::Rect> {
+        self.input.rect()
+    }
+
     /// Open it on an empty query, at the top of the list, and drawn nowhere yet.
     pub(crate) fn show(&mut self) {
-        self.open = true;
+        self.input.open();
         self.mode = crate::native::palette::PaletteMode::Commands;
         // Whatever the last search found belongs to the query that is being cleared - and
         // one still running is looking for it too.
@@ -54,11 +61,6 @@ impl PaletteState {
         self.files = crate::native::palette::Search::default();
         self.contents = crate::native::palette::Search::default();
         self.files_link_to_task = None;
-        self.query.clear();
-        self.highlighted = 0;
-        self.highlight_query.clear();
-        self.rect = None;
-        self.select_query = false;
         self.places = None;
     }
 
@@ -67,9 +69,7 @@ impl PaletteState {
     pub(crate) fn show_rename(&mut self, name: &str) {
         self.show();
         self.mode = crate::native::palette::PaletteMode::Rename;
-        self.query = name.to_string();
-        self.highlight_query = self.query.clone();
-        self.select_query = true;
+        self.input.open_on(name);
     }
 
     /// Open it on the code actions a language server offered, to pick one from - see
@@ -128,14 +128,13 @@ impl PaletteState {
         self.stop_searches();
         self.files = crate::native::palette::Search::default();
         self.contents = crate::native::palette::Search::default();
-        self.highlighted = 0;
+        self.input.highlight_first();
     }
 
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
     /// measured against, and a search still out is nobody's to wait for.
     pub(crate) fn dismiss(&mut self) {
-        self.open = false;
-        self.rect = None;
+        self.input.dismiss();
         self.stop_searches();
     }
 
@@ -157,19 +156,14 @@ impl PaletteState {
 impl Default for PaletteState {
     fn default() -> Self {
         Self {
-            open: false,
+            input: egui_command_palette::CommandPalette::default(),
             mode: crate::native::palette::PaletteMode::Commands,
             files: crate::native::palette::Search::default(),
             contents: crate::native::palette::Search::default(),
             search_scope: crate::api::SearchScope::default(),
             search_session_id: String::new(),
             latest_search: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            query: String::new(),
             files_link_to_task: None,
-            highlighted: 0,
-            highlight_query: String::new(),
-            rect: None,
-            select_query: false,
             places: None,
         }
     }

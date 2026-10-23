@@ -125,7 +125,7 @@ pub(crate) fn follow(app: &mut App, ctx: &egui::Context) {
         } => ask(app, ctx, session_id, pane_id, since),
         // The palette was put away without anything being picked.
         CodeActing::Choosing { .. }
-            if !(app.model.palette.open && app.model.palette.mode == PaletteMode::CodeActions) =>
+            if !(app.model.palette.is_open() && app.model.palette.mode == PaletteMode::CodeActions) =>
         {
             None
         }

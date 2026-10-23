@@ -30,7 +30,9 @@ fn the_command_palette_lists_what_can_be_opened() {
         .wgpu()
         .build_ui(move |ui| {
             if open_in_ui.load(Ordering::Relaxed) {
-                app.model.palette.open = true;
+                if !app.model.palette.is_open() {
+                    app.model.palette.show();
+                }
             }
             app.draw(ui);
             let loaded = app
@@ -148,16 +150,16 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
-            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            showing_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
             let matches = crate::native::palette::ranked(
                 crate::native::palette::commands_for(&app),
-                &app.model.palette.query,
+                app.model.palette.query(),
             );
             let title = matches
-                .get(app.model.palette.highlighted)
+                .get(app.model.palette.highlighted())
                 .map(|command| command.title.clone())
                 .unwrap_or_default();
-            *highlight_in_ui.lock().expect("poisoned") = (app.model.palette.highlighted, title);
+            *highlight_in_ui.lock().expect("poisoned") = (app.model.palette.highlighted(), title);
             ready_in_ui.store(
                 app.model
                     .review_ref(&app.model.root_session_id)
@@ -512,7 +514,7 @@ fn letters_type_into_the_palette_after_a_bare_cmd_press() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
-            *query_in_ui.lock().expect("poisoned") = app.model.palette.query.clone();
+            *query_in_ui.lock().expect("poisoned") = app.model.palette.query().to_string();
             ready_in_ui.store(
                 app.model
                     .review_ref(&app.model.root_session_id)
@@ -575,7 +577,7 @@ fn clicking_outside_the_palette_puts_it_away() {
         .wgpu()
         .build_ui(move |ui| {
             app.draw(ui);
-            open_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            open_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
             ready_in_ui.store(
                 app.model
                     .review_ref(&app.model.root_session_id)
@@ -816,7 +818,7 @@ fn escape_puts_the_palette_away_over_a_file() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             app.draw(ui);
-            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            showing_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
             if let Some((id, _)) = app
                 .model
                 .layout
@@ -908,7 +910,7 @@ fn escape_puts_the_palette_away_over_a_shell() {
                 placed_in_ui.store(true, Ordering::Relaxed);
             }
             app.draw(ui);
-            showing_in_ui.store(app.model.palette.open, Ordering::Relaxed);
+            showing_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
             shell_in_ui.store(
                 app.model.terminal_with_keyboard.is_some_and(|id| {
                     ui.ctx().memory(|memory| memory.has_focus(id))

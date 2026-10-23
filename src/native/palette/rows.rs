@@ -61,7 +61,7 @@ pub(super) fn rename_rows(app: &App) -> Vec<Command> {
     let Some(target) = crate::native::renaming::naming(&app.model) else {
         return Vec::new();
     };
-    let new_name = app.model.palette.query.trim();
+    let new_name = app.model.palette.query().trim();
     if new_name.is_empty() || new_name == target.name {
         return Vec::new();
     }
@@ -203,7 +203,7 @@ pub(super) fn empty_message(app: &App) -> String {
         PaletteMode::Files => searching_message(&app.model.palette.files)
             .unwrap_or_else(|| "no file of the repo has that name".to_string()),
         PaletteMode::Contents => {
-            if app.model.palette.query.is_empty() {
+            if app.model.palette.query().is_empty() {
                 return "type what to look for in the files".to_string();
             }
             searching_message(&app.model.palette.contents)
@@ -245,7 +245,7 @@ fn footnote_of<T>(search: &Search<T>, shown: usize) -> Option<String> {
 /// checkbox has.
 fn asked_of(app: &App) -> SearchRequest {
     SearchRequest {
-        query: app.model.palette.query.clone(),
+        query: app.model.palette.query().to_string(),
         scope: app.model.palette.search_scope,
     }
 }

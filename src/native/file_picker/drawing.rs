@@ -53,7 +53,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     };
     // The palette opened over it is the box that was asked for last, and a press anywhere
     // else belongs to whatever was pressed - see the palette's own.
-    if app.model.palette.open || pressed_outside(ctx, picker.rect) {
+    if app.model.palette.is_open() || pressed_outside(ctx, picker.rect) {
         app.model.file_picker = None;
         return;
     }

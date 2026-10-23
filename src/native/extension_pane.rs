@@ -308,7 +308,7 @@ impl App {
         };
         // The palette and the find bar are drawn over the pane and answer Escape themselves,
         // whether or not their box has the keyboard yet - a key taken here would never reach them.
-        if ctx.egui_wants_keyboard_input() || self.model.palette.open || self.model.find.is_some() {
+        if ctx.egui_wants_keyboard_input() || self.model.palette.is_open() || self.model.find.is_some() {
             return;
         }
         let Some(running) = self

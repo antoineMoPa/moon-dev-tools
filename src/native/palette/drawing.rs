@@ -1,18 +1,18 @@
 //! Drawing the palette: the query box over the list, the switch between its two searches
-//! and the scope they search, and a row.
+//! and the scope they search. The box and its rows are `egui_command_palette`'s; this is
+//! what moon puts in it.
 
-use egui::{
-    Align2, Color32, CornerRadius, Key, RichText, Stroke, StrokeKind,
-    text::{LayoutJob, TextWrapping},
-    vec2,
-};
+use egui::{Color32, Key, RichText, vec2};
+use egui_command_palette::{LineAccessory, Row, View};
+
+pub(in crate::native) use egui_command_palette::{Kept, cut_to_width, pressed_outside};
 
 use crate::{
     api::SearchScope,
     native::{
         app::App,
         bindings::{self},
-        theme::{Palette, SMALL_SIZE},
+        theme::{Palette, SMALL_SIZE, UI_SIZE},
     },
 };
 
@@ -20,16 +20,6 @@ use super::rows::{
     empty_message, footnote, hint_of, refresh_content_matches, refresh_file_matches,
 };
 use super::{Command, PaletteMode, rows_for};
-
-/// How much of the window's height the palette's rows may take before they scroll. With the
-/// palette hung 12% of the way down, this keeps the whole of it on screen.
-const ROWS_HEIGHT_OF_SCREEN: f32 = 0.55;
-
-/// The height of one row of the list.
-pub(super) const ROW_HEIGHT: f32 = 34.0;
-
-/// The gap between a row's edge and what is written in it.
-const ROW_PADDING: f32 = 9.0;
 
 /// The gap between the query line's edge and what is typed in it.
 const LINE_PADDING: i8 = 7;
@@ -41,13 +31,6 @@ const SEARCH_SWITCH: [(PaletteMode, &str); 2] = [
     (PaletteMode::Contents, "content"),
 ];
 
-/// Which end of a text is kept when it is wider than the room it has.
-#[derive(Clone, Copy)]
-pub(in crate::native) enum Kept {
-    Start,
-    End,
-}
-
 /// Which end of a row's second line is kept. A sentence about a command is read from its
 /// start. A path is read from its end - the file, and the line in it - and its first folders
 /// are what a row can do without.
@@ -58,15 +41,69 @@ fn description_kept(mode: PaletteMode) -> Kept {
     }
 }
 
+/// The palette's colours and row sizes, out of the window's.
+fn style_of(palette: &Palette) -> egui_command_palette::PaletteStyle {
+    egui_command_palette::PaletteStyle {
+        panel: palette.panel,
+        line: palette.line,
+        selected: palette.control_active_bg,
+        accent: palette.accent,
+        text: palette.ink,
+        muted: palette.muted,
+        shadow: Color32::from_black_alpha(60),
+        row_height: 34.0,
+        title_size: UI_SIZE,
+        detail_size: SMALL_SIZE - 1.0,
+        detail_top: 19.0,
+    }
+}
+
+/// The row of the list a command is.
+fn row_of(command: &Command) -> Row {
+    Row {
+        title: command.title.clone(),
+        description: command.description.clone(),
+        shortcut: command.shortcut.map(bindings::describe).unwrap_or_default(),
+    }
+}
+
+/// What the line carries besides what is typed: the switch between the two searches at its
+/// end, when it has one, and under it the box for what files they read.
+struct SearchLine<'a> {
+    mode: PaletteMode,
+    palette: &'a Palette,
+    switch: bool,
+    scope: &'a mut SearchScope,
+    /// The search the switch was clicked over to.
+    switched_to: Option<PaletteMode>,
+}
+
+impl LineAccessory for SearchLine<'_> {
+    fn room_at_end(&self, ui: &egui::Ui) -> f32 {
+        if self.switch {
+            search_switch_width(ui, self.palette)
+        } else {
+            0.0
+        }
+    }
+
+    fn show(&mut self, ui: &mut egui::Ui, line: egui::Rect) {
+        if self.switch {
+            self.switched_to = draw_search_switch(ui, line, self.mode, self.palette);
+        }
+        if matches!(self.mode, PaletteMode::Files | PaletteMode::Contents) {
+            draw_scope_box(ui, self.scope, self.palette);
+        }
+    }
+}
+
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
-    if !app.model.palette.open {
+    if !app.model.palette.is_open() {
         return;
     }
     // A press anywhere else - a shell, a tab, a pane in the next frame over - puts the palette
-    // away and belongs to whatever was pressed. It is answered before anything is drawn: the
-    // search box asks for the keyboard every frame it exists, so a palette still on screen
-    // would take it straight back off the shell that was just clicked.
-    if pressed_outside(ctx, app.model.palette.rect) {
+    // away and belongs to whatever was pressed.
+    if app.model.palette.input.dismissal_requested(ctx) {
         app.model.palette.dismiss();
         return;
     }
@@ -91,141 +128,36 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         PaletteMode::Contents => refresh_content_matches(app),
     }
     let palette = app.palette_of();
+    *app.model.palette.input.style_mut() = style_of(&palette);
     let matches = rows_for(app);
-    let description_kept = description_kept(app.model.palette.mode);
+    let rows: Vec<Row> = matches.iter().map(row_of).collect();
+    let hint = hint_of(app);
+    let empty = empty_message(app);
+    let note = footnote(app, matches.len());
+    let view = View {
+        hint: &hint,
+        empty: &empty,
+        footnote: note.as_deref(),
+        description_kept: description_kept(app.model.palette.mode),
+    };
+    let mut line = SearchLine {
+        mode: app.model.palette.mode,
+        palette: &palette,
+        switch: has_search_switch(app),
+        scope: &mut app.model.palette.search_scope,
+        switched_to: None,
+    };
 
-    let (dismiss, move_down, move_up, accept) = ctx.input_mut(|input| {
-        (
-            input.key_pressed(Key::Escape),
-            input.key_pressed(Key::ArrowDown),
-            input.key_pressed(Key::ArrowUp),
-            input.key_pressed(Key::Enter),
-        )
-    });
+    let chosen = app
+        .model
+        .palette
+        .input
+        .show_rows(ctx, &rows, &view, &mut line);
+    let switched_to = line.switched_to;
 
-    if dismiss {
-        app.model.palette.dismiss();
-        return;
+    if let Some(to) = switched_to {
+        app.model.palette.switch_search(to);
     }
-    // Typed since the highlight was picked: the list underneath it is a different list, and
-    // the first match of the new one is what Enter runs.
-    let retyped = app.model.palette.highlight_query != app.model.palette.query;
-    if retyped {
-        app.model.palette.highlighted = 0;
-        app.model.palette.highlight_query = app.model.palette.query.clone();
-    }
-    if !matches.is_empty() {
-        let last = matches.len() - 1;
-        if move_down {
-            app.model.palette.highlighted = (app.model.palette.highlighted + 1).min(last);
-        }
-        if move_up {
-            app.model.palette.highlighted = app.model.palette.highlighted.saturating_sub(1);
-        }
-        app.model.palette.highlighted = app.model.palette.highlighted.min(last);
-    }
-
-    let mut chosen: Option<usize> = None;
-    if accept && !matches.is_empty() {
-        chosen = Some(app.model.palette.highlighted);
-    }
-
-    let screen = ctx.viewport_rect();
-    let area = egui::Area::new("moonreview-palette".into())
-        .order(egui::Order::Foreground)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, screen.height() * 0.12))
-        .show(ctx, |ui| {
-            floating_frame(&palette)
-                .show(ui, |ui| {
-                    ui.set_width(floating_width(screen));
-
-                    let hint = hint_of(app);
-                    // The line makes room at its end for the switch, when it has one: what is
-                    // typed stops short of the switch rather than running under it.
-                    let switch_width = search_switch_width(ui, &palette);
-                    let line_end = if has_search_switch(app) {
-                        i8::try_from((f32::from(LINE_PADDING) + switch_width).ceil() as i32)
-                            .expect("the search switch is wider than a line's margin can be")
-                    } else {
-                        LINE_PADDING
-                    };
-                    let entry = ui.add(
-                        egui::TextEdit::singleline(&mut app.model.palette.query)
-                            .hint_text(hint)
-                            .desired_width(f32::INFINITY)
-                            .margin(egui::Margin {
-                                left: LINE_PADDING,
-                                right: line_end,
-                                top: 5,
-                                bottom: 5,
-                            }),
-                    );
-                    entry.request_focus();
-                    // Opened on a name to type over, which is selected so the first key typed
-                    // replaces it - see `PaletteState::show_rename`.
-                    if std::mem::take(&mut app.model.palette.select_query) {
-                        select_all(ui.ctx(), entry.id, &app.model.palette.query);
-                    }
-                    if has_search_switch(app)
-                        && let Some(to) =
-                            draw_search_switch(ui, entry.rect, app.model.palette.mode, &palette)
-                    {
-                        app.model.palette.switch_search(to);
-                    }
-                    if matches!(
-                        app.model.palette.mode,
-                        PaletteMode::Files | PaletteMode::Contents
-                    ) {
-                        draw_scope_box(ui, &mut app.model.palette.search_scope, &palette);
-                    }
-
-                    ui.add_space(6.0);
-                    if matches.is_empty() {
-                        ui.label(RichText::new(empty_message(app)).color(palette.muted));
-                        return;
-                    }
-
-                    // The rows scroll rather than the box growing: a list taller than the
-                    // window would be pushed up to fit, search line and all, every time the
-                    // matches came in. The height is the rows' own, capped - an area hands
-                    // its contents last frame's rect to fit in, so a scroll area left to size
-                    // itself would stay as short as the empty palette was. The highlight is
-                    // kept in view when the keyboard moves it; a pointer over a row is
-                    // already looking at it.
-                    let keep_highlight_in_view = move_down || move_up || retyped;
-                    let rows_height = rows_height_of(matches.len(), ui.spacing().item_spacing.y)
-                        .min(screen.height() * ROWS_HEIGHT_OF_SCREEN);
-                    egui::ScrollArea::vertical()
-                        .max_height(rows_height)
-                        .min_scrolled_height(rows_height)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for (index, command) in matches.iter().enumerate() {
-                                let highlighted = index == app.model.palette.highlighted;
-                                let row =
-                                    draw_row(ui, command, description_kept, highlighted, &palette);
-                                if highlighted && keep_highlight_in_view {
-                                    row.scroll_to_me(None);
-                                }
-                                if row.clicked() {
-                                    chosen = Some(index);
-                                }
-                                if row.hovered() {
-                                    app.model.palette.highlighted = index;
-                                }
-                            }
-                        });
-                    if let Some(footnote) = footnote(app, matches.len()) {
-                        ui.label(
-                            RichText::new(footnote)
-                                .size(SMALL_SIZE - 1.0)
-                                .color(palette.muted),
-                        );
-                    }
-                });
-        });
-    app.model.palette.rect = Some(area.response.rect);
-
     if let Some(index) = chosen
         && let Some(command) = matches.into_iter().nth(index)
     {
@@ -234,46 +166,20 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// The box the palette is drawn in, floating over the window: the panel's ground, a hairline
-/// round it and a shadow under it. The file picker is the same kind of box - see
-/// [`crate::native::file_picker`].
+/// The box the palette is drawn in, floating over the window. The file picker is the same
+/// kind of box - see [`crate::native::file_picker`].
 pub(in crate::native) fn floating_frame(palette: &Palette) -> egui::Frame {
-    egui::Frame::new()
-        .fill(palette.panel)
-        .stroke(Stroke::new(1.0, palette.line))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(egui::Margin::same(9))
-        .shadow(egui::epaint::Shadow {
-            offset: [0, 10],
-            blur: 28,
-            spread: 0,
-            color: Color32::from_black_alpha(60),
-        })
+    egui_command_palette::frame(&style_of(palette))
 }
 
-/// How wide that box is: half the window, within what a line of a command and a phone's
-/// window allow.
+/// How wide that box is.
 pub(in crate::native) fn floating_width(screen: egui::Rect) -> f32 {
-    (screen.width() * 0.5).clamp(360.0, 560.0)
+    egui_command_palette::frame_width(screen)
 }
 
 /// The ground and outline of the row the keyboard is on.
 pub(in crate::native) fn paint_highlight(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(5), palette.control_active_bg);
-    ui.painter().rect_stroke(
-        rect,
-        CornerRadius::same(5),
-        Stroke::new(1.0, palette.accent),
-        StrokeKind::Inside,
-    );
-}
-
-/// How tall `rows` rows are when laid out one under the other: the rows themselves, and the
-/// layout's gap between each pair. Counting the rows alone left the area a gap short per row,
-/// which put a scrollbar on a list of three rows that all fit.
-pub(super) fn rows_height_of(rows: usize, gap: f32) -> f32 {
-    rows as f32 * ROW_HEIGHT + rows.saturating_sub(1) as f32 * gap
+    egui_command_palette::paint_highlight(ui, rect, &style_of(palette));
 }
 
 /// The box under the two searches' line that widens them to the files the repo's
@@ -356,130 +262,4 @@ fn draw_search_switch(
         line.max,
     );
     search_switch(mode, palette).show_in(ui, room)
-}
-
-/// Select the whole of the palette's line.
-fn select_all(ctx: &egui::Context, id: egui::Id, query: &str) {
-    let Some(mut state) = egui::TextEdit::load_state(ctx, id) else {
-        return;
-    };
-    state
-        .cursor
-        .set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::new(0),
-            egui::text::CCursor::new(query.chars().count()),
-        )));
-    state.store(ctx, id);
-}
-
-/// Whether a pointer button went down this frame away from where the palette drew last frame.
-/// Before it has drawn once there is nowhere to be outside of, and the press is somebody
-/// else's business.
-pub(in crate::native) fn pressed_outside(
-    ctx: &egui::Context,
-    drawn_at: Option<egui::Rect>,
-) -> bool {
-    let Some(drawn_at) = drawn_at else {
-        return false;
-    };
-    ctx.input(|input| {
-        input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|at| !drawn_at.contains(at))
-    })
-}
-
-/// `text` on one line no wider than `width`, with an ellipsis where the rest of it was.
-pub(in crate::native) fn cut_to_width(
-    painter: &egui::Painter,
-    text: &str,
-    font: egui::FontId,
-    color: Color32,
-    width: f32,
-    kept: Kept,
-) -> std::sync::Arc<egui::Galley> {
-    let line = |text: String, wrap: TextWrapping| {
-        let mut job = LayoutJob::simple_singleline(text, font.clone(), color);
-        job.wrap = wrap;
-        painter.layout_job(job)
-    };
-    match kept {
-        Kept::Start => line(text.to_string(), TextWrapping::truncate_at_width(width)),
-        Kept::End => {
-            let whole = line(text.to_string(), TextWrapping::no_max_width());
-            if whole.size().x <= width {
-                return whole;
-            }
-            let ellipsis_width = line("…".to_string(), TextWrapping::no_max_width()).size().x;
-            // The first glyph that the rest of the line fits from, beside the ellipsis.
-            let glyphs = &whole.rows[0].glyphs;
-            let kept_from = glyphs
-                .iter()
-                .position(|glyph| whole.size().x - glyph.pos.x <= width - ellipsis_width)
-                .unwrap_or(glyphs.len());
-            let end: String = glyphs[kept_from..].iter().map(|glyph| glyph.chr).collect();
-            line(format!("…{end}"), TextWrapping::no_max_width())
-        }
-    }
-}
-
-/// A row of the list. Its two lines are cut to the row: a matching line of a file is as long
-/// as whoever wrote it liked, and the painter clips nothing, so a line left whole ran out of
-/// the palette's right edge and across the window behind it.
-fn draw_row(
-    ui: &mut egui::Ui,
-    command: &Command,
-    description_kept: Kept,
-    highlighted: bool,
-    palette: &Palette,
-) -> egui::Response {
-    let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), egui::Sense::click());
-    let response = crate::native::widgets::clickable(response);
-
-    if ui.is_rect_visible(rect) {
-        if highlighted {
-            paint_highlight(ui, rect, palette);
-        }
-        let small = egui::FontId::proportional(SMALL_SIZE - 1.0);
-        let mut text_width = rect.width() - 2.0 * ROW_PADDING;
-        // The keyboard's own way to the same command, against the right edge - and the two
-        // lines stop short of it.
-        if let Some(chord) = command.shortcut {
-            let shortcut = ui.painter().text(
-                egui::pos2(rect.max.x - ROW_PADDING, rect.center().y),
-                Align2::RIGHT_CENTER,
-                bindings::describe(chord),
-                small.clone(),
-                palette.muted,
-            );
-            text_width -= shortcut.width() + ROW_PADDING;
-        }
-        let title = cut_to_width(
-            ui.painter(),
-            &command.title,
-            egui::FontId::proportional(crate::native::theme::UI_SIZE),
-            palette.ink,
-            text_width,
-            Kept::Start,
-        );
-        ui.painter()
-            .galley(rect.min + vec2(ROW_PADDING, 5.0), title, palette.ink);
-        let description = cut_to_width(
-            ui.painter(),
-            &command.description,
-            small,
-            palette.muted,
-            text_width,
-            description_kept,
-        );
-        ui.painter().galley(
-            rect.min + vec2(ROW_PADDING, 19.0),
-            description,
-            palette.muted,
-        );
-    }
-    response
 }

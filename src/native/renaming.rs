@@ -204,7 +204,7 @@ pub(crate) fn follow(app: &mut App, ctx: &egui::Context) {
         // The palette was put away without a name being picked, which is the rename called
         // off.
         Renaming::Naming { .. }
-            if !(app.model.palette.open
+            if !(app.model.palette.is_open()
                 && app.model.palette.mode == crate::native::palette::PaletteMode::Rename) =>
         {
             None

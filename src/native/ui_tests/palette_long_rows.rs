@@ -69,7 +69,7 @@ fn a_row_wider_than_the_palette_is_cut_to_fit_inside_it() {
                     .as_ref()
                     .filter(|_| app.model.palette.contents.done)
                     .map(|asked| asked.query.clone()),
-                app.model.palette.rect,
+                app.model.palette.rect(),
             );
         });
 

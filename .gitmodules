@@ -18,3 +18,7 @@
 	path = crates/egui_moon_code_ide
 	url = git@github.com:antoineMoPa/egui_moon_code_ide.git
 	branch = main
+[submodule "crates/egui_command_palette"]
+	path = crates/egui_command_palette
+	url = git@github.com:antoineMoPa/egui_command_palette.git
+	branch = main

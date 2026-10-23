@@ -113,7 +113,7 @@ impl App {
         };
         // Drawn over the panes: a window left showing would cover them. A menu of the bar
         // is one more of those - see `crate::native::menu::bar`.
-        let covered = self.model.palette.open
+        let covered = self.model.palette.is_open()
             || self.model.find.is_some()
             || egui::Popup::is_any_open(ctx);
         let pixels_per_point = ctx.pixels_per_point();

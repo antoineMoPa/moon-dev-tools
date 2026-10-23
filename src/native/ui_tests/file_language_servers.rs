@@ -106,7 +106,7 @@ impl RealTab {
                 }
                 *rows_in_ui.lock().expect("not shared") =
                     match crate::native::code_actions::offered(&app.model) {
-                        Some(actions) if app.model.palette.open => {
+                        Some(actions) if app.model.palette.is_open() => {
                             actions.iter().map(|action| action.title.clone()).collect()
                         }
                         _ => Vec::new(),

@@ -266,7 +266,7 @@ fn draw_board(app: &mut App, ui: &mut Ui, palette: &Palette, actions: &mut Vec<B
     if !app.model.board.marked.is_empty()
         && !ui.ctx().text_edit_focused()
         && !crate::native::find::is_typed_into(&app.model.find)
-        && !app.model.palette.open
+        && !app.model.palette.is_open()
         && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     {
         selection::let_go_of_all(&mut app.model.board);

@@ -101,7 +101,7 @@ impl App {
             .retain(|pane_id, _| open.contains_key(pane_id));
 
         // Drawn over the panes: a page left showing would cover them.
-        let covered = self.model.palette.open || self.model.find.is_some();
+        let covered = self.model.palette.is_open() || self.model.find.is_some();
         let pixels_per_point = ctx.pixels_per_point();
         for (pane_id, placed) in &self.webviews.views {
             if covered || !drawn.contains_key(pane_id) {

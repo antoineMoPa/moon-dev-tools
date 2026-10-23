@@ -174,9 +174,9 @@ fn renaming_in_a_real_crate_edits_the_open_tab_and_writes_the_file_nobody_has_op
                 Ordering::Relaxed,
             );
             let palette = &app.model.palette;
-            *naming_in_ui.lock().expect("the palette is not shared") = (palette.open
+            *naming_in_ui.lock().expect("the palette is not shared") = (palette.is_open()
                 && palette.mode == crate::native::palette::PaletteMode::Rename)
-                .then(|| palette.query.clone());
+                .then(|| palette.query().to_string());
             if let Some(editor) = app.model.file_editors.values().next() {
                 *text_in_ui.lock().expect("the text is not shared") =
                     editor.text_for_test().to_string();
@@ -434,7 +434,7 @@ fn finding_the_uses_of_a_name_in_a_real_crate_lists_them_in_the_palette() {
             );
             let palette = &app.model.palette;
             *rows_in_ui.lock().expect("the rows are not shared") = match &palette.places {
-                Some(found) if palette.open => found
+                Some(found) if palette.is_open() => found
                     .places
                     .iter()
                     .map(|place| {
