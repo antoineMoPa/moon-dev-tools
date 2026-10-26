@@ -167,6 +167,8 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                     // Sized and scrolled the way the palette's rows are - see there.
                     let drawn = rows.len().min(ROWS_DRAWN);
                     let keep_highlight_in_view = move_down || move_up || relisted;
+                    // Only a pointer that moved takes the highlight - see the palette's rows.
+                    let pointer_moved = ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
                     let rows_height = (drawn as f32 * ROW_HEIGHT
                         + drawn.saturating_sub(1) as f32 * ui.spacing().item_spacing.y)
                         .min(screen.height() * ROWS_HEIGHT_OF_SCREEN);
@@ -185,7 +187,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                                 if drawn.clicked() {
                                     chosen = Some(index);
                                 }
-                                if drawn.hovered() {
+                                if drawn.hovered() && pointer_moved {
                                     picker.highlighted = index;
                                 }
                             }

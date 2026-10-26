@@ -144,6 +144,8 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
     let highlight_in_ui = Arc::clone(&highlight);
     let showing = Arc::new(AtomicBool::new(false));
     let showing_in_ui = Arc::clone(&showing);
+    let palette_rect = Arc::new(Mutex::new(None));
+    let palette_rect_in_ui = Arc::clone(&palette_rect);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))
@@ -151,6 +153,7 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
         .build_ui(move |ui| {
             app.draw(ui);
             showing_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
+            *palette_rect_in_ui.lock().expect("poisoned") = app.model.palette.input.rect();
             let matches = crate::native::palette::ranked(
                 crate::native::palette::commands_for(&app),
                 app.model.palette.query(),
@@ -209,6 +212,32 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
     assert_eq!(
         title, "comment agents",
         "the first match of what is typed is what Enter runs"
+    );
+
+    // A pointer moved onto a row lower down takes the highlight. Left resting there, it must
+    // not take it back from the first row as the next letter is typed - the highlight would
+    // flash between the two on every key.
+    let palette = palette_rect
+        .lock()
+        .expect("poisoned")
+        .expect("the palette should have been drawn");
+    let over_lower_row = egui::pos2(palette.center().x, palette.min.y + 110.0);
+    for at in [over_lower_row - egui::vec2(10.0, 0.0), over_lower_row] {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness.run_steps(1);
+    }
+    harness.run_steps(1);
+    assert_ne!(
+        highlight.lock().expect("poisoned").0,
+        0,
+        "the pointer moved onto a lower row should have taken the highlight"
+    );
+    type_letter(&mut harness, egui::Key::H, "h");
+    harness.run_steps(3);
+    assert_eq!(
+        highlight.lock().expect("poisoned").0,
+        0,
+        "a resting pointer should leave the highlight on the first match of what is typed"
     );
 }
 
