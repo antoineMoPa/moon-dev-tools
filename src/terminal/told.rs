@@ -48,6 +48,15 @@ const LOOKS_AGAIN_AFTER: Duration = Duration::from_millis(200);
 /// Code's does. Written apart, the text is read as typing and the return as Enter.
 const ENTER_FOLLOWS_AFTER: Duration = Duration::from_millis(100);
 
+/// How long a line waits at most for an agent to start reading its keys - see
+/// [`TerminalSession::is_still_coming_up`]. One that has not by then never will, and the line
+/// is typed for whatever is there.
+const READS_KEYS_WITHIN: Duration = Duration::from_secs(60);
+
+/// How long the Enter waits at most for the line to show on the shell's screen - see
+/// [`wait_until_shown`]. A shell that has not drawn it by then is sent the Enter anyway.
+const ENTER_WAITS_FOR_THE_LINE_AT_MOST: Duration = Duration::from_secs(10);
+
 /// What the Enter key writes.
 const ENTER: &[u8] = b"\r";
 
@@ -127,13 +136,22 @@ impl TerminalSession {
         }
     }
 
-    /// Whether the agent in this shell may still be drawing its interface, and so have no box
-    /// to take a line. It is the wait the card's title makes before it is typed - see
-    /// `type_ahead` in [`super::spawning`]: over once the agent has printed something and gone
-    /// quiet, and over whatever it is printing once it has had as long as any of them takes.
+    /// Whether the agent in this shell may still be coming up, and so have no box to take a
+    /// line. Until it has put its terminal in raw mode it is not reading keys at all: what is
+    /// typed then is echoed by the terminal and handed over with its Enter in one read, which
+    /// the agent takes for a paste whose Enter sends nothing. Once it reads keys, it is the
+    /// wait the card's title used to make before it was typed - see `type_ahead` in
+    /// [`super::spawning`]: over once the agent has printed something and gone quiet, and over
+    /// whatever it is printing once it has had as long as any of them takes.
     /// Never, for a login shell: what is typed before its prompt is up is read once it is.
     fn is_still_coming_up(&self) -> bool {
-        if self.program.agent().is_none() || self.started.elapsed() >= TYPE_AHEAD_DEADLINE {
+        if self.program.agent().is_none() || self.started.elapsed() >= READS_KEYS_WITHIN {
+            return false;
+        }
+        if !self.reads_keys_as_they_come() {
+            return true;
+        }
+        if self.started.elapsed() >= TYPE_AHEAD_DEADLINE {
             return false;
         }
         let drawn_and_waiting = self
@@ -142,6 +160,29 @@ impl TerminalSession {
             .unwrap()
             .is_some_and(|last| last.elapsed() >= TYPE_AHEAD_QUIET);
         !drawn_and_waiting
+    }
+
+    /// Whether the program has its terminal out of canonical mode, reading each key as it
+    /// comes rather than a line at a time - which every agent's interface does once its box
+    /// is up. A terminal whose mode cannot be read is taken to be reading.
+    #[cfg(unix)]
+    fn reads_keys_as_they_come(&self) -> bool {
+        let Some(fd) = self.master.lock().unwrap().as_raw_fd() else {
+            return true;
+        };
+        let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: `fd` is the pty's master, held open by `self.master`, and `termios` is
+        // written whole by a call that answers 0.
+        if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
+            return true;
+        }
+        let termios = unsafe { termios.assume_init() };
+        termios.c_lflag & libc::ICANON == 0
+    }
+
+    #[cfg(not(unix))]
+    fn reads_keys_as_they_come(&self) -> bool {
+        true
     }
 
     /// Whether a line this shell is told has to wait - see the module's own words on why.
@@ -206,11 +247,35 @@ fn type_the_next_line(session: &TerminalSession) -> Looked {
         .is_ok()
     {
         std::thread::sleep(ENTER_FOLLOWS_AFTER);
+        wait_until_shown(session, &line);
         if writer.write_all(ENTER).and_then(|()| writer.flush()).is_ok() {
             session.a_told_line_was_sent();
         }
     }
     Looked::Typed
+}
+
+/// Wait until the shell's screen shows `line`, which is the program having read it.
+///
+/// An agent can go quiet before its box is reading keys - one loading its servers, in a repo
+/// with many. The line and the Enter then wait unread in the pty together and are read as
+/// one burst, which the agent takes for a paste: the Enter becomes a line break in its box
+/// and nothing is sent. Once the line is drawn it has been read, and the Enter is a key of
+/// its own. Looked for with its spaces taken out, since a long line wraps in the box.
+fn wait_until_shown(session: &TerminalSession, line: &str) {
+    let wanted: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    let deadline = std::time::Instant::now() + ENTER_WAITS_FOR_THE_LINE_AT_MOST;
+    while std::time::Instant::now() < deadline && !session.has_ended() {
+        // A screen that cannot be read is one the line cannot be seen on: the Enter goes.
+        let Ok(screen) = session.shown(super::Shown::Screen) else {
+            return;
+        };
+        let screen: String = screen.chars().filter(|c| !c.is_whitespace()).collect();
+        if screen.contains(&wanted) {
+            return;
+        }
+        std::thread::sleep(LOOKS_AGAIN_AFTER);
+    }
 }
 
 #[cfg(test)]

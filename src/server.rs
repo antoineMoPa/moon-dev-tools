@@ -21,12 +21,13 @@ use board_routes::{
 };
 use review_routes::{
     agent_dispatch_log_request, blame_session_file, cancel_comment_dispatch_request,
-    commit_history, commit_run_outcome, commit_state, create_session_file, discard_hunk,
-    discard_hunks, find_session_files, hunk_patch, open_session, resolve_comment,
+    commit_history, commit_run_outcome, commit_state, create_session_file, decrypted_session_file,
+    discard_hunk, discard_hunks, find_session_files, hunk_patch, open_session, resolve_comment,
     resolve_comment_by_key, search_session_contents, send_comment_batch, session_file,
     session_file_at, session_state, session_submodules, stage_all, stage_file, stage_hunk,
     stage_selection, start_commit_run, suggest_commit_message, unstage_file, unstage_hunk,
-    update_agent, update_comment, update_commit_view, write_session_file,
+    update_agent, update_comment, update_commit_view, write_encrypted_session_file,
+    write_session_file,
 };
 
 use std::{
@@ -224,6 +225,14 @@ fn protected_routes() -> Router<Served> {
         .route(
             "/api/session/{session_id}/file/new",
             post(create_session_file),
+        )
+        .route(
+            "/api/session/{session_id}/file/decrypt",
+            post(decrypted_session_file),
+        )
+        .route(
+            "/api/session/{session_id}/file/encrypted",
+            post(write_encrypted_session_file),
         )
         .route("/api/session/{session_id}/blame", post(blame_session_file))
         .route("/api/session/{session_id}/file-at", get(session_file_at))

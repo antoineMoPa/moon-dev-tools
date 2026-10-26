@@ -148,6 +148,32 @@ pub(super) async fn create_session_file(
     Ok("ok")
 }
 
+pub(super) async fn decrypted_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::encrypted_files::DecryptFileRequest>,
+) -> Result<Json<FileContentPayload>, AppError> {
+    mark_activity(&state);
+    let file = session_work(state, session_id, move |state, session_id| {
+        service::decrypted_session_file(state, session_id, &request.file_path, &request.passphrase)
+    })
+    .await?;
+    Ok(Json(file))
+}
+
+pub(super) async fn write_encrypted_session_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::encrypted_files::WriteEncryptedFileRequest>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    session_work(state, session_id, move |state, session_id| {
+        service::write_encrypted_session_file(state, session_id, &request)
+    })
+    .await?;
+    Ok("ok")
+}
+
 pub(super) async fn session_file(
     AxumPath(session_id): AxumPath<String>,
     Query(query): Query<FileQuery>,

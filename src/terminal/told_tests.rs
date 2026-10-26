@@ -2,7 +2,8 @@
 //! somebody is in the way.
 //!
 //! A script stands in for an agent, started under its name the way the other pty tests start
-//! one: it says back every line it is sent, so a line that was typed and never sent - or sent
+//! one: it takes its terminal out of canonical mode first, as an agent's box does, and says
+//! back every line it is sent, so a line that was typed and never sent - or sent
 //! in two halves - does not read as one that arrived.
 
 #![cfg(unix)]
@@ -17,21 +18,27 @@ use crate::terminal::tests::spawn_fake_claude;
 
 /// Says each line it is sent back as `got[line]`.
 const SAYS_BACK: &str =
-    "#!/bin/sh\nwhile IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
+    "#!/bin/sh\n/bin/stty -icanon\nwhile IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
 /// The same, having first spent a second drawing, the way an agent's interface does as it
 /// comes up, and then said it is ready.
-const DRAWS_THEN_SAYS_BACK: &str = "#!/bin/sh\nfor frame in 1 2 3 4 5 6 7 8 9 10; do printf 'drawing\\n'; sleep 0.1; done\n\
+const DRAWS_THEN_SAYS_BACK: &str = "#!/bin/sh\n/bin/stty -icanon\nfor frame in 1 2 3 4 5 6 7 8 9 10; do printf 'drawing\\n'; sleep 0.1; done\n\
      printf 'ready\\n'\n\
      while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
+/// An agent slow to come up: it draws, goes quiet for longer than any wait on silence, and
+/// only then puts its terminal in raw mode and reads - each burst of keys as one chunk, the
+/// way an agent's box tells a paste from typing.
+const QUIET_BEFORE_IT_READS: &str = "#!/bin/sh\nprintf 'drawing\\n'\n/bin/sleep 4\n/bin/stty raw -echo\nprintf 'ready\\n'\n\
+     while chunk=$(/bin/dd bs=256 count=1 2>/dev/null); do [ -n \"$chunk\" ] && printf 'got[%s]' \"$chunk\"; done\n";
+
 /// The same, having first asked for a person the way an agent waiting on a permission does.
-const ASKS_THEN_SAYS_BACK: &str = "#!/bin/sh\nprintf 'working\\033]9;Permission needs input\\007'\n\
+const ASKS_THEN_SAYS_BACK: &str = "#!/bin/sh\n/bin/stty -icanon\nprintf 'working\\033]9;Permission needs input\\007'\n\
      while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
 /// The same, having first said what Claude Code says once it has finished and nobody has
 /// typed for a minute.
-const WAITS_TO_BE_TYPED_AT_THEN_SAYS_BACK: &str = "#!/bin/sh\nprintf 'done\\033]9;Claude is waiting for your input\\007'\n\
+const WAITS_TO_BE_TYPED_AT_THEN_SAYS_BACK: &str = "#!/bin/sh\n/bin/stty -icanon\nprintf 'done\\033]9;Claude is waiting for your input\\007'\n\
      while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
 fn registry() -> Arc<TerminalRegistry> {
@@ -103,6 +110,34 @@ fn a_line_told_to_an_agent_that_is_still_coming_up_waits_until_it_has() {
     assert!(
         typed_at > ready_at,
         "the line should have waited for the agent to come up, printed {printed:?}"
+    );
+    registry.remove(&terminal_id);
+}
+
+/// An agent that has gone quiet but not yet put its terminal in raw mode is not reading its
+/// keys: the line waits for it. Typed before, the terminal would echo it and hand the line
+/// and its Enter over together once the agent read - a paste, whose Enter sends nothing.
+#[test]
+fn a_line_waits_for_an_agent_that_is_quiet_but_not_reading_keys() {
+    let registry = registry();
+    let terminal_id = spawn_fake_claude(&registry, QUIET_BEFORE_IT_READS);
+    let session = registry.get(&terminal_id).expect("expected the shell");
+
+    registry
+        .tell(&terminal_id, "hello")
+        .expect("expected the shell to be told");
+
+    assert!(
+        prints(&session, "got[hello", Duration::from_secs(15)),
+        "the line should have reached the agent, printed {:?}",
+        printed(&session)
+    );
+    let printed = printed(&session);
+    let typed_at = printed.find("hello").expect("the line was typed");
+    let ready_at = printed.find("ready").expect("the agent came up");
+    assert!(
+        typed_at > ready_at,
+        "the line should have waited for the agent to read keys, printed {printed:?}"
     );
     registry.remove(&terminal_id);
 }

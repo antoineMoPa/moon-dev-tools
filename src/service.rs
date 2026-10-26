@@ -5,6 +5,7 @@
 //! synchronous and takes `&AppState`, so a local window never talks HTTP to itself.
 
 mod comments;
+mod encrypted_files;
 mod files;
 mod folders;
 mod staging;
@@ -15,6 +16,7 @@ pub(crate) use comments::{
     cancel_dispatch, dispatch_log, resolve_comment, resolve_comment_by_key, send_comment_batch,
     update_comment,
 };
+pub(crate) use encrypted_files::{decrypted_session_file, write_encrypted_session_file};
 pub(crate) use files::{
     blame_session_file, create_session_file, find_session_files, search_session_contents,
     session_file, session_file_at, write_session_file,

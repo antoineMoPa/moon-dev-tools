@@ -14,11 +14,13 @@
 //! [`on_disk`]'s.
 
 mod drawing;
+mod encrypted;
 mod json_tree;
 #[cfg(test)]
 mod for_tests;
 mod on_disk;
 mod opening;
+mod passphrase_field;
 mod picture;
 mod preview_images;
 mod serving;
@@ -29,7 +31,7 @@ use egui_moon_code_ide::{Completing, LspPosition, Served};
 use egui_moon_editor::{Editor, Language};
 use web_time::Instant;
 
-use crate::api::FileContentPayload;
+use crate::api::{FileContentPayload, encrypted_files::is_encrypted_name};
 
 /// A file being read or edited, and what has happened to it since it was opened.
 pub(crate) struct FileEditor {
@@ -142,11 +144,18 @@ pub(crate) struct FileEditor {
     /// drawn: as the tab opens and each time the page is flipped to, so a picture written
     /// since is the one shown - see [`preview_images`].
     preview_images_stale: bool,
+    /// The passphrase of a file kept encrypted, and the question asking for it - see
+    /// [`encrypted`]. `None` for every other file.
+    encrypted: Option<encrypted::Encrypted>,
 }
 
 impl FileEditor {
     fn loading(file_path: String, asks_language_servers: bool) -> Self {
         let preview = is_markdown(&file_path);
+        let encrypted = is_encrypted_name(&file_path).then(encrypted::Encrypted::opening);
+        // The text of an encrypted file is not told to a language server, which may well
+        // keep it somewhere of its own.
+        let asks_language_servers = asks_language_servers && encrypted.is_none();
         let mut code = Editor::new(String::new());
         // What the file is read as, settled here because the path is what says so and this is
         // where the pane learns it. The text arrives later; the language is the same either way.
@@ -185,6 +194,7 @@ impl FileEditor {
             revision: None,
             picture: None,
             preview_images_stale: true,
+            encrypted,
         }
     }
 
@@ -192,6 +202,12 @@ impl FileEditor {
     /// from the start, because looking at who touched what is what such a tab is opened for,
     /// and it asks no language server anything: the text is not a document of the project.
     fn at_revision(file_path: String, revision: String) -> Self {
+        // Reached off a blame, which an encrypted file does not offer: its history is
+        // ciphertext.
+        assert!(
+            !is_encrypted_name(&file_path),
+            "an encrypted file has no old version to open"
+        );
         let mut editor = Self::loading(file_path, false);
         editor.revision = Some(revision);
         // Opened to be read line by line beside the blame, so a markdown file opens on its
@@ -214,6 +230,9 @@ impl FileEditor {
         // rendered page.
         editor.preview = false;
         editor.on_disk = false;
+        if editor.encrypted.is_some() {
+            editor.encrypted = Some(encrypted::Encrypted::new_file());
+        }
         editor
     }
 
@@ -222,6 +241,16 @@ impl FileEditor {
     fn set_language_of(&mut self, file_path: &str) {
         self.code.set_language(Language::of_path(file_path));
         self.preview = false;
+    }
+
+    /// Keep a tab just named after a file kept encrypted the way such a file is kept: asked a
+    /// passphrase as it saves, and told to no language server.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn encrypt_if_named_so(&mut self, file_path: &str) {
+        if is_encrypted_name(file_path) && self.encrypted.is_none() {
+            self.encrypted = Some(encrypted::Encrypted::new_file());
+            self.asks_language_servers = false;
+        }
     }
 
     /// A tab for File > New: empty like [`FileEditor::new_file`], but with no name of its own.
@@ -281,6 +310,11 @@ impl FileEditor {
     /// The commit whose version of the file the tab shows, for a tab on an old version.
     pub(super) fn revision(&self) -> Option<&str> {
         self.revision.as_deref()
+    }
+
+    /// Whether the file is kept encrypted - see [`encrypted`].
+    pub(super) fn is_encrypted(&self) -> bool {
+        self.encrypted.is_some()
     }
 
     /// Whether the text can only be read: a file outside the repo, a file as an old commit
@@ -384,6 +418,7 @@ mod tests {
             revision: None,
             picture: None,
             preview_images_stale: true,
+            encrypted: None,
         }
     }
 

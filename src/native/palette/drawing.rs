@@ -186,6 +186,18 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if let Some(to) = switched_to {
         app.model.palette.switch_search(to);
     }
+    // A name typed from `/` or `~` is a path of the disk, which the file picker browses and
+    // completes - the finder only searches the repo. A file for a task's card stays a file
+    // of the repo.
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.model.palette.mode == PaletteMode::Files
+        && app.model.palette.files_link_to_task.is_none()
+        && crate::native::file_picker::names_the_disk(app.model.palette.query())
+    {
+        let typed = app.model.palette.query().to_string();
+        app.pick_file_to_edit_from(&typed);
+        return;
+    }
     if let Some(index) = chosen
         && let Some(command) = matches.into_iter().nth(index)
     {

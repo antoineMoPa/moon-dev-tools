@@ -2,6 +2,7 @@
 // browser compiles of this module.
 pub(crate) mod applications;
 pub(crate) mod display;
+pub(crate) mod encrypted_files;
 pub(crate) mod folders;
 pub(crate) mod image_formats;
 #[cfg(not(target_arch = "wasm32"))]

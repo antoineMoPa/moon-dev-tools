@@ -140,6 +140,22 @@ impl Backend for RemoteBackend {
         )
     }
 
+    fn decrypted_file_content(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::DecryptFileRequest,
+    ) -> Result<FileContentPayload> {
+        self.post_json(&format!("/api/session/{session_id}/file/decrypt"), request)
+    }
+
+    fn write_encrypted_file(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::WriteEncryptedFileRequest,
+    ) -> Result<()> {
+        self.post(&format!("/api/session/{session_id}/file/encrypted"), request)
+    }
+
     fn list_folder(&self, folder: &str) -> Result<crate::api::folders::FolderListing> {
         let encoded = urlencode(folder);
         self.get(&format!("/api/folder?path={encoded}"))

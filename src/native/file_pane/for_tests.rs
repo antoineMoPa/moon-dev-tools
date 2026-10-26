@@ -24,6 +24,13 @@ impl FileEditor {
         self.triggers.clone()
     }
 
+    /// Why the passphrase last typed into an encrypted tab did not open it, if it did not.
+    pub(crate) fn passphrase_refusal_for_test(&self) -> Option<String> {
+        self.encrypted
+            .as_ref()
+            .and_then(|encrypted| encrypted.refusal_for_test())
+    }
+
     /// What the pane is showing, once it has arrived.
     pub(crate) fn content_for_test(&self) -> Option<String> {
         self.saved.clone()

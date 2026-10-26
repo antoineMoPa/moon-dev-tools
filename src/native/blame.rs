@@ -272,6 +272,12 @@ pub(crate) fn toggle(app: &mut App, pane_id: PaneId) {
         app.model.error(said);
         return;
     }
+    // Its history is ciphertext, and its text is not handed to git.
+    if editor.is_encrypted() {
+        let said = format!("{} is encrypted, and has no blame", editor.file_path);
+        app.model.error(said);
+        return;
+    }
     editor.blaming_mut().toggle();
 }
 

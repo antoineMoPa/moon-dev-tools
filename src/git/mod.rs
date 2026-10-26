@@ -218,6 +218,15 @@ pub(crate) fn read_repo_image(repo_path: &Path, file_path: &str) -> Result<Optio
     Ok(Some(hunks::data_uri(mime_type, &bytes)))
 }
 
+/// The bytes of a file of the working tree, for a file that is not text - an encrypted one,
+/// which [`crate::gpg`] reads. Only the working tree: what HEAD has is not what is being
+/// edited.
+pub(crate) fn read_repo_bytes(repo_path: &Path, file_path: &str) -> Result<Vec<u8>> {
+    let resolved = resolve_in_working_tree(repo_path, file_path)?
+        .with_context(|| format!("{file_path} is not a file in the working tree"))?;
+    fs::read(&resolved).map_err(|error| anyhow!("failed to read {}: {error}", resolved.display()))
+}
+
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
     if let Some(resolved) = resolve_in_working_tree(repo_path, file_path)? {
         // The reason is said with the path rather than left as the error's cause: a window
@@ -244,7 +253,11 @@ pub(crate) fn read_committed_file(repo_path: &Path, file_path: &str) -> Result<S
 
 /// Write a file in the working tree. Only a file that is already there can be written: this
 /// is an editor for what is being reviewed, not a way to create files anywhere on disk.
-pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {
+pub(crate) fn write_repo_file(
+    repo_path: &Path,
+    file_path: &str,
+    content: impl AsRef<[u8]>,
+) -> Result<()> {
     if file_path.trim().is_empty() {
         bail!("file path cannot be empty");
     }
@@ -275,7 +288,11 @@ pub(crate) fn write_repo_file(repo_path: &Path, file_path: &str, content: &str) 
 ///
 /// Only in a folder the repo already has, and only where nothing is. A file that turned up at
 /// the path after the tab was opened is somebody else's, and is not written over.
-pub(crate) fn create_repo_file(repo_path: &Path, file_path: &str, content: &str) -> Result<()> {
+pub(crate) fn create_repo_file(
+    repo_path: &Path,
+    file_path: &str,
+    content: impl AsRef<[u8]>,
+) -> Result<()> {
     if file_path.trim().is_empty() {
         bail!("file path cannot be empty");
     }
@@ -298,7 +315,7 @@ pub(crate) fn create_repo_file(repo_path: &Path, file_path: &str, content: &str)
     let path = folder.join(name);
     let mut file = fs::File::create_new(&path)
         .map_err(|error| anyhow!("failed to create {}: {error}", path.display()))?;
-    std::io::Write::write_all(&mut file, content.as_bytes())
+    std::io::Write::write_all(&mut file, content.as_ref())
         .map_err(|error| anyhow!("failed to write {}: {error}", path.display()))
 }
 

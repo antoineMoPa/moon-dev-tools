@@ -30,6 +30,8 @@ mod extensions;
 #[cfg(not(target_arch = "wasm32"))]
 mod git;
 #[cfg(not(target_arch = "wasm32"))]
+mod gpg;
+#[cfg(not(target_arch = "wasm32"))]
 mod instances;
 #[cfg(not(target_arch = "wasm32"))]
 mod lsp;

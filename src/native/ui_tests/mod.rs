@@ -29,6 +29,7 @@ mod diff_sideways;
 mod extensions;
 mod file_blame;
 mod file_editing;
+mod file_encrypted;
 mod file_language_servers;
 mod file_picker;
 mod file_written_elsewhere;

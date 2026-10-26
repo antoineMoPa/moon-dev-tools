@@ -33,7 +33,8 @@ const ROWS_HEIGHT_OF_SCREEN: f32 = 0.5;
 const ROWS_DRAWN: usize = 300;
 
 /// What the picker says under its rows, since the line says none of it itself.
-const KEYS_NOTE: &str = "enter opens or picks · backspace goes up · esc cancels";
+const KEYS_NOTE: &str =
+    "enter opens or picks · tab completes · backspace goes up · / or ~ starts over · esc cancels";
 
 /// The line's own id, so its caret can be read before it is drawn and placed after.
 const LINE_ID: &str = "moonreview-file-picker-line";
@@ -74,13 +75,15 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         caret_is_after_a_folder(ctx, line_id, &picker.line) && way_up(picker).is_some();
     // The keys that are the list's are taken before the line sees them: an arrow would move
     // its caret, and Enter would take the keyboard off it.
-    let (cancel, move_down, move_up, accept, goes_up) = ctx.input_mut(|input| {
+    // Tab as well, which would take the keyboard off the line to the next widget.
+    let (cancel, move_down, move_up, accept, goes_up, completes) = ctx.input_mut(|input| {
         (
             input.consume_key(Modifiers::NONE, Key::Escape),
             input.consume_key(Modifiers::NONE, Key::ArrowDown),
             input.consume_key(Modifiers::NONE, Key::ArrowUp),
             input.consume_key(Modifiers::NONE, Key::Enter),
             backspace_goes_up && input.consume_key(Modifiers::NONE, Key::Backspace),
+            input.consume_key(Modifiers::NONE, Key::Tab),
         )
     });
     if cancel {
@@ -91,6 +94,17 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         let up = way_up(picker).expect("checked as the key was taken");
         picker.go_to(up);
         ctx.request_repaint();
+    }
+    if completes {
+        let listing = match &picker.listing {
+            Listing::Read(listing) => Some(listing),
+            Listing::NoFolder | Listing::Waiting | Listing::Failed(_) => None,
+        };
+        if let Some(line) = rows::completed(&picker.purpose, listing, &picker.line) {
+            picker.line = line;
+            picker.places_caret = true;
+            ctx.request_repaint();
+        }
     }
 
     let rows = rows_of(picker);
@@ -131,8 +145,18 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                         .margin(egui::Margin::symmetric(7, 5)),
                 );
                 entry.request_focus();
+                if let Some(line) = rows::started_over(&picker.line) {
+                    picker.line = line;
+                    picker.places_caret = true;
+                    ui.ctx().request_repaint();
+                }
                 if std::mem::take(&mut picker.places_caret) {
-                    place_caret(ui.ctx(), line_id, &picker.line);
+                    place_caret(
+                        ui.ctx(),
+                        line_id,
+                        &picker.line,
+                        picker.purpose.suggested_name(),
+                    );
                 }
 
                 ui.add_space(6.0);
@@ -252,18 +276,23 @@ fn caret_is_after_a_folder(ctx: &egui::Context, line_id: egui::Id, line: &str) -
     caret.is_empty() && caret.primary.index == egui::text::CharIndex(line.chars().count())
 }
 
-/// Put the caret at the end of the line, with what follows its last `/` selected: nothing,
-/// after going into a folder, and the name offered for a new file, to be typed over.
-fn place_caret(ctx: &egui::Context, line_id: egui::Id, line: &str) {
+/// Put the caret at the end of the line, with the name offered for a new file selected after
+/// the last `/`, to be typed over. Any other line - a folder gone into, a name completed, `~`
+/// started over from - has nothing selected.
+fn place_caret(ctx: &egui::Context, line_id: egui::Id, line: &str, suggested: Option<&str>) {
     let Some(mut state) = egui::TextEdit::load_state(ctx, line_id) else {
         return;
     };
-    let (folder, _) = rows::split(line).expect("the picker only writes lines that name a folder");
+    let end = line.chars().count();
+    let selected_from = match rows::split(line) {
+        Some((folder, typed)) if Some(typed) == suggested => folder.chars().count(),
+        _ => end,
+    };
     state
         .cursor
         .set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::new(folder.chars().count()),
-            egui::text::CCursor::new(line.chars().count()),
+            egui::text::CCursor::new(selected_from),
+            egui::text::CCursor::new(end),
         )));
     state.store(ctx, line_id);
 }

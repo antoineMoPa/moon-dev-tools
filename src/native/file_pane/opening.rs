@@ -4,6 +4,7 @@
 use egui_frames::PaneId;
 use egui_moon_code_ide::LanguageSource;
 
+use crate::api::encrypted_files::WriteEncryptedFileRequest;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::native::file_picker::PickPurpose;
 use crate::native::{
@@ -275,6 +276,7 @@ impl App {
             .get_mut(&pane_id)
             .expect("the tab being named has an editor");
         editor.set_language_of(&file_path);
+        editor.encrypt_if_named_so(&file_path);
         editor.file_path = file_path;
         editor.untitled = false;
         editor.on_disk = is_there;
@@ -297,8 +299,12 @@ impl App {
             Some(revision) => FileEditor::at_revision(file_path.to_string(), revision.to_string()),
             None => FileEditor::loading(file_path.to_string(), self.asks_language_servers),
         };
+        // An encrypted file is read once its passphrase is typed - see [`super::encrypted`].
+        let asks_a_passphrase = editor.is_encrypted();
         self.model.file_editors.insert(pane_id, editor);
-        self.load_file(pane_id, session_id, file_path, revision);
+        if !asks_a_passphrase {
+            self.load_file(pane_id, session_id, file_path, revision);
+        }
     }
 
     fn load_file(
@@ -353,6 +359,33 @@ impl App {
         if editor.saving || editor.is_read_only() || (editor.on_disk && !editor.is_dirty()) {
             return;
         }
+        // An encrypted file is only written encrypted, with a passphrase asked for each time:
+        // answering the question is what writes it.
+        if let Some(encrypted) = editor.encrypted.as_mut() {
+            encrypted.ask_to_save();
+            return;
+        }
+        self.write_file_pane(pane_id, session_id, None);
+    }
+
+    /// Write a tab's text to its file - encrypted with `passphrase` for a file kept
+    /// encrypted, which is wiped once the write is over.
+    pub(super) fn write_file_pane(
+        &mut self,
+        pane_id: PaneId,
+        session_id: &str,
+        passphrase: Option<zeroize::Zeroizing<String>>,
+    ) {
+        let editor = self
+            .model
+            .file_editors
+            .get_mut(&pane_id)
+            .expect("a tab is written from its own pane");
+        assert_eq!(
+            passphrase.is_some(),
+            editor.is_encrypted(),
+            "a file kept encrypted is written with a passphrase, and only such a file"
+        );
         editor.saving = true;
         editor.writes_sent += 1;
         let content = editor.code.text().to_string();
@@ -365,13 +398,19 @@ impl App {
         let tells_the_server = editor.server_heard().was_opened();
         // The first save of a tab opened on a path nothing was at is what creates the file.
         let creates = !editor.on_disk;
+        let encrypted_write = passphrase.map(|passphrase| WriteEncryptedFileRequest {
+            file_path: file_path.clone(),
+            content: content.clone(),
+            passphrase,
+            creates,
+        });
         self.tasks.spawn_keyed(
             Some(format!("save:{pane_id}")),
             move |backend| {
-                if creates {
-                    backend.create_file(&for_call, &for_write, &written)?;
-                } else {
-                    backend.write_file(&for_call, &for_write, &written)?;
+                match &encrypted_write {
+                    Some(request) => backend.write_encrypted_file(&for_call, request)?,
+                    None if creates => backend.create_file(&for_call, &for_write, &written)?,
+                    None => backend.write_file(&for_call, &for_write, &written)?,
                 }
                 // The file is written whatever the server makes of it: one that did not hear
                 // only misses the check a save sets off, and hears the next save.

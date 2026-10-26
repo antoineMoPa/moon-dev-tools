@@ -10,7 +10,7 @@ use crate::api::folders::{EntryKind, FolderEntry, FolderListing};
 use super::PickPurpose;
 
 /// Between the folders of a path of the server's disk - see [`crate::api::folders`].
-const SEPARATOR: char = '/';
+pub(super) const SEPARATOR: char = '/';
 
 /// The row that goes up a folder reads as the shell's name for it.
 const UP_NAME: &str = "..";
@@ -20,6 +20,72 @@ const UP_NAME: &str = "..";
 pub(super) fn split(path: &str) -> Option<(&str, &str)> {
     let folder_ends = path.rfind(SEPARATOR)? + SEPARATOR.len_utf8();
     Some(path.split_at(folder_ends))
+}
+
+/// What `~` on the line stands for, the home folder - see [`super::HOME`].
+pub(super) const HOME_MARK: char = '~';
+
+/// The line started over from a `/` or a `~` typed where a name would start: `/` after a
+/// folder's `/` goes to the root, and `~` there to the home folder, so a path is typed from
+/// the start without clearing the folder the picker opened on. `None` for a line that does
+/// not start over. A `~` that begins a longer name - `~backup` - is that name.
+pub(super) fn started_over(line: &str) -> Option<String> {
+    let root = line.rfind("//").map(|at| at + SEPARATOR.len_utf8());
+    let home = line
+        .match_indices(&format!("{SEPARATOR}{HOME_MARK}"))
+        .map(|(at, _)| at + SEPARATOR.len_utf8())
+        .filter(|&starts| {
+            let after = &line[starts + HOME_MARK.len_utf8()..];
+            after.is_empty() || after.starts_with(SEPARATOR)
+        })
+        .last();
+    let starts = root.max(home)?;
+    Some(line[starts..].to_string())
+}
+
+/// The line with the name being typed completed the way a shell's Tab completes it: as far as
+/// every entry it could be agrees, with a folder's `/` once only one is left - which lists
+/// that folder next. `None` when nothing it could be is listed, or there is nothing more to
+/// add. Matched whatever the case typed; one entry left is written in its own case.
+pub(super) fn completed(
+    purpose: &PickPurpose,
+    listing: Option<&FolderListing>,
+    line: &str,
+) -> Option<String> {
+    if line == HOME_MARK.to_string() {
+        return Some(format!("{HOME_MARK}{SEPARATOR}"));
+    }
+    let (folder, typed) = split(line)?;
+    let listing = listing?;
+    let typed_lower = typed.to_lowercase();
+    let lists_files = matches!(purpose.picks(), Picks::File | Picks::NewName);
+    let candidates: Vec<&FolderEntry> = listing
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == EntryKind::Folder || lists_files)
+        .filter(|entry| entry.name.to_lowercase().starts_with(&typed_lower))
+        .collect();
+    let completion = match candidates.as_slice() {
+        [] => return None,
+        [only] if only.kind == EntryKind::Folder => format!("{}{SEPARATOR}", only.name),
+        [only] => only.name.clone(),
+        [first, rest @ ..] => {
+            let mut agreed: Vec<char> = first.name.chars().collect();
+            for other in rest {
+                let same = agreed
+                    .iter()
+                    .zip(other.name.chars())
+                    .take_while(|(one, two)| one.to_lowercase().eq(two.to_lowercase()))
+                    .count();
+                agreed.truncate(same);
+            }
+            // What was typed stays as it was typed: the entries agree on it only up to case.
+            let added: String = agreed.into_iter().skip(typed.chars().count()).collect();
+            format!("{typed}{added}")
+        }
+    };
+    let completed = format!("{folder}{completion}");
+    (completed != line).then_some(completed)
 }
 
 /// A folder and a name in it, as one path.
@@ -236,6 +302,60 @@ mod tests {
         assert_eq!(split("~/prog/"), Some(("~/prog/", "")));
         assert_eq!(split("~"), None);
         assert_eq!(split(""), None);
+    }
+
+    #[test]
+    fn a_slash_or_a_tilde_where_a_name_starts_starts_the_line_over() {
+        assert_eq!(started_over("/home/moon/prog//").as_deref(), Some("/"));
+        assert_eq!(started_over("/home/moon/prog/~").as_deref(), Some("~"));
+        assert_eq!(
+            started_over("/home/moon//etc/hosts").as_deref(),
+            Some("/etc/hosts")
+        );
+        assert_eq!(started_over("/etc/~/prog/").as_deref(), Some("~/prog/"));
+        assert_eq!(started_over("~/prog//").as_deref(), Some("/"));
+        assert_eq!(started_over("/home/moon/~backup"), None);
+        assert_eq!(started_over("/home/moon/prog/"), None);
+        assert_eq!(started_over("/"), None);
+        assert_eq!(started_over("~/"), None);
+    }
+
+    /// Tab completes as a shell does: one entry left is written whole, a folder with its
+    /// `/`; several are written as far as they agree; files only where files are picked.
+    #[test]
+    fn tab_completes_what_is_typed_as_far_as_the_entries_agree() {
+        let listing = listing(
+            "/home/moon",
+            &[
+                ("Projects", EntryKind::Folder),
+                ("prog", EntryKind::Folder),
+                ("programs.txt", EntryKind::File),
+                ("notes.md", EntryKind::File),
+            ],
+        );
+        let file = file_purpose();
+        let folder = PickPurpose::RepoFolder;
+
+        assert_eq!(completed(&file, Some(&listing), "~").as_deref(), Some("~/"));
+        assert_eq!(
+            completed(&file, Some(&listing), "~/no").as_deref(),
+            Some("~/notes.md")
+        );
+        assert_eq!(
+            completed(&file, Some(&listing), "~/proj").as_deref(),
+            Some("~/Projects/")
+        );
+        assert_eq!(
+            completed(&file, Some(&listing), "~/p").as_deref(),
+            Some("~/pro")
+        );
+        assert_eq!(completed(&file, Some(&listing), "~/pro"), None);
+        assert_eq!(
+            completed(&folder, Some(&listing), "~/prog").as_deref(),
+            Some("~/prog/")
+        );
+        assert_eq!(completed(&folder, Some(&listing), "~/no"), None);
+        assert_eq!(completed(&file, Some(&listing), "~/zzz"), None);
     }
 
     #[test]

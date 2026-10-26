@@ -29,6 +29,9 @@ const WRITTEN_ELSEWHERE_NOTE: &str = "changed on disk";
 /// What the header reads on a tab opened on a path nothing is at yet, until a save creates it.
 const NEW_FILE_NOTE: &str = "new file · not saved yet";
 
+/// What the header reads on a file kept encrypted - see [`super::encrypted`].
+const ENCRYPTED_NOTE: &str = "encrypted · gpg";
+
 /// `[reload]` once it has been pressed, asking for the second press that drops the edits.
 const RELOAD_CONFIRM_LABEL: &str = "[reload · discard edits]";
 
@@ -74,6 +77,15 @@ impl App {
         let loaded = editor.saved.is_some();
         let picture = editor.picture.is_some();
         let blaming = editor.blaming.is_on();
+        let encrypted = editor.is_encrypted();
+        let asking_a_passphrase = editor
+            .encrypted
+            .as_ref()
+            .is_some_and(|encrypted| encrypted.is_asking());
+        let hides_the_text = editor
+            .encrypted
+            .as_ref()
+            .is_some_and(|encrypted| encrypted.hides_the_text());
         let markdown = is_markdown(file_path);
         // A file of the window's own project reads as its path inside it. One placed in a
         // session of its own - `/etc/hostname` - reads as where it is on disk: its path
@@ -139,6 +151,7 @@ impl App {
                         // text has lines to put it beside.
                         if loaded
                             && !outside_the_repo
+                            && !encrypted
                             && !previewing
                             && !treeing
                             && !picture
@@ -197,6 +210,16 @@ impl App {
                             )
                             .on_hover_text(
                                 "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
+                            );
+                        }
+                        if encrypted {
+                            ui.label(
+                                RichText::new(ENCRYPTED_NOTE)
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.muted),
+                            )
+                            .on_hover_text(
+                                "This file is kept encrypted with gpg. It is decrypted with its passphrase as it opens, and every save encrypts it again with that passphrase - it is never written in the clear.",
                             );
                         }
                         // The same for a file only a command writes: which command, since
@@ -276,6 +299,13 @@ impl App {
                 if let Some(error) = error {
                     ui.label(RichText::new(error).color(palette.warn));
                     return;
+                }
+                if asking_a_passphrase {
+                    self.draw_passphrase_ask(ui, pane_id, session_id, &palette);
+                    if hides_the_text {
+                        return;
+                    }
+                    ui.add_space(4.0);
                 }
                 if !loaded {
                     ui.spinner();

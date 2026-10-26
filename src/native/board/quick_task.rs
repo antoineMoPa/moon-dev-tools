@@ -44,11 +44,12 @@ pub(crate) fn commands(app: &App, query: &str) -> Vec<Command> {
     agents
         .into_iter()
         .map(|agent| Command {
-            title: format!("\"{title}\" → start with {}", agent_label(agent)),
-            description: format!(
-                "New card in progress, with {} working on it",
+            title: format!(
+                "\"{}\" → start with {}",
+                cut_title(title),
                 agent_label(agent)
             ),
+            description: "Start task right away".to_string(),
             action: CommandAction::StartQuickTask {
                 title: title.to_string(),
                 agent,
@@ -56,6 +57,19 @@ pub(crate) fn commands(app: &App, query: &str) -> Vec<Command> {
             shortcut: None,
         })
         .collect()
+}
+
+/// How much of the typed title a row shows. The card and the agent get the whole of it.
+const ROW_TITLE_CHARS: usize = 20;
+
+/// The typed title as a row shows it: its first [`ROW_TITLE_CHARS`], and an ellipsis where
+/// the rest was.
+fn cut_title(title: &str) -> String {
+    if title.chars().count() <= ROW_TITLE_CHARS {
+        return title.to_string();
+    }
+    let kept: String = title.chars().take(ROW_TITLE_CHARS).collect();
+    format!("{kept}…")
 }
 
 /// Make the card, start `agent` on it and tell it `title`.

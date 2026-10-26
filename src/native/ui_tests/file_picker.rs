@@ -31,6 +31,8 @@ fn a_file_is_picked_with_the_keyboard_and_opens_in_a_tab() {
     // The picker's rows while it is up, and the file in a tab once there is one.
     let seen = Arc::new(Mutex::new((None::<Vec<String>>, None::<String>)));
     let seen_in_ui = Arc::clone(&seen);
+    let line = Arc::new(Mutex::new(String::new()));
+    let line_in_ui = Arc::clone(&line);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))
@@ -40,6 +42,9 @@ fn a_file_is_picked_with_the_keyboard_and_opens_in_a_tab() {
                 app.pending_action = Some(CommandAction::OpenFile);
             }
             app.draw(ui);
+            if let Some(picker) = &app.model.file_picker {
+                *line_in_ui.lock().expect("poisoned") = picker.line_for_test().to_string();
+            }
             *seen_in_ui.lock().expect("poisoned") = (
                 app.model
                     .file_picker
@@ -72,7 +77,14 @@ fn a_file_is_picked_with_the_keyboard_and_opens_in_a_tab() {
         "Enter on a folder should list it, got {:?}",
         rows(&seen)
     );
-    press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    // Tab completes the name as a shell does, leaving it the one row for Enter.
+    type_letter(&mut harness, egui::Key::M, "m");
+    press_key(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(
+        line.lock().expect("poisoned").ends_with("/src/main.rs"),
+        "Tab should have written main.rs, got {:?}",
+        line.lock().expect("poisoned")
+    );
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
 
     // Assert
@@ -83,6 +95,69 @@ fn a_file_is_picked_with_the_keyboard_and_opens_in_a_tab() {
     let (picker, tab) = seen.lock().expect("poisoned").clone();
     assert_eq!(tab.as_deref(), Some("src/main.rs"));
     assert_eq!(picker, None, "a pick should put the picker away");
+}
+
+/// ⌘P with a path pasted from `/`: the finder hands it to the picker, which browses the disk
+/// from there, and Enter opens the file.
+#[test]
+fn a_path_typed_into_the_file_finder_is_browsed_by_the_picker() {
+    let fixture = Fixture::new("file-finder-path");
+    fixture.write("src/main.rs", "fn main() {}\n");
+    fixture.commit("Add the program");
+    let pasted = format!(
+        "{}/src/main.rs",
+        fixture.root.canonicalize().unwrap().display()
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let asked = Arc::new(AtomicBool::new(false));
+    let seen = Arc::new(Mutex::new((None::<Vec<String>>, None::<String>)));
+    let seen_in_ui = Arc::clone(&seen);
+    let finding = Arc::new(AtomicBool::new(false));
+    let finding_in_ui = Arc::clone(&finding);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .build_ui(move |ui| {
+            if !asked.load(Ordering::Relaxed) && app.repo_root().is_some() {
+                asked.store(true, Ordering::Relaxed);
+                app.pending_action = Some(CommandAction::FindFile);
+            }
+            app.draw(ui);
+            finding_in_ui.store(app.model.palette.is_open(), Ordering::Relaxed);
+            *seen_in_ui.lock().expect("poisoned") = (
+                app.model
+                    .file_picker
+                    .as_ref()
+                    .map(|picker| picker.rows_for_test()),
+                app.model.layout.panes().find_map(|(_, pane)| match pane {
+                    Pane::File { file_path, .. } => Some(file_path.clone()),
+                    _ => None,
+                }),
+            );
+        });
+    assert!(
+        settle(&mut harness, || finding.load(Ordering::Relaxed)),
+        "the finder never opened"
+    );
+    harness.run_steps(2);
+
+    harness.input_mut().events.push(egui::Event::Paste(pasted));
+    assert!(
+        settle(&mut harness, || seen.lock().expect("poisoned").0
+            == Some(vec!["main.rs".to_string()])),
+        "the picker should list the pasted file, got {:?}",
+        seen.lock().expect("poisoned").0
+    );
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+
+    assert!(
+        settle(&mut harness, || seen.lock().expect("poisoned").1.is_some()),
+        "the file never reached a tab"
+    );
+    assert_eq!(
+        seen.lock().expect("poisoned").1.as_deref(),
+        Some("src/main.rs")
+    );
 }
 
 /// What the window reads back of a tab on a file outside the repo.

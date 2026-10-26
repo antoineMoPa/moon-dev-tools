@@ -90,12 +90,14 @@ impl App {
         // about to be what this pane sent, a new file has nothing on disk to read yet, and an
         // old version of a file is not on the disk at all. A picture is not read again either:
         // it is the whole file every time, and it has no edits for a change to be set against.
+        // Nor is an encrypted file, whose every read is a decrypt with its passphrase.
         if editor.saved.is_none()
             || editor.saving
             || !due
             || !editor.on_disk
             || editor.revision.is_some()
             || editor.picture.is_some()
+            || editor.encrypted.is_some()
         {
             return;
         }

@@ -41,6 +41,7 @@ toml = "1"
 miniz_oxide = "0.8"
 webbrowser = "1"
 web-time = "1"
+zeroize = { version = "1.8", features = ["serde"] }
 uuid = "1"
 rhai = { version = "1.25.1", features = ["serde"] }
 

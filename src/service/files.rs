@@ -35,6 +35,7 @@ pub(crate) fn session_file(
                 image_src: None,
             });
         }
+        refuse_encrypted_name(file_path)?;
         let folder = folder_a_file_is_in(&session.repo_path, file_path)?;
         // A picture is sent as the picture it is: its bytes are no text for a tab to show,
         // and reading them as one is refused.
@@ -152,7 +153,7 @@ pub(crate) fn search_session_contents(
 /// file of the board - a card's notes, the wire, the work log - the checkout the board is
 /// kept in, which is another folder when the session is on a work tree of a shared server -
 /// see [`crate::moontasks::store::board_checkout`].
-fn folder_a_file_is_in(
+pub(super) fn folder_a_file_is_in(
     session_folder: &std::path::Path,
     file_path: &str,
 ) -> Result<std::path::PathBuf> {
@@ -164,12 +165,23 @@ fn folder_a_file_is_in(
     }
 }
 
+/// A file named as encrypted is never read or written as plain text: its text goes through
+/// [`super::encrypted_files`], with a passphrase. A plain write of one would leave the secret
+/// on disk in the clear.
+fn refuse_encrypted_name(file_path: &str) -> Result<()> {
+    if crate::api::encrypted_files::is_encrypted_name(file_path) {
+        bail!("{file_path} is encrypted, and is only read or written with its passphrase");
+    }
+    Ok(())
+}
+
 pub(crate) fn write_session_file(
     state: &AppState,
     session_id: &str,
     file_path: &str,
     content: &str,
 ) -> Result<()> {
+    refuse_encrypted_name(file_path)?;
     crate::api::ensure_session_is_writable(state, session_id)?;
     crate::api::with_session(state, session_id, |session| {
         let folder = folder_a_file_is_in(&session.repo_path, file_path)?;
@@ -184,6 +196,7 @@ pub(crate) fn create_session_file(
     file_path: &str,
     content: &str,
 ) -> Result<()> {
+    refuse_encrypted_name(file_path)?;
     crate::api::ensure_session_is_writable(state, session_id)?;
     crate::api::with_session(state, session_id, |session| {
         let folder = folder_a_file_is_in(&session.repo_path, file_path)?;

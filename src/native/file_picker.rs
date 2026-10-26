@@ -13,8 +13,10 @@
 //! that purpose names: see [`picked`].
 //!
 //! The keys: typing narrows the list to the names holding what was typed, and a `/` typed
-//! goes into the folder named before it - so a whole path can be typed or pasted, from `/` or
-//! from `~/`. The arrows move along the list. Enter goes into the folder on the row, or picks
+//! goes into the folder named before it. A `/` or `~` typed where a name would start starts
+//! the line over from the root or the home folder - so a whole path can be typed or pasted,
+//! from `/` or from `~/`, over the folder the picker opened on. Tab completes the name being
+//! typed as a shell does. The arrows move along the list. Enter goes into the folder on the row, or picks
 //! what is on it. Backspace after a `/` goes up a folder, as the `..` row does. Esc, or a
 //! press anywhere else, puts the picker away with nothing picked.
 
@@ -150,6 +152,12 @@ impl FilePicker {
         self.places_caret = true;
     }
 
+    /// The path typed so far.
+    #[cfg(test)]
+    pub(crate) fn line_for_test(&self) -> &str {
+        &self.line
+    }
+
     /// The rows it is listing, as they read.
     #[cfg(test)]
     pub(crate) fn rows_for_test(&self) -> Vec<String> {
@@ -165,6 +173,15 @@ impl App {
         // One box over the window at a time, and this is the one just asked for.
         self.model.palette.dismiss();
         self.model.file_picker = Some(FilePicker::opened(purpose, folder));
+    }
+
+    /// Put the picker up for a file to edit on a path typed elsewhere - the file finder's
+    /// query, once it names the disk rather than the repo: see [`names_the_disk`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn pick_file_to_edit_from(&mut self, line: &str) {
+        self.ask_for_a_pick(PickPurpose::FileToEdit, HOME);
+        let picker = self.model.file_picker.as_mut().expect("just put up");
+        picker.line = line.to_string();
     }
 
     /// Ask for the folder the line names, when it is not the one already listed or asked for.
@@ -203,6 +220,12 @@ impl App {
             },
         );
     }
+}
+
+/// Whether a path typed as a file name starts from the root or the home folder - a path of
+/// the disk, which the picker browses, rather than a name the repo's files are searched for.
+pub(crate) fn names_the_disk(typed: &str) -> bool {
+    typed.starts_with([rows::SEPARATOR, rows::HOME_MARK])
 }
 
 /// What was picked.

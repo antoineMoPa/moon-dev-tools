@@ -156,6 +156,19 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// Create a file nothing is at yet, which is the first save of a tab opened on a new file.
     /// Refused where something already is.
     fn create_file(&self, session_id: &str, file_path: &str, content: &str) -> Result<()>;
+    /// The text of a file kept encrypted, decrypted with the passphrase it was encrypted with -
+    /// see [`crate::api::encrypted_files`].
+    fn decrypted_file_content(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::DecryptFileRequest,
+    ) -> Result<FileContentPayload>;
+    /// Encrypt a tab's text with a passphrase and write it as a file kept encrypted.
+    fn write_encrypted_file(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::WriteEncryptedFileRequest,
+    ) -> Result<()>;
     /// What is in a folder of the disk this backend reads, for the picker the window draws
     /// itself - see [`crate::native::file_picker`]. The folder is named from `/`, or from `~`
     /// for the home of whoever the server runs as.

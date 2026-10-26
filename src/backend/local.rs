@@ -133,6 +133,27 @@ impl Backend for LocalBackend {
         service::create_session_file(&self.state, session_id, file_path, content)
     }
 
+    fn decrypted_file_content(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::DecryptFileRequest,
+    ) -> Result<FileContentPayload> {
+        service::decrypted_session_file(
+            &self.state,
+            session_id,
+            &request.file_path,
+            &request.passphrase,
+        )
+    }
+
+    fn write_encrypted_file(
+        &self,
+        session_id: &str,
+        request: &crate::api::encrypted_files::WriteEncryptedFileRequest,
+    ) -> Result<()> {
+        service::write_encrypted_session_file(&self.state, session_id, request)
+    }
+
     fn list_folder(&self, folder: &str) -> Result<crate::api::folders::FolderListing> {
         service::list_folder(folder)
     }

@@ -148,12 +148,12 @@ mod tests {
            esac\n\
          done\n\
          if [ $on = no ]; then printf 'left\\n'; exit 1; fi\n\
-         stty sane\n\
+         stty sane -icanon\n\
          printf 'trusted\\n'\n\
          while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
     /// Comes up with a box and no question, and says back each line it is sent.
-    const COMES_UP_WITH_ITS_BOX: &str = "#!/bin/sh\nprintf '> '\n\
+    const COMES_UP_WITH_ITS_BOX: &str = "#!/bin/sh\n/bin/stty -icanon\nprintf '> '\n\
          while IFS= read -r line; do printf 'got[%s]\\n' \"$line\"; done\n";
 
     fn registry() -> Arc<TerminalRegistry> {
