@@ -19,7 +19,7 @@ use crate::{
 use super::rows::{
     empty_message, footnote, hint_of, refresh_content_matches, refresh_file_matches,
 };
-use super::{Command, PaletteMode, rows_for};
+use super::{Command, CommandAction, PaletteMode, rows_for};
 
 /// The gap between the query line's edge and what is typed in it.
 const LINE_PADDING: i8 = 7;
@@ -64,6 +64,34 @@ fn row_of(command: &Command) -> Row {
         title: command.title.clone(),
         description: command.description.clone(),
         shortcut: command.shortcut.map(bindings::describe).unwrap_or_default(),
+        title_color: title_color_of(&command.action),
+    }
+}
+
+/// The colour each agent's quick task is written in, so the row says which agent it starts
+/// before it is read.
+#[cfg(not(target_arch = "wasm32"))]
+const AGENT_INKS: &[(crate::api::AgentKind, Color32)] = &[
+    (crate::api::AgentKind::Claude, Color32::from_rgb(0xd9, 0x77, 0x57)),
+    (crate::api::AgentKind::Codex, Color32::from_rgb(0x7f, 0xc8, 0xf8)),
+    (crate::api::AgentKind::OpenCode, Color32::from_rgb(0x5b, 0x8d, 0xef)),
+    (crate::api::AgentKind::Pi, Color32::from_rgb(0xea, 0xb6, 0x5d)),
+];
+
+/// The colour a command's title is set apart in: a quick task made out of what was typed is
+/// written in its agent's colour - see [`crate::native::board::quick_task`] - so it reads as
+/// something other than the window's commands. `None` is the ordinary ink.
+fn title_color_of(action: &CommandAction) -> Option<Color32> {
+    match action {
+        #[cfg(not(target_arch = "wasm32"))]
+        CommandAction::StartQuickTask { agent, .. } => Some(
+            AGENT_INKS
+                .iter()
+                .find(|(of, _)| of == agent)
+                .map(|(_, ink)| *ink)
+                .expect("every agent a quick task is offered for has an ink"),
+        ),
+        _ => None,
     }
 }
 

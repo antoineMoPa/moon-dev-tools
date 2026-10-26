@@ -17,7 +17,7 @@ use rows::{code_action_rows, content_rows, file_rows, place_rows, rename_rows};
 use egui_frames::DropSide;
 
 use crate::{
-    api::SearchScope,
+    api::{AgentKind, SearchScope},
     native::{app::App, bindings, panes::OpenPaneRequest},
     project::ProjectCommand,
 };
@@ -200,6 +200,10 @@ pub(crate) enum CommandAction {
     /// its own to make one for.
     #[cfg(not(target_arch = "wasm32"))]
     GeneratePassKey,
+    /// Make a card with this title and start this agent on it, told the title - see
+    /// [`crate::native::board::quick_task`]. A browser's window cannot tell a shell a line.
+    #[cfg(not(target_arch = "wasm32"))]
+    StartQuickTask { title: String, agent: AgentKind },
 }
 
 /// Every typed term has to appear somewhere in the title or description, which makes
@@ -275,7 +279,18 @@ pub(crate) fn ranked(commands: Vec<Command>, query: &str) -> Vec<Command> {
 /// What the palette is offering under the query: the commands that match it, or the files.
 fn rows_for(app: &App) -> Vec<Command> {
     match app.model.palette.mode {
-        PaletteMode::Commands => ranked(commands_for(app), app.model.palette.query()),
+        PaletteMode::Commands => {
+            let query = app.model.palette.query();
+            let commands = ranked(commands_for(app), query);
+            // After the commands, so a command's name typed in full stays the first row; a
+            // title, which names no command, has these as its only rows.
+            #[cfg(not(target_arch = "wasm32"))]
+            let commands = commands
+                .into_iter()
+                .chain(crate::native::board::quick_task::commands(app, query))
+                .collect();
+            commands
+        }
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
         PaletteMode::Rename => rename_rows(app),
@@ -330,6 +345,59 @@ mod tests {
 
         let titles: Vec<&str> = matches.iter().map(|row| row.title.as_str()).collect();
         assert_eq!(titles[0], "open file", "the rows were {titles:?}");
+    }
+
+    /// A title typed into the palette is offered as a quick task, once per agent and the
+    /// selected one first - after the commands, so `wl` is still the work log on Enter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_typed_title_is_offered_as_a_quick_task_after_the_commands() {
+        use crate::api::{AgentOption, SessionPayload};
+
+        let fixture = crate::native::ui_tests::seeded_fixture("palette-quick-task");
+        let mut app = crate::native::ui_tests::app_for(
+            &fixture.root,
+            crate::native::theme::ThemeMode::Dark,
+        );
+        let agent = |kind: AgentKind| AgentOption {
+            kind,
+            label: kind.label().to_string(),
+            available: true,
+            logged_in: None,
+            log_in_command: None,
+        };
+        let session_id = app.model.root_session_id.clone();
+        app.model.review(&session_id).payload = Some(std::sync::Arc::new(SessionPayload {
+            repo_name: "repo".to_string(),
+            branch_name: None,
+            commit_base: None,
+            commits: Vec::new(),
+            history_commits: Vec::new(),
+            history_has_more: false,
+            local_change_summary: Default::default(),
+            active_commit: None,
+            repo_path: "/repo".to_string(),
+            read_only: false,
+            patch_preview_line_limit: 500,
+            available_agents: vec![agent(AgentKind::Claude), agent(AgentKind::Codex)],
+            selected_agent: AgentKind::Codex,
+            full_file_path: None,
+            hunks: Vec::new(),
+            review_comments: Vec::new(),
+            export_text: String::new(),
+        }));
+        app.model.palette.show();
+        app.model.palette.input.open_on("wl");
+
+        let rows = rows_for(&app);
+
+        let titles: Vec<&str> = rows.iter().map(|row| row.title.as_str()).collect();
+        assert_eq!(titles[0], "wl", "the rows were {titles:?}");
+        assert_eq!(
+            titles[titles.len() - 2..],
+            ["\"wl\" → start with codex", "\"wl\" → start with claude"],
+            "the rows were {titles:?}"
+        );
     }
 
     #[test]

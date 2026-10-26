@@ -20,6 +20,8 @@ mod board_task;
 pub(crate) mod marks;
 pub(crate) mod motion;
 pub(crate) mod placing;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod quick_task;
 pub(crate) mod resources;
 pub(crate) mod selection;
 pub(crate) mod start;
