@@ -141,13 +141,13 @@ pub(super) async fn set_project_config(
 }
 
 pub(super) async fn run_project_command(
-    AxumPath((session_id, which)): AxumPath<(String, String)>,
+    AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
+    Json(request): Json<crate::project::ProjectRunRequest>,
 ) -> Result<Json<TerminalOpened>, AppError> {
     mark_activity(&state);
-    let which: crate::project::ProjectCommand = which.parse()?;
     let terminal_id = session_work(state, session_id, move |state, session_id| {
-        crate::project::run(state, session_id, which)
+        crate::project::run(state, session_id, &request)
     })
     .await?;
     Ok(Json(TerminalOpened { terminal_id }))

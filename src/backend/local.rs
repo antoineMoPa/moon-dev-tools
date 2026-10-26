@@ -17,7 +17,7 @@ use crate::{
         self, AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
         ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
-    project::{ProjectCommand, ProjectConfig},
+    project::{ProjectConfig, ProjectRunRequest},
     search::SearchListener,
     settings::{Settings, SettingsChange},
     service,
@@ -346,8 +346,8 @@ impl Backend for LocalBackend {
         crate::project::set_session_commands(&self.state, session_id, commands)
     }
 
-    fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String> {
-        crate::project::run(&self.state, session_id, which)
+    fn run_project_command(&self, session_id: &str, request: &ProjectRunRequest) -> Result<String> {
+        crate::project::run(&self.state, session_id, request)
     }
 
     fn start_task_resource(

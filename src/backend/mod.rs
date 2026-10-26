@@ -33,7 +33,7 @@ use crate::{
         AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
         ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
-    project::{ProjectCommand, ProjectConfig},
+    project::{ProjectConfig, ProjectRunRequest},
     settings::{Settings, SettingsChange},
 };
 
@@ -312,12 +312,12 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// from - see [`crate::settings::Settings::agent_models`].
     fn opencode_models(&self) -> Result<Vec<String>>;
 
-    /// The two commands the Project menu runs, out of the reviewed repo's own file.
+    /// The targets the Project menu runs, out of the reviewed repo's own file.
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig>;
     fn set_project_config(&self, session_id: &str, commands: &ProjectConfig) -> Result<()>;
-    /// Start a shell with one of those commands typed into it and sent, and answer with the
-    /// shell it runs in. Attached with [`Backend::attach_terminal`], like any other.
-    fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String>;
+    /// Start a shell with one of a target's commands typed into it and sent, and answer with
+    /// the shell it runs in. Attached with [`Backend::attach_terminal`], like any other.
+    fn run_project_command(&self, session_id: &str, request: &ProjectRunRequest) -> Result<String>;
 
     /// What the commit pane draws: what is staged, and where a push would send it.
     fn commit_state(&self, session_id: &str) -> Result<CommitState>;

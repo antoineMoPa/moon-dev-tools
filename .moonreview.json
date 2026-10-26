@@ -1,4 +1,8 @@
 {
-  "build": "cargo install --locked --path . && moon install-launchers",
-  "run": "@restart"
+  "build": "cargo install --locked --path .; moon install-launchers",
+  "run": "@restart",
+  "indent": {
+    "spaces": 4
+  },
+  "day_ends_at": "16:30"
 }

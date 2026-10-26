@@ -125,8 +125,11 @@ pub(crate) enum CommandAction {
     SearchContent,
     /// Split the frame the keyboard is in against this side, with a shell in the new half.
     Split(DropSide),
-    /// Run one of the project's own commands in a shell of its own.
-    RunProject(ProjectCommand),
+    /// Run one of a target's commands in a shell.
+    RunProject {
+        target: String,
+        which: ProjectCommand,
+    },
     /// Open a shell with this command line typed into it and sent.
     RunInShell(String),
     /// Put this window's project down and go back to its launch screen, to open another.

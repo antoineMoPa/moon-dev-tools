@@ -14,7 +14,7 @@ mod applications;
 pub(crate) mod bar;
 
 /// Something the menu asked for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum MenuAction {
     ToggleTheme,
     OpenCommandPalette,
@@ -83,8 +83,11 @@ pub(crate) enum MenuAction {
     /// Who is in this machine's server, to kick out - the `users` extension, as a menu item.
     #[cfg(not(target_arch = "wasm32"))]
     OpenUsers,
-    /// Run one of the project's own commands in a shell.
-    RunProject(crate::project::ProjectCommand),
+    /// Run one of a target's commands in a shell.
+    RunProject {
+        target: String,
+        which: crate::project::ProjectCommand,
+    },
     /// Open the pane those commands are set in.
     OpenProject,
     /// Open the person's own settings, the ones kept for every project.
@@ -111,8 +114,35 @@ mod platform {
     use super::MenuAction;
     use crate::{
         cli::{Frame, NEW_WINDOW_FRAMES},
-        project::ProjectCommand,
+        project::{BuildTarget, ProjectCommand, ProjectConfig},
     };
+
+    /// Where the first target's submenu goes in the Project menu: after Switch Project and
+    /// its separator.
+    const FIRST_TARGET_PLACE: usize = 2;
+
+    /// The chord each command has, carried by the item of the target run last - see
+    /// [`NativeMenu::show_project`].
+    fn chord_of(which: ProjectCommand) -> Accelerator {
+        match which {
+            ProjectCommand::Build => {
+                Accelerator::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyB)
+            }
+            ProjectCommand::Run => Accelerator::new(Some(Modifiers::META), Code::KeyR),
+            // Off `R` and beside `build`, because `cmd+alt+R` and the review's `cmd+shift+R`
+            // were one hand's reach and one letter apart.
+            ProjectCommand::BuildAndRun => {
+                Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyB)
+            }
+        }
+    }
+
+    /// The Project menu's part that follows the repo's file: one submenu per target, and the
+    /// ids of their items.
+    struct TargetMenus {
+        submenus: Vec<Submenu>,
+        items: Vec<(MenuId, String, ProjectCommand)>,
+    }
 
     /// The menu, kept alive for as long as the window: dropping it would take the bar with it.
     pub(crate) struct NativeMenu {
@@ -144,8 +174,11 @@ mod platform {
         generate_pass_key: MenuId,
         open_users: MenuId,
         open_submodules: MenuId,
-        /// One per command the Project menu runs, in the order the menu has them.
-        project_commands: Vec<(MenuId, ProjectCommand)>,
+        project_menu: Submenu,
+        target_menus: std::cell::RefCell<TargetMenus>,
+        /// What the Project menu was last built for, so a frame that changes nothing asks the
+        /// OS for nothing.
+        project_shown: std::cell::RefCell<Option<(Vec<BuildTarget>, Option<String>)>>,
         open_project: MenuId,
         open_settings: MenuId,
         switch_project: MenuId,
@@ -294,44 +327,14 @@ mod platform {
             // without a trip to the terminal - the new instance opens on this window's repo.
             let restart_window = MenuItem::new("Restart", true, None);
 
-            // The project's own two commands, and the pane they are set in.
-            //
-            // Both items are always there and always enabled. The bar is built as the window
-            // opens, before any repo has been read, and macOS gives no way to grow it later -
-            // so a command the project has not set says so when it is picked, which is what
-            // the palette avoids by only listing the ones that are set.
-            let project_commands: Vec<(MenuItem, ProjectCommand)> = [
-                (
-                    ProjectCommand::Build,
-                    Accelerator::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyB),
-                ),
-                (
-                    ProjectCommand::Run,
-                    Accelerator::new(Some(Modifiers::META), Code::KeyR),
-                ),
-                (
-                    ProjectCommand::BuildAndRun,
-                    // Off `R` and beside `build`, because `cmd+alt+R` and the review's
-                    // `cmd+shift+R` were one hand's reach and one letter apart.
-                    Accelerator::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyB),
-                ),
-            ]
-            .into_iter()
-            .map(|(which, accelerator)| {
-                let mut label = which.label().to_string();
-                label[..1].make_ascii_uppercase();
-                (MenuItem::new(label, true, Some(accelerator)), which)
-            })
-            .collect();
+            // Each target's submenu goes between these once the repo's file has been read -
+            // see `show_project`.
             let open_project = MenuItem::new("Project Settings…", true, None);
             // Back to the launch screen and its recent projects, in this same window.
             let switch_project = MenuItem::new("Switch Project…", true, None);
             let project_menu = Submenu::new("Project", true);
             project_menu.append(&switch_project).ok()?;
             project_menu.append(&PredefinedMenuItem::separator()).ok()?;
-            for (item, _) in &project_commands {
-                project_menu.append(item).ok()?;
-            }
             project_menu
                 .append_items(&[&PredefinedMenuItem::separator(), &open_project])
                 .ok()?;
@@ -457,10 +460,12 @@ mod platform {
                 generate_pass_key: generate_pass_key.id().clone(),
                 open_users: open_users.id().clone(),
                 open_submodules: open_submodules.id().clone(),
-                project_commands: project_commands
-                    .iter()
-                    .map(|(item, which)| (item.id().clone(), *which))
-                    .collect(),
+                project_menu,
+                target_menus: std::cell::RefCell::new(TargetMenus {
+                    submenus: Vec::new(),
+                    items: Vec::new(),
+                }),
+                project_shown: std::cell::RefCell::new(None),
                 open_project: open_project.id().clone(),
                 open_settings: open_settings.id().clone(),
                 switch_project: switch_project.id().clone(),
@@ -482,6 +487,41 @@ mod platform {
             self.tunnel_start_item.set_enabled(!running);
             for item in &self.tunnel_running_items {
                 item.set_enabled(running);
+            }
+        }
+
+        /// Give each target a submenu of the commands it has set. The target run last - the
+        /// first until one has - carries the chords, so they run it again.
+        pub(crate) fn show_project(&self, project: &ProjectConfig, last_target: Option<&str>) {
+            let shown = (project.targets.clone(), last_target.map(str::to_string));
+            if self.project_shown.borrow().as_ref() == Some(&shown) {
+                return;
+            }
+            *self.project_shown.borrow_mut() = Some(shown);
+
+            let repeated = project.target_to_repeat(last_target);
+            let mut target_menus = self.target_menus.borrow_mut();
+            for submenu in target_menus.submenus.drain(..) {
+                self.project_menu.remove(&submenu).ok();
+            }
+            target_menus.items.clear();
+            for (place, target) in project.targets.iter().enumerate() {
+                let submenu = Submenu::new(&target.name, true);
+                for which in ProjectCommand::ALL {
+                    if target.line(which).is_none() {
+                        continue;
+                    }
+                    let chord = (Some(target) == repeated).then(|| chord_of(which));
+                    let item = MenuItem::new(which.menu_label(), true, chord);
+                    submenu.append(&item).ok();
+                    target_menus
+                        .items
+                        .push((item.id().clone(), target.name.clone(), which));
+                }
+                self.project_menu
+                    .insert(&submenu, FIRST_TARGET_PLACE + place)
+                    .ok();
+                target_menus.submenus.push(submenu);
             }
         }
 
@@ -535,10 +575,17 @@ mod platform {
                     MenuAction::OpenSettings
                 } else if event.id == self.switch_project {
                     MenuAction::SwitchProject
-                } else if let Some((_, which)) =
-                    self.project_commands.iter().find(|(id, _)| *id == event.id)
+                } else if let Some((_, target, which)) = self
+                    .target_menus
+                    .borrow()
+                    .items
+                    .iter()
+                    .find(|(id, _, _)| *id == event.id)
                 {
-                    MenuAction::RunProject(*which)
+                    MenuAction::RunProject {
+                        target: target.clone(),
+                        which: *which,
+                    }
                 } else if event.id == self.restart_window {
                     MenuAction::RestartWindow
                 } else if event.id == self.install_launchers {
@@ -570,6 +617,13 @@ mod platform {
         }
 
         pub(crate) fn show_tunnel_running(&self, _running: bool) {}
+
+        pub(crate) fn show_project(
+            &self,
+            _project: &crate::project::ProjectConfig,
+            _last_target: Option<&str>,
+        ) {
+        }
 
         pub(crate) fn drain(&self) -> Vec<MenuAction> {
             Vec::new()

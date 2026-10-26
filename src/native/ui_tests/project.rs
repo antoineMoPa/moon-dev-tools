@@ -1,4 +1,4 @@
-//! The project pane: the two commands the Project menu runs and how the repo's files are
+//! The project pane: the targets the Project menu runs and how the repo's files are
 //! indented, typed and picked into the repo's own file.
 
 use std::{
@@ -21,6 +21,9 @@ use crate::{
 };
 
 use super::{app_for, seeded_fixture};
+
+/// The target every test here builds: the one the pane opens on in a repo with none.
+const TARGET: &str = "target 1";
 
 /// What the test types into the build box. A command of its own rather than a real build:
 /// the point is that what is typed is what runs, and this one says so in one line.
@@ -66,7 +69,10 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
             if run_build_in_ui.swap(false, Ordering::Relaxed) {
-                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+                app.pending_action = Some(CommandAction::RunProject {
+                    target: TARGET.to_string(),
+                    which: ProjectCommand::Build,
+                });
             }
             app.draw(ui);
             ready_in_ui.store(app.model.project_editor.is_some(), Ordering::Relaxed);
@@ -80,7 +86,7 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
             offers_build_in_ui.store(
                 crate::native::palette::commands_for(&app)
                     .iter()
-                    .any(|command| command.title == "build"),
+                    .any(|command| command.title == format!("build {TARGET}")),
                 Ordering::Relaxed,
             );
         });
@@ -129,7 +135,13 @@ fn what_is_typed_into_the_project_pane_is_what_the_palette_runs() {
         text.contains(BUILD_COMMAND),
         "the project file should hold what was typed, got {text:?}"
     );
-    harness.run_steps(3);
+    // The window's own copy is set when the write comes back, which is a frame or more after
+    // the file holds it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !offers_build.load(Ordering::Relaxed) {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(
         offers_build.load(Ordering::Relaxed),
         "the palette should offer the build command the pane just wrote"
@@ -190,8 +202,11 @@ fn a_second_build_is_typed_into_the_first_builds_shell() {
     crate::project::write_project(
         &fixture.root,
         &crate::project::ProjectConfig::typed(
-            REUSED_BUILD_COMMAND,
-            "",
+            vec![crate::project::BuildTarget::typed(
+                TARGET,
+                REUSED_BUILD_COMMAND,
+                "",
+            )],
             egui_moon_editor::Indent::default(),
         ),
     )
@@ -223,12 +238,15 @@ fn a_second_build_is_typed_into_the_first_builds_shell() {
         .wgpu()
         .build_ui(move |ui| {
             if run_build_in_ui.swap(false, Ordering::Relaxed) {
-                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+                app.pending_action = Some(CommandAction::RunProject {
+                    target: TARGET.to_string(),
+                    which: ProjectCommand::Build,
+                });
             }
             app.draw(ui);
             ready_in_ui.store(
                 matches!(app.model.stage, crate::native::model::Stage::Ready)
-                    && app.model.project.build.is_some(),
+                    && !app.model.project.targets.is_empty(),
                 Ordering::Relaxed,
             );
             shells_in_ui.store(
@@ -326,8 +344,11 @@ fn a_build_shell_that_ended_behind_another_tab_is_not_typed_into() {
     crate::project::write_project(
         &fixture.root,
         &crate::project::ProjectConfig::typed(
-            REUSED_BUILD_COMMAND,
-            "",
+            vec![crate::project::BuildTarget::typed(
+                TARGET,
+                REUSED_BUILD_COMMAND,
+                "",
+            )],
             egui_moon_editor::Indent::default(),
         ),
     )
@@ -359,7 +380,10 @@ fn a_build_shell_that_ended_behind_another_tab_is_not_typed_into() {
         .wgpu()
         .build_ui(move |ui| {
             if run_build_in_ui.swap(false, Ordering::Relaxed) {
-                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+                app.pending_action = Some(CommandAction::RunProject {
+                    target: TARGET.to_string(),
+                    which: ProjectCommand::Build,
+                });
             }
             if cover_build_shell_in_ui.swap(false, Ordering::Relaxed) {
                 let (build_pane, _) = app
@@ -391,7 +415,7 @@ fn a_build_shell_that_ended_behind_another_tab_is_not_typed_into() {
             app.draw(ui);
             ready_in_ui.store(
                 matches!(app.model.stage, crate::native::model::Stage::Ready)
-                    && app.model.project.build.is_some(),
+                    && !app.model.project.targets.is_empty(),
                 Ordering::Relaxed,
             );
             busy_in_ui.store(
@@ -492,8 +516,11 @@ fn a_build_with_no_room_for_a_column_takes_a_tab() {
     crate::project::write_project(
         &fixture.root,
         &crate::project::ProjectConfig::typed(
-            REUSED_BUILD_COMMAND,
-            "",
+            vec![crate::project::BuildTarget::typed(
+                TARGET,
+                REUSED_BUILD_COMMAND,
+                "",
+            )],
             egui_moon_editor::Indent::default(),
         ),
     )
@@ -518,12 +545,15 @@ fn a_build_with_no_room_for_a_column_takes_a_tab() {
         .wgpu()
         .build_ui(move |ui| {
             if run_build_in_ui.swap(false, Ordering::Relaxed) {
-                app.pending_action = Some(CommandAction::RunProject(ProjectCommand::Build));
+                app.pending_action = Some(CommandAction::RunProject {
+                    target: TARGET.to_string(),
+                    which: ProjectCommand::Build,
+                });
             }
             app.draw(ui);
             ready_in_ui.store(
                 matches!(app.model.stage, crate::native::model::Stage::Ready)
-                    && app.model.project.build.is_some(),
+                    && !app.model.project.targets.is_empty(),
                 Ordering::Relaxed,
             );
             frames_in_ui.store(app.model.layout.frame_count(), Ordering::Relaxed);

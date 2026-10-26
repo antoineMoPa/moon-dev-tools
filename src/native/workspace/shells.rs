@@ -11,7 +11,7 @@ use crate::{
         app::{App, AttachedTerminal, TerminalHolder},
         panes::Pane,
     },
-    project::ProjectCommand,
+    project::{BuildTarget, ProjectCommand, ProjectRunRequest},
 };
 
 use super::{ShellMarks, TerminalPlacement, place_shell};
@@ -34,7 +34,7 @@ impl App {
         );
     }
 
-    /// The same, with one of the project's commands typed into the shell and sent. The pane
+    /// The same, with one of a target's commands typed into the shell and sent. The pane
     /// is an ordinary shell pane: the command is over in a moment, and what is left is a
     /// shell in the repo with its output above the prompt.
     ///
@@ -48,15 +48,20 @@ impl App {
     pub(crate) fn run_project_command(
         &mut self,
         session_id: String,
+        target: &BuildTarget,
         which: ProjectCommand,
         placement: TerminalPlacement,
         restarts_when_exited: bool,
     ) {
         if let Some(terminal_id) = self.shell_for_project_commands() {
-            self.type_project_command(&terminal_id, which, restarts_when_exited);
+            self.type_project_command(&terminal_id, target, which, restarts_when_exited);
             return;
         }
         let started = session_id.clone();
+        let request = ProjectRunRequest {
+            target: target.name.clone(),
+            which,
+        };
         self.spawn_shell(
             session_id,
             None,
@@ -65,7 +70,7 @@ impl App {
                 takes_project_commands: true,
                 restarts_window: restarts_when_exited,
             },
-            move |backend| backend.run_project_command(&started, which),
+            move |backend| backend.run_project_command(&started, &request),
         );
     }
 
@@ -86,7 +91,7 @@ impl App {
         waiting.then_some(terminal_id)
     }
 
-    /// Type one of the project's commands into a shell that is already open, as a person at
+    /// Type one of a target's commands into a shell that is already open, as a person at
     /// that prompt would, and bring its tab forward to watch it run.
     ///
     /// The line is the window's own copy of the project's commands - the one the Project menu
@@ -95,12 +100,13 @@ impl App {
     fn type_project_command(
         &mut self,
         terminal_id: &str,
+        target: &BuildTarget,
         which: ProjectCommand,
         restarts_when_exited: bool,
     ) {
-        let Some(line) = self.model.project.line(which) else {
+        let Some(line) = target.line(which) else {
             self.model
-                .error(format!("this project has no {} command", which.label()));
+                .error(format!("{} has no {} command", target.name, which.label()));
             return;
         };
         let Some(terminal) = self.terminals.get(terminal_id) else {

@@ -23,7 +23,7 @@ use crate::{
     api::{AgentKind, AgentLogPayload, RepoStatusView},
     moontasks::ReviewRequestView,
     native::{panes::Pane, theme::ThemeMode, workspace_color::WorkspaceColor},
-    project::{ProjectCommand, ProjectConfig},
+    project::{BuildTarget, ProjectCommand, ProjectConfig},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -242,16 +242,20 @@ pub(crate) struct Model {
     pub(crate) opened_project: Option<String>,
     /// The project this window is on, once one is open. What the title bar says.
     pub(crate) project_path: Option<String>,
-    /// The commands the Project menu runs, as the repo's `.moonreview.json` has them. Read
+    /// The targets the Project menu runs, as the repo's `.moonreview.json` has them. Read
     /// when the review opens, and again whenever the configuration pane is opened or saves,
     /// because the file is one a person may also edit by hand.
     pub(crate) project: ProjectConfig,
     /// Set when a review opens, so the commands above are read for it.
     pub(crate) project_pending: bool,
+    /// The target a command was last run of, whose menu items carry the chords that run it
+    /// again - see [`ProjectConfig::target_to_repeat`]. The window's own: another window on
+    /// the repo may be building something else.
+    pub(crate) last_target: Option<String>,
     /// Set when the configuration pane is opened, so its first box takes the keyboard: the
-    /// pane is two boxes and nothing else, and typing is what it is opened for.
+    /// pane is opened to type a command in.
     pub(crate) project_focus: bool,
-    /// What the configuration pane's two boxes hold. Seeded from the file when the pane is
+    /// What the configuration pane's boxes hold. Seeded from the file when the pane is
     /// opened, and what a save writes back.
     pub(crate) project_editor: Option<ProjectEditor>,
     /// Set by a keystroke in one of those boxes, cleared by the write it causes. The pane
@@ -278,15 +282,16 @@ pub(crate) struct Model {
     pub(crate) settings_page: crate::native::settings_pane::SettingsPage,
 }
 
-/// What the configuration pane holds, mid-edit: the two commands as text, and the
-/// indentation as the choice it is.
+/// What the configuration pane holds, mid-edit: each target's name and commands as text,
+/// which of them the pane is showing, and the indentation as the choice it is.
 ///
 /// The commands are text rather than commands because a box someone has emptied is still a
 /// box: it becomes a command that is not set only when the pane saves - see
-/// [`ProjectConfig::typed`].
+/// [`crate::project::BuildTarget::typed`].
 pub(crate) struct ProjectEditor {
-    pub(crate) build: String,
-    pub(crate) run: String,
+    pub(crate) targets: Vec<TargetEditor>,
+    /// The target whose boxes the pane shows, by its place in `targets`.
+    pub(crate) selected: usize,
     /// What a Tab press puts into this repo's files. Not a box, so a click on the row picks
     /// it outright and the pane saves the moment it is picked.
     pub(crate) indent: egui_moon_editor::Indent,
@@ -294,9 +299,16 @@ pub(crate) struct ProjectEditor {
     pub(crate) day_ends_at: crate::project::TimeOfDay,
 }
 
-impl ProjectEditor {
+/// One target's three boxes.
+pub(crate) struct TargetEditor {
+    pub(crate) name: String,
+    pub(crate) build: String,
+    pub(crate) run: String,
+}
+
+impl TargetEditor {
     /// The box one of the menu's commands is typed in. The one place a command is paired
-    /// with its box, so the pane draws the two rows from the same list it reads them by.
+    /// with its box, so the pane draws the rows from the same list it reads them by.
     pub(crate) fn text_mut(&mut self, which: ProjectCommand) -> &mut String {
         match which {
             ProjectCommand::Build => &mut self.build,
@@ -306,13 +318,62 @@ impl ProjectEditor {
         }
     }
 
-    pub(crate) fn of(config: &ProjectConfig) -> Self {
+    /// A new target, called by its place in the list until it is renamed.
+    fn named(place: usize) -> Self {
         Self {
-            build: config.build.clone().unwrap_or_default(),
-            run: config.run.clone().unwrap_or_default(),
+            name: format!("target {place}"),
+            build: String::new(),
+            run: String::new(),
+        }
+    }
+
+    fn of(target: &BuildTarget) -> Self {
+        Self {
+            name: target.name.clone(),
+            build: target.build.clone().unwrap_or_default(),
+            run: target.run.clone().unwrap_or_default(),
+        }
+    }
+}
+
+impl ProjectEditor {
+    pub(crate) fn of(config: &ProjectConfig) -> Self {
+        let mut targets: Vec<TargetEditor> = config.targets.iter().map(TargetEditor::of).collect();
+        // A project with no targets opens on one to fill in, named so the menu has something
+        // to call it by: the pane is opened to type a command, and a name box first would be
+        // in the way of that.
+        if targets.is_empty() {
+            targets.push(TargetEditor::named(1));
+        }
+        Self {
+            targets,
+            selected: 0,
             indent: config.indent(),
             day_ends_at: config.day_ends_at(),
         }
+    }
+
+    /// Add a target to fill in, and show it.
+    pub(crate) fn add_target(&mut self) {
+        self.targets
+            .push(TargetEditor::named(self.targets.len() + 1));
+        self.selected = self.targets.len() - 1;
+    }
+
+    /// Take the shown target out, and show the one before it.
+    pub(crate) fn remove_selected(&mut self) {
+        self.targets.remove(self.selected);
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// What the pane holds, as a file to write.
+    pub(crate) fn config(&self) -> ProjectConfig {
+        let targets = self
+            .targets
+            .iter()
+            .map(|target| BuildTarget::typed(&target.name, &target.build, &target.run))
+            .collect();
+        ProjectConfig::typed(targets, self.indent).with_day_ending_at(self.day_ends_at)
     }
 }
 

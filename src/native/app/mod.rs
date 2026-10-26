@@ -327,6 +327,7 @@ impl App {
                 submodules: Vec::new(),
                 project: Default::default(),
                 project_pending: false,
+                last_target: None,
                 settings_page: Default::default(),
                 project_focus: false,
                 project_editor: None,

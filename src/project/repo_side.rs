@@ -4,7 +4,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use super::{PROJECT_SHELL_NAME, ProjectCommand, ProjectConfig};
+use serde::Deserialize;
+
+use super::{
+    BuildTarget, PROJECT_SHELL_NAME, ProjectCommand, ProjectConfig, ProjectRunRequest, TimeOfDay,
+};
 use crate::api::AppState;
 
 const PROJECT_FILE_NAME: &str = ".moonreview.json";
@@ -13,9 +17,56 @@ fn project_path(repo_path: &Path) -> PathBuf {
     repo_path.join(PROJECT_FILE_NAME)
 }
 
-/// The commands the repo's file has, or none at all.
+/// The repo's file as it may be found on disk: the targets it has now, or the one `build` and
+/// one `run` it had before targets, which a repo nobody has opened the settings of since
+/// still says.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectFile {
+    #[serde(default)]
+    targets: Vec<BuildTarget>,
+    #[serde(default)]
+    build: Option<String>,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    indent: Option<egui_moon_editor::Indent>,
+    #[serde(default)]
+    day_ends_at: Option<TimeOfDay>,
+}
+
+impl ProjectFile {
+    /// The project the file describes. The two commands of a file from before targets are
+    /// its first target, named after the repo's folder. The file itself is left as it is: it
+    /// takes the new shape the next time the settings pane writes it, rather than changing
+    /// under a repo that was only opened.
+    fn project(self, repo_path: &Path) -> ProjectConfig {
+        let mut targets = self.targets;
+        if self.build.is_some() || self.run.is_some() {
+            let name = repo_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .expect("a repo's path ends in its folder");
+            targets.insert(
+                0,
+                BuildTarget {
+                    name,
+                    build: self.build,
+                    run: self.run,
+                },
+            );
+        }
+        ProjectConfig {
+            targets,
+            indent: self.indent,
+            day_ends_at: self.day_ends_at,
+        }
+    }
+}
+
+/// What the repo's file says, or nothing at all.
 ///
-/// A file that cannot be read or makes no sense leaves both commands unset, the way
+/// A file that cannot be read or makes no sense leaves the project with no targets, the way
 /// [`crate::moontasks::store::read_board`] falls back to its defaults: a window that opens
 /// with an empty Project menu is worth more than one that refuses to open, and this file is
 /// hand-editable, so a half-typed one is an ordinary thing to find.
@@ -24,8 +75,8 @@ pub(crate) fn read_project(repo_path: &Path) -> ProjectConfig {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return ProjectConfig::default();
     };
-    match serde_json::from_str(&text) {
-        Ok(commands) => commands,
+    match serde_json::from_str::<ProjectFile>(&text) {
+        Ok(file) => file.project(repo_path),
         Err(error) => {
             eprintln!("[moonreview] ignoring {}: {error}", path.display());
             ProjectConfig::default()
@@ -56,21 +107,31 @@ pub(crate) fn set_session_commands(
     write_project(&repo_path, commands)
 }
 
-/// Start a shell on the repo with one of the project's commands typed into it and sent.
+/// Start a shell on the repo with one of a target's commands typed into it and sent.
 ///
-/// A command the project has not set is an error rather than an empty shell: the menu only
-/// offers the ones that are set, so asking for one that is not means the file changed under
-/// whoever asked, and they should be told so.
-pub(crate) fn run(state: &AppState, session_id: &str, which: ProjectCommand) -> Result<String> {
+/// A target or a command the project has not set is an error rather than an empty shell: the
+/// menu only offers the ones that are set, so asking for one that is not means the file
+/// changed under whoever asked, and they should be told so.
+pub(crate) fn run(
+    state: &AppState,
+    session_id: &str,
+    request: &ProjectRunRequest,
+) -> Result<String> {
     let repo_path = repo_of(state, session_id)?;
-    let commands = read_project(&repo_path);
+    let project = read_project(&repo_path);
+    let Some(target) = project.target(&request.target) else {
+        bail!("this project has no target called {}", request.target);
+    };
     // Restarting is the window's own act, not a line of shell - a window that asks for this
     // anyway read the file before it said so.
-    if which == ProjectCommand::Run && commands.run_restarts_window() {
-        bail!("this project's run command restarts the window, which only the window itself does");
+    if request.which == ProjectCommand::Run && target.run_restarts_window() {
+        bail!(
+            "{}'s run command restarts the window, which only the window itself does",
+            target.name
+        );
     }
-    let Some(line) = commands.line(which) else {
-        bail!("this project has no {} command", which.label());
+    let Some(line) = target.line(request.which) else {
+        bail!("{} has no {} command", target.name, request.which.label());
     };
     state.terminals.spawn(crate::terminal::TerminalSpec {
         name: Some(PROJECT_SHELL_NAME.to_string()),
@@ -88,7 +149,7 @@ mod tests {
     use egui_moon_editor::Indent;
 
     use super::*;
-    use crate::project::RESTART_RUN_COMMAND;
+    use crate::project::{BuildTarget, RESTART_RUN_COMMAND};
 
     fn scratch_repo(name: &str) -> PathBuf {
         let dir =
@@ -97,11 +158,15 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn a_repo_with_no_file_has_neither_command() {
-        let commands = read_project(&scratch_repo("empty"));
+    fn app_target() -> BuildTarget {
+        BuildTarget::typed("app", "cargo build", "cargo run -- .")
+    }
 
-        assert_eq!(commands, ProjectConfig::default());
+    #[test]
+    fn a_repo_with_no_file_has_no_targets() {
+        let project = read_project(&scratch_repo("empty"));
+
+        assert_eq!(project, ProjectConfig::default());
     }
 
     /// When the day ends is written as a clock reads - `"21:05"` - and a project that has
@@ -114,13 +179,16 @@ mod tests {
         assert_eq!(read_project(&repo).day_ends_at(), DAY_ENDS_AT);
         assert_eq!(DAY_ENDS_AT.to_string(), "16:30");
 
-        let config = ProjectConfig::typed("cargo build", "", Indent::default())
+        let config = ProjectConfig::typed(vec![app_target()], Indent::default())
             .with_day_ending_at(TimeOfDay::new(21, 5));
         write_project(&repo, &config).expect("failed to write the configuration");
 
         let written = std::fs::read_to_string(repo.join(".moonreview.json"))
             .expect("expected the project file");
-        assert!(written.contains(r#""day_ends_at": "21:05""#), "got {written}");
+        assert!(
+            written.contains(r#""day_ends_at": "21:05""#),
+            "got {written}"
+        );
         assert_eq!(read_project(&repo).day_ends_at(), TimeOfDay::new(21, 5));
     }
 
@@ -143,11 +211,14 @@ mod tests {
     #[test]
     fn what_is_written_is_what_is_read_back() {
         let repo = scratch_repo("round-trip");
-        let commands = ProjectConfig::typed("cargo build", "cargo run -- .", Indent::default());
+        let project = ProjectConfig::typed(
+            vec![app_target(), BuildTarget::typed("web", "npm run build", "")],
+            Indent::Tab,
+        );
 
-        write_project(&repo, &commands).expect("failed to write the commands");
+        write_project(&repo, &project).expect("failed to write the project");
 
-        assert_eq!(read_project(&repo), commands);
+        assert_eq!(read_project(&repo), project);
     }
 
     #[test]
@@ -171,41 +242,54 @@ mod tests {
         assert_eq!(read_project(&repo).indent(), Indent::Spaces(2));
     }
 
-    /// What the pane holds is what the file says, indentation included: the row of choices
-    /// is written by the same save as the two boxes.
     #[test]
-    fn what_the_pane_holds_is_written_indentation_and_all() {
-        let repo = scratch_repo("pane-indent");
-        let config = ProjectConfig::typed("cargo build", "cargo run", Indent::Tab);
+    fn a_blank_box_is_a_command_that_is_not_set_and_a_blank_name_no_target() {
+        let target = BuildTarget::typed(" app ", "  ", "cargo run");
+        assert_eq!(target.name, "app");
+        assert_eq!(target.build, None);
+        assert_eq!(target.run, Some("cargo run".to_string()));
 
-        write_project(&repo, &config).expect("failed to write the configuration");
-
-        assert_eq!(read_project(&repo).indent(), Indent::Tab);
-        assert_eq!(read_project(&repo).build, Some("cargo build".to_string()));
+        let project = ProjectConfig::typed(
+            vec![BuildTarget::typed("  ", "cargo build", ""), target],
+            Indent::default(),
+        );
+        assert_eq!(project.targets.len(), 1);
     }
 
     #[test]
-    fn a_blank_box_is_a_command_that_is_not_set() {
-        let commands = ProjectConfig::typed("  ", "cargo run", Indent::default());
-
-        assert_eq!(commands.build, None);
-        assert_eq!(commands.run, Some("cargo run".to_string()));
-    }
-
-    #[test]
-    fn a_file_that_makes_no_sense_leaves_both_commands_unset() {
+    fn a_file_that_makes_no_sense_leaves_no_targets() {
         let repo = scratch_repo("broken");
         std::fs::write(project_path(&repo), "{ not json").expect("failed to write the file");
 
         assert_eq!(read_project(&repo), ProjectConfig::default());
     }
 
+    /// The `build` and `run` a file had before targets are its first target, named after the
+    /// repo's folder, and the file is not rewritten by being read.
+    #[test]
+    fn a_file_of_the_old_two_commands_is_read_as_a_first_target() {
+        let repo = scratch_repo("old-shape");
+        let old = r#"{ "build": "cargo build", "run": "cargo run", "indent": "tab" }"#;
+        std::fs::write(project_path(&repo), old).expect("failed to write the file");
+
+        let project = read_project(&repo);
+
+        let folder = repo.file_name().expect("a folder").to_string_lossy();
+        assert_eq!(
+            project.targets,
+            vec![BuildTarget::typed(&folder, "cargo build", "cargo run")]
+        );
+        assert_eq!(project.indent(), Indent::Tab);
+        assert_eq!(
+            std::fs::read_to_string(project_path(&repo)).expect("the file"),
+            old
+        );
+    }
+
     #[test]
     fn build_and_run_is_the_two_commands_chained_on_success() {
-        let commands = ProjectConfig::typed("cargo build", "cargo run -- .", Indent::default());
-
         assert_eq!(
-            commands.line(ProjectCommand::BuildAndRun),
+            app_target().line(ProjectCommand::BuildAndRun),
             Some("cargo build && cargo run -- .".to_string())
         );
     }
@@ -213,42 +297,43 @@ mod tests {
     #[test]
     fn build_and_run_needs_both_commands() {
         assert_eq!(
-            ProjectConfig::typed("cargo build", "", Indent::default())
-                .line(ProjectCommand::BuildAndRun),
+            BuildTarget::typed("app", "cargo build", "").line(ProjectCommand::BuildAndRun),
             None
         );
         assert_eq!(
-            ProjectConfig::typed("", "cargo run", Indent::default())
-                .line(ProjectCommand::BuildAndRun),
+            BuildTarget::typed("app", "", "cargo run").line(ProjectCommand::BuildAndRun),
             None
         );
     }
 
     #[test]
     fn a_restart_word_run_command_makes_the_build_shell_exit_on_success() {
-        let commands = ProjectConfig::typed("cargo build", RESTART_RUN_COMMAND, Indent::default());
+        let target = BuildTarget::typed("app", "cargo build", RESTART_RUN_COMMAND);
 
-        assert!(commands.run_restarts_window());
+        assert!(target.run_restarts_window());
         assert_eq!(
-            commands.line(ProjectCommand::BuildAndRun),
+            target.line(ProjectCommand::BuildAndRun),
             Some("cargo build && exit".to_string())
         );
     }
 
+    /// The shortcuts repeat the target run last, and the first one until anything has run or
+    /// once the one run last is gone from the file.
     #[test]
-    fn every_command_parses_back_from_its_token() {
-        for which in [
-            ProjectCommand::Build,
-            ProjectCommand::Run,
-            ProjectCommand::BuildAndRun,
-        ] {
-            assert_eq!(
-                which
-                    .token()
-                    .parse::<ProjectCommand>()
-                    .expect("should parse"),
-                which
-            );
-        }
+    fn the_target_to_repeat_is_the_last_run_while_it_is_there() {
+        let project = ProjectConfig::typed(
+            vec![app_target(), BuildTarget::typed("web", "npm run build", "")],
+            Indent::default(),
+        );
+
+        let named = |last: Option<&str>| {
+            project
+                .target_to_repeat(last)
+                .map(|target| target.name.clone())
+        };
+        assert_eq!(named(None), Some("app".to_string()));
+        assert_eq!(named(Some("web")), Some("web".to_string()));
+        assert_eq!(named(Some("docs")), Some("app".to_string()));
+        assert_eq!(ProjectConfig::default().target_to_repeat(Some("web")), None);
     }
 }

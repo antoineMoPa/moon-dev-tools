@@ -15,7 +15,7 @@ use crate::{
         palette::CommandAction,
         panes::{OpenPaneRequest, Pane, PaneKind},
     },
-    project::{ProjectCommand, ProjectConfig},
+    project::ProjectCommand,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -425,8 +425,7 @@ impl App {
             return;
         };
         self.model.project_unsaved = false;
-        let commands = ProjectConfig::typed(&editor.build, &editor.run, editor.indent)
-            .with_day_ending_at(editor.day_ends_at);
+        let commands = editor.config();
         let session_id = self.model.root_session_id.clone();
         let written = commands.clone();
         self.tasks.spawn_keyed(
@@ -468,7 +467,7 @@ impl App {
                 self.model.palette.show_contents(in_front);
             }
             CommandAction::Split(side) => self.split_frame(side),
-            CommandAction::RunProject(which) => self.run_project(ctx, which),
+            CommandAction::RunProject { target, which } => self.run_project(ctx, target, which),
             CommandAction::RunInShell(command) => self.run_in_shell(command),
             CommandAction::SwitchProject => self.switch_project(ctx),
             CommandAction::GoToSpace(index) => self.go_to_space(ctx, index),
@@ -514,12 +513,18 @@ impl App {
         }
     }
 
-    /// Run one of the project's commands in a shell - or restart the window, when the
-    /// project's run command is the restart word rather than a line of shell. Build-and-run
-    /// on such a project spawns the build shell and marks it, so its end restarts the window
-    /// on what it built - see [`crate::project::RESTART_RUN_COMMAND`].
-    fn run_project(&mut self, ctx: &egui::Context, which: ProjectCommand) {
-        let restarts = self.model.project.run_restarts_window();
+    /// Run one of a target's commands in a shell, or restart the window, when the target's
+    /// run command is the restart word rather than a line of shell. Build-and-run on such a
+    /// target spawns the build shell and marks it, so its end restarts the window on what it
+    /// built - see [`crate::project::RESTART_RUN_COMMAND`].
+    fn run_project(&mut self, ctx: &egui::Context, target: String, which: ProjectCommand) {
+        let Some(found) = self.model.project.target(&target).cloned() else {
+            self.model
+                .error(format!("this project has no target called {target}"));
+            return;
+        };
+        self.model.last_target = Some(found.name.clone());
+        let restarts = found.run_restarts_window();
         if which == ProjectCommand::Run && restarts {
             self.restart_window(ctx);
             return;
@@ -528,6 +533,7 @@ impl App {
         let placement = self.beside_the_other_shells();
         self.run_project_command(
             session_id,
+            &found,
             which,
             placement,
             which == ProjectCommand::BuildAndRun && restarts,

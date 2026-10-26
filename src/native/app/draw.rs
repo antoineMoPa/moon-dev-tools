@@ -269,7 +269,9 @@ impl App {
                 MenuAction::NewFile => CommandAction::NewFile,
                 MenuAction::FindFile => CommandAction::FindFile,
                 MenuAction::SearchContent => CommandAction::SearchContent,
-                MenuAction::RunProject(which) => CommandAction::RunProject(which),
+                MenuAction::RunProject { target, which } => {
+                    CommandAction::RunProject { target, which }
+                }
                 MenuAction::OpenProject => {
                     CommandAction::OpenPane(crate::native::panes::OpenPaneRequest::Project)
                 }
@@ -422,6 +424,7 @@ impl App {
             self.apply_menu_actions(picked);
             if let Some(menu) = &self.menu {
                 menu.show_tunnel_running(self.tunnel.is_some());
+                menu.show_project(&self.model.project, self.model.last_target.as_deref());
             }
         }
 

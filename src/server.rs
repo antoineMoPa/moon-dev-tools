@@ -290,7 +290,7 @@ fn protected_routes() -> Router<Served> {
             get(project_commands).post(set_project_config),
         )
         .route(
-            "/api/session/{session_id}/project/run/{which}",
+            "/api/session/{session_id}/project/run",
             post(run_project_command),
         )
         .route(

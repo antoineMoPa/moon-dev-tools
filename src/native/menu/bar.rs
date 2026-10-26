@@ -4,9 +4,8 @@
 //!
 //! The same menus as the macOS bar in the parent module, less the items that act on the
 //! machine the window runs on - new windows, restarting, launchers - which a page has no
-//! machine for, and in a page less the two that pick a file. Drawn each frame rather than
-//! built once, so it can list only the project commands the project has set, the way the
-//! palette does, where the system bar has to carry all three and say no when one is picked.
+//! machine for, and in a page less the two that pick a file. Drawn each frame, so it lists
+//! only the commands each target has set, the way the palette does.
 //! And one item more than that bar has: the QR code of the page's own address - see
 //! `crate::native::login_link::page_qr`.
 //!
@@ -35,7 +34,7 @@ const BAR_ID: &str = "moonreview-menu-bar";
 const LOGO_DROP: f32 = 1.5;
 
 /// Draw the bar, and say what was picked from it this frame. `project` decides which of the
-/// project's commands are offered: only the ones it has set.
+/// targets' commands are offered: only the ones they have set.
 pub(crate) fn draw(
     ui: &mut Ui,
     palette: &Palette,
@@ -159,23 +158,7 @@ fn menus(
             picked,
         );
         ui.separator();
-        let mut offered_any = false;
-        for which in [
-            ProjectCommand::Build,
-            ProjectCommand::Run,
-            ProjectCommand::BuildAndRun,
-        ] {
-            if project.line(which).is_none() {
-                continue;
-            }
-            offered_any = true;
-            let mut label = which.label().to_string();
-            label[..1].make_ascii_uppercase();
-            item(ui, &label, None, MenuAction::RunProject(which), picked);
-        }
-        if offered_any {
-            ui.separator();
-        }
+        project_items(ui, project, picked);
         item(
             ui,
             "Project Settings…",
@@ -227,6 +210,27 @@ fn menus(
             picked,
         );
     });
+}
+
+/// The Project menu's commands: a submenu per target with the ones it has set.
+fn project_items(ui: &mut Ui, project: &ProjectConfig, picked: &mut Vec<MenuAction>) {
+    for target in &project.targets {
+        ui.menu_button(&target.name, |ui| {
+            for which in ProjectCommand::ALL {
+                if target.line(which).is_none() {
+                    continue;
+                }
+                let action = MenuAction::RunProject {
+                    target: target.name.clone(),
+                    which,
+                };
+                item(ui, &which.menu_label(), None, action, picked);
+            }
+        });
+    }
+    if !project.targets.is_empty() {
+        ui.separator();
+    }
 }
 
 /// A tab as the hamburger lists it.
@@ -315,7 +319,7 @@ mod tests {
     use egui_kittest::{Harness, kittest::Queryable as _};
 
     use super::*;
-    use crate::native::theme::ThemeMode;
+    use crate::{native::theme::ThemeMode, project::BuildTarget};
 
     /// A bar over a project, whose picks are collected across the harness's frames.
     fn bar_over(
@@ -334,10 +338,12 @@ mod tests {
                     own: &[],
                     installed: None,
                 };
-                picked_in_ui
-                    .lock()
-                    .expect("the picks")
-                    .extend(draw(ui, &palette, &project, applications));
+                picked_in_ui.lock().expect("the picks").extend(draw(
+                    ui,
+                    &palette,
+                    &project,
+                    applications,
+                ));
             });
         (harness, picked)
     }
@@ -369,13 +375,15 @@ mod tests {
         );
     }
 
-    /// Only the commands the project has set are offered: an item that runs nothing is
-    /// worse than no item.
+    /// Each target has a submenu of only the commands it has set: an item that runs nothing
+    /// is worse than no item.
     #[test]
-    fn the_project_menu_lists_only_the_commands_that_are_set() {
-        let (mut harness, _) = bar_over(ProjectConfig {
-            build: Some("cargo build".to_string()),
-            run: None,
+    fn the_project_menu_has_a_submenu_per_target_of_the_commands_it_set() {
+        let (mut harness, picked) = bar_over(ProjectConfig {
+            targets: vec![
+                BuildTarget::typed("app", "cargo build", ""),
+                BuildTarget::typed("web", "npm run build", "npm run preview"),
+            ],
             indent: None,
             day_ends_at: None,
         });
@@ -384,13 +392,24 @@ mod tests {
         harness.get_by_label("Project").click();
         harness.run();
 
-        assert!(harness.query_by_label("Build").is_some(), "build is set");
-        assert!(harness.query_by_label("Run").is_none(), "run is not set");
-        assert!(
-            harness.query_by_label("Build and run").is_none(),
-            "needs both"
-        );
         assert!(harness.query_by_label("Project Settings…").is_some());
+        harness.get_by_label_contains("app").hover();
+        harness.run();
+        assert!(harness.query_by_label("Build").is_some(), "app builds");
+        assert!(harness.query_by_label("Run").is_none(), "app has no run");
+
+        harness.get_by_label_contains("web").hover();
+        harness.run();
+        harness.get_by_label("Build and run").click();
+        harness.run();
+
+        assert_eq!(
+            *picked.lock().expect("the picks"),
+            vec![MenuAction::RunProject {
+                target: "web".to_string(),
+                which: ProjectCommand::BuildAndRun,
+            }]
+        );
     }
 
     /// An item reads its chord beside it, so the bar is where the bindings are learned.

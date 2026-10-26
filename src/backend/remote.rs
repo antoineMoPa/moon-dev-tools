@@ -41,7 +41,7 @@ use crate::{
         ReviewRequestView, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
         TerminalOpened, WirePayload, WorkLogPayload, review_request::Amend,
     },
-    project::{ProjectCommand, ProjectConfig},
+    project::{ProjectConfig, ProjectRunRequest},
     settings::{Settings, SettingsChange},
 };
 
@@ -438,11 +438,9 @@ impl Backend for RemoteBackend {
         self.post(&format!("/api/session/{session_id}/project"), commands)
     }
 
-    fn run_project_command(&self, session_id: &str, which: ProjectCommand) -> Result<String> {
-        let opened: TerminalOpened = self.post_json(
-            &format!("/api/session/{session_id}/project/run/{}", which.token()),
-            &json!({}),
-        )?;
+    fn run_project_command(&self, session_id: &str, request: &ProjectRunRequest) -> Result<String> {
+        let opened: TerminalOpened =
+            self.post_json(&format!("/api/session/{session_id}/project/run"), request)?;
         Ok(opened.terminal_id)
     }
 

@@ -1,5 +1,5 @@
-//! Project settings - `<repo>/.moonreview.json`, which holds the commands a project is built
-//! and run with, and how its files are indented.
+//! Project settings - `<repo>/.moonreview.json`, which holds the targets a project is built
+//! and run as, and how its files are indented.
 //!
 //! Which command builds a repo, and whether its code is written in tabs or in spaces, are
 //! facts about the repo rather than about whoever opened it, so they are kept with the repo
@@ -34,20 +34,22 @@ pub(crate) const RESTART_RUN_COMMAND: &str = "@restart";
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const PROJECT_SHELL_NAME: &str = "Build terminal";
 
-/// What the Project menu runs. The first two are the commands a project configures; the third
-/// is the two chained, built out of them rather than stored. Running one is asking the server
-/// for this, not for a line of shell to run: the command text lives in the repo's file and
-/// never travels.
+/// What the Project menu runs of a target. The first two are the commands a target
+/// configures; the third is the two chained, built out of them rather than stored. Running one
+/// is asking the server for this and the target's name, not for a line of shell to run: the
+/// command text lives in the repo's file and never travels.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum ProjectCommand {
     Build,
     Run,
-    #[serde(rename = "build-and-run")]
     BuildAndRun,
 }
 
 impl ProjectCommand {
+    /// Every command, in the order the menus list them.
+    pub(crate) const ALL: [Self; 3] = [Self::Build, Self::Run, Self::BuildAndRun];
+
     /// What the menu item and the shell's tab are called.
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -57,28 +59,19 @@ impl ProjectCommand {
         }
     }
 
-    /// The word the command goes by in a URL, where the label's spaces cannot. What
-    /// [`std::str::FromStr`] below parses.
-    pub(crate) fn token(self) -> &'static str {
-        match self {
-            Self::Build => "build",
-            Self::Run => "run",
-            Self::BuildAndRun => "build-and-run",
-        }
+    /// The label as a menu item reads it, capitalised.
+    pub(crate) fn menu_label(self) -> String {
+        let mut label = self.label().to_string();
+        label[..1].make_ascii_uppercase();
+        label
     }
 }
 
-impl std::str::FromStr for ProjectCommand {
-    type Err = anyhow::Error;
-
-    fn from_str(text: &str) -> Result<Self> {
-        match text {
-            "build" => Ok(Self::Build),
-            "run" => Ok(Self::Run),
-            "build-and-run" => Ok(Self::BuildAndRun),
-            other => bail!("{other} is not a project command"),
-        }
-    }
+/// What the window asks the server to run: one command of one target, by the target's name.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct ProjectRunRequest {
+    pub(crate) target: String,
+    pub(crate) which: ProjectCommand,
 }
 
 /// A time of day to the minute, as the repo's file writes it: `"16:30"`.
@@ -143,33 +136,25 @@ impl TryFrom<String> for TimeOfDay {
 /// When a day of work ends in a project that has not said: half past four.
 pub(crate) const DAY_ENDS_AT: TimeOfDay = TimeOfDay::new(16, 30);
 
-/// What the repo's file says about it.
+/// One thing a project builds and runs - the program, its web page, its docs - under a name
+/// the Project menu lists it by.
 ///
-/// A command that is not set is one the Project menu does not offer: there is no sensible
-/// guess at how a repo is built, and an item that runs nothing is worse than no item. An
-/// indentation that is not set is four spaces, which is a guess worth making - every file has
-/// to be indented in something the moment a tab is pressed.
-#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub(crate) struct ProjectConfig {
-    #[serde(default)]
-    pub(crate) build: Option<String>,
-    #[serde(default)]
-    pub(crate) run: Option<String>,
-    /// What a Tab press puts into a file of this repo: `"tab"`, or `{ "spaces": 2 }`. Picked
-    /// in the configuration pane, or typed into the file by hand, and read by the editor
-    /// through [`ProjectConfig::indent`].
-    #[serde(default)]
-    pub(crate) indent: Option<egui_moon_editor::Indent>,
-    /// When a day of work on this project ends, which is when the board stops counting any of
-    /// its queue as today's - see [`ProjectConfig::day_ends_at`]. A fact about the project
-    /// rather than the person: one worked on in the evenings ends later than the day job.
+/// A command that is not set is one the menu does not offer for this target: there is no
+/// sensible guess at how a thing is built, and an item that runs nothing is worse than no
+/// item.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BuildTarget {
+    pub(crate) name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) day_ends_at: Option<TimeOfDay>,
+    pub(crate) build: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) run: Option<String>,
 }
 
-impl ProjectConfig {
-    /// The command line one of the menu's items runs, if the project has set what it needs.
-    /// Build and run is the two commands chained on the first's success. For a project whose
+impl BuildTarget {
+    /// The command line one of the menu's items runs, if the target has set what it needs.
+    /// Build and run is the two commands chained on the first's success. For a target whose
     /// run command is [`RESTART_RUN_COMMAND`] the run half is `exit` instead: the build shell
     /// ending is then the signal that the build came out well and the window can start again
     /// on it - the window watches for that exit, see
@@ -191,10 +176,63 @@ impl ProjectConfig {
         }
     }
 
-    /// Whether running this project means restarting the window rather than typing a line
+    /// Whether running this target means restarting the window rather than typing a line
     /// into a shell - see [`RESTART_RUN_COMMAND`].
     pub(crate) fn run_restarts_window(&self) -> bool {
         self.run.as_deref() == Some(RESTART_RUN_COMMAND)
+    }
+
+    /// The target as the configuration pane's boxes hold it: a blank box is a command that is
+    /// not set.
+    pub(crate) fn typed(name: &str, build: &str, run: &str) -> Self {
+        Self {
+            name: name.trim().to_string(),
+            build: typed_command(build),
+            run: typed_command(run),
+        }
+    }
+}
+
+/// What the repo's file says about it.
+///
+/// A file from before targets, with one `build` and one `run`, is read as its first target -
+/// see `repo_side::ProjectFile`. A field the file does not know makes the whole file one that
+/// is ignored and said so. An indentation that is not set is four spaces,
+/// which is a guess worth making - every file has to be indented in something the moment a
+/// tab is pressed.
+#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectConfig {
+    /// What the Project menu builds and runs, in the order it lists them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) targets: Vec<BuildTarget>,
+    /// What a Tab press puts into a file of this repo: `"tab"`, or `{ "spaces": 2 }`. Picked
+    /// in the configuration pane, or typed into the file by hand, and read by the editor
+    /// through [`ProjectConfig::indent`].
+    #[serde(default)]
+    pub(crate) indent: Option<egui_moon_editor::Indent>,
+    /// When a day of work on this project ends, which is when the board stops counting any of
+    /// its queue as today's - see [`ProjectConfig::day_ends_at`]. A fact about the project
+    /// rather than the person: one worked on in the evenings ends later than the day job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) day_ends_at: Option<TimeOfDay>,
+}
+
+impl ProjectConfig {
+    /// The target of this name. Two targets of one name are the first of them: the pane says
+    /// so where the names are typed.
+    pub(crate) fn target(&self, name: &str) -> Option<&BuildTarget> {
+        self.targets.iter().find(|target| target.name == name)
+    }
+
+    /// The target whose items in the macOS menu bar carry the chords: the one run last, while
+    /// the file still has it, and the first one until anything has run. The bar a window draws
+    /// for itself has no chords for these.
+    #[cfg(any(all(target_os = "macos", not(target_arch = "wasm32")), test))]
+    pub(crate) fn target_to_repeat(&self, last_run: Option<&str>) -> Option<&BuildTarget> {
+        last_run
+            .and_then(|name| self.target(name))
+            .or_else(|| self.targets.first())
     }
 
     /// How this repo's files are indented, which is four spaces until the file says otherwise.
@@ -209,12 +247,14 @@ impl ProjectConfig {
     }
 
     /// What the configuration pane is holding, as a file to write. This is the one place a
-    /// blank box becomes an unset command - so a file written by the native pane and one
-    /// written through the web say the same thing about a command nobody filled in.
-    pub(crate) fn typed(build: &str, run: &str, indent: egui_moon_editor::Indent) -> Self {
+    /// target whose name box is blank is dropped - so a file written by the native pane and
+    /// one written through the web say the same thing about a target nobody named.
+    pub(crate) fn typed(targets: Vec<BuildTarget>, indent: egui_moon_editor::Indent) -> Self {
         Self {
-            build: typed_command(build),
-            run: typed_command(run),
+            targets: targets
+                .into_iter()
+                .filter(|target| !target.name.is_empty())
+                .collect(),
             indent: Some(indent),
             day_ends_at: None,
         }
