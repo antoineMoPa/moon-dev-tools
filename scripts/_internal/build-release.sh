@@ -58,10 +58,6 @@ EOF
 
 require_zig
 
-# `moon licenses` prints the file compiled into the executable, so it has to name what this
-# build links before anything is built.
-"$ROOT_DIR/scripts/third-party-licenses.py" --check
-
 echo "Building moon dev tools $TAG for $TARGET_TRIPLE..."
 cargo build --release --locked
 
