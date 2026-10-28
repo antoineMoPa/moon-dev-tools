@@ -5,7 +5,8 @@
 //! A click on a text file - a `.txt`, a `.json`, markdown, source, a file with no extension -
 //! opens it in a tab the way `moon edit` puts it in one: it is text the window reads and
 //! writes itself. Any other document is handed to the machine's own opener - `open` on a Mac -
-//! so a PDF opens in the reader it is set to rather than in a pane made for text.
+//! so a PDF opens in the reader it is set to rather than in a pane made for text. A web page is
+//! text too, but it is attached to be looked at, so it goes to the opener and the browser.
 //!
 //! The mark at the end of a row takes the document's line out of the file, the way the mark on
 //! a file's row takes that file off the card: the document itself stays where it is.
@@ -29,6 +30,11 @@ use crate::{
 const OPENER: &str = "open";
 #[cfg(not(target_os = "macos"))]
 const OPENER: &str = "xdg-open";
+
+/// The extensions of text documents that go to [`OPENER`] all the same: a page is attached to
+/// be seen in a browser, not read as markup.
+#[cfg(not(target_arch = "wasm32"))]
+const EXTENSIONS_FOR_OPENER: &[&str] = &["html", "htm"];
 
 /// Where a listed document is: a line naming an absolute path is that path, and any other is
 /// from the task's folder.
@@ -94,7 +100,8 @@ pub(crate) fn draw_list(
     }
 }
 
-/// Open one listed document: a text file in a tab, anything else with [`OPENER`].
+/// Open one listed document: a text file in a tab, anything else - and a web page - with
+/// [`OPENER`].
 ///
 /// Text is told from what is in the file rather than from its name, the way a review tells
 /// which untracked files it can show, so no list of extensions has to keep up with what gets
@@ -108,7 +115,9 @@ pub(crate) fn draw_list(
 fn open(app: &mut App, path: PathBuf) {
     // An error is a path that cannot be read as a file, which is no text for a tab either.
     #[cfg(not(target_arch = "wasm32"))]
-    if matches!(crate::git::is_likely_binary_file(&path), Ok(false)) {
+    if !goes_to_opener_by_name(&path)
+        && matches!(crate::git::is_likely_binary_file(&path), Ok(false))
+    {
         app.asked_files
             .push_back(crate::instances::window::OpenFileAsked {
                 path,
@@ -120,5 +129,26 @@ fn open(app: &mut App, path: PathBuf) {
     if let Err(error) = std::process::Command::new(OPENER).arg(&path).spawn() {
         app.model
             .error(format!("could not open {}: {error}", path.display()));
+    }
+}
+
+/// Whether `path` is named as one of [`EXTENSIONS_FOR_OPENER`].
+#[cfg(not(target_arch = "wasm32"))]
+fn goes_to_opener_by_name(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| EXTENSIONS_FOR_OPENER.contains(&extension))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_web_page_goes_to_the_opener_and_markdown_does_not() {
+        assert!(goes_to_opener_by_name(Path::new("report.html")));
+        assert!(goes_to_opener_by_name(Path::new("/tmp/page.htm")));
+        assert!(!goes_to_opener_by_name(Path::new("notes.md")));
+        assert!(!goes_to_opener_by_name(Path::new("Makefile")));
     }
 }
