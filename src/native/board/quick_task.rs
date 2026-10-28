@@ -5,8 +5,8 @@
 //! the agent on it - which moves the card to in progress, see
 //! `crate::moontasks::service::resources` - and tells the agent the title as its first line,
 //! so it starts on the work rather than waiting to be told it. Nothing opens: the palette was
-//! opened over something else, and that is what stays in front. The card's agent dot and the
-//! message say it started.
+//! opened over something else, and that is what stays in front. The card's agent dot says it
+//! started; only a failure gets a message.
 
 use anyhow::Context;
 
@@ -107,13 +107,12 @@ pub(crate) fn start(app: &mut App, title: String, agent: AgentKind) {
             // Waits in the shell until the agent has a box to take it - see `told` in
             // `crate::terminal`.
             backend.tell_terminal(&terminal_id, &title)?;
-            Ok(task.title)
+            Ok(())
         },
         move |model, result| {
             model.board.refresh_requested = true;
-            match result {
-                Ok(title) => model.info(format!("{} started on \"{title}\"", agent_label(agent))),
-                Err(error) => model.error(format!("could not start the quick task: {error}")),
+            if let Err(error) = result {
+                model.error(format!("could not start the quick task: {error}"));
             }
         },
     );
