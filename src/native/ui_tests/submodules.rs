@@ -425,6 +425,75 @@ fn a_task_with_several_pending_reviews_opens_them_as_one_diff() {
     );
 }
 
+/// A repo of the combined review is committed where it is read: its diff ends in a commit row
+/// with the message its task wrote, and once committed it folds to a line offering the push.
+#[test]
+fn a_repo_of_the_combined_review_is_committed_under_its_diff() {
+    let fixture = seeded_fixture("task-review-commit");
+    add_submodule(&fixture, "crates/dirty", &["new.rs"]);
+    let submodule = fixture.root.join("crates/dirty");
+    run_git_no_output(&submodule, &["add", "-A"]).expect("failed to stage the submodule");
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        "crates/dirty/ // fix: the submodule\n. // chore: take the module forward\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+    assert!(
+        wait_for_labels(&mut harness, &["review all 2 repos"]),
+        "the card should offer every pending review at once"
+    );
+    harness.get_by_label("review all 2 repos").click();
+    assert!(
+        wait_for_labels(&mut harness, &["fix: the submodule", "1 staged"]),
+        "the submodule's commit row should carry its task's message and what is staged"
+    );
+
+    // Act: the first commit row is the submodule's, the first line of the request.
+    harness
+        .query_all_by_label("commit")
+        .next()
+        .expect("each repo has a commit row")
+        .click();
+
+    // Assert
+    let committed = || {
+        crate::git::run_git(&submodule, &["log", "-1", "--format=%s"])
+            .is_ok_and(|subject| subject.trim() == "fix: the submodule")
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !committed() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        committed(),
+        "the submodule should have been committed with its task's message"
+    );
+    assert!(
+        wait_for_labels(&mut harness, &["push"]),
+        "the committed submodule should fold to its line, offering the push"
+    );
+}
+
 /// Step the window until every one of `labels` is on screen, for up to the time `settle` gives.
 fn wait_for_labels(harness: &mut Harness<'_>, labels: &[&str]) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);

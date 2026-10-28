@@ -6,6 +6,7 @@
 //! git wants typed - a hook's question, a push over ssh - lands in the same place.
 
 pub(super) mod drawing;
+pub(crate) mod inline;
 mod message;
 mod run;
 
@@ -201,6 +202,9 @@ struct CommitRun {
     exit_code: Option<i32>,
     /// When the pane last asked how it went - see [`OUTCOME_ASK_INTERVAL`].
     last_ask: Option<Instant>,
+    /// Whether the run's terminal has been given the keyboard, which an inline commit does the
+    /// first frame it draws it - see [`inline`].
+    keyboard_handed_over: bool,
 }
 
 impl CommitRun {

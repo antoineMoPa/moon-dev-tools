@@ -57,7 +57,6 @@ mod settings;
 mod shell_locale;
 #[cfg(not(target_arch = "wasm32"))]
 mod shell_path;
-#[cfg(not(target_arch = "wasm32"))]
 mod shell_quoting;
 #[cfg(not(target_arch = "wasm32"))]
 mod terminal;

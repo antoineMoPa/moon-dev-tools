@@ -44,6 +44,7 @@ impl App {
                             commits,
                             exit_code: None,
                             last_ask: None,
+                            keyboard_handed_over: false,
                         });
                         if let Ok(mut inbox) = inbox.lock() {
                             inbox.push(AttachedTerminal {

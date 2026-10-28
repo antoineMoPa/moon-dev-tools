@@ -5,7 +5,13 @@
 //! other in a single scroll, in the order the task's `request_for_review.txt` lists them, which
 //! is the order they are to be committed and deployed. Each repo is still its own review: its
 //! hunks are drawn by the review pane's own code against its own session, so staging, comments
-//! and discards land in the repo they belong to, and each repo has its own button to its commit.
+//! and discards land in the repo they belong to.
+//!
+//! Each repo is committed where it is read: its diff ends in a commit row and a box with the
+//! message and the terminal side by side - see [`crate::native::commit_pane::inline`]. While a
+//! repo's diff is on screen its row is pinned to the bottom of the scroll, and it lands as the
+//! head of the box when the end of the diff comes up. A committed repo folds to one line with
+//! its push.
 //!
 //! The pane names the task rather than its sessions, because a session lasts only as long as
 //! the server that made it. The sessions are found by repo in the model, and opened the first
@@ -13,13 +19,14 @@
 
 use std::sync::Arc;
 
-use egui::{RichText, Ui};
+use egui::{Rect, RichText, Ui};
 
 use crate::{
     api::{OpenSessionRequest, SessionPayload},
     moontasks::ReviewRequestView,
     native::{
         app::App,
+        commit_pane::inline::{self, RowPress},
         model::ScrollTo,
         review::{
             hunks,
@@ -34,6 +41,9 @@ use crate::{
 
 /// How wide the pane has to be to stand the list of repos beside the diff.
 const ROOM_FOR_THE_REPO_LIST: f32 = 760.0;
+
+/// How tall the row pinned to the bottom of the scroll is drawn.
+const PINNED_ROW_HEIGHT: f32 = 30.0;
 
 /// A repo of the task as this pane draws it: the line that asked for it, and where its review
 /// stands.
@@ -50,7 +60,10 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
         .model
         .review_requests
         .iter()
-        .filter(|request| request.task_id == task_id && request.pending())
+        .filter(|request| {
+            request.task_id == task_id
+                && (request.pending() || committed_in_this_pane(app, request))
+        })
         .cloned()
         .collect();
     open_sessions(app, &requests);
@@ -132,10 +145,15 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
             }
             let scrolled = scroll_area.show(ui, |ui| {
                 map.start(ui.cursor().min.y);
+                let mut commit_places = Vec::new();
                 for repo in &repos {
-                    draw_repo(app, ui, repo, &mut map, &palette);
+                    let top = ui.cursor().min.y;
+                    if let Some(place) = draw_repo(app, ui, repo, &mut map, &palette) {
+                        commit_places.push((top, place));
+                    }
                     ui.add_space(18.0);
                 }
+                pin_commit_row(app, ui, &commit_places, &palette);
             });
             map.scrolled = Scrolled {
                 offset: scrolled.state.offset.y,
@@ -282,14 +300,43 @@ fn draw_repo_list(app: &mut App, ui: &mut Ui, repos: &[RepoUnderReview], palette
         });
 }
 
-/// One repo: a bar naming it, and its diff under the bar.
+/// Whether a repo whose line is no longer pending was committed from here, which keeps it in
+/// the pane as its committed line until the push.
+fn committed_in_this_pane(app: &App, request: &ReviewRequestView) -> bool {
+    !request.done
+        && !request.task_finished
+        && app
+            .model
+            .review_sessions_of_repos
+            .get(&request.repo_path)
+            .is_some_and(|session_id| app.inline_commit_made(session_id))
+}
+
+/// Where a repo's commit row and box were drawn in their place, which is what decides whether
+/// the row is pinned to the bottom of the scroll.
+struct CommitPlace {
+    session_id: String,
+    repo_name: String,
+    row: Rect,
+    commit_box: Rect,
+}
+
+/// One repo: a bar naming it, its diff under the bar, and its commit under the diff. A repo
+/// committed from here is its committed line instead.
 fn draw_repo(
     app: &mut App,
     ui: &mut Ui,
     repo: &RepoUnderReview,
     map: &mut Minimap,
     palette: &Palette,
-) {
+) -> Option<CommitPlace> {
+    if !repo.request.pending() {
+        let session_id = repo.session_id.as_deref()?;
+        app.keep_inline_commit(session_id);
+        inline::draw_committed_line(app, ui, session_id, &repo.request.name, palette);
+        return None;
+    }
+
     egui::Frame::new()
         .fill(palette.header_bg)
         .inner_margin(egui::Margin::symmetric(8, 5))
@@ -316,8 +363,11 @@ fn draw_repo(
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(session_id) = &repo.session_id
-                        && widgets::clickable(ui.button("commit"))
-                            .on_hover_text("Open the commit pane of this repo")
+                        && widgets::clickable(ui.button("commit pane"))
+                            .on_hover_text(
+                                "Open the commit pane of this repo: push, pull request, and a \
+                                 message written by the agent",
+                            )
                             .clicked()
                     {
                         app.open_commit_pane(session_id);
@@ -329,16 +379,109 @@ fn draw_repo(
 
     match (&repo.session_id, &repo.payload, &repo.error) {
         (Some(session_id), Some(_), _) => {
-            hunks::draw_in_place(app, ui, session_id, map, palette)
+            hunks::draw_in_place(app, ui, session_id, map, palette);
+            Some(draw_commit(app, ui, session_id, &repo.request.name, palette))
         }
         (_, _, Some(error)) => {
             ui.label(RichText::new(error).color(palette.warn));
+            None
         }
         _ => {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(RichText::new("reading the diff…").color(palette.muted));
             });
+            None
         }
     }
+}
+
+/// The commit under a repo's diff: the row, and the box under it.
+fn draw_commit(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    repo_name: &str,
+    palette: &Palette,
+) -> CommitPlace {
+    app.keep_inline_commit(session_id);
+    ui.add_space(10.0);
+    let row = commit_row_frame(palette).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.push_id(("commit-row", session_id), |ui| {
+            inline::draw_row(app, ui, session_id, repo_name, false, palette)
+        })
+        .inner
+    });
+    let commit_box = egui::Frame::new()
+        .fill(palette.panel)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            inline::draw_box(app, ui, session_id, palette);
+        })
+        .response
+        .rect;
+    if row.inner != RowPress::Nothing {
+        ui.scroll_to_rect(commit_box, Some(egui::Align::Max));
+    }
+    CommitPlace {
+        session_id: session_id.to_string(),
+        repo_name: repo_name.to_string(),
+        row: row.response.rect,
+        commit_box,
+    }
+}
+
+/// Pin the commit row of the repo being read to the bottom of the scroll: the repo whose top is
+/// above the bottom of the view and whose row, in its place, is below it. Drawn after the diff
+/// so it is over it, and takes the clicks there.
+fn pin_commit_row(
+    app: &mut App,
+    ui: &mut Ui,
+    commit_places: &[(f32, CommitPlace)],
+    palette: &Palette,
+) {
+    let view = ui.clip_rect();
+    let pinned_top = view.bottom() - PINNED_ROW_HEIGHT;
+    let Some((_, place)) = commit_places
+        .iter()
+        .find(|(top, place)| *top < pinned_top && place.row.top() > pinned_top)
+    else {
+        return;
+    };
+    let rect = Rect::from_min_max(
+        egui::pos2(place.row.left(), pinned_top),
+        egui::pos2(place.row.right(), view.bottom()),
+    );
+    let press = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            commit_row_frame(palette)
+                .stroke(egui::Stroke::new(1.0, palette.line))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.push_id(("pinned-commit-row", &place.session_id), |ui| {
+                        inline::draw_row(
+                            app,
+                            ui,
+                            &place.session_id,
+                            &place.repo_name,
+                            true,
+                            palette,
+                        )
+                    })
+                    .inner
+                })
+                .inner
+        })
+        .inner;
+    if press != RowPress::Nothing {
+        ui.scroll_to_rect(place.commit_box, Some(egui::Align::Max));
+    }
+}
+
+fn commit_row_frame(palette: &Palette) -> egui::Frame {
+    egui::Frame::new()
+        .fill(palette.panel)
+        .inner_margin(egui::Margin::symmetric(8, 5))
 }

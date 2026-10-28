@@ -97,6 +97,10 @@ impl App {
     /// The line is the window's own copy of the project's commands - the one the Project menu
     /// offers - rather than the file read again: the command that runs is the command that was
     /// picked.
+    ///
+    /// It goes back to the repo first. The shell started there, but it is a shell: someone may
+    /// have gone into a task's folder in it since, and `cargo install --path .` typed there
+    /// builds nothing.
     fn type_project_command(
         &mut self,
         terminal_id: &str,
@@ -104,11 +108,20 @@ impl App {
         which: ProjectCommand,
         restarts_when_exited: bool,
     ) {
-        let Some(line) = target.line(which) else {
+        let Some(command) = target.line(which) else {
             self.model
                 .error(format!("{} has no {} command", target.name, which.label()));
             return;
         };
+        let Some(repo_root) = self.repo_root() else {
+            self.model
+                .error("the window's repo has not been read yet".to_string());
+            return;
+        };
+        let line = format!(
+            "cd {} && {command}",
+            crate::shell_quoting::single_quoted(&repo_root.to_string_lossy())
+        );
         let Some(terminal) = self.terminals.get(terminal_id) else {
             self.model
                 .error("the shell the project's commands run in is gone".to_string());
