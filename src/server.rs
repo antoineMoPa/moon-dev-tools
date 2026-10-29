@@ -10,7 +10,8 @@ pub(crate) mod users;
 mod web_page;
 
 use board_routes::{
-    amend_review_request, change_settings, list_review_requests, opencode_models, settings,
+    amend_review_request, change_settings, list_review_requests, opencode_models,
+    palette_history, record_in_palette_history, settings,
     add_column, attach_task_resource, board_task, create_task, delete_column, delete_task,
     delete_task_resource, link_task_file, list_agent_sessions, list_columns,
     list_tasks, open_task_notes, open_wire, open_work_log, place_column, place_tasks,
@@ -68,6 +69,7 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         display: Arc::default(),
         lsp: Arc::new(crate::lsp::LanguageServers::new()),
         settings_path: crate::settings::path(),
+        palette_history_path: crate::palette_history::path(),
     }
 }
 
@@ -285,6 +287,10 @@ fn protected_routes() -> Router<Served> {
         )
         .route("/api/session/{session_id}/board-task", get(board_task))
         .route("/api/settings", get(settings).post(change_settings))
+        .route(
+            "/api/session/{session_id}/palette-history",
+            get(palette_history).post(record_in_palette_history),
+        )
         .route("/api/opencode-models", get(opencode_models))
         .route(
             "/api/session/{session_id}/review-requests",

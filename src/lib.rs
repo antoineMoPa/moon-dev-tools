@@ -41,6 +41,7 @@ mod moved_hunks;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
+mod palette_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod pass_keys;
 mod project;

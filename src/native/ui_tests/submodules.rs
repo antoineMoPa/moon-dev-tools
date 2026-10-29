@@ -227,8 +227,15 @@ fn the_submodule_hub_lists_every_submodule_and_reviews_a_changed_one() {
         Some("submodules")
     );
 
-    // Act: anywhere on the changed submodule's row opens a review of it.
-    harness.get_by_label("dirty").click();
+    // Act: the box has the keyboard again now the hub is back in front; ↓ walks onto the
+    // first row and on to the changed submodule's, and Enter opens a review of it.
+    super::press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    super::press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    super::press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    super::press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         harness.step();

@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use crate::{
-    api::SearchProgress,
+    api::{ContentMatch, SearchProgress},
     backend::SearchListener,
     native::{app::App, model::Model, panes::OpenPaneRequest, tasks::ModelEdits},
 };
@@ -91,23 +91,28 @@ pub(super) fn file_rows(app: &App) -> Vec<Command> {
         .files
         .matches
         .iter()
-        .map(|file_path| Command {
-            title: file_name_of(file_path).to_string(),
-            description: file_path.clone(),
-            action: match &app.model.palette.files_link_to_task {
-                Some(task_id) => CommandAction::LinkTaskFile {
-                    task_id: task_id.clone(),
-                    file_path: file_path.clone(),
-                },
-                None => CommandAction::OpenPane(OpenPaneRequest::File {
-                    session_id: app.model.palette.search_session_id.clone(),
-                    file_path: file_path.clone(),
-                    at: None,
-                }),
-            },
-            shortcut: None,
-        })
+        .map(|file_path| file_row(app, file_path))
         .collect()
+}
+
+/// The row of one file the search found.
+pub(super) fn file_row(app: &App, file_path: &str) -> Command {
+    Command {
+        title: file_name_of(file_path).to_string(),
+        description: file_path.to_string(),
+        action: match &app.model.palette.files_link_to_task {
+            Some(task_id) => CommandAction::LinkTaskFile {
+                task_id: task_id.clone(),
+                file_path: file_path.to_string(),
+            },
+            None => CommandAction::OpenPane(OpenPaneRequest::File {
+                session_id: app.model.palette.search_session_id.clone(),
+                file_path: file_path.to_string(),
+                at: None,
+            }),
+        },
+        shortcut: None,
+    }
 }
 
 /// One row per matching line: the line itself to read the match by, and where in the repo it
@@ -128,20 +133,25 @@ pub(super) fn content_rows(app: &App) -> Vec<Command> {
         .contents
         .matches
         .iter()
-        .map(|found| Command {
-            title: found.line.clone(),
-            description: format!("{}:{}", found.file_path, found.line_number),
-            action: CommandAction::OpenPane(OpenPaneRequest::File {
-                session_id: app.model.palette.search_session_id.clone(),
-                file_path: found.file_path.clone(),
-                at: Some(crate::native::panes::OpenAt {
-                    line: found.line_number,
-                    query: searched.clone(),
-                }),
-            }),
-            shortcut: None,
-        })
+        .map(|found| content_row(app, found, &searched))
         .collect()
+}
+
+/// The row of one matching line, found for `searched`.
+pub(super) fn content_row(app: &App, found: &ContentMatch, searched: &str) -> Command {
+    Command {
+        title: found.line.clone(),
+        description: format!("{}:{}", found.file_path, found.line_number),
+        action: CommandAction::OpenPane(OpenPaneRequest::File {
+            session_id: app.model.palette.search_session_id.clone(),
+            file_path: found.file_path.clone(),
+            at: Some(crate::native::panes::OpenAt {
+                line: found.line_number,
+                query: searched.to_string(),
+            }),
+        }),
+        shortcut: None,
+    }
 }
 
 /// What the searches have to say under their rows, if anything - see [`footnote_of`].
@@ -156,7 +166,7 @@ pub(super) fn footnote(app: &App, shown: usize) -> Option<String> {
     }
 }
 
-fn file_name_of(file_path: &str) -> &str {
+pub(super) fn file_name_of(file_path: &str) -> &str {
     file_path.rsplit('/').next().unwrap_or(file_path)
 }
 
@@ -243,33 +253,61 @@ fn footnote_of<T>(search: &Search<T>, shown: usize) -> Option<String> {
 
 /// What the palette is asking of a search right now: the query in its box, in the scope its
 /// checkbox has.
-fn asked_of(app: &App) -> SearchRequest {
+pub(super) fn asked_of(app: &App) -> SearchRequest {
     SearchRequest {
         query: app.model.palette.query().to_string(),
         scope: app.model.palette.search_scope,
     }
 }
 
+/// How a search asks the backend for what it finds.
+type Find<T> = fn(
+    &dyn crate::backend::Backend,
+    &str,
+    &SearchRequest,
+    &mut dyn SearchListener<T>,
+) -> anyhow::Result<()>;
+
+/// The file finder's way of asking the backend.
+fn find_files(
+    backend: &dyn crate::backend::Backend,
+    session_id: &str,
+    asked: &SearchRequest,
+    listener: &mut dyn SearchListener<String>,
+) -> anyhow::Result<()> {
+    backend.find_files(session_id, &asked.query, asked.scope, listener)
+}
+
+/// The content search's.
+fn search_contents(
+    backend: &dyn crate::backend::Backend,
+    session_id: &str,
+    asked: &SearchRequest,
+    listener: &mut dyn SearchListener<ContentMatch>,
+) -> anyhow::Result<()> {
+    backend.search_contents(session_id, &asked.query, asked.scope, listener)
+}
+
 /// Keep the file list on the query that is typed.
 pub(super) fn refresh_file_matches(app: &mut App) {
-    refresh_search(
-        app,
-        |backend, session_id, asked, listener| {
-            backend.find_files(session_id, &asked.query, asked.scope, listener)
-        },
-        |model| &mut model.palette.files,
-    );
+    refresh_search(app, find_files, |model| &mut model.palette.files);
 }
 
 /// The same for the lines the content search found.
 pub(super) fn refresh_content_matches(app: &mut App) {
-    refresh_search(
-        app,
-        |backend, session_id, asked, listener| {
-            backend.search_contents(session_id, &asked.query, asked.scope, listener)
-        },
-        |model| &mut model.palette.contents,
-    );
+    refresh_search(app, search_contents, |model| &mut model.palette.contents);
+}
+
+/// Start both searches on `asked`, on the one ticket: the command list shows the start of
+/// each, and a key typed since stops the two of them at once.
+pub(super) fn start_both_searches(app: &mut App, asked: &SearchRequest) {
+    let ticket = app.model.palette.next_search_ticket();
+    start_search(app, asked.clone(), ticket, find_files, |model| {
+        &mut model.palette.files
+    });
+    start_search(app, asked.clone(), ticket, search_contents, |model| {
+        &mut model.palette.contents
+    });
 }
 
 /// Keep one of the searches on what is asked: the query that is typed, in the scope that is
@@ -281,12 +319,7 @@ pub(super) fn refresh_content_matches(app: &mut App) {
 /// one before it sees it is no longer the latest and stops.
 fn refresh_search<T: Send + 'static>(
     app: &mut App,
-    find: fn(
-        &dyn crate::backend::Backend,
-        &str,
-        &SearchRequest,
-        &mut dyn SearchListener<T>,
-    ) -> anyhow::Result<()>,
+    find: Find<T>,
     search_of: fn(&mut Model) -> &mut Search<T>,
 ) {
     let asked = asked_of(app);
@@ -294,6 +327,17 @@ fn refresh_search<T: Send + 'static>(
         return;
     }
     let ticket = app.model.palette.next_search_ticket();
+    start_search(app, asked, ticket, find, search_of);
+}
+
+/// Start one search on `asked`, on `ticket`, its list emptied for what it finds.
+fn start_search<T: Send + 'static>(
+    app: &mut App,
+    asked: SearchRequest,
+    ticket: u64,
+    find: Find<T>,
+    search_of: fn(&mut Model) -> &mut Search<T>,
+) {
     let no_repo = app.model.palette.search_session_id.is_empty();
     let search = search_of(&mut app.model);
     *search = Search {

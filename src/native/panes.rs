@@ -339,7 +339,7 @@ impl Pane {
 }
 
 /// A pane the user asked for, before it has a name.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum OpenPaneRequest {
     Review {
         session_id: String,
@@ -448,7 +448,7 @@ pub(crate) fn short_revision(revision: &str) -> &str {
     &revision[..7.min(revision.len())]
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct OpenAt {
     /// Counted from one, as the number in the fringe is.
     pub(crate) line: usize,
@@ -663,7 +663,7 @@ impl PaneView<Pane> for App {
                 let session_id = session_id.clone();
                 commit_pane::draw(self, ui, pane_id, &session_id);
             }
-            Pane::Submodules => crate::native::submodules::draw(self, ui),
+            Pane::Submodules => crate::native::submodules::draw(self, ui, pane_id),
             Pane::Project => crate::native::project_pane::draw(self, ui),
             Pane::Settings => crate::native::settings_pane::draw(self, ui),
             Pane::Messages => crate::native::messages::draw(self, ui),

@@ -5,7 +5,7 @@
 //! what closing one costs, and which shell a tab is showing.
 
 mod opening;
-mod shells;
+pub(crate) mod shells;
 mod tabs;
 mod terminals;
 
@@ -197,6 +197,7 @@ impl App {
 
         // The workspace draws moonreview's own panes, so the view it needs is this app: both it
         // and the arrangement are lent out for the call and put back straight after.
+        self.model.pane_in_front = self.active_pane_id();
         let mut frames = std::mem::take(&mut self.frames);
         let mut layout = std::mem::take(&mut self.model.layout);
         let events = frames.show(ui, &mut layout, self);

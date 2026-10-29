@@ -316,7 +316,7 @@ impl ChildExt for std::process::Child {
 }
 
 #[cfg(unix)]
-fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
+pub(crate) fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
     let pid = child.id() as libc::pid_t;
     let group_result = unsafe { libc::kill(-pid, libc::SIGKILL) };
     if group_result == -1 {
@@ -327,7 +327,7 @@ fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
+pub(crate) fn stop_process_group(child: &mut Child) -> std::io::Result<()> {
     child.kill()
 }
 

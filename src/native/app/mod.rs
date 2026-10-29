@@ -344,6 +344,8 @@ impl App {
                 task_review_minimaps: HashMap::new(),
                 opening_review_sessions: Default::default(),
                 submodule_filter_focus: false,
+                submodule_highlight: None,
+                pane_in_front: None,
                 shells_running_a_command: Vec::new(),
                 shells_wanting_attention: Vec::new(),
                 attention_posted: HashMap::new(),

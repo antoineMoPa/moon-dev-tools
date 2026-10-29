@@ -33,6 +33,7 @@ use crate::{
         AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
         ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
+    palette_history::{HistoryEntry, HistoryRecord},
     project::{ProjectConfig, ProjectRunRequest},
     settings::{Settings, SettingsChange},
 };
@@ -324,6 +325,10 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// The models `opencode` can run with, as `provider/model`, for the settings page to pick
     /// from - see [`crate::settings::Settings::agent_models`].
     fn opencode_models(&self) -> Result<Vec<String>>;
+    /// The palette's history of the project `session_id` is on, oldest first - see
+    /// [`crate::palette_history`].
+    fn palette_history(&self, session_id: &str) -> Result<Vec<HistoryEntry>>;
+    fn record_in_palette_history(&self, session_id: &str, record: &HistoryRecord) -> Result<()>;
 
     /// The targets the Project menu runs, out of the reviewed repo's own file.
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig>;

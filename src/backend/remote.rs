@@ -41,6 +41,7 @@ use crate::{
         ReviewRequestView, StartResourceRequest, TaskNotesPayload, TaskPlacementRequest, TaskView,
         TerminalOpened, WirePayload, WorkLogPayload, review_request::Amend,
     },
+    palette_history::{HistoryEntry, HistoryRecord},
     project::{ProjectConfig, ProjectRunRequest},
     settings::{Settings, SettingsChange},
 };
@@ -440,6 +441,17 @@ impl Backend for RemoteBackend {
 
     fn change_settings(&self, change: SettingsChange) -> Result<()> {
         self.post("/api/settings", &change)
+    }
+
+    fn palette_history(&self, session_id: &str) -> Result<Vec<HistoryEntry>> {
+        self.get(&format!("/api/session/{session_id}/palette-history"))
+    }
+
+    fn record_in_palette_history(&self, session_id: &str, record: &HistoryRecord) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/palette-history"),
+            record,
+        )
     }
 
     fn opencode_models(&self) -> Result<Vec<String>> {

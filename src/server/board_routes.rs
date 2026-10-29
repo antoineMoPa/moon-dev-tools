@@ -118,6 +118,26 @@ pub(super) async fn change_settings(
     Ok("ok")
 }
 
+/// The palette's history of the project the session is on - see [`crate::palette_history`].
+/// Read and written as the server, like the settings: the file is the server's.
+pub(super) async fn palette_history(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::palette_history::HistoryEntry>>, AppError> {
+    mark_activity(&state);
+    Ok(Json(crate::palette_history::served(&state, &session_id)?))
+}
+
+pub(super) async fn record_in_palette_history(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(record): Json<crate::palette_history::HistoryRecord>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    crate::palette_history::change(&state, &session_id, record)?;
+    Ok("ok")
+}
+
 pub(super) async fn project_commands(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,

@@ -69,6 +69,11 @@ pub(crate) struct Settings {
     /// when that one is not on the person's plan.
     #[serde(default)]
     pub(crate) agent_models: BTreeMap<AgentKind, String>,
+    /// The agent the palette's last quick task was started with, which the next one is
+    /// offered with - apart from the review's selector, which says who comments go to.
+    /// `None` until a quick task has been started.
+    #[serde(default)]
+    pub(crate) quick_task_agent: AgentKind,
 }
 
 /// A program with windows, as the person wrote it for the `moon` menu.
@@ -95,6 +100,7 @@ pub(crate) enum SettingsChange {
         agent: AgentKind,
         model: Option<String>,
     },
+    SelectQuickTaskAgent(AgentKind),
 }
 
 impl Settings {
@@ -114,6 +120,11 @@ impl Settings {
             } => self.mark_workspace(&project_path, color),
             SettingsChange::SelectAgentModel { agent, model } => {
                 self.select_agent_model(agent, model)
+            }
+            SettingsChange::SelectQuickTaskAgent(agent) => {
+                let changed = self.quick_task_agent != agent;
+                self.quick_task_agent = agent;
+                changed
             }
         }
     }
@@ -209,28 +220,35 @@ fn home_settings_path() -> Option<PathBuf> {
 pub(crate) fn path() -> Option<PathBuf> {
     #[cfg(test)]
     {
-        // Cargo names each test's thread after the test, which is the isolation this needs.
-        let test: String = std::thread::current()
-            .name()
-            .unwrap_or("unnamed")
-            .chars()
-            .map(|character| {
-                if character.is_alphanumeric() {
-                    character
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        Some(std::env::temp_dir().join(format!(
-            "moonreview-test-settings-{}-{test}.json",
-            std::process::id()
-        )))
+        Some(test_scratch_file("settings"))
     }
     #[cfg(not(test))]
     {
         home_settings_path()
     }
+}
+
+/// A scratch file of the test running on this thread, for a file kept under `~/.moonreview`
+/// - see [`path`]. Cargo names each test's thread after the test, which is the isolation this
+/// needs.
+#[cfg(test)]
+pub(crate) fn test_scratch_file(kept: &str) -> PathBuf {
+    let test: String = std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    std::env::temp_dir().join(format!(
+        "moonreview-test-{kept}-{}-{test}.json",
+        std::process::id()
+    ))
 }
 
 /// Read the settings, falling back to the defaults.
@@ -376,12 +394,13 @@ mod tests {
             workspace_colors: BTreeMap::new(),
             applications: Vec::new(),
             agent_models: BTreeMap::new(),
+            quick_task_agent: AgentKind::Codex,
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[],"agent_models":{}}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[],"agent_models":{},"quick_task_agent":"codex"}"#
         );
     }
 

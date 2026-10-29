@@ -30,6 +30,16 @@ pub(crate) struct PaletteState {
     pub(crate) files_link_to_task: Option<String>,
     /// The places the palette is listing, while it is - see [`crate::native::places`].
     pub(crate) places: Option<crate::native::places::FoundPlaces>,
+    /// What the command list in sections keeps from one frame to the next - see
+    /// [`crate::native::palette::SectionsState`].
+    pub(crate) sections: crate::native::palette::SectionsState,
+    /// What was run from the palette before, drawn above it - see
+    /// [`crate::native::palette::history`]. Its entries are kept from one opening to the next.
+    pub(crate) history: crate::native::palette::HistoryState,
+    /// The line of shell run under the palette, while its output is up - see
+    /// [`crate::native::palette::ShellRun`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) shell: Option<crate::native::palette::ShellRun>,
 }
 
 impl PaletteState {
@@ -62,6 +72,19 @@ impl PaletteState {
         self.contents = crate::native::palette::Search::default();
         self.files_link_to_task = None;
         self.places = None;
+        self.sections = crate::native::palette::SectionsState::default();
+        self.history.rest();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.shell = None;
+        }
+    }
+
+    /// Open it on the commands, whose list also holds what the two searches find, in the repo
+    /// of the given review.
+    pub(crate) fn show_commands(&mut self, search_session_id: String) {
+        self.show();
+        self.search_session_id = search_session_id;
     }
 
     /// Open it on a name to rename, selected, so what is typed replaces it - see
@@ -131,11 +154,38 @@ impl PaletteState {
         self.input.highlight_first();
     }
 
+    /// Turn the command list into the whole of one of its two searches, keeping what is
+    /// typed - Tab on a row of that section. The search the section showed the start of is
+    /// already the one the mode wants, so it runs on rather than starting over.
+    pub(crate) fn open_section(&mut self, to: crate::native::palette::PaletteMode) {
+        assert!(
+            matches!(
+                to,
+                crate::native::palette::PaletteMode::Files
+                    | crate::native::palette::PaletteMode::Contents
+            ),
+            "only the two searches have a mode of their own to open"
+        );
+        assert_eq!(
+            self.mode,
+            crate::native::palette::PaletteMode::Commands,
+            "only the command list has sections"
+        );
+        self.mode = to;
+        self.input.highlight_first();
+    }
+
     /// Put it away. The rect goes with it so the next one it draws is the one clicks are
     /// measured against, and a search still out is nobody's to wait for.
     pub(crate) fn dismiss(&mut self) {
         self.input.dismiss();
         self.stop_searches();
+        self.history.rest();
+        // The line of shell under it goes with it, stopped if it still runs.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.shell = None;
+        }
     }
 
     /// The ticket for a search about to start, which makes it the latest: whichever search
@@ -147,7 +197,7 @@ impl PaletteState {
     }
 
     /// Leave no search wanted, without starting one.
-    fn stop_searches(&self) {
+    pub(crate) fn stop_searches(&self) {
         self.latest_search
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -165,6 +215,10 @@ impl Default for PaletteState {
             latest_search: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             files_link_to_task: None,
             places: None,
+            sections: crate::native::palette::SectionsState::default(),
+            history: crate::native::palette::HistoryState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            shell: None,
         }
     }
 }

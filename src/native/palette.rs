@@ -4,13 +4,21 @@
 
 mod commands;
 mod drawing;
+pub(crate) mod history;
 mod rows;
+mod sections;
+#[cfg(not(target_arch = "wasm32"))]
+mod shell;
 
 pub(crate) use commands::commands_for;
 pub(crate) use drawing::draw;
 pub(in crate::native) use drawing::{
     Kept, cut_to_width, floating_frame, floating_width, paint_highlight, pressed_outside,
 };
+pub(crate) use history::HistoryState;
+pub(crate) use sections::SectionsState;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use shell::ShellRun;
 
 use rows::{code_action_rows, content_rows, file_rows, place_rows, rename_rows};
 
@@ -89,8 +97,9 @@ pub(crate) struct Command {
 }
 
 /// What running a command does. Most open a pane; the rest are the window's own actions,
-/// which on macOS also sit in the menu bar.
-#[derive(Clone)]
+/// which on macOS also sit in the menu bar. Its `Debug` text is how the palette's history
+/// knows a command - see [`crate::palette_history::HistoryThing::Command`].
+#[derive(Clone, Debug)]
 pub(crate) enum CommandAction {
     OpenPane(OpenPaneRequest),
     ToggleTheme,
@@ -279,21 +288,11 @@ pub(crate) fn ranked(commands: Vec<Command>, query: &str) -> Vec<Command> {
     matches
 }
 
-/// What the palette is offering under the query: the commands that match it, or the files.
+/// What the palette is offering under the query in every mode but the commands, which are
+/// listed in sections - see [`sections`].
 fn rows_for(app: &App) -> Vec<Command> {
     match app.model.palette.mode {
-        PaletteMode::Commands => {
-            let query = app.model.palette.query();
-            let commands = ranked(commands_for(app), query);
-            // After the commands, so a command's name typed in full stays the first row; a
-            // title, which names no command, has these as its only rows.
-            #[cfg(not(target_arch = "wasm32"))]
-            let commands = commands
-                .into_iter()
-                .chain(crate::native::board::quick_task::commands(app, query))
-                .collect();
-            commands
-        }
+        PaletteMode::Commands => unreachable!("the command list is drawn in sections"),
         PaletteMode::Files => file_rows(app),
         PaletteMode::Contents => content_rows(app),
         PaletteMode::Rename => rename_rows(app),
@@ -350,57 +349,65 @@ mod tests {
         assert_eq!(titles[0], "open file", "the rows were {titles:?}");
     }
 
-    /// A title typed into the palette is offered as a quick task, once per agent and the
-    /// selected one first - after the commands, so `wl` is still the work log on Enter.
+    /// A title typed into the palette is offered as a quick task, on one row with a chip per
+    /// agent and the selected one picked - in the last section, so `wl` is still the work log
+    /// on Enter, and the repo's files and lines come between the two.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_typed_title_is_offered_as_a_quick_task_after_the_commands() {
-        use crate::api::{AgentOption, SessionPayload};
-
         let fixture = crate::native::ui_tests::seeded_fixture("palette-quick-task");
         let mut app = crate::native::ui_tests::app_for(
             &fixture.root,
             crate::native::theme::ThemeMode::Dark,
         );
-        let agent = |kind: AgentKind| AgentOption {
-            kind,
-            label: kind.label().to_string(),
-            available: true,
-            logged_in: None,
-            log_in_command: None,
-        };
-        let session_id = app.model.root_session_id.clone();
-        app.model.review(&session_id).payload = Some(std::sync::Arc::new(SessionPayload {
-            repo_name: "repo".to_string(),
-            branch_name: None,
-            commit_base: None,
-            commits: Vec::new(),
-            history_commits: Vec::new(),
-            history_has_more: false,
-            local_change_summary: Default::default(),
-            active_commit: None,
-            repo_path: "/repo".to_string(),
-            read_only: false,
-            patch_preview_line_limit: 500,
-            available_agents: vec![agent(AgentKind::Claude), agent(AgentKind::Codex)],
-            selected_agent: AgentKind::Codex,
-            full_file_path: None,
-            hunks: Vec::new(),
-            review_comments: Vec::new(),
-            export_text: String::new(),
-        }));
-        app.model.palette.show();
+        crate::native::ui_tests::palette_sections::offer_agents(
+            &mut app,
+            &[AgentKind::Claude, AgentKind::Codex],
+            AgentKind::Codex,
+        );
+        // The window's session is not open yet; any review's will do for the searches to be
+        // asked for.
+        app.model
+            .palette
+            .show_commands("searched-session".to_string());
         app.model.palette.input.open_on("wl");
 
-        let rows = rows_for(&app);
+        let listed = sections::command_sections(&app);
 
-        let titles: Vec<&str> = rows.iter().map(|row| row.title.as_str()).collect();
-        assert_eq!(titles[0], "wl", "the rows were {titles:?}");
+        let kinds: Vec<_> = listed.iter().map(|part| part.kind).collect();
         assert_eq!(
-            titles[titles.len() - 2..],
-            ["\"wl\" → start with codex", "\"wl\" → start with claude"],
-            "the rows were {titles:?}"
+            kinds,
+            [
+                Some(sections::SectionKind::Commands),
+                Some(sections::SectionKind::Files),
+                Some(sections::SectionKind::Contents),
+                Some(sections::SectionKind::Task),
+            ]
         );
+        let titles = |part: &sections::Listed| -> Vec<String> {
+            part.commands.iter().map(|row| row.title.clone()).collect()
+        };
+        assert_eq!(titles(&listed[0])[0], "wl");
+        assert_eq!(titles(&listed[3]), ["\"wl\" → start with codex"]);
+        let task_row = &listed[3].rows[0];
+        let chips: Vec<&str> = task_row
+            .choices
+            .iter()
+            .map(|choice| choice.label.as_str())
+            .collect();
+        assert_eq!(chips, ["claude", "codex"]);
+        assert_eq!(task_row.picked, 1, "the selected agent should be picked");
+        // Searched once typing pauses: until then the two keep their room.
+        assert!(listed[1].commands.is_empty() && listed[1].placeholders == 3);
+        assert!(listed[2].commands.is_empty() && listed[2].placeholders == 2);
+
+        // The agent the last quick task was started with comes before the selector's.
+        app.model.settings = Some(crate::settings::Settings {
+            quick_task_agent: AgentKind::Claude,
+            ..crate::settings::Settings::default()
+        });
+        let listed = sections::command_sections(&app);
+        assert_eq!(titles(&listed[3]), ["\"wl\" → start with claude"]);
     }
 
     #[test]

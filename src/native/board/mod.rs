@@ -450,7 +450,7 @@ pub(crate) fn available_agents(app: &App) -> Vec<AgentKind> {
     agents
 }
 
-pub(super) fn agent_label(agent: AgentKind) -> String {
+pub(crate) fn agent_label(agent: AgentKind) -> String {
     match agent {
         AgentKind::None => "no agent".to_string(),
         other => other.label().to_lowercase(),

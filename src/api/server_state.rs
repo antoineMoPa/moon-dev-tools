@@ -33,6 +33,8 @@ pub(crate) struct AppState {
     /// state is built - under test that is on the test's own thread, which is what gives
     /// each test a file of its own. See [`crate::settings::path`].
     pub(crate) settings_path: Option<std::path::PathBuf>,
+    /// The same for the palette's history - see [`crate::palette_history::path`].
+    pub(crate) palette_history_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Default)]

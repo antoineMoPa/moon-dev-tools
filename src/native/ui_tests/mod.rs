@@ -40,6 +40,8 @@ mod layout;
 mod open_from_shell;
 mod palette;
 mod palette_long_rows;
+pub(crate) mod palette_history;
+pub(crate) mod palette_sections;
 mod palette_search_switch;
 mod project;
 mod settings_pane;

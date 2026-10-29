@@ -557,7 +557,7 @@ pub(crate) enum SearchLine<T> {
 }
 
 /// One line of the repo that a content search found.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContentMatch {
     pub(crate) file_path: String,
     /// Counted from one, the way the number in an editor's fringe is.

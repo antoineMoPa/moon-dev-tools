@@ -7,7 +7,7 @@ use crate::native::{theme::Palette, widgets};
 
 /// What a run's dot says about it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Activity {
+pub(crate) enum Activity {
     /// Going, and printing: green.
     Running,
     /// Asking for a person - a question, a permission, a bell - and nobody has typed into

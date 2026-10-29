@@ -386,6 +386,7 @@ mod tests {
             ],
             indent: None,
             day_ends_at: None,
+            palette_shell: None,
         });
         harness.run();
 

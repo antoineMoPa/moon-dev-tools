@@ -143,6 +143,12 @@ pub(crate) const DATES_ARRIVALS_IN: &str = "done";
 /// [`crate::native::board::days_work`].
 pub(crate) const COUNTS_A_DAYS_WORK_IN: &str = "done";
 
+/// The column a quick task's card leaves the palette's history in, by the same reckoning: a
+/// finished task has no agent to bring back to. See [`crate::native::palette::history`]. A
+/// browser's window starts no quick task.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const ENDS_QUICK_TASKS_IN: &str = "done";
+
 /// What a column is called for it to be given the day's-work line without being asked - see
 /// [`BoardColumn::marks_a_days_work`]. By what it is called rather than by its id, unlike the
 /// rules above: a board whose queue was made by hand has it under an id of its own - `big` -

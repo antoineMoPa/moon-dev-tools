@@ -33,6 +33,11 @@ const SHELL_BUTTON_GAP: f32 = 6.0;
 /// The shell button's box.
 const SHELL_BUTTON_SIZE: f32 = 18.0;
 
+/// The box's id, known before the box is drawn so the arrow keys and Enter can be taken
+/// from it first: a single line box would move its caret with them, and give the keyboard up
+/// on Enter.
+const FILTER_BOX_ID: &str = "submodule-hub-filter";
+
 /// The query the hub is being narrowed by, ready to match paths against: trimmed and folded
 /// to lowercase once here rather than once per submodule.
 struct Filter(String);
@@ -79,7 +84,7 @@ struct Group {
     rows: Vec<Row>,
 }
 
-pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: egui_frames::PaneId) {
     let palette = app.palette_of();
     let filter = Filter::of(&app.model.submodule_filter);
     let groups = groups_of(app, &filter);
@@ -99,6 +104,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
     ));
     let changes_column =
         widest(ui, rows().map(|row| &row.changes), &small, &palette) + CHANGES_COLUMN_GAP;
+    let moved = follow_keys(app, ui, pane_id, &rows().collect::<Vec<_>>());
     // The shell button sits outside the row, to its right, so a narrow pane leaves room for it.
     let row_width = (changes_column + widest_name + ROW_PADDING * 2.0)
         .min(ui.available_width() - 2.0 - SHELL_BUTTON_GAP - SHELL_BUTTON_SIZE);
@@ -150,7 +156,20 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
                                         ui.add_space(2.0);
                                     }
                                     for row in &group.rows {
-                                        draw_row(app, ui, row, changes_column, row_width, &palette);
+                                        let highlighted = app.model.submodule_highlight.as_ref()
+                                            == Some(&row.path_under_repo);
+                                        let rect = draw_row(
+                                            app,
+                                            ui,
+                                            row,
+                                            highlighted,
+                                            changes_column,
+                                            row_width,
+                                            &palette,
+                                        );
+                                        if highlighted && moved {
+                                            ui.scroll_to_rect(rect, None);
+                                        }
                                     }
                                 });
                             });
@@ -166,6 +185,54 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui) {
         });
 }
 
+/// Walk the rows with ↑ and ↓ and open the one walked to with Enter, while the hub is the
+/// tab in front and no other box has the keyboard - its own box may, since it is typed into
+/// to narrow the list and then moved through. With a query typed and no row walked to, Enter opens the first match.
+/// Whether the walk moved this frame, so the row it is on is scrolled into view.
+fn follow_keys(app: &mut App, ui: &mut Ui, pane_id: egui_frames::PaneId, rows: &[&Row]) -> bool {
+    let typed = Filter::of(&app.model.submodule_filter);
+    let on = app
+        .model
+        .submodule_highlight
+        .as_ref()
+        .and_then(|path| rows.iter().position(|row| &row.path_under_repo == path));
+    let on = match on {
+        Some(place) => Some(place),
+        None if typed.is_on() && !rows.is_empty() => Some(0),
+        None => None,
+    };
+    app.model.submodule_highlight = on.map(|place| rows[place].path_under_repo.clone());
+    let box_has_keys = ui.memory(|memory| memory.has_focus(egui::Id::new(FILTER_BOX_ID)));
+    let hub_in_front = app.model.pane_in_front == Some(pane_id);
+    // The palette and the find bar are drawn over the hub and take these keys themselves.
+    let keys_are_ours = hub_in_front
+        && !app.model.palette.is_open()
+        && app.model.find.is_none()
+        && (box_has_keys || !ui.ctx().egui_wants_keyboard_input());
+    if !keys_are_ours || rows.is_empty() {
+        return false;
+    }
+    let (down, up, enter) = ui.input_mut(|input| {
+        (
+            input.consume_key(Modifiers::NONE, Key::ArrowDown),
+            input.consume_key(Modifiers::NONE, Key::ArrowUp),
+            input.consume_key(Modifiers::NONE, Key::Enter),
+        )
+    });
+    let last = rows.len() - 1;
+    let to = match (on, down, up) {
+        (None, true, false) => Some(0),
+        (Some(place), true, false) => Some((place + 1).min(last)),
+        (Some(place), false, true) => Some(place.saturating_sub(1)),
+        _ => on,
+    };
+    app.model.submodule_highlight = to.map(|place| rows[place].path_under_repo.clone());
+    if enter && let Some(place) = to {
+        app.pending_action = Some(CommandAction::OpenPane(rows[place].opens.clone()));
+    }
+    to != on
+}
+
 /// The box the list is narrowed with, and the way back to the whole list.
 ///
 /// It takes the keyboard when the hub is opened, so a hub brought up to find one submodule
@@ -176,6 +243,7 @@ fn draw_filter_box(app: &mut App, ui: &mut Ui, palette: &Palette) {
     ui.horizontal(|ui| {
         let entry = ui.add(
             egui::TextEdit::singleline(&mut app.model.submodule_filter)
+                .id(egui::Id::new(FILTER_BOX_ID))
                 .hint_text("Filter submodules")
                 .desired_width(FILTER_BOX_WIDTH)
                 .margin(egui::Margin::symmetric(6, 3)),
@@ -207,6 +275,7 @@ fn draw_filter_box(app: &mut App, ui: &mut Ui, palette: &Palette) {
 
     if cleared {
         app.model.submodule_filter.clear();
+        app.model.submodule_highlight = None;
     }
     ui.add_space(4.0);
 }
@@ -314,14 +383,16 @@ fn unpushed_label(unpushed_commits: usize) -> Option<String> {
 
 /// A row is one target: anywhere on it opens the review of that repo. The shell button to its
 /// right opens a shell in that repo instead.
+/// One row, lit as it is under the pointer when the arrow keys are on it. Where it was drawn.
 fn draw_row(
     app: &mut App,
     ui: &mut Ui,
     row: &Row,
+    highlighted: bool,
     changes_column: f32,
     row_width: f32,
     palette: &Palette,
-) {
+) -> egui::Rect {
     // The id the row is interacted with below, made here so what is drawn and what is
     // clicked are the same target rather than two ids that happen to look alike.
     let id = ui.id().with(&row.path_under_repo);
@@ -329,10 +400,11 @@ fn draw_row(
     // Where the name was drawn, which the shell button beside the row is levelled with.
     let mut name_rect = egui::Rect::NOTHING;
     let response = ui.allocate_ui(vec2(row_width, 0.0), |ui| {
-        let hovered = ui
-            .ctx()
-            .read_response(id)
-            .is_some_and(|response| response.hovered());
+        let hovered = highlighted
+            || ui
+                .ctx()
+                .read_response(id)
+                .is_some_and(|response| response.hovered());
         // Nothing at all until the pointer is on it: at rest the hub is a list of names, and
         // the fill and border fading up are what say the whole block is one target.
         let shown = ui
@@ -419,6 +491,7 @@ fn draw_row(
             repo_path: row.repo_path.clone(),
         }));
     }
+    response.response.rect
 }
 
 /// A prompt, `>_`, as a button: quiet until the pointer is on it.

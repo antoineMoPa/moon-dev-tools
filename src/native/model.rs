@@ -111,6 +111,13 @@ pub(crate) struct Model {
     /// Set when the hub is opened or brought forward, so its box takes the keyboard: the
     /// hub is a list to find one submodule in, and typing is how it is found.
     pub(crate) submodule_filter_focus: bool,
+    /// The hub's row the arrow keys are on, by its path under the repo: the list is read
+    /// again as statuses come in and the box is typed into, and a place in it would move.
+    pub(crate) submodule_highlight: Option<String>,
+    /// The pane in front of the active frame, noted before the panes are drawn: the
+    /// arrangement is lent out while they are, so a pane cannot ask it whether it is the one
+    /// the keyboard is talking to.
+    pub(crate) pane_in_front: Option<egui_frames::PaneId>,
     /// Every repo the board's tasks have asked to have looked at, in deploy order - see
     /// [`crate::moontasks::ReviewRequestView`]. Kept on the model rather than carried on a
     /// [`crate::moontasks::TaskView`] because the commit pane reads it too, and it has to be
@@ -297,6 +304,9 @@ pub(crate) struct ProjectEditor {
     pub(crate) indent: egui_moon_editor::Indent,
     /// When a day of work on this project ends - see [`ProjectConfig::day_ends_at`].
     pub(crate) day_ends_at: crate::project::TimeOfDay,
+    /// Not shown in the pane, only carried through it so a save keeps what the file says -
+    /// see [`ProjectConfig::palette_shell`].
+    pub(crate) palette_shell: Option<bool>,
 }
 
 /// One target's three boxes.
@@ -350,6 +360,7 @@ impl ProjectEditor {
             selected: 0,
             indent: config.indent(),
             day_ends_at: config.day_ends_at(),
+            palette_shell: config.palette_shell,
         }
     }
 
@@ -373,7 +384,9 @@ impl ProjectEditor {
             .iter()
             .map(|target| BuildTarget::typed(&target.name, &target.build, &target.run))
             .collect();
-        ProjectConfig::typed(targets, self.indent).with_day_ending_at(self.day_ends_at)
+        ProjectConfig::typed(targets, self.indent)
+            .with_day_ending_at(self.day_ends_at)
+            .with_palette_shell(self.palette_shell)
     }
 }
 

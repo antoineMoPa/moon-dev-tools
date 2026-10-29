@@ -118,10 +118,7 @@ impl App {
                 .error("the window's repo has not been read yet".to_string());
             return;
         };
-        let line = format!(
-            "cd {} && {command}",
-            crate::shell_quoting::single_quoted(&repo_root.to_string_lossy())
-        );
+        let line = line_at_repo(&repo_root, &command);
         let Some(terminal) = self.terminals.get(terminal_id) else {
             self.model
                 .error("the shell the project's commands run in is gone".to_string());
@@ -343,4 +340,12 @@ impl App {
         };
         self.spawn_terminal(session_id, None, placement);
     }
+}
+
+/// `command` as a line that goes to the repo at `repo_root` before it runs.
+pub(crate) fn line_at_repo(repo_root: &std::path::Path, command: &str) -> String {
+    format!(
+        "cd {} && {command}",
+        crate::shell_quoting::single_quoted(&repo_root.to_string_lossy())
+    )
 }

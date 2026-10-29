@@ -3,7 +3,9 @@
 //! what moon puts in it.
 
 use egui::{Color32, Key, RichText, vec2};
-use egui_command_palette::{LineAccessory, Row, View};
+#[cfg(not(target_arch = "wasm32"))]
+use egui_command_palette::Choice;
+use egui_command_palette::{LineAccessory, Row, Section, SectionHeader, View};
 
 pub(in crate::native) use egui_command_palette::{Kept, cut_to_width, pressed_outside};
 
@@ -19,7 +21,11 @@ use crate::{
 use super::rows::{
     empty_message, footnote, hint_of, refresh_content_matches, refresh_file_matches,
 };
-use super::{Command, CommandAction, PaletteMode, rows_for};
+use super::sections::{
+    Listed, SectionKind, command_sections, keep_shown_matches, opened_by_header,
+    refresh_section_searches, remember_highlight, restore_highlight, section_to_open,
+};
+use super::{Command, PaletteMode, history, rows_for};
 
 /// The gap between the query line's edge and what is typed in it.
 const LINE_PADDING: i8 = 7;
@@ -51,25 +57,27 @@ fn style_of(palette: &Palette) -> egui_command_palette::PaletteStyle {
         text: palette.ink,
         muted: palette.muted,
         shadow: Color32::from_black_alpha(60),
-        row_height: 34.0,
+        row_height: 42.0,
         title_size: UI_SIZE,
         detail_size: SMALL_SIZE - 1.0,
-        detail_top: 19.0,
+        title_top: 8.0,
+        detail_top: 24.0,
+        header_height: 32.0,
     }
 }
 
 /// The row of the list a command is.
-fn row_of(command: &Command) -> Row {
+pub(super) fn row_of(command: &Command) -> Row {
     Row {
         title: command.title.clone(),
         description: command.description.clone(),
         shortcut: command.shortcut.map(bindings::describe).unwrap_or_default(),
-        title_color: title_color_of(&command.action),
+        ..Row::default()
     }
 }
 
-/// The colour each agent's quick task is written in, so the row says which agent it starts
-/// before it is read.
+/// The colour each agent is written in on a quick task's row, so the row says which agent it
+/// starts before it is read.
 #[cfg(not(target_arch = "wasm32"))]
 const AGENT_INKS: &[(crate::api::AgentKind, Color32)] = &[
     (crate::api::AgentKind::Claude, Color32::from_rgb(0xd9, 0x77, 0x57)),
@@ -78,20 +86,54 @@ const AGENT_INKS: &[(crate::api::AgentKind, Color32)] = &[
     (crate::api::AgentKind::Pi, Color32::from_rgb(0xea, 0xb6, 0x5d)),
 ];
 
-/// The colour a command's title is set apart in: a quick task made out of what was typed is
-/// written in its agent's colour - see [`crate::native::board::quick_task`] - so it reads as
-/// something other than the window's commands. `None` is the ordinary ink.
-fn title_color_of(action: &CommandAction) -> Option<Color32> {
-    match action {
-        #[cfg(not(target_arch = "wasm32"))]
-        CommandAction::StartQuickTask { agent, .. } => Some(
-            AGENT_INKS
-                .iter()
-                .find(|(of, _)| of == agent)
-                .map(|(_, ink)| *ink)
-                .expect("every agent a quick task is offered for has an ink"),
-        ),
-        _ => None,
+/// An agent's colour.
+#[cfg(not(target_arch = "wasm32"))]
+fn ink_of(agent: crate::api::AgentKind) -> Color32 {
+    AGENT_INKS
+        .iter()
+        .find(|(of, _)| *of == agent)
+        .map(|(_, ink)| *ink)
+        .expect("every agent a quick task is offered for has an ink")
+}
+
+/// The row of a quick task made out of what was typed - see
+/// [`crate::native::board::quick_task`]: the agent it starts with named in its colour, so it
+/// reads as something other than the window's commands, and a chip per agent at its end.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn quick_task_row(
+    task: &crate::native::board::quick_task::QuickTask,
+    command: &Command,
+) -> Row {
+    Row {
+        inked: vec![(task.agent_in_title(&command.title), ink_of(task.agent))],
+        choices: task
+            .agents
+            .iter()
+            .map(|agent| Choice {
+                label: crate::native::board::agent_label(*agent),
+                ink: ink_of(*agent),
+            })
+            .collect(),
+        picked: task
+            .agents
+            .iter()
+            .position(|agent| *agent == task.agent)
+            .expect("the agent a quick task starts with is one of its agents"),
+        ..row_of(command)
+    }
+}
+
+/// A quick task's row in the palette's history - see [`super::history`]: the agent's dot, the
+/// title, and the agent named in its colour.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn quick_task_entry_row(title: &str, agent: crate::api::AgentKind) -> Row {
+    let label = crate::native::board::agent_label(agent);
+    let title = format!("\"{title}\" · {label}");
+    Row {
+        dot: Some(ink_of(agent)),
+        inked: vec![(title.len() - label.len()..title.len(), ink_of(agent))],
+        title,
+        ..Row::default()
     }
 }
 
@@ -127,8 +169,15 @@ impl LineAccessory for SearchLine<'_> {
 
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     if !app.model.palette.is_open() {
+        // Put away by its own box - a press elsewhere - which knows nothing of the line of
+        // shell under it.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.model.palette.shell = None;
+        }
         return;
     }
+    history::take_escape(app, ctx);
     // A press anywhere else - a shell, a tab, a pane in the next frame over - puts the palette
     // away and belongs to whatever was pressed.
     if app.model.palette.input.dismissal_requested(ctx) {
@@ -147,26 +196,65 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
             .palette
             .switch_search(other_search(app.model.palette.mode));
     }
+    // Tab on a row of the files or the lines the command list found opens the whole list
+    // of them, on the same query.
+    if app.model.palette.mode == PaletteMode::Commands
+        && let Some(to) = section_to_open(app)
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Tab))
+    {
+        app.model.palette.open_section(to);
+    }
+    // Only the command list takes a line of shell: the searches look for what is typed.
+    #[cfg(not(target_arch = "wasm32"))]
+    let shell_line = super::shell::typed_line(app)
+        .filter(|_| app.model.palette.mode == PaletteMode::Commands)
+        .map(ToOwned::to_owned);
+    #[cfg(target_arch = "wasm32")]
+    let shell_line: Option<String> = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    super::shell::follow_query(app);
     match app.model.palette.mode {
-        PaletteMode::Commands
-        | PaletteMode::Rename
-        | PaletteMode::Places
-        | PaletteMode::CodeActions => {}
+        PaletteMode::Rename | PaletteMode::Places | PaletteMode::CodeActions => {}
+        // A line of shell is not looked for in the repo.
+        PaletteMode::Commands if shell_line.is_some() => app.model.palette.stop_searches(),
+        PaletteMode::Commands => {
+            refresh_section_searches(app, ctx);
+            keep_shown_matches(app);
+        }
         PaletteMode::Files => refresh_file_matches(app),
         PaletteMode::Contents => refresh_content_matches(app),
     }
     let palette = app.palette_of();
     *app.model.palette.input.style_mut() = style_of(&palette);
-    let matches = rows_for(app);
-    let rows: Vec<Row> = matches.iter().map(row_of).collect();
+    let listed = match app.model.palette.mode {
+        PaletteMode::Commands => command_sections(app),
+        _ => vec![Listed::bare(rows_for(app))],
+    };
+    let row_count: usize = listed.iter().map(|part| part.commands.len()).sum();
     let hint = hint_of(app);
     let empty = empty_message(app);
-    let note = footnote(app, matches.len());
+    let note = footnote(app, row_count);
+    let sections = sections_of(&listed, description_kept(app.model.palette.mode));
+    restore_highlight(app, &listed);
+    let mut entries = history::shown_entries(app);
+    let on_first_row = app.model.palette.input.highlighted() == 0;
+    let entry_run = history::take_keys(app, ctx, &entries, on_first_row);
+    // ⌘Enter on a line of shell opens it in a shell of its own.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(line) = &shell_line
+        && entry_run.is_none()
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::Enter))
+    {
+        super::shell::open_in_terminal(app, line);
+        return;
+    }
+    let cursor = &app.model.palette.history.cursor;
     let view = View {
         hint: &hint,
         empty: &empty,
         footnote: note.as_deref(),
-        description_kept: description_kept(app.model.palette.mode),
+        label: cursor.searching().then_some(history::SEARCH_LABEL),
+        highlight_shown: !cursor.active(),
     };
     let mut line = SearchLine {
         mode: app.model.palette.mode,
@@ -176,15 +264,30 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         switched_to: None,
     };
 
-    let chosen = app
+    let shown = app
         .model
         .palette
         .input
-        .show_rows(ctx, &rows, &view, &mut line);
+        .show_sections(ctx, &sections, &view, &mut line);
     let switched_to = line.switched_to;
+    remember_highlight(app, &listed);
+    let entry_clicked = history::draw(app, ctx, &entries);
+    #[cfg(not(target_arch = "wasm32"))]
+    super::shell::draw_output(app, ctx);
+
+    if let Some(index) = entry_run.or(entry_clicked) {
+        history::run(app, ctx, entries.swap_remove(index));
+        return;
+    }
 
     if let Some(to) = switched_to {
         app.model.palette.switch_search(to);
+    }
+    if let Some(index) = shown.more_clicked {
+        app.model
+            .palette
+            .open_section(opened_by_header(&listed, index));
+        return;
     }
     // A name typed from `/` or `~` is a path of the disk, which the file picker browses and
     // completes - the finder only searches the repo. A file for a task's card stays a file
@@ -198,12 +301,57 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         app.pick_file_to_edit_from(&typed);
         return;
     }
-    if let Some(index) = chosen
-        && let Some(command) = matches.into_iter().nth(index)
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((row, choice)) = shown.picked {
+        super::sections::pick_task_agent(app, &listed, row, choice);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((row, choice)) = shown.choice_clicked {
+        app.model.palette.dismiss();
+        app.pending_action = Some(super::sections::task_started_from_chip(
+            app, &listed, row, choice,
+        ));
+        return;
+    }
+    // Enter on a line of shell runs it under the palette, which its row keeps open.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(line) = &shell_line
+        && shown.chosen.is_some()
     {
+        super::shell::run(app, ctx, line);
+        return;
+    }
+    if let Some(index) = shown.chosen
+        && let Some(command) = listed.into_iter().flat_map(|part| part.commands).nth(index)
+    {
+        if let Some(thing) = history::thing_of(app, app.model.palette.mode, &command) {
+            app.record_in_history(thing);
+        }
         app.model.palette.dismiss();
         app.pending_action = Some(command.action);
     }
+}
+
+/// The parts of the list as the palette draws them. The searches' sections keep the end of
+/// a path, whatever the mode keeps of a row.
+fn sections_of(listed: &[Listed], mode_kept: Kept) -> Vec<Section<'_>> {
+    listed
+        .iter()
+        .map(|part| Section {
+            header: part.header.as_ref().map(|header| SectionHeader {
+                label: header.label,
+                count: &header.count,
+                busy: header.busy,
+                more: header.more.as_deref(),
+            }),
+            rows: &part.rows,
+            description_kept: match part.kind {
+                Some(SectionKind::Files | SectionKind::Contents) => Kept::End,
+                Some(SectionKind::Commands | SectionKind::Task) | None => mode_kept,
+            },
+            placeholders: part.placeholders,
+        })
+        .collect()
 }
 
 /// The box the palette is drawn in, floating over the window. The file picker is the same

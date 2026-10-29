@@ -54,6 +54,13 @@ impl App {
         self.change_settings(SettingsChange::SelectAgentModel { agent, model });
     }
 
+    /// Offer the next quick task with the agent this one was started with - see
+    /// [`crate::settings::Settings::quick_task_agent`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn remember_quick_task_agent(&mut self, agent: crate::api::AgentKind) {
+        self.change_settings(SettingsChange::SelectQuickTaskAgent(agent));
+    }
+
     /// Mark this window's project with a color, and keep `settings.json` in step.
     ///
     /// A window that is on no project yet - the launch screen - has nothing to mark: the

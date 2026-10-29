@@ -17,6 +17,7 @@ use crate::{
         self, AttachResourceRequest, BoardColumn, BoardTaskView, ColumnId, CreateTaskRequest,
         ReviewRequestView, StartResourceRequest, TaskView, review_request::Amend,
     },
+    palette_history::{HistoryEntry, HistoryRecord},
     project::{ProjectConfig, ProjectRunRequest},
     search::SearchListener,
     settings::{Settings, SettingsChange},
@@ -357,6 +358,14 @@ impl Backend for LocalBackend {
 
     fn change_settings(&self, change: SettingsChange) -> Result<()> {
         crate::settings::change(&self.state, change)
+    }
+
+    fn palette_history(&self, session_id: &str) -> Result<Vec<HistoryEntry>> {
+        crate::palette_history::served(&self.state, session_id)
+    }
+
+    fn record_in_palette_history(&self, session_id: &str, record: &HistoryRecord) -> Result<()> {
+        crate::palette_history::change(&self.state, session_id, record.clone())
     }
 
     fn project_commands(&self, session_id: &str) -> Result<ProjectConfig> {

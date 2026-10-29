@@ -355,7 +355,7 @@ const AGENT_QUIET_AFTER_SECS: u64 = 10;
 /// What a run's dot says - see [`Activity`]. A shell asking for a person says so over
 /// anything else; only an agent run reads as quiet, and only once it has been so for
 /// [`AGENT_QUIET_AFTER_SECS`].
-fn activity_of(resource: &TaskResourceView) -> Activity {
+pub(crate) fn activity_of(resource: &TaskResourceView) -> Activity {
     // Going in a process that is no shell of this moon: that it is going is all there is to
     // say of it from here.
     if resource.going_elsewhere_in.is_some() {

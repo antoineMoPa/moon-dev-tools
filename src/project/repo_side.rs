@@ -33,6 +33,8 @@ struct ProjectFile {
     indent: Option<egui_moon_editor::Indent>,
     #[serde(default)]
     day_ends_at: Option<TimeOfDay>,
+    #[serde(default)]
+    palette_shell: Option<bool>,
 }
 
 impl ProjectFile {
@@ -60,6 +62,7 @@ impl ProjectFile {
             targets,
             indent: self.indent,
             day_ends_at: self.day_ends_at,
+            palette_shell: self.palette_shell,
         }
     }
 }

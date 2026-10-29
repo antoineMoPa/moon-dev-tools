@@ -246,9 +246,10 @@ impl App {
 
     /// Do what the menu asked for. Each pick is deferred into `pending_action` like a
     /// palette command, or into the tab slot, so nothing is opened while the tree is drawn.
+    /// A pick the palette also offers goes into its history.
     pub(crate) fn apply_menu_actions(&mut self, picked: Vec<MenuAction>) {
         for action in picked {
-            self.pending_action = Some(match action {
+            let picked = match action {
                 #[cfg(target_arch = "wasm32")]
                 MenuAction::FocusTab(pane_id) => {
                     // Not focused here: the hamburger of a phone's tab strip is drawn while the
@@ -336,7 +337,11 @@ impl App {
                     self.show_palette();
                     continue;
                 }
-            });
+            };
+            // Kept in the palette's history like a row run from it, so a menu item is one ↑
+            // away the next time, under the name the palette knows it by.
+            self.record_menu_pick(&picked);
+            self.pending_action = Some(picked);
         }
     }
 

@@ -84,7 +84,9 @@ impl App {
 
     /// Open the command palette, on the applications the server has installed now.
     pub(crate) fn show_palette(&mut self) {
-        self.model.palette.show();
+        let in_front = self.review_in_front();
+        self.model.palette.show_commands(in_front);
         self.list_installed_applications();
+        self.load_palette_history();
     }
 }

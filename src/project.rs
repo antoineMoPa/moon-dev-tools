@@ -216,6 +216,11 @@ pub(crate) struct ProjectConfig {
     /// rather than the person: one worked on in the evenings ends later than the day job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) day_ends_at: Option<TimeOfDay>,
+    /// Whether a line typed after `!` in the command palette runs as shell - see
+    /// [`ProjectConfig::palette_shell`]. Set to `false` by hand in a project where running
+    /// shell from the palette is of no use; the configuration pane keeps what the file says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) palette_shell: Option<bool>,
 }
 
 impl ProjectConfig {
@@ -246,6 +251,12 @@ impl ProjectConfig {
         self.day_ends_at.unwrap_or(DAY_ENDS_AT)
     }
 
+    /// Whether the palette runs `!` lines as shell in this project, which it does until the
+    /// file says otherwise.
+    pub(crate) fn palette_shell(&self) -> bool {
+        self.palette_shell.unwrap_or(true)
+    }
+
     /// What the configuration pane is holding, as a file to write. This is the one place a
     /// target whose name box is blank is dropped - so a file written by the native pane and
     /// one written through the web say the same thing about a target nobody named.
@@ -257,6 +268,7 @@ impl ProjectConfig {
                 .collect(),
             indent: Some(indent),
             day_ends_at: None,
+            palette_shell: None,
         }
     }
 
@@ -264,6 +276,13 @@ impl ProjectConfig {
     pub(crate) fn with_day_ending_at(self, day_ends_at: TimeOfDay) -> Self {
         Self {
             day_ends_at: Some(day_ends_at),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_palette_shell(self, palette_shell: Option<bool>) -> Self {
+        Self {
+            palette_shell,
             ..self
         }
     }

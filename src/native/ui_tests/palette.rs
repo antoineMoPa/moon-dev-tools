@@ -221,7 +221,7 @@ fn typing_in_the_palette_highlights_the_first_match_again() {
         .lock()
         .expect("poisoned")
         .expect("the palette should have been drawn");
-    let over_lower_row = egui::pos2(palette.center().x, palette.min.y + 110.0);
+    let over_lower_row = egui::pos2(palette.center().x, palette.min.y + 200.0);
     for at in [over_lower_row - egui::vec2(10.0, 0.0), over_lower_row] {
         harness.input_mut().events.push(egui::Event::PointerMoved(at));
         harness.run_steps(1);
