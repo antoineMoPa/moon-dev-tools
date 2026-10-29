@@ -494,6 +494,93 @@ fn a_repo_of_the_combined_review_is_committed_under_its_diff() {
     );
 }
 
+/// ⌘F over the combined review searches every repo in it, counting the matches down the pane
+/// in the order the repos stand, so stepping walks from one repo's diff into the next.
+#[test]
+fn find_over_the_combined_review_steps_from_one_repo_into_the_next() {
+    let fixture = seeded_fixture("task-review-find");
+    add_submodule(&fixture, "crates/dirty", &["new.rs"]);
+    fixture.write("crates/dirty/new.rs", "// values\n");
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/metadata.json",
+        "{\n  \"title\": \"Deploy the thing\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
+    fixture.write(
+        ".moontasks/deploy-the-thing-1111/request_for_review.txt",
+        "crates/dirty/ // fix: the submodule\n. // chore: take the module forward\n",
+    );
+
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    // How many matches the bar counts, and the repos whose review holds the current one.
+    let seen = Arc::new(Mutex::new((0usize, Vec::<String>::new())));
+    let seen_in_ui = Arc::clone(&seen);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.open_pane(OpenPaneRequest::Tasks);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            let total = app.model.find.as_ref().map_or(0, |find| find.total);
+            let holding: Vec<String> = app
+                .model
+                .review_sessions_of_repos
+                .iter()
+                .filter(|(_, session_id)| {
+                    app.model
+                        .review_ref(session_id)
+                        .is_some_and(|review| review.find_match.is_some())
+                })
+                .map(|(repo_path, _)| repo_path.clone())
+                .collect();
+            *seen_in_ui.lock().expect("poisoned") = (total, holding);
+        });
+    assert!(
+        wait_for_labels(&mut harness, &["review all 2 repos"]),
+        "the card should offer every pending review at once"
+    );
+    harness.get_by_label("review all 2 repos").click();
+    assert!(
+        wait_for_labels(&mut harness, &["new.rs", "src/extra.rs"]),
+        "the combined review should show the changes of both repos"
+    );
+
+    // Act
+    super::press_key(&mut harness, egui::Key::F, egui::Modifiers::COMMAND);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("values".to_string()));
+    harness.step();
+    harness.run_steps(3);
+
+    // Assert: the submodule's one match comes first, the line above the root's.
+    let (total, holding) = seen.lock().expect("poisoned").clone();
+    assert!(
+        total >= 3,
+        "the submodule's match and the root's should all be counted, got {total}"
+    );
+    assert_eq!(holding.len(), 1, "one repo holds the current match: {holding:?}");
+    assert!(
+        holding[0].ends_with("crates/dirty"),
+        "the first match is the submodule's: {holding:?}"
+    );
+
+    super::press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    let (_, holding) = seen.lock().expect("poisoned").clone();
+    assert_eq!(holding.len(), 1, "one repo holds the current match: {holding:?}");
+    assert!(
+        !holding[0].ends_with("crates/dirty"),
+        "Enter should have stepped into the root's diff: {holding:?}"
+    );
+}
+
 /// Step the window until every one of `labels` is on screen, for up to the time `settle` gives.
 fn wait_for_labels(harness: &mut Harness<'_>, labels: &[&str]) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);

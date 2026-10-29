@@ -3,8 +3,8 @@
 //! One bar, belonging to one pane at a time - the pane that had the keyboard when it opened.
 //! What "search" means is the pane's own business: a shell looks through its screen and its
 //! scrollback, a review looks through every hunk it is showing rather than only the ones on
-//! screen, and an open file and a task's notes mark the matches in their text - see
-//! [`TextSearch`]. All this file owns is the query, which match of them is the current one,
+//! screen - a task's review through those of each of its repos - and an open file and a
+//! task's notes mark the matches in their text - see [`TextSearch`]. All this file owns is the query, which match of them is the current one,
 //! and the bar the two are typed and stepped through in.
 
 use std::ops::Range;
@@ -24,6 +24,7 @@ use crate::native::{app::App, model::ToastKind, panes::PaneKind, theme::SMALL_SI
 /// ⌘F with its own filter instead of a bar.
 const SEARCHABLE: &[PaneKind] = &[
     PaneKind::Review,
+    PaneKind::TaskReview,
     PaneKind::Terminal,
     PaneKind::File,
     PaneKind::Start,

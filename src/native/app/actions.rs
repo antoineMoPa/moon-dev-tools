@@ -835,11 +835,13 @@ impl App {
         }
     }
 
-    /// Run the find bar's search over a review, and tell the bar what it found.
+    /// Run the find bar's search over the reviews a pane shows, one under the other, and tell
+    /// the bar what it found. A review's pane shows one; a task's review shows each repo the
+    /// task asks to have reviewed, and its matches are counted down the pane in that order.
     ///
     /// A search walks every hunk, so it only happens when the bar asks - a changed query or a
     /// step to another match - rather than on every frame the review draws.
-    pub(crate) fn apply_review_find(&mut self, pane_id: PaneId, session_id: &str) {
+    pub(crate) fn apply_review_find(&mut self, pane_id: PaneId, session_ids: &[String]) {
         let Some((query, at, pending)) = self
             .model
             .find
@@ -848,31 +850,39 @@ impl App {
             .map(|find| (find.query.clone(), find.at, find.pending))
         else {
             // No bar on this pane: nothing of a previous search stays marked.
-            let review = self.model.review(session_id);
-            review.find_query.clear();
-            review.find_match = None;
+            for session_id in session_ids {
+                let review = self.model.review(session_id);
+                review.find_query.clear();
+                review.find_match = None;
+            }
             return;
         };
 
-        self.model.review(session_id).find_query = query.clone();
+        for session_id in session_ids {
+            self.model.review(session_id).find_query = query.clone();
+        }
         if !pending {
             return;
         }
 
-        let found = crate::native::review::search::find_all(self, session_id, &query);
-        let current = found.get(at).cloned();
-        let review = self.model.review(session_id);
-        // Bringing the line into view is what makes a match in a file scrolled far away
-        // findable - the line rather than its hunk, which can be taller than the window.
-        review.scroll_to = current
-            .as_ref()
-            .map(|found| crate::native::model::ScrollTo {
-                hunk_id: found.hunk_id.clone(),
-                line_index: Some(found.line_index),
-            });
-        review.find_match = current;
+        let mut total = 0;
+        for session_id in session_ids {
+            let found = crate::native::review::search::find_all(self, session_id, &query);
+            let current = at.checked_sub(total).and_then(|at| found.get(at)).cloned();
+            total += found.len();
+            let review = self.model.review(session_id);
+            // Bringing the line into view is what makes a match in a file scrolled far away
+            // findable - the line rather than its hunk, which can be taller than the window.
+            if let Some(current) = &current {
+                review.scroll_to = Some(crate::native::model::ScrollTo {
+                    hunk_id: current.hunk_id.clone(),
+                    line_index: Some(current.line_index),
+                });
+            }
+            review.find_match = current;
+        }
         if let Some(find) = &mut self.model.find {
-            find.found(found.len());
+            find.found(total);
         }
     }
 }

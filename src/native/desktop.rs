@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 
 #[cfg(target_os = "macos")]
 use super::text_without_a_key;
-use super::{Launch, app, logos};
+use super::{Launch, app, crash_report, logos};
 use crate::{
     api::OpenSessionRequest,
     backend::{local::LocalBackend, remote::RemoteBackend},
@@ -111,6 +111,7 @@ pub(crate) fn run(launch: Launch) -> Result<()> {
 }
 
 fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
+    crash_report::install();
     // Which project it is on is only known once the session opens, and the window says so
     // then; until then it is named after the executable alone.
     let title = app::window_title(launch.frame, None);
@@ -156,6 +157,9 @@ fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
                 super::window_drag::install();
             }
             app.restore_layout_from(creation.storage);
+            if let Some(crash) = crash_report::take_unshown() {
+                app.model.error(crash);
+            }
             Ok(Box::new(app))
         }),
     )

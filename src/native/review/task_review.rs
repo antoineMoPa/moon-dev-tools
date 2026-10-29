@@ -20,6 +20,7 @@
 use std::sync::Arc;
 
 use egui::{Rect, RichText, Ui};
+use egui_frames::PaneId;
 
 use crate::{
     api::{OpenSessionRequest, SessionPayload},
@@ -54,7 +55,7 @@ struct RepoUnderReview {
     error: Option<String>,
 }
 
-pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
+pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
     let palette = app.palette_of();
     let requests: Vec<ReviewRequestView> = app
         .model
@@ -71,6 +72,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, task_id: &str) {
         .into_iter()
         .map(|request| repo_under_review(app, request))
         .collect();
+    // The find bar looks through the diffs drawn here: a repo committed from this pane is
+    // down to its committed line, so there is nothing of it left to find.
+    let searched: Vec<String> = repos
+        .iter()
+        .filter(|repo| repo.request.pending() && repo.payload.is_some())
+        .filter_map(|repo| repo.session_id.clone())
+        .collect();
+    app.apply_review_find(pane_id, &searched);
 
     egui::Panel::top(egui::Id::new(("task-review-header", task_id)))
         .frame(

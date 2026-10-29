@@ -622,12 +622,12 @@ impl PaneView<Pane> for App {
         match pane {
             Pane::Review { session_id, .. } => {
                 let session_id = session_id.clone();
-                self.apply_review_find(pane_id, &session_id);
+                self.apply_review_find(pane_id, std::slice::from_ref(&session_id));
                 review::draw(self, ui, &session_id);
             }
             Pane::TaskReview { task_id, .. } => {
                 let task_id = task_id.clone();
-                review::task_review::draw(self, ui, &task_id);
+                review::task_review::draw(self, ui, pane_id, &task_id);
             }
             Pane::Agents => review::draw_agents(self, ui),
             Pane::Terminal { terminal_id, .. } => {

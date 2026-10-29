@@ -15,6 +15,8 @@ mod commit_pane_request_tests;
 #[cfg(test)]
 mod commit_pane_tests;
 pub(crate) mod completing;
+#[cfg(not(target_arch = "wasm32"))]
+mod crash_report;
 pub(crate) mod definition;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod desktop;
