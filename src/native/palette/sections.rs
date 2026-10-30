@@ -1,6 +1,6 @@
 //! Sections - the command list as it is drawn while something is typed: the commands that
-//! match, then the start of what the file finder and the content search find for the same
-//! query, then the quick tasks.
+//! match, then the quick task, then the start of what the file finder and the content search
+//! find for the same query.
 //!
 //! The two searches are the ones the Files and Contents modes run, started once typing
 //! pauses. Each section shows the first few of its matches, in the places they first came in,
@@ -30,9 +30,9 @@ const SEARCH_MIN_CHARS: usize = 2;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SectionKind {
     Commands,
+    Task,
     Files,
     Contents,
-    Task,
 }
 
 /// What a section is, as the list draws it.
@@ -47,11 +47,18 @@ struct SectionLayout {
 }
 
 /// The sections in the order they are listed in, which never changes: where to look for a
-/// file is learnt once.
+/// file is learnt once. The ones that are there at once come first, so the searches growing
+/// below them move nothing.
 const SECTION_LAYOUTS: [SectionLayout; 4] = [
     SectionLayout {
         kind: SectionKind::Commands,
         label: "Commands",
+        shown_at_most: None,
+        opens: None,
+    },
+    SectionLayout {
+        kind: SectionKind::Task,
+        label: "Task",
         shown_at_most: None,
         opens: None,
     },
@@ -66,12 +73,6 @@ const SECTION_LAYOUTS: [SectionLayout; 4] = [
         label: "Contents",
         shown_at_most: Some(2),
         opens: Some(PaletteMode::Contents),
-    },
-    SectionLayout {
-        kind: SectionKind::Task,
-        label: "Task",
-        shown_at_most: None,
-        opens: None,
     },
 ];
 
@@ -128,11 +129,6 @@ pub(crate) struct SectionsState {
     highlighted: Option<RowKey>,
     files: ShownMatches<String>,
     contents: ShownMatches<ContentMatch>,
-    /// The agent picked on the task row with ← and →, which it starts with until the palette
-    /// is put away. `None` is the window's selected agent - see
-    /// [`crate::native::board::quick_task::offered`].
-    #[cfg(not(target_arch = "wasm32"))]
-    task_agent: Option<crate::api::AgentKind>,
 }
 
 /// One part of the list, ready to draw: its header, if the list is in sections, and its
@@ -319,24 +315,20 @@ pub(super) fn command_sections(app: &App) -> Vec<Listed> {
     }
     let mut listed = Vec::new();
     listed.extend(whole_section(SectionKind::Commands, commands));
+    #[cfg(not(target_arch = "wasm32"))]
+    listed.extend(task_section(app, query));
     if searches_repo(app) {
         let asked = asked_of(app);
         listed.extend(file_section(app, &asked));
         listed.extend(content_section(app, &asked));
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    listed.extend(task_section(app, query));
     listed
 }
 
 /// What is typed as the title of a quick task: one row, with a chip per agent.
 #[cfg(not(target_arch = "wasm32"))]
 fn task_section(app: &App, query: &str) -> Option<Listed> {
-    let task = crate::native::board::quick_task::offered(
-        app,
-        query,
-        app.model.palette.sections.task_agent,
-    )?;
+    let task = crate::native::board::quick_task::offered(app, query)?;
     let command = task.command();
     Some(Listed {
         kind: Some(SectionKind::Task),
@@ -373,21 +365,10 @@ fn task_agent_at(
         Some(SectionKind::Task),
         "only the task row has chips"
     );
-    let task = crate::native::board::quick_task::offered(
-        app,
-        app.model.palette.query(),
-        app.model.palette.sections.task_agent,
-    )
-    .expect("the task row was listed for what is typed");
+    let task = crate::native::board::quick_task::offered(app, app.model.palette.query())
+        .expect("the task row was listed for what is typed");
     let agent = task.agents[choice];
     (task, agent)
-}
-
-/// The agent picked with ← or → on the task row, kept for the rest of this opening.
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn pick_task_agent(app: &mut App, listed: &[Listed], row: usize, choice: usize) {
-    let (_, agent) = task_agent_at(app, listed, row, choice);
-    app.model.palette.sections.task_agent = Some(agent);
 }
 
 /// What a click on a chip of the task row runs: the task, started with that chip's agent.

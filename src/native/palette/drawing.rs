@@ -302,10 +302,6 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         return;
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some((row, choice)) = shown.picked {
-        super::sections::pick_task_agent(app, &listed, row, choice);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some((row, choice)) = shown.choice_clicked {
         app.model.palette.dismiss();
         app.pending_action = Some(super::sections::task_started_from_chip(

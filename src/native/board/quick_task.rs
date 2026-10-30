@@ -33,11 +33,10 @@ pub(crate) struct QuickTask {
     pub(crate) agent: AgentKind,
 }
 
-/// The quick task for `query` as a title, with the agent picked in the palette since it
-/// opened, or else the one the last quick task was started with, or else the window's
-/// selected agent, or else the first of them. None for an
-/// empty query, which is no title, or a machine without an agent to start.
-pub(crate) fn offered(app: &App, query: &str, picked: Option<AgentKind>) -> Option<QuickTask> {
+/// The quick task for `query` as a title, with the agent the last quick task was started
+/// with, or else the window's selected agent, or else the first of them. None for an empty
+/// query, which is no title, or a machine without an agent to start.
+pub(crate) fn offered(app: &App, query: &str) -> Option<QuickTask> {
     let title = query.trim();
     if title.is_empty() {
         return None;
@@ -57,7 +56,7 @@ pub(crate) fn offered(app: &App, query: &str, picked: Option<AgentKind>) -> Opti
         .filter(|agent| *agent != AgentKind::None)
         .collect();
     let first = *agents.first()?;
-    let agent = [picked, last_started, selected]
+    let agent = [last_started, selected]
         .into_iter()
         .flatten()
         .find(|agent| agents.contains(agent))

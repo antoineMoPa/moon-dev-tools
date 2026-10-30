@@ -142,10 +142,10 @@ pub(crate) fn offer_agents(app: &mut App, agents: &[AgentKind], selected: AgentK
     }));
 }
 
-/// → on the highlighted task row picks the next agent, wrapping round after the last, and
-/// Enter starts the task with the one picked.
+/// ← and → on the task row are the query line's, to move along what is typed; Enter starts
+/// the task with the agent its row has picked.
 #[test]
-fn arrows_pick_the_task_rows_agent_and_enter_starts_it() {
+fn arrows_leave_the_task_rows_agent_and_enter_starts_it() {
     let fixture = seeded_fixture("palette-task-chips");
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     offer_agents(
@@ -183,7 +183,7 @@ fn arrows_pick_the_task_rows_agent_and_enter_starts_it() {
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
     assert_eq!(
         *started.lock().expect("poisoned"),
-        Some(AgentKind::Claude),
-        "two steps right of codex, past pi, should wrap round to claude"
+        Some(AgentKind::Codex),
+        "the arrows should have moved the caret, not the agent"
     );
 }

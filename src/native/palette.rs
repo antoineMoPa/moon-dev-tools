@@ -379,17 +379,17 @@ mod tests {
             kinds,
             [
                 Some(sections::SectionKind::Commands),
+                Some(sections::SectionKind::Task),
                 Some(sections::SectionKind::Files),
                 Some(sections::SectionKind::Contents),
-                Some(sections::SectionKind::Task),
             ]
         );
         let titles = |part: &sections::Listed| -> Vec<String> {
             part.commands.iter().map(|row| row.title.clone()).collect()
         };
         assert_eq!(titles(&listed[0])[0], "wl");
-        assert_eq!(titles(&listed[3]), ["\"wl\" → start with codex"]);
-        let task_row = &listed[3].rows[0];
+        assert_eq!(titles(&listed[1]), ["\"wl\" → start with codex"]);
+        let task_row = &listed[1].rows[0];
         let chips: Vec<&str> = task_row
             .choices
             .iter()
@@ -398,8 +398,8 @@ mod tests {
         assert_eq!(chips, ["claude", "codex"]);
         assert_eq!(task_row.picked, 1, "the selected agent should be picked");
         // Searched once typing pauses: until then the two keep their room.
-        assert!(listed[1].commands.is_empty() && listed[1].placeholders == 3);
-        assert!(listed[2].commands.is_empty() && listed[2].placeholders == 2);
+        assert!(listed[2].commands.is_empty() && listed[2].placeholders == 3);
+        assert!(listed[3].commands.is_empty() && listed[3].placeholders == 2);
 
         // The agent the last quick task was started with comes before the selector's.
         app.model.settings = Some(crate::settings::Settings {
@@ -407,7 +407,7 @@ mod tests {
             ..crate::settings::Settings::default()
         });
         let listed = sections::command_sections(&app);
-        assert_eq!(titles(&listed[3]), ["\"wl\" → start with claude"]);
+        assert_eq!(titles(&listed[1]), ["\"wl\" → start with claude"]);
     }
 
     #[test]
