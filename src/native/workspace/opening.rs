@@ -1,7 +1,7 @@
 //! Opening a pane: where each kind of pane lands, and the one already open that is brought
 //! forward instead of a second copy.
 
-use egui_frames::{FrameId, PaneId};
+use egui_frames::{DropSide, FrameId, PaneId};
 
 use crate::{
     api::OpenSessionRequest,
@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::{TerminalPlacement, add_right_column, place_shell};
+use super::{TerminalPlacement, add_right_column, frame_at_the_right, place_shell};
 
 impl App {
     /// Open a pane where its kind belongs: reviews with reviews, shells with shells, and a
@@ -238,6 +238,27 @@ impl App {
                 if let Some(pane) = standing_in {
                     self.close_pane(pane);
                 }
+            }
+            OpenPaneRequest::ToldAgent {
+                terminal_id,
+                command,
+                task_id,
+            } => {
+                let reviewing = self.model.layout.active_pane().map(|(pane, _)| pane);
+                self.open_pane(OpenPaneRequest::AttachTerminal {
+                    terminal_id: terminal_id.clone(),
+                    command,
+                    task_id: Some(task_id),
+                });
+                let Some(reviewing) = reviewing else {
+                    return;
+                };
+                if let Some((agent, _)) = self.model.layout.find_pane(
+                    |pane| matches!(pane, Pane::Terminal { terminal_id: open, .. } if *open == terminal_id),
+                ) {
+                    self.move_out_from_behind(agent, reviewing);
+                }
+                self.model.layout.focus_pane(reviewing);
             }
             OpenPaneRequest::TaskStart { task_id, title } => {
                 // One start window a task: asking for it again brings it forward.
@@ -559,6 +580,27 @@ impl App {
         }
         self.let_go_of_shell(&replaced);
         self.model.layout.focus_pane(task_tab);
+    }
+
+    /// A tab sharing its frame with the pane being read is hidden by it, so it goes to the frame
+    /// at the right, or into a new column when that is the same frame. A workspace too narrow
+    /// for a column leaves it where it is.
+    fn move_out_from_behind(&mut self, pane: PaneId, in_front: PaneId) {
+        let columns_fit = self.model.columns_fit;
+        let layout = &mut self.model.layout;
+        let frame = layout.frame_of(in_front);
+        if layout.frame_of(pane) != frame {
+            return;
+        }
+        match frame_at_the_right(layout).filter(|right| Some(*right) != frame) {
+            Some(right) => layout.move_pane_to_frame(pane, right, DropSide::Tabs, None),
+            None if columns_fit => layout.move_pane_against_edge(
+                pane,
+                DropSide::Right,
+                egui_frames::DEFAULT_EDGE_SHARE,
+            ),
+            None => {}
+        }
     }
 
     /// The start window open on this task, if one is.

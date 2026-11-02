@@ -7,6 +7,7 @@ pub(crate) mod header;
 pub(crate) mod hunks;
 pub(crate) mod image_diff;
 pub(crate) mod minimap;
+pub(crate) mod running_agents;
 pub(crate) mod search;
 pub(crate) mod sidebar;
 pub(crate) mod task_review;

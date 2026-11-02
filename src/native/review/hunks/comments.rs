@@ -11,12 +11,13 @@ use crate::{
         model::{Draft, hash_of},
         palette::CommandAction,
         panes::OpenPaneRequest,
+        review::running_agents,
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
 };
 
-use super::actions::{current_selection, open_draft};
+use super::actions::{open_draft, selected_lines};
 use super::gutter_width;
 
 /// How big the bubble that opens a composer is. Wider than a diff row is tall, because a row
@@ -94,9 +95,9 @@ pub(super) fn draw_comment_bubble(
     }
 
     if response.clicked()
-        && let Some(selection) = current_selection(app, session_id, &hunk.id)
+        && let Some(selected) = selected_lines(app, session_id, &hunk.id)
     {
-        open_draft(app, session_id, hunk, selection);
+        open_draft(app, session_id, hunk, selected);
     }
     response.contains_pointer() || response.clicked()
 }
@@ -142,7 +143,12 @@ pub(super) fn draw_inline_comment(
                 if let Some(dispatch) = &dispatch
                     && dispatch.status != crate::api::CommentDispatchStatus::Idle
                 {
-                    let label = format!("{} · {}", dispatch.agent.label(), dispatch.detail);
+                    // A running agent's dispatch names the agent in its own words.
+                    let label = if dispatch.agent == crate::api::AgentKind::None {
+                        dispatch.detail.clone()
+                    } else {
+                        format!("{} · {}", dispatch.agent.label(), dispatch.detail)
+                    };
                     let label = label.trim_end_matches(" · ");
                     if dispatch.status == crate::api::CommentDispatchStatus::Batched {
                         widgets::pill(ui, label, palette.ink, palette.batch_bg);
@@ -208,6 +214,7 @@ fn delete_comment(app: &mut App, session_id: &str, hunk: &HunkView, comment_inde
                     hunk_id: hunk_id.clone(),
                     comment: comment.clone(),
                     batch: false,
+                    patch_excerpt: String::new(),
                 },
             )
         });
@@ -258,6 +265,10 @@ pub(super) fn draw_composer(
         .as_ref()
         .map(|payload| payload.selected_agent)
         .unwrap_or_default();
+    let running = payload.as_ref().map_or_else(Vec::new, |payload| {
+        running_agents::offered(app, session_id, &payload.repo_path)
+    });
+    let chosen = running_agents::chosen(app.model.review(session_id), &running).cloned();
 
     let mut send = false;
     let mut batch = false;
@@ -330,9 +341,10 @@ pub(super) fn draw_composer(
                 cancel = true;
             }
 
-            ui.horizontal(|ui| {
+            // Wraps: an agent's name is as long as its task's title made it.
+            ui.horizontal_wrapped(|ui| {
                 let ready = !draft.note.trim().is_empty();
-                let has_agent = agent != crate::api::AgentKind::None;
+                let has_agent = chosen.is_some() || agent != crate::api::AgentKind::None;
 
                 // The comment goes wherever this says, so the choice sits beside the button
                 // that sends it.
@@ -344,16 +356,22 @@ pub(super) fn draw_composer(
                         hash_of(anchor),
                         agent,
                         &payload.available_agents,
-                        palette,
+                        &running,
+                        chosen.as_ref(),
                     );
                 }
 
                 // Saving a comment with an agent selected hands it over there and then; that
                 // is what the server does, so the button has to say so.
-                let (label, hint) = if has_agent {
+                let (label, hint) = if let Some(chosen) = &chosen {
                     (
-                        format!("send to {}", agent.label()),
-                        "write this comment and hand it over now (cmd+return)",
+                        format!("send to `{}`", chosen.agent.name),
+                        "paste this comment and its patch into the running agent (cmd+return)",
+                    )
+                } else if has_agent {
+                    (
+                        format!("new {} run", agent.label()),
+                        "write this comment and start an agent on it now (cmd+return)",
                     )
                 } else {
                     (
@@ -435,22 +453,28 @@ pub(super) fn draw_composer(
         comment: draft.note.trim().to_string(),
         resolved: false,
     });
-    let comment = build_anchored_comment_value(&anchored);
+    let request = crate::api::CommentRequest {
+        hunk_id: hunk.id.clone(),
+        comment: build_anchored_comment_value(&anchored),
+        batch,
+        patch_excerpt: draft.patch_excerpt.clone(),
+    };
 
     remove_this_draft(app);
     app.model.review(session_id).selection = None;
 
-    let hunk_id = hunk.id.clone();
     let for_call = session_id.to_string();
+    let told = chosen.filter(|_| !batch);
+    if let Some(told) = &told {
+        crate::native::review::running_agents::show_told_agent(app, told);
+    }
+    let told_to = told.map(|told| told.agent);
     app.tasks
         .act(session_id, "could not save the comment", move |backend| {
-            backend.set_comment(
-                &for_call,
-                crate::api::CommentRequest {
-                    hunk_id: hunk_id.clone(),
-                    comment: comment.clone(),
-                    batch,
-                },
-            )
+            let request = request.clone();
+            match &told_to {
+                Some(agent) => backend.tell_comment(&for_call, request, agent),
+                None => backend.set_comment(&for_call, request),
+            }
         });
 }

@@ -20,7 +20,7 @@ use crate::api::AgentKind;
 /// How many entries a project keeps: running a 101st drops the oldest.
 pub(crate) const HISTORY_KEPT: usize = 100;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
 const HISTORY_FILE_NAME: &str = "palette-history.json";
 
 /// One thing run from the palette, and when it last was.

@@ -14,6 +14,7 @@ mod tests;
 
 pub(crate) use comments::{
     cancel_dispatch, dispatch_log, resolve_comment, resolve_comment_by_key, send_comment_batch,
+    tell_comment, tell_held_comments,
     update_comment,
 };
 pub(crate) use encrypted_files::{decrypted_session_file, write_encrypted_session_file};

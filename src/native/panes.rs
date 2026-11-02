@@ -377,6 +377,13 @@ pub(crate) enum OpenPaneRequest {
         command: Option<AgentKind>,
         task_id: Option<String>,
     },
+    /// The running agent a review's comment just went to, brought on screen to answer it while
+    /// the keyboard stays in the review.
+    ToldAgent {
+        terminal_id: String,
+        command: Option<AgentKind>,
+        task_id: String,
+    },
     File {
         session_id: String,
         file_path: String,

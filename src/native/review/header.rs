@@ -1,6 +1,7 @@
 //! The strip at the top of a review: what is being reviewed and the review-wide actions.
 //! The agent selector lives in the comment composer, but is defined here with the batch
-//! send that shares its choice.
+//! send that shares its choice. A task review has no strip of this kind and draws the batch
+//! send on each repo's bar.
 
 use egui::{Align, Layout, RichText, Ui};
 
@@ -9,6 +10,7 @@ use crate::{
     native::{
         agent_logins,
         app::App,
+        review::running_agents::{self, CommentTarget, OfferedAgent},
         theme::{Palette, SMALL_SIZE},
         widgets,
     },
@@ -43,15 +45,6 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, beside: bool, p
     let repo_path = &payload.repo_path;
     let label = review_label(&payload);
     let read_only = payload.read_only;
-    let selected_agent = payload.selected_agent;
-    // Only comments actually held for a batch can be batch-sent. Counting every unresolved
-    // comment here would offer to send ones that were already dispatched, and the send would
-    // then quietly do nothing.
-    let batched = payload
-        .review_comments
-        .iter()
-        .filter(|comment| comment.dispatch.status == CommentDispatchStatus::Batched)
-        .count();
     let full_file_path = payload.full_file_path.as_deref();
 
     ui.horizontal(|ui| {
@@ -103,32 +96,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, beside: bool, p
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if batched > 0 {
-                let has_agent = selected_agent != AgentKind::None;
-                let label = format!("send {batched} to {}", selected_agent.label());
-                let button =
-                    widgets::clickable(ui.add_enabled(has_agent, egui::Button::new(label)));
-                let button = if has_agent {
-                    button.on_hover_text("hand every held comment to the agent now")
-                } else {
-                    button.on_disabled_hover_text("pick an agent first")
-                };
-
-                if button.clicked() {
-                    let for_call = session_id.to_string();
-                    let note = format!(
-                        "sent {batched} comment{} to {}",
-                        if batched == 1 { "" } else { "s" },
-                        selected_agent.label()
-                    );
-                    app.tasks.act_and_say(
-                        session_id,
-                        "could not send the comments",
-                        note,
-                        move |backend| backend.send_comment_batch(&for_call),
-                    );
-                }
-            }
+            draw_batch_send(app, ui, session_id, &payload);
 
             if let Some(path) = full_file_path
                 && widgets::quiet_button(ui, "view file")
@@ -152,9 +120,69 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, session_id: &str, beside: bool, p
     });
 }
 
+/// The button that hands every held comment over, where they are going being what the
+/// composers last chose. Draws nothing while no comment is held.
+pub(crate) fn draw_batch_send(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    payload: &crate::api::SessionPayload,
+) {
+    // Only comments actually held for a batch can be batch-sent. Counting every unresolved
+    // comment here would offer to send ones that were already dispatched, and the send would
+    // then quietly do nothing.
+    let batched = payload
+        .review_comments
+        .iter()
+        .filter(|comment| comment.dispatch.status == CommentDispatchStatus::Batched)
+        .count();
+    if batched == 0 {
+        return;
+    }
+
+    let offered = running_agents::offered(app, session_id, &payload.repo_path);
+    let told = running_agents::chosen(app.model.review(session_id), &offered).cloned();
+    let running = told.as_ref().map(|told| told.agent.clone());
+    let selected_agent = payload.selected_agent;
+    let goes_somewhere = running.is_some() || selected_agent != AgentKind::None;
+    let destination = running
+        .as_ref()
+        .map_or(selected_agent.label(), |agent| agent.name.as_str())
+        .to_string();
+    let label = format!("send {batched} to {destination}");
+    let button = widgets::clickable(ui.add_enabled(goes_somewhere, egui::Button::new(label)));
+    let button = if goes_somewhere {
+        button.on_hover_text("hand every held comment to the agent now")
+    } else {
+        button.on_disabled_hover_text("pick an agent first")
+    };
+
+    if button.clicked() {
+        if let Some(told) = &told {
+            running_agents::show_told_agent(app, told);
+        }
+        let for_call = session_id.to_string();
+        let note = format!(
+            "sent {batched} comment{} to {destination}",
+            if batched == 1 { "" } else { "s" },
+        );
+        app.tasks.act_and_say(
+            session_id,
+            "could not send the comments",
+            note,
+            move |backend| match &running {
+                Some(agent) => backend.tell_held_comments(&for_call, agent),
+                None => backend.send_comment_batch(&for_call),
+            },
+        );
+    }
+}
+
 /// The picker for where comments go. It lives in the comment composer, beside the button
 /// that sends the comment - and more than one composer can be open, so each brings a salt
-/// of its own to keep the drop-downs apart.
+/// of its own to keep the drop-downs apart. The running agents come first when there are any,
+/// and `chosen` is the one of them comments go to, over the agent a new run would be.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_agent_select(
     app: &mut App,
     ui: &mut Ui,
@@ -162,12 +190,17 @@ pub(crate) fn draw_agent_select(
     salt: u64,
     selected: AgentKind,
     agents: &[crate::api::AgentOption],
-    palette: &Palette,
+    running: &[OfferedAgent],
+    chosen: Option<&OfferedAgent>,
 ) {
-    let selected_label = agents
-        .iter()
-        .find(|agent| agent.kind == selected)
-        .map(|agent| agent.label.clone())
+    let selected_label = chosen
+        .map(|offered| offered.agent.name.clone())
+        .or_else(|| {
+            agents
+                .iter()
+                .find(|agent| agent.kind == selected)
+                .map(|agent| agent.label.clone())
+        })
         .unwrap_or_else(|| selected.label().to_string());
 
     // The shell that logs the person in to an agent, when the menu was asked for one.
@@ -175,7 +208,15 @@ pub(crate) fn draw_agent_select(
     egui::ComboBox::from_id_salt(("agent-select", session_id, salt))
         .selected_text(RichText::new(selected_label).size(SMALL_SIZE))
         .width(112.0)
+        .truncate()
         .show_ui(ui, |ui| {
+            if !running.is_empty() {
+                ui.label(RichText::new("this task").size(SMALL_SIZE - 1.0).weak());
+                for offered in running {
+                    draw_running_agent(app, ui, session_id, offered, chosen);
+                }
+                ui.label(RichText::new("new agent").size(SMALL_SIZE - 1.0).weak());
+            }
             for agent in agents {
                 // An agent the person is not logged in to says so and can be picked all the
                 // same: the server only reads the signs of a login.
@@ -188,12 +229,15 @@ pub(crate) fn draw_agent_select(
                 // menu explains the gap rather than hiding it.
                 let response = ui
                     .add_enabled_ui(agent.available, |ui| {
-                        ui.selectable_label(agent.kind == selected, label)
+                        ui.selectable_label(chosen.is_none() && agent.kind == selected, label)
                     })
                     .inner;
                 if !agent.available {
                     response.on_hover_text(format!("{} is not on PATH", agent.label));
                     continue;
+                }
+                if response.clicked() && !running.is_empty() {
+                    app.model.review(session_id).comment_target = CommentTarget::NewRun;
                 }
                 if response.clicked() && agent.kind != selected {
                     let kind = agent.kind;
@@ -217,8 +261,28 @@ pub(crate) fn draw_agent_select(
     if let Some(command) = log_in {
         app.run_in_shell(command);
     }
+}
 
-    let _ = palette;
+fn draw_running_agent(
+    app: &mut App,
+    ui: &mut Ui,
+    session_id: &str,
+    offered: &OfferedAgent,
+    chosen: Option<&OfferedAgent>,
+) {
+    let is_chosen =
+        chosen.is_some_and(|chosen| chosen.agent.terminal_id == offered.agent.terminal_id);
+    let state = if offered.needs_you {
+        "needs you"
+    } else {
+        "running"
+    };
+    let label = format!("{} · {state}", offered.agent.name);
+    if ui.selectable_label(is_chosen, label).clicked() {
+        app.model.review(session_id).comment_target = CommentTarget::RunningAgent {
+            terminal_id: offered.agent.terminal_id.clone(),
+        };
+    }
 }
 
 #[cfg(test)]

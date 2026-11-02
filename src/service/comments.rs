@@ -3,11 +3,12 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    api::{AgentLogPayload, AppState, RepoSession},
+    api::{AgentLogPayload, AppState, RepoSession, RunningAgent},
     comments::{
         agent_dispatch_log, anchored_comment_key, build_anchored_comment_value,
         cancel_comment_dispatch, parse_anchored_comments, plan_batched_comment_dispatches,
-        plan_comment_dispatches, spawn_comment_dispatch,
+        plan_comment_dispatches, plan_told_comment, plan_told_held_comments,
+        spawn_comment_dispatch, tell_running_agent,
     },
 };
 
@@ -97,6 +98,32 @@ pub(crate) fn send_comment_batch(state: &AppState, session_id: &str) -> Result<(
     }
 
     Ok(())
+}
+
+/// Write a comment and hand it to an agent already running on the task, rather than starting
+/// one.
+pub(crate) fn tell_comment(
+    state: &AppState,
+    session_id: &str,
+    request: &crate::api::CommentRequest,
+    agent: &RunningAgent,
+) -> Result<()> {
+    let told = crate::api::with_session(state, session_id, |session| {
+        plan_told_comment(session, request, agent)
+    })?;
+    tell_running_agent(state, session_id, told)
+}
+
+/// Hand every held comment to an agent already running on the task, as one message.
+pub(crate) fn tell_held_comments(
+    state: &AppState,
+    session_id: &str,
+    agent: &RunningAgent,
+) -> Result<()> {
+    let told = crate::api::with_session(state, session_id, |session| {
+        plan_told_held_comments(session, agent)
+    })?;
+    tell_running_agent(state, session_id, told)
 }
 
 pub(crate) fn cancel_dispatch(

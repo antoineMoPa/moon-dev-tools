@@ -19,6 +19,9 @@ pub(crate) struct Draft {
     pub(crate) header: String,
     /// The raw patch lines the comment is anchored to, exactly as they appear in the hunk.
     pub(crate) selection: String,
+    /// The same lines as a patch with their numbers, taken while the hunk's lines and the
+    /// selection in them were at hand: the selection moves on while a draft stays parked.
+    pub(crate) patch_excerpt: String,
     pub(crate) note: String,
     /// Set when the composer has just opened, so the text box takes focus once.
     pub(crate) focus: bool,
@@ -156,6 +159,10 @@ pub(crate) struct ReviewState {
     /// Every comment currently being written, each drawn as its own composer. Selecting a
     /// new run opens a new one; the others stay parked at their anchors with their text.
     pub(crate) drafts: Vec<Draft>,
+    /// Where this review's comments go - see [`crate::native::review::running_agents`].
+    pub(crate) comment_target: crate::native::review::running_agents::CommentTarget,
+    /// The task whose review pane last drew this review, whose agents are offered first.
+    pub(crate) reviewing_task: Option<String>,
     /// Full patches fetched for hunks whose preview was truncated, keyed by hunk.
     pub(crate) expanded_patches: HashMap<String, String>,
     /// What the find bar over this review is looking for, so the lines being drawn can mark
@@ -199,6 +206,8 @@ impl ReviewState {
             selection: None,
             selecting_in: None,
             drafts: Vec::new(),
+            comment_target: Default::default(),
+            reviewing_task: None,
             expanded_patches: HashMap::new(),
             find_query: String::new(),
             find_match: None,

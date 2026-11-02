@@ -37,8 +37,7 @@ fn tooltip_is_up(harness: &Harness<'_>) -> bool {
 /// What the test reads off the window after each frame.
 #[derive(Default, Clone)]
 struct Seen {
-    /// The tab on the file as it is, and its blame once it is there.
-    file_tab: Option<PaneId>,
+    /// The blame of the tab on the file as it is, once it is there.
     chunks: Option<Vec<BlameChunk>>,
     /// The tab on an old version of the file, if one has opened: which version, whether it
     /// is the tab in front, and its blame once it is there.
@@ -94,7 +93,6 @@ fn a_file_tab_shows_who_last_touched_each_stretch_of_it() {
             app.draw(ui);
 
             let mut now = Seen {
-                file_tab,
                 review_in_front: matches!(app.active_pane(), Some((_, Pane::Review { .. }))),
                 review_of: app
                     .model

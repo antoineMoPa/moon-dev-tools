@@ -27,7 +27,7 @@ use serde_json::json;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
+        AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, RunningAgent, CommitHistoryPayload,
         ContentMatch, FileContentPayload, LspCompletion, LspCompletionsPayload, LspDocumentRequest,
         LspLocation, LspLocationsPayload, LspPosition, LspPositionRequest, LspStatus,
         LspStatusPayload, LspTriggersPayload, LspWork, LspWorkPayload, OpenSessionRequest,
@@ -251,6 +251,7 @@ impl Backend for RemoteBackend {
                 "hunk_id": request.hunk_id,
                 "comment": request.comment,
                 "batch": request.batch,
+                "patch_excerpt": request.patch_excerpt,
             }),
         )
     }
@@ -265,6 +266,31 @@ impl Backend for RemoteBackend {
         self.post(
             &format!("/api/session/{session_id}/comment-batch"),
             &json!({}),
+        )
+    }
+
+    fn tells_running_agents(&self) -> bool {
+        false
+    }
+
+    fn tell_comment(
+        &self,
+        _session_id: &str,
+        _request: CommentRequest,
+        agent: &RunningAgent,
+    ) -> Result<()> {
+        anyhow::bail!(
+            "{} is on {}, which this window cannot type into",
+            agent.name,
+            self.base_url
+        )
+    }
+
+    fn tell_held_comments(&self, _session_id: &str, agent: &RunningAgent) -> Result<()> {
+        anyhow::bail!(
+            "{} is on {}, which this window cannot type into",
+            agent.name,
+            self.base_url
         )
     }
 

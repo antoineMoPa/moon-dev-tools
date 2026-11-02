@@ -298,3 +298,106 @@ fn only_one_line_of_text_is_told_and_only_to_a_shell_that_is_there() {
     assert!(session.told.lock().unwrap().waiting.is_empty());
     registry.remove(&terminal_id);
 }
+
+/// Turns bracketed paste on, as every agent's box does, and keeps exactly the bytes it is
+/// sent in the file it is named, with nothing of the terminal's between them and it.
+fn keeps_what_it_is_sent_in(file: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\n/bin/stty raw -echo\nprintf 'ready\\033[?2004h\\n'\nexec /bin/cat > '{}'\n",
+        file.display()
+    )
+}
+
+/// What became of a paste, as its sender hears it.
+fn paste_outcome() -> (OnPasteEnded, std::sync::mpsc::Receiver<PasteEnded>) {
+    let (ended, outcome) = std::sync::mpsc::channel();
+    (
+        Box::new(move |how| ended.send(how).expect("the test is listening")),
+        outcome,
+    )
+}
+
+/// A paste keeps its line breaks and goes in one bracketed piece, with an Enter of its own
+/// after it. A control character in the text does not reach the terminal: the end marker
+/// inside this one would otherwise end the paste early and send what follows as keystrokes.
+#[test]
+fn a_paste_arrives_whole_and_is_sent_by_an_enter_of_its_own() {
+    let received = std::env::temp_dir().join(format!("told-paste-{}", std::process::id()));
+    let registry = registry();
+    let terminal_id = spawn_fake_claude(&registry, &keeps_what_it_is_sent_in(&received));
+    let session = registry.get(&terminal_id).expect("expected the shell");
+    assert!(prints(&session, "ready", Duration::from_secs(10)));
+
+    let (on_ended, outcome) = paste_outcome();
+    registry
+        .tell_paste(
+            &terminal_id,
+            "one\ntwo\x1b[201~three",
+            Default::default(),
+            on_ended,
+        )
+        .expect("expected the shell to be told");
+
+    assert_eq!(
+        outcome
+            .recv_timeout(Duration::from_secs(15))
+            .expect("expected to hear how it ended"),
+        PasteEnded::Sent
+    );
+    let wanted: &[u8] = b"\x1b[200~one\ntwo[201~three\x1b[201~\r";
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::fs::read(&received).unwrap_or_default() != wanted && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    registry.remove(&terminal_id);
+    let arrived = std::fs::read(&received).expect("the program kept what it read");
+    std::fs::remove_file(&received).expect("expected to clear up");
+    assert_eq!(String::from_utf8_lossy(&arrived), String::from_utf8_lossy(wanted));
+}
+
+/// A program that never turned bracketed paste on would read each line break as an Enter.
+#[test]
+fn a_paste_is_refused_by_a_program_not_reading_pastes() {
+    let registry = registry();
+    let terminal_id = spawn_fake_claude(&registry, SAYS_BACK);
+
+    let (on_ended, outcome) = paste_outcome();
+    registry
+        .tell_paste(&terminal_id, "one\ntwo", Default::default(), on_ended)
+        .expect("expected the shell to be told");
+
+    assert_eq!(
+        outcome
+            .recv_timeout(Duration::from_secs(15))
+            .expect("expected to hear how it ended"),
+        PasteEnded::Failed("the agent is not reading pastes".to_string())
+    );
+    registry.remove(&terminal_id);
+}
+
+/// Taking a paste back does not wait for what is holding it: that is why it is taken back.
+#[test]
+fn a_paste_taken_back_while_held_never_reaches_the_shell() {
+    let registry = registry();
+    let terminal_id = spawn_fake_claude(&registry, ASKS_THEN_SAYS_BACK);
+    let session = registry.get(&terminal_id).expect("expected the shell");
+    assert!(prints(&session, "working", Duration::from_secs(10)));
+
+    let canceled: crate::api::CancelToken = Default::default();
+    let (on_ended, outcome) = paste_outcome();
+    registry
+        .tell_paste(&terminal_id, "one\ntwo", Arc::clone(&canceled), on_ended)
+        .expect("expected the shell to be told");
+    assert!(outcome.recv_timeout(Duration::from_secs(1)).is_err());
+
+    canceled.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    assert_eq!(
+        outcome
+            .recv_timeout(Duration::from_secs(5))
+            .expect("expected to hear how it ended"),
+        PasteEnded::Canceled
+    );
+    assert!(!printed(&session).contains("got["));
+    registry.remove(&terminal_id);
+}

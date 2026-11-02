@@ -68,6 +68,7 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
         .cloned()
         .collect();
     open_sessions(app, &requests);
+    mark_reviews_as_this_tasks(app, &requests);
     let repos: Vec<RepoUnderReview> = requests
         .into_iter()
         .map(|request| repo_under_review(app, request))
@@ -194,6 +195,21 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
 /// The minimap strip's widget id, derived from the task so the tests can find it.
 pub(crate) fn strip_id(task_id: &str) -> egui::Id {
     egui::Id::new(("moonreview-task-minimap", task_id))
+}
+
+/// The sessions are found by repo and shared with any other review of it, so a session says
+/// which task it is being read for: that task's agents are the ones a comment is offered first.
+fn mark_reviews_as_this_tasks(app: &mut App, requests: &[ReviewRequestView]) {
+    for request in requests {
+        if let Some(session_id) = app
+            .model
+            .review_sessions_of_repos
+            .get(&request.repo_path)
+            .cloned()
+        {
+            app.model.review(&session_id).reviewing_task = Some(request.task_id.clone());
+        }
+    }
 }
 
 /// Ask the server for the session of each repo that has none yet. Asking for a session of a
@@ -380,6 +396,11 @@ fn draw_repo(
                             .clicked()
                     {
                         app.open_commit_pane(session_id);
+                    }
+                    if let (Some(session_id), Some(payload)) = (&repo.session_id, &repo.payload) {
+                        crate::native::review::header::draw_batch_send(
+                            app, ui, session_id, payload,
+                        );
                     }
                 });
             });

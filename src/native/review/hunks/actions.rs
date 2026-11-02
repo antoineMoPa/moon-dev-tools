@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{body_text_x, code_rect, column_at, word_bounds_at};
+use super::{body_text_x, code_rect, column_at, excerpt::patch_excerpt, word_bounds_at};
 
 pub(super) fn draw_hunk_toolbar(
     app: &mut App,
@@ -328,6 +328,29 @@ fn selected_patch(app: &App, session_id: &str, hunk_id: &str) -> Option<(String,
     Some((patch, hunk.file_path.clone()))
 }
 
+/// What a comment is about: the raw lines it is anchored to, and the same lines as a patch.
+pub(super) struct SelectedLines {
+    raw: String,
+    patch_excerpt: String,
+}
+
+/// The selection in this hunk, once a comment is being opened on it. Separate from
+/// [`current_selection`], which every row asks of every frame.
+pub(super) fn selected_lines(
+    app: &mut App,
+    session_id: &str,
+    hunk_id: &str,
+) -> Option<SelectedLines> {
+    let raw = current_selection(app, session_id, hunk_id)?;
+    let selection = app.model.review_ref(session_id)?.selection?;
+    let (patch, file_path) = selected_patch(app, session_id, hunk_id)?;
+    let lines = app.diff_lines(hunk_id, &patch, &file_path);
+    Some(SelectedLines {
+        raw,
+        patch_excerpt: patch_excerpt(&file_path, &lines, selection.line_range())?,
+    })
+}
+
 /// The raw patch lines the user has selected in this hunk, if any.
 pub(super) fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) -> Option<String> {
     let selection = app.model.review_ref(session_id)?.selection?;
@@ -355,7 +378,16 @@ pub(super) fn current_selection(app: &mut App, session_id: &str, hunk_id: &str) 
 /// Composers that have nothing typed in them are put away first - an unwritten box was a
 /// place to type, not a comment. Typed ones stay parked exactly where they are: a comment
 /// being written never moves and is never thrown away by selecting somewhere else.
-pub(super) fn open_draft(app: &mut App, session_id: &str, hunk: &HunkView, selection: String) {
+pub(super) fn open_draft(
+    app: &mut App,
+    session_id: &str,
+    hunk: &HunkView,
+    selected: SelectedLines,
+) {
+    let SelectedLines {
+        raw: selection,
+        patch_excerpt,
+    } = selected;
     let review = app.model.review(session_id);
     review.drafts.retain(|draft| !draft.note.trim().is_empty());
     if let Some(existing) = review
@@ -372,6 +404,7 @@ pub(super) fn open_draft(app: &mut App, session_id: &str, hunk: &HunkView, selec
         file_path: hunk.file_path.clone(),
         header: hunk.header.clone(),
         selection,
+        patch_excerpt,
         note: String::new(),
         focus: true,
         pending_discard: false,

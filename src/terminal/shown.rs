@@ -14,6 +14,7 @@ use libghostty_vt::{
     Terminal as Emulator, TerminalOptions,
     render::{CellIterator, RenderState, RowIterator},
     selection::FormatOptions,
+    terminal::Mode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +56,22 @@ impl TerminalSession {
             .context("failed to read the size of the shell")?;
         let printed = self.scrollback.lock().unwrap().replay();
         text_of(&printed, size.cols, size.rows, wanted)
+    }
+
+    /// Whether the program has turned bracketed paste on, which is a mode of what it printed
+    /// rather than anything the pty knows.
+    pub(super) fn reads_bracketed_pastes(&self) -> Result<bool> {
+        let printed = self.scrollback.lock().unwrap().replay();
+        let mut emulator = Emulator::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 0,
+        })
+        .map_err(|error| anyhow!("failed to create a terminal: {error}"))?;
+        emulator.vt_write(&printed);
+        emulator
+            .mode(Mode::BRACKETED_PASTE)
+            .map_err(|error| anyhow!("failed to read a terminal's mode: {error}"))
     }
 }
 

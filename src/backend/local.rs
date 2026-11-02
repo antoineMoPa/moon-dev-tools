@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::{
     api::{
-        AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommentRequest,
+        AgentKind, AgentLogPayload, AppState, BlameOf, BlamePayload, CommentRequest, RunningAgent,
         CommitHistoryPayload, ContentMatch, FileContentPayload, LspCompletion, LspLocation,
         LspPosition, LspStatus, LspWork, OpenSessionRequest, PatchPayload, SearchScope,
         SessionOpened, SessionPayload, SubmoduleHubPayload,
@@ -214,6 +214,23 @@ impl Backend for LocalBackend {
 
     fn send_comment_batch(&self, session_id: &str) -> Result<()> {
         service::send_comment_batch(&self.state, session_id)
+    }
+
+    fn tells_running_agents(&self) -> bool {
+        true
+    }
+
+    fn tell_comment(
+        &self,
+        session_id: &str,
+        request: CommentRequest,
+        agent: &RunningAgent,
+    ) -> Result<()> {
+        service::tell_comment(&self.state, session_id, &request, agent)
+    }
+
+    fn tell_held_comments(&self, session_id: &str, agent: &RunningAgent) -> Result<()> {
+        service::tell_held_comments(&self.state, session_id, agent)
     }
 
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()> {

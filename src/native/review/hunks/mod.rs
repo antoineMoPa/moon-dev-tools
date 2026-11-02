@@ -12,6 +12,7 @@
 
 mod actions;
 mod comments;
+mod excerpt;
 mod lines;
 mod sideways;
 

@@ -30,6 +30,8 @@ pub(crate) struct CommentDispatchState {
     pub(crate) agent: AgentKind,
     pub(crate) cancel_token: Option<CancelToken>,
     pub(crate) log: Option<AgentLog>,
+    /// The commented lines as a patch, kept for as long as the comment is held back.
+    pub(crate) patch_excerpt: String,
 }
 
 pub(crate) struct CommentUpdate {
@@ -437,7 +439,10 @@ pub(crate) fn plan_batched_comment_dispatches(
     }])
 }
 
-fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> CommentUpdate {
+pub(crate) fn apply_comment_update(
+    session: &mut RepoSession,
+    request: &CommentRequest,
+) -> CommentUpdate {
     let previous_comment = session
         .comments
         .get(&request.hunk_id)
@@ -530,6 +535,7 @@ fn queue_dispatch_job(
             agent: session.selected_agent,
             cancel_token: cancel_token.as_ref().map(Arc::clone),
             log: None,
+            patch_excerpt: request.patch_excerpt.clone(),
         },
     );
 

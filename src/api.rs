@@ -570,12 +570,22 @@ pub(crate) struct ContentMatch {
 /// session, and the window asks for each next one by this size too.
 pub(crate) const HISTORY_COMMIT_PAGE_SIZE: usize = 30;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub(crate) struct CommentRequest {
     pub(crate) hunk_id: String,
     pub(crate) comment: String,
     #[serde(default)]
     pub(crate) batch: bool,
+    #[serde(default)]
+    pub(crate) patch_excerpt: String,
+}
+
+/// An agent already running on a task, which a comment can go to instead of starting a run.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct RunningAgent {
+    pub(crate) terminal_id: String,
+    /// What the run's shell is called, which is what the review shows it as.
+    pub(crate) name: String,
 }
 
 #[derive(Serialize, Deserialize)]

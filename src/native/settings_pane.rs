@@ -119,7 +119,8 @@ fn draw_agent_row(app: &mut App, ui: &mut Ui, palette: &Palette) -> Option<Agent
             0,
             selected,
             &agents,
-            palette,
+            &[],
+            None,
         );
     });
     Some(selected)

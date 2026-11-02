@@ -376,6 +376,7 @@ fn a_held_comment_is_what_the_batch_send_moves() {
             hunk_id: hunk.id.clone(),
             comment: comment.clone(),
             batch: true,
+            patch_excerpt: String::new(),
         },
     )
     .expect("expected the comment to be stored");

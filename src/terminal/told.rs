@@ -22,6 +22,11 @@
 //! A held line is not dropped: it waits, and the lines told after it wait behind it, so a
 //! shell reads what it is told in the order it was told. What is still waiting when the shell
 //! ends goes with it.
+//!
+//! A line cannot carry a line break, so what runs to several lines is told as a paste - see
+//! [`TerminalRegistry::tell_paste`]. It waits in the same queue, held back by the same three
+//! things, and its sender hears how it ended, since it may wait for as long as a person takes
+//! to answer a permission.
 
 use std::{
     collections::VecDeque,
@@ -31,7 +36,7 @@ use std::{
 };
 
 use super::{TYPE_AHEAD_DEADLINE, TYPE_AHEAD_QUIET, TerminalRegistry, TerminalSession};
-use crate::attention::Asked;
+use crate::{api::CancelToken, attention::Asked};
 
 /// How long after the last keystroke in a shell a line it is told still waits. Long enough to
 /// outlast a pause between two words, and short next to how long an agent takes over anything.
@@ -60,10 +65,43 @@ const ENTER_WAITS_FOR_THE_LINE_AT_MOST: Duration = Duration::from_secs(10);
 /// What the Enter key writes.
 const ENTER: &[u8] = b"\r";
 
-/// The lines a shell has been told and has not had typed into it yet, oldest first.
+/// What a program that has turned bracketed paste on reads around a paste.
+const PASTE_STARTS: &[u8] = b"\x1b[200~";
+const PASTE_ENDS: &[u8] = b"\x1b[201~";
+
+/// How long after a paste its Enter is written. There is no waiting to see it drawn as there
+/// is for a line: an agent folds a long paste to a mark such as `[Pasted text +12 lines]`.
+const ENTER_FOLLOWS_A_PASTE_AFTER: Duration = Duration::from_millis(500);
+
+/// How a paste a shell was told ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PasteEnded {
+    Sent,
+    /// The sender took it back while it was waiting its turn.
+    Canceled,
+    Failed(String),
+}
+
+/// What hears how a paste ended.
+pub(crate) type OnPasteEnded = Box<dyn FnOnce(PasteEnded) + Send>;
+
+/// Text of several lines waiting to be pasted into a shell and sent.
+struct WaitingPaste {
+    text: String,
+    canceled: CancelToken,
+    on_ended: OnPasteEnded,
+}
+
+/// One thing a shell has been told and has not had typed into it yet.
+enum Waiting {
+    Line(String),
+    Paste(WaitingPaste),
+}
+
+/// What a shell has been told and has not had typed into it yet, oldest first.
 #[derive(Default)]
 pub(super) struct Told {
-    waiting: VecDeque<String>,
+    waiting: VecDeque<Waiting>,
     /// Whether a thread is typing them. One at most, which is what keeps them in order.
     being_typed: bool,
 }
@@ -88,6 +126,39 @@ impl TerminalRegistry {
         if line.is_empty() || line.chars().any(char::is_control) {
             anyhow::bail!("a shell is told one line of text, and {line:?} is not one");
         }
+        self.told_to_wait(terminal_id, Waiting::Line(line.to_string()))
+    }
+
+    /// Paste text of any number of lines into a shell and send it, once nothing holds it back.
+    /// Answers as soon as the paste is waiting its turn; `on_ended` hears how it ended, unless
+    /// this answers an error, in which case the paste never joined the queue.
+    pub(crate) fn tell_paste(
+        &self,
+        terminal_id: &str,
+        text: &str,
+        canceled: CancelToken,
+        on_ended: OnPasteEnded,
+    ) -> anyhow::Result<()> {
+        // Source code can hold anything. A control character in it must not reach the terminal
+        // as one: a paste's own end marker would turn the rest of the text into keystrokes.
+        let text: String = text
+            .chars()
+            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+            .collect();
+        if text.trim().is_empty() {
+            anyhow::bail!("a shell is told a paste with something in it");
+        }
+        self.told_to_wait(
+            terminal_id,
+            Waiting::Paste(WaitingPaste {
+                text,
+                canceled,
+                on_ended,
+            }),
+        )
+    }
+
+    fn told_to_wait(&self, terminal_id: &str, what: Waiting) -> anyhow::Result<()> {
         let session = self
             .get(terminal_id)
             .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
@@ -96,7 +167,7 @@ impl TerminalRegistry {
         }
 
         let mut told = session.told.lock().unwrap();
-        told.waiting.push_back(line.to_string());
+        told.waiting.push_back(what);
         if !told.being_typed {
             told.being_typed = true;
             let typing_into = Arc::clone(&session);
@@ -215,7 +286,7 @@ fn type_what_it_is_told(session: &TerminalSession) {
     }
 }
 
-/// Type the line that has waited longest and send it, unless it is held back.
+/// Type what has waited longest and send it, unless it is held back.
 ///
 /// The writer is held from before the shell is looked at until the Enter is written. It is
 /// the lock a keystroke takes, so a person who typed just before is seen, and one who types
@@ -226,7 +297,13 @@ fn type_the_next_line(session: &TerminalSession) -> Looked {
     let mut told = session.told.lock().unwrap();
     // A shell that has ended reads nothing, and its pty refuses writes or blocks on them.
     if session.has_ended() {
-        told.waiting.clear();
+        for waiting in told.waiting.drain(..) {
+            if let Waiting::Paste(paste) = waiting {
+                (paste.on_ended)(PasteEnded::Failed(
+                    "the agent ended before it could be told".to_string(),
+                ));
+            }
+        }
     }
     if told.waiting.is_empty() {
         // Said under the lock a line is added under, so one added from here on starts a
@@ -234,12 +311,30 @@ fn type_the_next_line(session: &TerminalSession) -> Looked {
         told.being_typed = false;
         return Looked::Finished;
     }
-    if session.holds_back_what_it_is_told() {
+    // Before what holds the queue back: a paste being taken back is why someone would rather
+    // not wait for that.
+    let taken_back = matches!(
+        told.waiting.front(),
+        Some(Waiting::Paste(paste)) if paste.canceled.load(Ordering::SeqCst)
+    );
+    if !taken_back && session.holds_back_what_it_is_told() {
         return Looked::Held;
     }
-    let line = told.waiting.pop_front().expect("a line is waiting");
+    let waiting = told.waiting.pop_front().expect("something is waiting");
     drop(told);
 
+    match waiting {
+        Waiting::Line(line) => type_a_line(session, &mut *writer, &line),
+        Waiting::Paste(paste) if taken_back => (paste.on_ended)(PasteEnded::Canceled),
+        Waiting::Paste(paste) => {
+            let ended = paste_and_send(session, &mut *writer, &paste.text);
+            (paste.on_ended)(ended);
+        }
+    }
+    Looked::Typed
+}
+
+fn type_a_line(session: &TerminalSession, writer: &mut dyn Write, line: &str) {
     // A write that fails is a shell that ended a moment ago, which the next look finds.
     if writer
         .write_all(line.as_bytes())
@@ -247,12 +342,36 @@ fn type_the_next_line(session: &TerminalSession) -> Looked {
         .is_ok()
     {
         std::thread::sleep(ENTER_FOLLOWS_AFTER);
-        wait_until_shown(session, &line);
+        wait_until_shown(session, line);
         if writer.write_all(ENTER).and_then(|()| writer.flush()).is_ok() {
             session.a_told_line_was_sent();
         }
     }
-    Looked::Typed
+}
+
+/// A program that has not turned bracketed paste on cannot tell a paste's line breaks from
+/// Enter, and each would send half of the text: it is refused rather than typed.
+fn paste_and_send(session: &TerminalSession, writer: &mut dyn Write, text: &str) -> PasteEnded {
+    match session.reads_bracketed_pastes() {
+        Ok(true) => {}
+        Ok(false) => {
+            return PasteEnded::Failed("the agent is not reading pastes".to_string());
+        }
+        Err(error) => return PasteEnded::Failed(error.to_string()),
+    }
+    let pasted = [PASTE_STARTS, text.as_bytes(), PASTE_ENDS]
+        .iter()
+        .try_for_each(|part| writer.write_all(part))
+        .and_then(|()| writer.flush());
+    if let Err(error) = pasted {
+        return PasteEnded::Failed(format!("the paste did not reach the agent: {error}"));
+    }
+    std::thread::sleep(ENTER_FOLLOWS_A_PASTE_AFTER);
+    if let Err(error) = writer.write_all(ENTER).and_then(|()| writer.flush()) {
+        return PasteEnded::Failed(format!("the paste was left unsent: {error}"));
+    }
+    session.a_told_line_was_sent();
+    PasteEnded::Sent
 }
 
 /// Wait until the shell's screen shows `line`, which is the program having read it.

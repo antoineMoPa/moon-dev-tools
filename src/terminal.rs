@@ -15,6 +15,7 @@ pub(crate) use routes::{
     terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
 };
 pub(crate) use shown::Shown;
+pub(crate) use told::PasteEnded;
 
 use std::{
     collections::HashMap,

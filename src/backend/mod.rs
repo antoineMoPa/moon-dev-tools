@@ -22,7 +22,7 @@ use anyhow::Result;
 use crate::{
     agent_sessions::AgentSessionView,
     api::{
-        AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, CommitHistoryPayload,
+        AgentKind, AgentLogPayload, BlameOf, BlamePayload, CommentRequest, RunningAgent, CommitHistoryPayload,
         ContentMatch, FileContentPayload, LspCompletion, LspLocation, LspPosition, LspStatus,
         LspWork, OpenSessionRequest, PatchPayload, SearchProgress, SearchScope, SessionOpened,
         SessionPayload, SubmoduleHubPayload,
@@ -188,6 +188,19 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn set_comment(&self, session_id: &str, request: CommentRequest) -> Result<()>;
     fn resolve_comment(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
     fn send_comment_batch(&self, session_id: &str) -> Result<()>;
+    /// Whether a comment can go to an agent already running on a task: its shell has to be
+    /// this moon's. Typing into a shell is not offered over HTTP, where a request names a
+    /// terminal id and a shared server holds other people's.
+    fn tells_running_agents(&self) -> bool;
+    /// Write a comment and paste it into an agent already running on the task.
+    fn tell_comment(
+        &self,
+        session_id: &str,
+        request: CommentRequest,
+        agent: &RunningAgent,
+    ) -> Result<()>;
+    /// Paste every held comment into an agent already running on the task, as one message.
+    fn tell_held_comments(&self, session_id: &str, agent: &RunningAgent) -> Result<()>;
     fn cancel_dispatch(&self, session_id: &str, hunk_id: &str, comment_index: usize) -> Result<()>;
     fn dispatch_log(&self, session_id: &str, dispatch_key: &str) -> Result<AgentLogPayload>;
 

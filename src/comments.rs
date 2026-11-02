@@ -4,9 +4,13 @@
 // The agents are the server's: the window in a browser only reads and writes the blocks.
 #[cfg(not(target_arch = "wasm32"))]
 mod server_side;
+#[cfg(not(target_arch = "wasm32"))]
+mod to_running_agent;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use server_side::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use to_running_agent::*;
 
 const ANCHOR_OPEN: &str = "[[mr-anchor]]";
 const SELECTION_MARK: &str = "[[selection]]";
