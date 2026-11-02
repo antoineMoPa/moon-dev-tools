@@ -138,11 +138,12 @@ pub(super) fn quick_task_entry_row(title: &str, agent: crate::api::AgentKind) ->
 }
 
 /// What the line carries besides what is typed: the switch between the two searches at its
-/// end, when it has one, and under it the box for what files they read.
+/// end, when it has one, and under it, when the searches run, the box for what files they read.
 struct SearchLine<'a> {
     mode: PaletteMode,
     palette: &'a Palette,
     switch: bool,
+    scope_box: bool,
     scope: &'a mut SearchScope,
     /// The search the switch was clicked over to.
     switched_to: Option<PaletteMode>,
@@ -161,7 +162,7 @@ impl LineAccessory for SearchLine<'_> {
         if self.switch {
             self.switched_to = draw_search_switch(ui, line, self.mode, self.palette);
         }
-        if matches!(self.mode, PaletteMode::Files | PaletteMode::Contents) {
+        if self.scope_box {
             draw_scope_box(ui, self.scope, self.palette);
         }
     }
@@ -260,6 +261,7 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
         mode: app.model.palette.mode,
         palette: &palette,
         switch: has_search_switch(app),
+        scope_box: has_scope_box(app, shell_line.is_some()),
         scope: &mut app.model.palette.search_scope,
         switched_to: None,
     };
@@ -366,7 +368,19 @@ pub(in crate::native) fn paint_highlight(ui: &egui::Ui, rect: egui::Rect, palett
     egui_command_palette::paint_highlight(ui, rect, &style_of(palette));
 }
 
-/// The box under the two searches' line that widens them to the files the repo's
+/// Whether the line has the box for what files the searches read. The command list runs both
+/// searches too, so it has the box from the moment it opens: one that came up with the second
+/// letter typed would push the rows down under it. A line of shell searches nothing, and
+/// neither does a window without a repo.
+fn has_scope_box(app: &App, typing_shell: bool) -> bool {
+    match app.model.palette.mode {
+        PaletteMode::Files | PaletteMode::Contents => true,
+        PaletteMode::Commands => !typing_shell && !app.model.palette.search_session_id.is_empty(),
+        PaletteMode::Rename | PaletteMode::Places | PaletteMode::CodeActions => false,
+    }
+}
+
+/// The box under the line of the searches that widens them to the files the repo's
 /// `.gitignore` leaves out - the submodules of a repo that ignores them, say. The line keeps
 /// the keyboard; this is for the pointer.
 fn draw_scope_box(ui: &mut egui::Ui, scope: &mut SearchScope, palette: &Palette) {
