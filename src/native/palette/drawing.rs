@@ -119,6 +119,8 @@ pub(super) fn quick_task_row(
             .iter()
             .position(|agent| *agent == task.agent)
             .expect("the agent a quick task starts with is one of its agents"),
+        // An agent started by Enter on a title with no command matching it is a surprise.
+        needs_reaching: true,
         ..row_of(command)
     }
 }

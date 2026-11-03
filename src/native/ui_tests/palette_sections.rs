@@ -142,10 +142,11 @@ pub(crate) fn offer_agents(app: &mut App, agents: &[AgentKind], selected: AgentK
     }));
 }
 
-/// ← and → on the task row are the query line's, to move along what is typed; Enter starts
-/// the task with the agent its row has picked.
+/// ← and → on the task row are the query line's, to move along what is typed. Enter starts
+/// nothing while the task row is only first for nothing else matching; once ↓ has reached it,
+/// Enter starts the task with the agent its row has picked.
 #[test]
-fn arrows_leave_the_task_rows_agent_and_enter_starts_it() {
+fn arrows_leave_the_task_rows_agent_and_enter_starts_it_once_reached() {
     let fixture = seeded_fixture("palette-task-chips");
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     offer_agents(
@@ -178,6 +179,13 @@ fn arrows_leave_the_task_rows_agent_and_enter_starts_it() {
         });
 
     harness.run_steps(2);
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(
+        *started.lock().expect("poisoned"),
+        None,
+        "Enter should not start an agent before ↓ reaches the task row"
+    );
+    press_key(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
     press_key(&mut harness, egui::Key::ArrowRight, egui::Modifiers::NONE);
     press_key(&mut harness, egui::Key::ArrowRight, egui::Modifiers::NONE);
     press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
