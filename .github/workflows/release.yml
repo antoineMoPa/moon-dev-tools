@@ -27,29 +27,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            runner: macos-15
-          # 22.04 for its older glibc (2.35), which the executable then asks no newer than.
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
-    runs-on: ${{ matrix.runner }}
+        target:
+          - aarch64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+        # Left out of the matrix rather than skipped step by step: a skipped job still waits for
+        # a runner, and macOS ones can go unassigned, failing the run and the upload with it.
+        exclude:
+          - target: ${{ inputs.local_target }}
+    # 22.04 for its older glibc (2.35), which the executable then asks no newer than.
+    runs-on: ${{ fromJSON('{"aarch64-apple-darwin":"macos-15","x86_64-unknown-linux-gnu":"ubuntu-22.04","aarch64-unknown-linux-gnu":"ubuntu-22.04-arm"}')[matrix.target] }}
     steps:
-      - uses: actions/checkout@v4
-        if: matrix.target != inputs.local_target
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # .gitmodules names the submodules by SSH, which a runner has no key for. They are public.
       - name: Check out submodules
-        if: matrix.target != inputs.local_target
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git submodule update --init --recursive
       - name: Read the version
         id: version
-        if: matrix.target != inputs.local_target
         env:
           BUILD_ONLY: ${{ inputs.build_only }}
         run: |
@@ -59,19 +57,41 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Install Rust
-        if: matrix.target != inputs.local_target
         run: |
           rustup toolchain install 1.95.0 --profile minimal --no-self-update --target wasm32-unknown-unknown
           rustup default 1.95.0
-      - uses: mlugg/setup-zig@v2
-        if: matrix.target != inputs.local_target
-        with:
-          version: 0.15.2
+      # From ziglang.org, checked against its published sha256: mlugg/setup-zig still runs on
+      # Node 20, which the runners are dropping.
+      - name: Install Zig
+        env:
+          ZIG_VERSION: 0.15.2
+          # The runner's "$RUNNER_ARCH-$RUNNER_OS" to the name ziglang.org gives its build.
+          ZIG_HOST_OF_RUNNER: |
+            {
+              "X64-Linux": "x86_64-linux",
+              "ARM64-Linux": "aarch64-linux",
+              "ARM64-macOS": "aarch64-macos"
+            }
+        run: |
+          runner="$RUNNER_ARCH-$RUNNER_OS"
+          zig_host="$(jq -er --arg runner "$runner" '.[$runner]' <<<"$ZIG_HOST_OF_RUNNER")"
+
+          curl -fsSL -o "$RUNNER_TEMP/zig-index.json" https://ziglang.org/download/index.json
+          zig_build="$(jq -e --arg version "$ZIG_VERSION" --arg host "$zig_host" \
+            '.[$version][$host]' "$RUNNER_TEMP/zig-index.json")"
+          tarball_url="$(jq -er .tarball <<<"$zig_build")"
+          tarball_sha256="$(jq -er .shasum <<<"$zig_build")"
+
+          tarball="$RUNNER_TEMP/zig.tar.xz"
+          curl -fsSL -o "$tarball" "$tarball_url"
+          echo "$tarball_sha256  $tarball" | shasum -a 256 -c -
+
+          tar -xJf "$tarball" -C "$RUNNER_TEMP"
+          zig_folder="$RUNNER_TEMP/$(basename "$tarball_url" .tar.xz)"
+          echo "$zig_folder" >> "$GITHUB_PATH"
       - name: Build and package
-        if: matrix.target != inputs.local_target
         run: bash scripts/_internal/build-release.sh ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        if: matrix.target != inputs.local_target
+      - uses: actions/upload-artifact@v7
         with:
           name: moonreview-${{ matrix.target }}
           # The folder named in full, so the artifact holds the files without it, and the upload
@@ -86,7 +106,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
