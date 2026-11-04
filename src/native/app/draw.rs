@@ -378,6 +378,11 @@ impl App {
         self.tasks.drain(&mut self.model);
         self.remember_opened_project();
         self.follow_project_color();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.restore_workspace(ctx);
+            self.remember_workspace();
+        }
         self.update_window_title(ctx);
         self.drain_attachments();
         self.keep_parked_spaces_alive();
@@ -518,6 +523,9 @@ impl App {
         // frames are laid out in what is left rather than under it.
         self.draw_status_bar(ui);
         self.start_reading_hunks();
+        // Before the panes draw, so an Escape the find bar is owed is not taken by a shell or
+        // an open file under it first.
+        find::take_escape(self, ctx);
         self.draw_workspace(ui);
         if self.hunks_left_unread() {
             ctx.request_repaint();

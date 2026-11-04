@@ -117,6 +117,9 @@ const GROUNDS: [(WorkspaceColor, Ground); 9] = [
     ),
 ];
 
+/// How many times its ground's lean a [`WorkspaceColor::marker`] is.
+const MARKER_LEAN: f32 = 3.0;
+
 /// The colors a picker offers, in the order it offers them.
 pub(crate) const ALL: [WorkspaceColor; 9] = [
     WorkspaceColor::Plain,
@@ -146,6 +149,23 @@ impl WorkspaceColor {
             ((hex >> 16) & 0xff) as u8,
             ((hex >> 8) & 0xff) as u8,
             (hex & 0xff) as u8,
+        )
+    }
+
+    /// The ground's lean away from plain, made [`MARKER_LEAN`] times as strong - for the small
+    /// marks that name a space in the status bar, where the ground itself is too faint to
+    /// tell one project from another. Plain stays plain.
+    pub(crate) fn marker(self, mode: ThemeMode) -> Color32 {
+        let plain = Self::Plain.bg(mode);
+        let ground = self.bg(mode);
+        let lean = |plain: u8, ground: u8| {
+            let leaned = plain as f32 + (ground as f32 - plain as f32) * MARKER_LEAN;
+            leaned.clamp(0.0, 255.0) as u8
+        };
+        Color32::from_rgb(
+            lean(plain.r(), ground.r()),
+            lean(plain.g(), ground.g()),
+            lean(plain.b(), ground.b()),
         )
     }
 

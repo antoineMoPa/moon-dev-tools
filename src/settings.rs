@@ -74,6 +74,21 @@ pub(crate) struct Settings {
     /// `None` until a quick task has been started.
     #[serde(default)]
     pub(crate) quick_task_agent: AgentKind,
+    /// The projects the window's spaces were on when they last changed, so the next launch
+    /// opens them again - see `App::restore_workspace`.
+    #[serde(default)]
+    pub(crate) workspace_projects: WorkspaceProjects,
+}
+
+/// The projects a window's spaces hold, kept so a relaunch puts them back. Only the window
+/// writes it, and it is written whole each time the spaces change.
+#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(crate) struct WorkspaceProjects {
+    /// The project of each space in list order: `None` for a space with no project, which is
+    /// one nobody has been to or one on its launch screen.
+    pub(crate) spaces: Vec<Option<String>>,
+    /// Where in the list the space in front was.
+    pub(crate) front: usize,
 }
 
 /// A program with windows, as the person wrote it for the `moon` menu.
@@ -101,6 +116,7 @@ pub(crate) enum SettingsChange {
         model: Option<String>,
     },
     SelectQuickTaskAgent(AgentKind),
+    SaveWorkspaceProjects(WorkspaceProjects),
 }
 
 impl Settings {
@@ -124,6 +140,11 @@ impl Settings {
             SettingsChange::SelectQuickTaskAgent(agent) => {
                 let changed = self.quick_task_agent != agent;
                 self.quick_task_agent = agent;
+                changed
+            }
+            SettingsChange::SaveWorkspaceProjects(projects) => {
+                let changed = self.workspace_projects != projects;
+                self.workspace_projects = projects;
                 changed
             }
         }
@@ -395,13 +416,33 @@ mod tests {
             applications: Vec::new(),
             agent_models: BTreeMap::new(),
             quick_task_agent: AgentKind::Codex,
+            workspace_projects: WorkspaceProjects::default(),
         })
         .expect("expected json");
 
         assert_eq!(
             encoded,
-            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[],"agent_models":{},"quick_task_agent":"codex"}"#
+            r#"{"selected_agent":"claude","recent_projects":[],"workspace_colors":{},"applications":[],"agent_models":{},"quick_task_agent":"codex","workspace_projects":{"spaces":[],"front":0}}"#
         );
+    }
+
+    #[test]
+    fn saved_workspace_projects_read_back_by_space() {
+        let mut settings = Settings::default();
+        let projects = WorkspaceProjects {
+            spaces: vec![
+                Some("/repos/front".into()),
+                None,
+                Some("/repos/back".into()),
+            ],
+            front: 2,
+        };
+        assert!(settings.apply(SettingsChange::SaveWorkspaceProjects(projects.clone())));
+        assert!(!settings.apply(SettingsChange::SaveWorkspaceProjects(projects.clone())));
+
+        let encoded = serde_json::to_string(&settings).expect("expected json");
+        let read_back: Settings = serde_json::from_str(&encoded).expect("expected settings");
+        assert_eq!(read_back.workspace_projects, projects);
     }
 
     #[test]

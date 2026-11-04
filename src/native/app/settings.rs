@@ -27,7 +27,7 @@ impl App {
 
     /// Make one change to the settings: to the window's copy at once, and to the server's file
     /// behind it. A change to what the copy already says is not sent.
-    fn change_settings(&mut self, change: SettingsChange) {
+    pub(super) fn change_settings(&mut self, change: SettingsChange) {
         let Some(settings) = &mut self.model.settings else {
             return;
         };

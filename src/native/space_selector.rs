@@ -193,9 +193,9 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, palette: &Palette) {
 }
 
 /// A space's preview: one small rectangle per frame of its arrangement, laid out the way the
-/// frames are, each in the ground color of the project. The space the window is on has its
-/// rectangles outlined in the accent, and - when it is split - the frame the keyboard is in
-/// filled with it.
+/// frames are, each in the marker shade of the project's color. The space the window is on
+/// has its rectangles outlined in the accent, and - when it is split - the frame the keyboard
+/// is in filled with it.
 fn draw_square(
     ui: &Ui,
     rect: Rect,
@@ -215,7 +215,7 @@ fn draw_square(
             palette.muted
         },
     );
-    let ground = space.color.bg(mode);
+    let ground = space.color.marker(mode);
     let Some(arrangement) = space.arrangement else {
         // Nothing to tile yet: one block, the space as it will open.
         ui.painter().rect(

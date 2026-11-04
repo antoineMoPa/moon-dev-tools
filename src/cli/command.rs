@@ -428,14 +428,23 @@ fn open_repo(path: &Path, frame: Frame) -> Result<()> {
 ///
 /// A window opened from a desktop launcher is started by the OS rather than by a shell, and
 /// macOS starts it at the root of the filesystem. Nobody works there, so that one opens on
-/// the last project this machine opened, and on the home folder when there has not been one.
+/// the project of the space that was in front when the window last closed - the window then
+/// puts the other spaces back around it, see `App::restore_workspace` - or else the last
+/// project this machine opened, and on the home folder when there has not been one.
 pub(super) fn folder_when_there_is_no_repo(current_dir: &Path) -> Result<PathBuf> {
     if current_dir != Path::new("/") {
         return Ok(current_dir.to_path_buf());
     }
-    let last_project = crate::settings::load()
-        .recent_projects
+    let settings = crate::settings::load();
+    let front_project = settings
+        .workspace_projects
+        .spaces
+        .get(settings.workspace_projects.front)
+        .cloned()
+        .flatten();
+    let last_project = front_project
         .into_iter()
+        .chain(settings.recent_projects)
         .map(PathBuf::from)
         .find(|project| project.is_dir());
     match last_project {

@@ -100,7 +100,12 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
     },
     AgentLaunch {
         kind: AgentKind::Minerve,
-        start: &["--append-system-prompt", "{brief}"],
+        start: &[
+            "--session-id",
+            "{session}",
+            "--append-system-prompt",
+            "{brief}",
+        ],
         resume: &["--resume"],
         attach: &["--resume={session}"],
         env: &[],

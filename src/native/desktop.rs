@@ -147,6 +147,9 @@ fn run_window(launch: Launch, manages_the_session: bool) -> Result<()> {
             // a repo someone is working in, and starting rust-analyzer for it is the point.
             // Every other caller of `App::new` is a ui test - see the field.
             app.asks_language_servers = true;
+            // And it is the window the person started, so it reopens the projects they left
+            // open - see `App::restore_workspace`.
+            app.restores_workspace = true;
             app.install_menu();
             // The same: a real window is the one caller a `moon open` should reach.
             app.listen_for_shell_asks(&creation.egui_ctx);

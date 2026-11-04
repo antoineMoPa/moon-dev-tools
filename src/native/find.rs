@@ -176,6 +176,29 @@ pub(crate) fn show_match(app: &mut App, pane_id: PaneId, query: String, at: usiz
     });
 }
 
+/// Put the bar away on Escape, when the bar's box has the keyboard or the pane it searches does.
+///
+/// Asked before the workspace is drawn: a shell or an open file takes Escape as its own while
+/// it draws, so the bar has to answer first. Not when another text box has the keyboard, or
+/// the palette is open - an Escape there is theirs. With no bar open nothing is consumed, so
+/// Escape reaches the shell as it always has.
+pub(crate) fn take_escape(app: &mut App, ctx: &egui::Context) {
+    let Some(find) = &app.model.find else {
+        return;
+    };
+    // `egui_wants_keyboard_input` is also true for a shell with the keyboard, so the text box
+    // question is asked of egui's text edits only.
+    let searched_pane_has_keyboard = app.active_pane_id() == Some(find.pane_id)
+        && !ctx.text_edit_focused()
+        && !app.model.palette.is_open();
+    if !(find.has_keyboard || searched_pane_has_keyboard) {
+        return;
+    }
+    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+        app.model.find = None;
+    }
+}
+
 /// Draw the bar in the top right of the pane it belongs to.
 pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
     let Some(find) = &app.model.find else {
@@ -273,25 +296,24 @@ pub(crate) fn draw(app: &mut App, ctx: &egui::Context) {
                 });
         });
 
-    // Enter walks the matches and Escape puts the bar away, both of which belong to the bar
-    // rather than to the pane under it, so they are read here instead of in the key table.
-    // Only while the query box holds the keyboard, though: an Enter meant for the shell or
-    // the file under the bar is the pane's, and stepping the search on it would move the
-    // window out from under whoever typed it.
-    let (next, previous, dismiss) = ctx.input_mut(|input| {
+    // Enter walks the matches, which belongs to the bar rather than to the pane under it, so
+    // it is read here instead of in the key table. Only while the query box holds the
+    // keyboard, though: an Enter meant for the shell or the file under the bar is the pane's,
+    // and stepping the search on it would move the window out from under whoever typed it.
+    // Escape is answered earlier, by `take_escape`.
+    let (next, previous) = ctx.input_mut(|input| {
         if !has_keyboard {
-            return (false, false, false);
+            return (false, false);
         }
         (
             input.consume_key(egui::Modifiers::NONE, Key::Enter),
             input.consume_key(egui::Modifiers::SHIFT, Key::Enter),
-            input.consume_key(egui::Modifiers::NONE, Key::Escape),
         )
     });
     if next || previous {
         stepped = Some(next);
     }
-    if dismiss || closed {
+    if closed {
         app.model.find = None;
         return;
     }

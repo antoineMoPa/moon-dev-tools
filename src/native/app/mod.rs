@@ -10,6 +10,8 @@ mod switching;
 mod web_windows;
 #[cfg(not(target_arch = "wasm32"))]
 mod windows;
+#[cfg(not(target_arch = "wasm32"))]
+mod workspace_projects;
 
 pub(crate) use draw::window_title;
 pub(crate) use spaces::{SpaceView, Spaces};
@@ -164,6 +166,11 @@ pub(crate) struct App {
     /// about this wiring turns it on for its own pane, on a file nothing serves - see
     /// `crate::native::file_pane::FileEditor::asks_language_servers_for_test`.
     pub(crate) asks_language_servers: bool,
+    /// Whether this window reopens the projects its spaces held last run, once the settings
+    /// have come - see [`App::restore_workspace`]. Only the window the person started sets it,
+    /// since a space built later must not reopen them again.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) restores_workspace: bool,
     /// The keyboard, read through the binding table. It holds the state of a prefix chord
     /// that has begun - the `C-x` of `C-x o` - between frames.
     keymap: Keymap,
@@ -448,6 +455,8 @@ impl App {
             decoded_images: HashMap::new(),
             // Turned on by the window itself - see the field.
             asks_language_servers: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            restores_workspace: false,
             keymap: Keymap::default(),
             needs_style: true,
             window_theme_frames: WINDOW_THEME_FRAMES,
