@@ -26,6 +26,7 @@ const AGENT_COMMANDS: &[(AgentKind, &str, &str)] = &[
     (AgentKind::Claude, "claude", "Open Claude in a terminal"),
     (AgentKind::Codex, "codex", "Open Codex in a terminal"),
     (AgentKind::Pi, "pi", "Open Pi in a terminal"),
+    (AgentKind::Minerve, "minerve", "Open Minerve in a terminal"),
 ];
 
 /// The sides the palette can split the active frame against, and the shell each split opens

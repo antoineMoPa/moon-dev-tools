@@ -35,6 +35,7 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob, model: Option<&str>) -> Resu
         AgentKind::Codex => run_codex(prompt, job, model),
         AgentKind::OpenCode => run_opencode(prompt, job, model),
         AgentKind::Pi => run_pi(prompt, job, model),
+        AgentKind::Minerve => run_minerve(prompt, job, model),
     }
 }
 
@@ -173,6 +174,27 @@ fn run_pi(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<Stri
             Arc::clone(&job.log),
         )?;
     summarize_agent_output("Pi", output)
+}
+
+fn run_minerve(prompt: String, job: &DispatchJob, model: Option<&str>) -> Result<String> {
+    let mut command = crate::shell_path::installed_tool("minerve")?;
+    command
+        .current_dir(&job.repo_path)
+        .arg("--print")
+        .args(model_args(AgentKind::Minerve, model));
+    configure_agent_command(&mut command);
+    let output = command
+        .spawn()
+        .context("failed to start Minerve")?
+        .wait_with_streamed_output_from_stdin(
+            prompt.as_bytes(),
+            "failed to write prompt to Minerve",
+            "[moonreview] Minerve stdout: ",
+            "[moonreview] Minerve stderr: ",
+            Arc::clone(&job.cancel_token),
+            Arc::clone(&job.log),
+        )?;
+    summarize_agent_output("Minerve", output)
 }
 
 /// The pipes an agent is talked to through, and a process group of its own, which is what
@@ -383,6 +405,7 @@ pub(crate) fn detect_agent_availability_on(
         codex: command_exists_on(path, "codex"),
         opencode: command_exists_on(path, "opencode"),
         pi: command_exists_on(path, "pi"),
+        minerve: command_exists_on(path, "minerve"),
     }
 }
 
@@ -396,6 +419,7 @@ pub(crate) fn agent_is_available(
         crate::api::AgentKind::Codex => availability.codex,
         crate::api::AgentKind::OpenCode => availability.opencode,
         crate::api::AgentKind::Pi => availability.pi,
+        crate::api::AgentKind::Minerve => availability.minerve,
     }
 }
 
@@ -408,6 +432,7 @@ pub(crate) fn agent_options(
         (crate::api::AgentKind::Codex, "Codex"),
         (crate::api::AgentKind::OpenCode, "OpenCode"),
         (crate::api::AgentKind::Pi, "Pi"),
+        (crate::api::AgentKind::Minerve, "Minerve"),
     ]
     .into_iter()
     .map(|(kind, label)| crate::api::AgentOption {

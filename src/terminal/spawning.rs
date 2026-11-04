@@ -50,6 +50,7 @@ impl TerminalRegistry {
             TerminalProgram::Agent(AgentKind::Codex) => ("codex".to_string(), Vec::new()),
             TerminalProgram::Agent(AgentKind::OpenCode) => ("opencode".to_string(), Vec::new()),
             TerminalProgram::Agent(AgentKind::Pi) => ("pi".to_string(), Vec::new()),
+            TerminalProgram::Agent(AgentKind::Minerve) => ("minerve".to_string(), Vec::new()),
         };
         // Every agent moon starts is told to say through the terminal when it wants a
         // person, the way it would tell iTerm2 or Ghostty - which is what the window reads

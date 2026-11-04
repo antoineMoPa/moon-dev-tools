@@ -183,6 +183,7 @@ pub(crate) enum AgentKind {
     Codex,
     OpenCode,
     Pi,
+    Minerve,
 }
 
 impl AgentKind {
@@ -193,6 +194,7 @@ impl AgentKind {
             Self::Codex => "Codex",
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
+            Self::Minerve => "Minerve",
         }
     }
 }

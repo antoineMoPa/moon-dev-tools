@@ -99,6 +99,13 @@ pub(crate) const AGENT_LAUNCHES: &[AgentLaunch] = &[
         env: &[],
     },
     AgentLaunch {
+        kind: AgentKind::Minerve,
+        start: &["--append-system-prompt", "{brief}"],
+        resume: &["--resume"],
+        attach: &["--resume={session}"],
+        env: &[],
+    },
+    AgentLaunch {
         kind: AgentKind::OpenCode,
         start: &[],
         resume: &["--continue"],

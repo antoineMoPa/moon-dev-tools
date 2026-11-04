@@ -21,7 +21,7 @@ pub(crate) struct AgentProgram {
 }
 
 /// No tools, no permissions to skip: an answer read off a prompt is all these are asked for.
-const AGENT_PROGRAMS: [AgentProgram; 4] = [
+const AGENT_PROGRAMS: [AgentProgram; 5] = [
     AgentProgram {
         agent: AgentKind::Claude,
         program: "claude",
@@ -46,6 +46,13 @@ const AGENT_PROGRAMS: [AgentProgram; 4] = [
     AgentProgram {
         agent: AgentKind::Pi,
         program: "pi",
+        answer_args: &["--print"],
+        after_model: &[],
+        model_flag: "--model",
+    },
+    AgentProgram {
+        agent: AgentKind::Minerve,
+        program: "minerve",
         answer_args: &["--print"],
         after_model: &[],
         model_flag: "--model",

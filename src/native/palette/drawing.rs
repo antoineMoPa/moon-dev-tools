@@ -84,6 +84,7 @@ const AGENT_INKS: &[(crate::api::AgentKind, Color32)] = &[
     (crate::api::AgentKind::Codex, Color32::from_rgb(0x7f, 0xc8, 0xf8)),
     (crate::api::AgentKind::OpenCode, Color32::from_rgb(0x5b, 0x8d, 0xef)),
     (crate::api::AgentKind::Pi, Color32::from_rgb(0xea, 0xb6, 0x5d)),
+    (crate::api::AgentKind::Minerve, Color32::from_rgb(0xa7, 0x8b, 0xfa)),
 ];
 
 /// An agent's colour.

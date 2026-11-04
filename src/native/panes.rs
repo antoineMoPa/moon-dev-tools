@@ -207,6 +207,7 @@ impl Pane {
                 Some(AgentKind::Codex) => "codex".to_string(),
                 Some(AgentKind::OpenCode) => "opencode".to_string(),
                 Some(AgentKind::Pi) => "pi".to_string(),
+                Some(AgentKind::Minerve) => "minerve".to_string(),
                 _ => "terminal".to_string(),
             },
             // The name alone: the path is on the pane's own header and on the tab's hover. A

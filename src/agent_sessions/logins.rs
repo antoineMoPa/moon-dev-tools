@@ -53,6 +53,11 @@ const AGENT_LOGINS: &[AgentLogin] = &[
         // Pi has no command that logs in: it is asked from inside, with `/login`.
         log_in_command: "pi",
     },
+    AgentLogin {
+        agent: AgentKind::Minerve,
+        credentials: ".minerve/auth.json",
+        log_in_command: "minerve login",
+    },
 ];
 
 /// Which agents the owner of this home has installed.
@@ -125,6 +130,7 @@ mod tests {
             codex: true,
             opencode: true,
             pi: false,
+            minerve: false,
         });
 
         for option in &mut options {
@@ -153,6 +159,7 @@ mod tests {
                     Some("opencode auth login")
                 ),
                 (AgentKind::Pi, None, None),
+                (AgentKind::Minerve, None, None),
             ]
         );
 
