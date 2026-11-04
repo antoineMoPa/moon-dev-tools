@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "moon-review"
-version = "0.59.0"
+version = "0.60.0"
 dependencies = [
  "anyhow",
  "axum",
