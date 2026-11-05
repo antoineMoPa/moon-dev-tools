@@ -195,6 +195,8 @@ pub(crate) struct Model {
     /// The visualizations agents have announced, and the pages their panes show - see
     /// [`crate::native::visualizations`].
     pub(crate) visualizations: crate::native::visualizations::Visualizations,
+    /// The conversations the inspect panes show - see [`crate::native::conversation_pane`].
+    pub(crate) conversations: crate::native::conversation_pane::Conversations,
     /// The agent the last run ended on, applied to the session once the review opens.
     pub(crate) restored_agent: Option<AgentKind>,
     /// The server's `settings.json`, as it was read when the window opened and changed since

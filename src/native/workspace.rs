@@ -198,11 +198,31 @@ impl App {
         // The workspace draws moonreview's own panes, so the view it needs is this app: both it
         // and the arrangement are lent out for the call and put back straight after.
         self.model.pane_in_front = self.active_pane_id();
+        self.inspectable_frames = self
+            .model
+            .layout
+            .frame_ids()
+            .into_iter()
+            .filter_map(|frame| {
+                let pane = self.model.layout.frame(frame)?.active_pane()?;
+                match self.model.layout.pane(pane)? {
+                    Pane::Terminal {
+                        terminal_id,
+                        command: Some(crate::api::AgentKind::Minerve),
+                        ..
+                    } => Some((frame, terminal_id.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
         let mut frames = std::mem::take(&mut self.frames);
         let mut layout = std::mem::take(&mut self.model.layout);
         let events = frames.show(ui, &mut layout, self);
         self.model.layout = layout;
         self.frames = frames;
+        if let Some(terminal_id) = self.pending_inspect.take() {
+            crate::native::conversation_pane::open(&mut self.model, &terminal_id);
+        }
 
         for event in events {
             match event {

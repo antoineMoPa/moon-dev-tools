@@ -492,6 +492,14 @@ fn protected_routes() -> Router<Served> {
             get(crate::terminal::terminal_view).delete(crate::terminal::close_terminal),
         )
         .route(
+            "/api/session/{session_id}/terminals/{terminal_id}/conversation",
+            get(crate::terminal::terminal_conversation),
+        )
+        .route(
+            "/api/session/{session_id}/terminals/{terminal_id}/conversation/prompt",
+            post(crate::terminal::submit_to_agent),
+        )
+        .route(
             "/api/session/{session_id}/terminals/{terminal_id}/name",
             post(crate::terminal::rename_terminal),
         )

@@ -287,6 +287,26 @@ pub(crate) async fn terminal_view(
     }))
 }
 
+/// The conversation of the Minerve in a shell - see [`super::agent_control`].
+pub(crate) async fn terminal_conversation(
+    AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+    Ok(Json(state.terminals.agent_conversation(&terminal_id)?))
+}
+
+/// A prompt for the Minerve in a shell - see [`super::agent_control`].
+pub(crate) async fn submit_to_agent(
+    AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::agent_conversation::AgentPrompt>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::api::with_session(&state, &session_id, |_| Ok(()))?;
+    state.terminals.submit_to_agent(&terminal_id, &request.text)?;
+    Ok("ok")
+}
+
 pub(crate) async fn rename_terminal(
     AxumPath((session_id, terminal_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,

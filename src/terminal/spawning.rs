@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, watch};
 use crate::{agent_sessions::AgentHome, api::AgentKind};
 
 use super::{
+    agent_control::{AgentControl, MINERVE_CONTROL_SOCKET_ENV_VAR},
     BROADCAST_CAPACITY, CLAUDE_NOTIFY_THROUGH_THE_TERMINAL, OUTPUT_CHUNK_SIZE, Scrollback,
     TYPE_AHEAD_DEADLINE, TYPE_AHEAD_POLL, TYPE_AHEAD_QUIET, TerminalProgram, TerminalRegistry,
     TerminalSession, TerminalSpec,
@@ -101,6 +102,17 @@ impl TerminalRegistry {
         if spec.program == TerminalProgram::Agent(AgentKind::OpenCode) {
             command.env("OPENTUI_NOTIFICATION_PROTOCOL", "osc9");
         }
+        // Minerve tells moon about its conversation over a socket of its own - see
+        // [`agent_control`]. Not as another Unix user, who could not enter the folder the
+        // socket is in.
+        let agent_control = match (&spec.program, runs_as) {
+            (TerminalProgram::Agent(AgentKind::Minerve), None) => {
+                let (control, listener) = AgentControl::listen()?;
+                command.env(MINERVE_CONTROL_SOCKET_ENV_VAR, control.socket_path());
+                Some((control, listener))
+            }
+            _ => None,
+        };
         command.cwd(&spec.cwd);
         command.env("TERM", "xterm-256color");
         // Which terminal a passphrase can be asked on. gpg launches pinentry and then fails
@@ -188,8 +200,12 @@ impl TerminalRegistry {
             last_activity: Arc::clone(&self.last_activity),
             child_pid,
             visualizations,
+            agent_control: agent_control.as_ref().map(|(control, _)| Arc::clone(control)),
             runs_as: spec.runs_as,
         });
+        if let Some((control, listener)) = agent_control {
+            control.read_in_background(listener, Arc::downgrade(&session));
+        }
         self.sessions
             .lock()
             .unwrap()

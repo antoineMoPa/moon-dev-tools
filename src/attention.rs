@@ -81,6 +81,12 @@ pub(crate) const WAITING_TO_BE_TYPED_AT: &[(crate::api::AgentKind, &str)] = &[
     ),
     // As a session ends its turn.
     (crate::api::AgentKind::OpenCode, "Session done"),
+    // Not printed by Minerve: moon puts it on the shell as Minerve's control socket says a
+    // turn ended - see `agent_control` in [`crate::terminal`].
+    (
+        crate::api::AgentKind::Minerve,
+        crate::terminal::WAITING_FOR_INPUT_NOTIFICATION,
+    ),
 ];
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

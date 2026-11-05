@@ -1,3 +1,4 @@
+mod agent_control;
 mod answered_queries;
 mod naming;
 mod output;
@@ -12,8 +13,9 @@ pub(crate) use naming::{name_for_new_shell, rename};
 pub(crate) use routes::{
     close_terminal, create_terminal, list_terminals, rename_terminal, run_in_shell,
     start_workspace_shell, start_workspace_shell_in_folder, start_workspace_shell_running,
-    terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
+    submit_to_agent, terminal_conversation, terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
 };
+pub(crate) use agent_control::WAITING_FOR_INPUT_NOTIFICATION;
 pub(crate) use shown::Shown;
 pub(crate) use told::PasteEnded;
 
@@ -277,6 +279,9 @@ pub(crate) struct TerminalSession {
     /// What a Codex in this terminal has shown - see [`crate::visualizations`]. `None` for any
     /// other program.
     visualizations: Option<Mutex<crate::visualizations::rollout::CodexRollouts>>,
+    /// What a Minerve in this terminal tells moon of its conversation - see [`agent_control`].
+    /// `None` for any other program.
+    agent_control: Option<Arc<agent_control::AgentControl>>,
 }
 
 impl TerminalSession {

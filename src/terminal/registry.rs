@@ -36,6 +36,31 @@ impl TerminalRegistry {
         self.get(terminal_id)?.name.lock().unwrap().clone()
     }
 
+    /// The conversation of the Minerve running in a shell - see [`super::agent_control`].
+    pub(crate) fn agent_conversation(
+        &self,
+        terminal_id: &str,
+    ) -> anyhow::Result<crate::agent_conversation::AgentConversation> {
+        let session = self
+            .get(terminal_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
+        let control = session.agent_control.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("terminal {terminal_id} runs no agent with a control socket")
+        })?;
+        Ok(control.conversation())
+    }
+
+    /// Sends a prompt to the Minerve running in a shell - see [`super::agent_control`].
+    pub(crate) fn submit_to_agent(&self, terminal_id: &str, text: &str) -> anyhow::Result<()> {
+        let session = self
+            .get(terminal_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown terminal {terminal_id}"))?;
+        let control = session.agent_control.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("terminal {terminal_id} runs no agent with a control socket")
+        })?;
+        control.submit(text)
+    }
+
     /// The names of every shell the server has, whoever owns it.
     pub(crate) fn live_names(&self) -> Vec<String> {
         self.sessions

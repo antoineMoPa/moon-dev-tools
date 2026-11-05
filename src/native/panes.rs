@@ -48,6 +48,8 @@ pub(crate) enum PaneKind {
     /// An agent's visualization, drawn by the system's webview - see
     /// [`crate::native::visualizations`].
     Visualization,
+    /// A Minerve run's conversation - see [`crate::native::conversation_pane`].
+    Conversation,
     /// Another program's window, in a session moon is the window manager of - see
     /// [`crate::native::application_pane`].
     #[cfg(target_os = "linux")]
@@ -142,6 +144,11 @@ pub(crate) enum Pane {
         /// The fragment the page is built from, on the machine the terminal runs on.
         fragment_path: String,
     },
+    /// The conversation of the Minerve in a shell, opened from the shell's `inspect` button -
+    /// see [`crate::native::conversation_pane`].
+    Conversation {
+        terminal_id: String,
+    },
     /// A window another program opened, which X draws over this pane - see
     /// [`crate::native::application_pane`]. Nothing of it is worth keeping with the layout: the
     /// window belongs to a program that will not be running the next time moon is.
@@ -191,6 +198,7 @@ impl Pane {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { .. } => PaneKind::Extension,
             Self::Visualization { .. } => PaneKind::Visualization,
+            Self::Conversation { .. } => PaneKind::Conversation,
             #[cfg(target_os = "linux")]
             Self::Application { .. } => PaneKind::Application,
             Self::Display => PaneKind::Display,
@@ -238,6 +246,7 @@ impl Pane {
             Self::Visualization { fragment_path } => {
                 crate::visualizations::title_of(std::path::Path::new(fragment_path))
             }
+            Self::Conversation { .. } => "inspect minerve".to_string(),
             #[cfg(target_os = "linux")]
             Self::Application { title, .. } => title.clone(),
             Self::Display => "desktop".to_string(),
@@ -325,7 +334,10 @@ impl Pane {
             Self::Messages => Some(OpenPaneRequest::Messages),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Extension { name } => Some(OpenPaneRequest::Extension { name: name.clone() }),
-            Self::Agents | Self::NewTask { .. } | Self::Visualization { .. } => None,
+            Self::Agents
+            | Self::NewTask { .. }
+            | Self::Visualization { .. }
+            | Self::Conversation { .. } => None,
             #[cfg(target_os = "linux")]
             Self::Application { .. } => None,
             Self::Display => Some(OpenPaneRequest::Display),
@@ -678,6 +690,10 @@ impl PaneView<Pane> for App {
             #[cfg(not(target_arch = "wasm32"))]
             Pane::Extension { .. } => crate::native::extension_pane::draw(self, ui, pane_id),
             Pane::Visualization { .. } => crate::native::webview_pane::draw(self, ui, pane_id),
+            Pane::Conversation { terminal_id } => {
+                let terminal_id = terminal_id.clone();
+                crate::native::conversation_pane::draw(self, ui, &terminal_id);
+            }
             #[cfg(target_os = "linux")]
             Pane::Application { .. } => crate::native::application_pane::draw(self, ui, pane_id),
             Pane::Display => crate::native::display_pane::draw(self, ui, pane_id),
@@ -720,10 +736,26 @@ impl PaneView<Pane> for App {
     }
 
     /// The light/dark switch, on the tab strip that doubles as the app header.
-    fn tab_strip_end(&mut self, ui: &mut Ui, _frame: FrameId, primary: bool) {
-        if !primary {
-            return;
+    fn tab_strip_end(&mut self, ui: &mut Ui, frame: FrameId, primary: bool) {
+        if primary {
+            self.window_controls(ui);
         }
+        // Left of the window's controls, for the Minerve shell in front of this frame.
+        if let Some(terminal_id) = self.inspectable_frames.get(&frame).cloned() {
+            let inspect = ui
+                .small_button("inspect")
+                .on_hover_text("The conversation and its tool calls");
+            // Deferred: the layout is lent out while its strips are drawn.
+            if inspect.clicked() {
+                self.pending_inspect = Some(terminal_id);
+            }
+        }
+    }
+}
+
+impl App {
+    /// The controls of the whole window, at the end of the top-left frame's strip.
+    fn window_controls(&mut self, ui: &mut Ui) {
         // On a phone the strip's own controls are all one size, the height of its tab.
         // (Not read from the frames' style: they are lent out to the draw this is called from.)
         let phone_height = crate::native::workspace::in_a_phone_window(ui.ctx())

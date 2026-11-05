@@ -79,6 +79,7 @@ pub(crate) mod theme;
 #[cfg(test)]
 pub(crate) mod ui_tests;
 pub(crate) mod visualizations;
+pub(crate) mod conversation_pane;
 /// Only where a session can be managed: X11, which is Linux here.
 #[cfg(target_os = "linux")]
 pub(crate) mod application_pane;

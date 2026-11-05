@@ -554,6 +554,18 @@ impl Backend for LocalBackend {
         crate::visualizations::routes::page_of(&self.state, session_id, fragment_path)
     }
 
+    fn terminal_conversation(
+        &self,
+        _session_id: &str,
+        terminal_id: &str,
+    ) -> Result<crate::agent_conversation::AgentConversation> {
+        self.state.terminals.agent_conversation(terminal_id)
+    }
+
+    fn submit_to_agent(&self, _session_id: &str, terminal_id: &str, text: &str) -> Result<()> {
+        self.state.terminals.submit_to_agent(terminal_id, text)
+    }
+
     fn close_terminal(&self, _session_id: &str, terminal_id: &str) -> Result<()> {
         self.state.terminals.remove(terminal_id);
         Ok(())

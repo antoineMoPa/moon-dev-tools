@@ -35,6 +35,7 @@ mod file_picker;
 mod file_written_elsewhere;
 mod files;
 mod finding;
+mod inspect_minerve;
 mod launch;
 mod layout;
 mod open_from_shell;

@@ -774,6 +774,25 @@ impl Backend for RemoteBackend {
         Ok(page.html)
     }
 
+    fn terminal_conversation(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> Result<crate::agent_conversation::AgentConversation> {
+        self.get(&format!(
+            "/api/session/{session_id}/terminals/{terminal_id}/conversation"
+        ))
+    }
+
+    fn submit_to_agent(&self, session_id: &str, terminal_id: &str, text: &str) -> Result<()> {
+        self.post(
+            &format!("/api/session/{session_id}/terminals/{terminal_id}/conversation/prompt"),
+            &crate::agent_conversation::AgentPrompt {
+                text: text.to_string(),
+            },
+        )
+    }
+
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()> {
         self.delete(&format!(
             "/api/session/{session_id}/terminals/{terminal_id}"

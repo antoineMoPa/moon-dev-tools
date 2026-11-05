@@ -402,6 +402,15 @@ pub(crate) trait Backend: Send + Sync + 'static {
     ) -> Result<Vec<crate::visualizations::VisualizationView>>;
     /// The page one of those visualizations is shown on, by its fragment's path.
     fn visualization_page(&self, session_id: &str, fragment_path: &str) -> Result<String>;
+    /// The conversation of the Minerve in a shell - see `agent_control` in
+    /// [`crate::terminal`].
+    fn terminal_conversation(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> Result<crate::agent_conversation::AgentConversation>;
+    /// Sends a prompt to the Minerve in a shell, refused while it is in a turn.
+    fn submit_to_agent(&self, session_id: &str, terminal_id: &str, text: &str) -> Result<()>;
     fn close_terminal(&self, session_id: &str, terminal_id: &str) -> Result<()>;
     /// What a shell is called, if it has been named: an agent's shell is named as it starts,
     /// a plain one only once someone renames it. A shell the server does not have is an error.

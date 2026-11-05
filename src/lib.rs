@@ -13,6 +13,7 @@
 mod agent;
 #[cfg(not(target_arch = "wasm32"))]
 mod agent_programs;
+mod agent_conversation;
 mod agent_sessions;
 mod api;
 pub(crate) mod attention;
