@@ -127,13 +127,9 @@ pub(crate) struct App {
     /// The tab whose menu said "close other tabs": every other tab of its frame is asked to
     /// close, one at a time.
     pub(crate) pending_close_of_others: Option<PaneId>,
-    /// The terminal whose `inspect` button was clicked, opened once the layout is back from
-    /// drawing - see [`crate::native::conversation_pane`].
+    /// The terminal whose `inspect` button was clicked on its run's row of the board, opened
+    /// once the layout is back from drawing - see [`crate::native::conversation_pane`].
     pub(crate) pending_inspect: Option<String>,
-    /// The frames whose pane in front is a Minerve shell, with its terminal: their strips show
-    /// an `inspect` button. Worked out before the strips are drawn, since the layout is lent
-    /// out while they are.
-    pub(crate) inspectable_frames: std::collections::HashMap<egui_frames::FrameId, String>,
     pending_tab_action: Option<TabAction>,
     /// Moving the window by an empty part of the tab strip - see [`crate::native::window_drag`].
     #[cfg(target_os = "macos")]
@@ -438,7 +434,6 @@ impl App {
             pending_close: None,
             pending_close_of_others: None,
             pending_inspect: None,
-            inspectable_frames: Default::default(),
             #[cfg(target_os = "macos")]
             window_drag: Default::default(),
             pending_tab_action: None,

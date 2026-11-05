@@ -402,6 +402,10 @@ impl Palette {
             accent: self.accent,
             close_hover: self.warn,
             font: FontId::proportional(SMALL_SIZE + 1.0),
+            // Pinned rather than taken from the crate, whose defaults grew to 24/14 and made
+            // the strip a head taller than the rest of the window's controls.
+            tab_height: 18.0,
+            close_size: 12.0,
             ..egui_frames::FramesStyle::default()
         }
     }

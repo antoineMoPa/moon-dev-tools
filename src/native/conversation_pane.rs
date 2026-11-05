@@ -7,8 +7,12 @@
 
 use std::collections::HashMap;
 
-use egui::{CornerRadius, RichText, Ui};
+use egui::{
+    CornerRadius, RichText, Ui,
+    text::{LayoutJob, TextFormat},
+};
 use egui_frames::DropSide;
+use egui_moon_editor::{Language, highlight};
 use web_time::Instant;
 
 use crate::{
@@ -17,6 +21,7 @@ use crate::{
     },
     native::{
         app::App,
+        board::marks::{Activity, activity_dot},
         model::Model,
         panes::Pane,
         theme::{CODE_SIZE, Palette, SMALL_SIZE, UI_SIZE},
@@ -317,14 +322,31 @@ fn draw_text(ui: &mut Ui, message: &AgentMessage, palette: &Palette) {
     }
 }
 
+/// How a tool call went, as far as its output says: Minerve answers a failed call with an
+/// output that starts `Error:` (its own tools, and MCP tools that report an error), or
+/// `[Error]` (a few of its tools word it so).
+fn outcome_of(output: Option<&str>) -> Activity {
+    match output.map(str::trim_start) {
+        None => Activity::Quiet,
+        Some(output) if output.starts_with("Error:") || output.starts_with("[Error]") => {
+            Activity::Attention
+        }
+        Some(_) => Activity::Running,
+    }
+}
+
 fn draw_tool_call(ui: &mut Ui, call: &AgentToolCall, output: Option<&str>, palette: &Palette) {
     // The model wrote these, so they may be anything: what does not parse is shown as written.
     let arguments: Option<serde_json::Map<String, serde_json::Value>> =
         serde_json::from_str(&call.function.arguments).ok();
+    let argument = |name: &str| arguments.as_ref()?.get(name)?.as_str();
     let headline = HEADLINE_ARGUMENT_OF_TOOL
         .iter()
         .find(|(tool, _)| *tool == call.function.name)
-        .and_then(|(_, argument)| arguments.as_ref()?.get(*argument)?.as_str());
+        .and_then(|(_, name)| argument(name));
+    // Code a tool reads or writes is coloured as the file it names would be.
+    let language_of_file = Language::of_path(argument("path").unwrap_or_default());
+    let json = Language::of_path("arguments.json");
     let mut title = RichText::new(match headline {
         Some(headline) => format!("{}  {}", call.function.name, first_line(headline)),
         None => call.function.name.clone(),
@@ -335,56 +357,87 @@ fn draw_tool_call(ui: &mut Ui, call: &AgentToolCall, output: Option<&str>, palet
         Some(_) => title.color(palette.ink),
         None => title.color(palette.muted),
     };
-    egui::CollapsingHeader::new(title)
-        .id_salt(&call.id)
-        .show(ui, |ui| {
-            match (call.function.name.as_str(), &arguments) {
-                ("edit", Some(arguments)) => draw_edits(ui, arguments, palette),
-                ("write", Some(arguments)) => {
-                    let content = arguments
-                        .get("content")
-                        .and_then(|content| content.as_str());
-                    draw_code(
-                        ui,
-                        content.unwrap_or_default(),
-                        palette.diff_added_bg,
-                        palette,
-                    );
-                }
-                // The headline already says all there is to say about these.
-                ("run_shell_command" | "read" | "delete_file" | "list_files", Some(_)) => {}
-                (_, Some(arguments)) => draw_code(
+    let id = ui.make_persistent_id(&call.id);
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+    let header = ui.horizontal(|ui| {
+        state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+        activity_dot(ui, outcome_of(output), palette);
+        let label = ui.add(egui::Label::new(title).sense(egui::Sense::click()));
+        if label.clicked() {
+            state.toggle(ui);
+        }
+    });
+    state.show_body_indented(&header.response, ui, |ui| {
+        match (call.function.name.as_str(), &arguments) {
+            ("edit", Some(arguments)) => draw_edits(ui, arguments, &language_of_file, palette),
+            ("write", Some(arguments)) => {
+                let content = arguments
+                    .get("content")
+                    .and_then(|content| content.as_str());
+                draw_code(
                     ui,
-                    &serde_json::to_string_pretty(arguments).expect("a JSON map serializes"),
-                    palette.code_bg,
+                    content.unwrap_or_default(),
+                    palette.diff_added_bg,
+                    &language_of_file,
                     palette,
-                ),
-                (_, None) => draw_code(ui, &call.function.arguments, palette.code_bg, palette),
+                );
             }
-            match output {
-                Some(output) => {
-                    ui.label(
-                        RichText::new("output")
-                            .size(SMALL_SIZE)
-                            .color(palette.muted),
-                    );
-                    draw_code(ui, &first_lines(output), palette.code_bg, palette);
-                }
-                None => {
-                    ui.label(
-                        RichText::new("no output yet")
-                            .size(SMALL_SIZE)
-                            .color(palette.muted),
-                    );
-                }
+            // The headline already says all there is to say about these.
+            ("run_shell_command" | "read" | "delete_file" | "list_files", Some(_)) => {}
+            (_, Some(arguments)) => draw_code(
+                ui,
+                &serde_json::to_string_pretty(arguments).expect("a JSON map serializes"),
+                palette.code_bg,
+                &json,
+                palette,
+            ),
+            (_, None) => draw_code(
+                ui,
+                &call.function.arguments,
+                palette.code_bg,
+                &json,
+                palette,
+            ),
+        }
+        match output {
+            Some(output) => {
+                ui.label(
+                    RichText::new("output")
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
+                );
+                // A read's output is the file; any other that parses as JSON is laid out and
+                // coloured as JSON.
+                let (output, language) = match (call.function.name.as_str(), pretty_json(output)) {
+                    ("read", _) => (output.to_string(), &language_of_file),
+                    (_, Some(pretty)) => (pretty, &json),
+                    (_, None) => (output.to_string(), &Language::plain()),
+                };
+                draw_code(
+                    ui,
+                    &first_lines(&output),
+                    palette.code_bg,
+                    language,
+                    palette,
+                );
             }
-        });
+            None => {
+                ui.label(
+                    RichText::new("no output yet")
+                        .size(SMALL_SIZE)
+                        .color(palette.muted),
+                );
+            }
+        }
+    });
 }
 
 /// Each replacement of an `edit` call: the text it takes out over the text it puts in.
 fn draw_edits(
     ui: &mut Ui,
     arguments: &serde_json::Map<String, serde_json::Value>,
+    language: &Language,
     palette: &Palette,
 ) {
     let Some(edits) = arguments.get("edits").and_then(|edits| edits.as_array()) else {
@@ -396,29 +449,65 @@ fn draw_edits(
                 .and_then(|text| text.as_str())
                 .unwrap_or_default()
         };
-        draw_code(ui, text_of("oldText"), palette.diff_removed_bg, palette);
-        draw_code(ui, text_of("newText"), palette.diff_added_bg, palette);
+        draw_code(
+            ui,
+            text_of("oldText"),
+            palette.diff_removed_bg,
+            language,
+            palette,
+        );
+        draw_code(
+            ui,
+            text_of("newText"),
+            palette.diff_added_bg,
+            language,
+            palette,
+        );
         ui.add_space(4.0);
     }
 }
 
-fn draw_code(ui: &mut Ui, text: &str, fill: egui::Color32, palette: &Palette) {
+/// `text` on a `fill` block, coloured as `language` reads it.
+fn draw_code(ui: &mut Ui, text: &str, fill: egui::Color32, language: &Language, palette: &Palette) {
     egui::Frame::new()
         .fill(fill)
         .corner_radius(CornerRadius::same(4))
         .inner_margin(6)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.add(
-                egui::Label::new(
-                    RichText::new(text)
-                        .monospace()
-                        .size(CODE_SIZE)
-                        .color(palette.ink),
-                )
-                .wrap(),
-            );
+            let mut job = coloured(text, language, palette);
+            job.wrap.max_width = ui.available_width();
+            ui.add(egui::Label::new(job).wrap());
         });
+}
+
+/// `text` in the code font, each token in its syntax ink.
+fn coloured(text: &str, language: &Language, palette: &Palette) -> LayoutJob {
+    let font = egui::FontId::monospace(CODE_SIZE);
+    let format = |style| TextFormat::simple(font.clone(), palette.syntax_ink(style));
+    let plain = format(egui_moon_editor::TokenStyle::Plain);
+    let mut job = LayoutJob::default();
+    for (line, tokens) in text.split_inclusive('\n').zip(highlight(language, text)) {
+        let mut at = 0;
+        for token in tokens {
+            if token.range.start > at {
+                job.append(&line[at..token.range.start], 0.0, plain.clone());
+            }
+            job.append(&line[token.range.clone()], 0.0, format(token.style));
+            at = token.range.end;
+        }
+        if at < line.len() {
+            job.append(&line[at..], 0.0, plain.clone());
+        }
+    }
+    job
+}
+
+/// `text` pretty-printed, when it is a JSON object or array.
+fn pretty_json(text: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    (value.is_object() || value.is_array())
+        .then(|| serde_json::to_string_pretty(&value).expect("parsed JSON serializes"))
 }
 
 fn first_line(text: &str) -> &str {
@@ -437,4 +526,47 @@ fn first_lines(text: &str) -> String {
         shown.join("\n"),
         total - SHOWN_OUTPUT_LINES
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tool_call_is_green_once_answered_red_when_the_answer_is_an_error() {
+        assert_eq!(outcome_of(None), Activity::Quiet);
+        assert_eq!(outcome_of(Some("Edited src/lib.rs")), Activity::Running);
+        assert_eq!(
+            outcome_of(Some("Error: Function 'nope' not found")),
+            Activity::Attention
+        );
+        assert_eq!(
+            outcome_of(Some("[Error] Offset 90 is beyond end of file")),
+            Activity::Attention
+        );
+    }
+
+    #[test]
+    fn a_json_output_is_pretty_printed_and_other_text_is_left_alone() {
+        assert_eq!(
+            pretty_json(r#"{"id":"MOON-12","tags":[1]}"#).as_deref(),
+            Some("{\n  \"id\": \"MOON-12\",\n  \"tags\": [\n    1\n  ]\n}")
+        );
+        assert_eq!(pretty_json("Edited src/lib.rs"), None);
+        assert_eq!(pretty_json("42"), None);
+    }
+
+    #[test]
+    fn json_is_coloured_by_token_and_keeps_its_text() {
+        let palette = Palette::of(crate::native::theme::ThemeMode::Dark);
+        let text = "{\n  \"path\": \"src/lib.rs\",\n  \"limit\": 20\n}";
+        let job = coloured(text, &Language::of_path("arguments.json"), &palette);
+        assert_eq!(job.text, text);
+        let colours: std::collections::HashSet<_> = job
+            .sections
+            .iter()
+            .map(|section| section.format.color)
+            .collect();
+        assert!(colours.len() > 2, "only {} colours", colours.len());
+    }
 }

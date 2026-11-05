@@ -1,4 +1,5 @@
-//! The `inspect` button over a Minerve shell, and the conversation pane it opens.
+//! The `inspect` button on a Minerve run's row of the board, and the conversation pane it
+//! opens.
 
 use std::sync::{
     Arc,
@@ -14,7 +15,7 @@ use crate::{
     },
     api::AgentKind,
     native::{
-        panes::{Pane, PaneKind},
+        panes::PaneKind,
         theme::ThemeMode,
     },
 };
@@ -65,18 +66,54 @@ fn conversation() -> AgentConversation {
                 ..message(AgentMessageRole::Assistant, "")
             },
             answer("c2", "Edited src/lib.rs"),
+            AgentMessage {
+                tool_calls: vec![call(
+                    "c3",
+                    "linear__get_issue",
+                    r#"{"id":"MOON-12","include_comments":true,"limit":20}"#,
+                )],
+                ..message(AgentMessageRole::Assistant, "")
+            },
+            answer("c3", "Error: MCP tool 'linear__get_issue': not signed in"),
             message(AgentMessageRole::Assistant, "It shouts now."),
         ],
         broken: None,
     }
 }
 
+/// A Minerve going for a task, as the board's answer would carry it.
+fn running_minerve() -> crate::moontasks::TaskResourceView {
+    crate::moontasks::TaskResourceView {
+        id: "run-of-a-minerve".to_string(),
+        kind: crate::moontasks::TaskResourceKind::Agent,
+        agent: AgentKind::Minerve,
+        label: "minerve - 1".to_string(),
+        file_path: None,
+        terminal_id: Some(TERMINAL_ID.to_string()),
+        running: true,
+        going_elsewhere_in: None,
+        quiet_for_secs: None,
+        attention: None,
+        resumable: true,
+        started_at_unix: 1700000001,
+        started_by: None,
+        work_tree: None,
+    }
+}
+
 #[test]
-fn inspect_on_a_minerve_shell_opens_its_conversation_beside_it() {
+fn inspect_on_a_minerve_run_of_the_board_opens_its_conversation() {
     let fixture = seeded_fixture("inspect-minerve");
+    fixture.write(
+        ".moontasks/greet-louder-1111/metadata.json",
+        "{\n  \"title\": \"Greet louder\",\n  \"status\": \"todo\",\n  \
+         \"created_at_unix\": 1700000000,\n  \"resources\": []\n}\n",
+    );
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     let opened = Arc::new(AtomicBool::new(false));
     let opened_in_ui = Arc::clone(&opened);
+    let on_board = Arc::new(AtomicBool::new(false));
+    let on_board_in_ui = Arc::clone(&on_board);
     let inspecting = Arc::new(AtomicBool::new(false));
     let inspecting_in_ui = Arc::clone(&inspecting);
 
@@ -86,19 +123,17 @@ fn inspect_on_a_minerve_shell_opens_its_conversation_beside_it() {
             if !opened_in_ui.load(Ordering::Relaxed)
                 && matches!(app.model.stage, crate::native::model::Stage::Ready)
             {
-                let frame = app.model.layout.frame_ids()[0];
-                let pane = app.model.layout.add_pane(
-                    frame,
-                    Pane::Terminal {
-                        terminal_id: TERMINAL_ID.to_string(),
-                        command: Some(AgentKind::Minerve),
-                        task_id: None,
-                    },
-                    None,
-                );
-                app.model.layout.focus_pane(pane);
+                app.open_pane(crate::native::panes::OpenPaneRequest::Tasks);
                 app.model.conversations.heard(TERMINAL_ID, conversation());
                 opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            // The fixture has no shell behind the run, so the run is put on the card here,
+            // again after any answer of the board's that would take it off.
+            if let Some(task) = app.model.board.tasks.first_mut()
+                && task.resources.is_empty()
+            {
+                task.resources.push(running_minerve());
+                on_board_in_ui.store(true, Ordering::Relaxed);
             }
             app.draw(ui);
             inspecting_in_ui.store(
@@ -111,10 +146,12 @@ fn inspect_on_a_minerve_shell_opens_its_conversation_beside_it() {
         });
 
     assert!(
-        settle(&mut harness, || opened.load(Ordering::Relaxed)),
-        "the window never got ready"
+        settle(&mut harness, || on_board.load(Ordering::Relaxed)),
+        "the board never read the task out of .moontasks"
     );
-    harness.step();
+    harness.run_steps(3);
+    // On the run's row, not on the tab strip.
+    assert_eq!(harness.query_all_by_label("inspect").count(), 1);
     harness.get_by_label("inspect").click();
     assert!(
         settle(&mut harness, || inspecting.load(Ordering::Relaxed)),
@@ -131,6 +168,10 @@ fn inspect_on_a_minerve_shell_opens_its_conversation_beside_it() {
     harness.run_steps(3);
     harness.get_by_label("hello");
     harness.get_by_label("HELLO");
+    // Anything else shows its arguments, as JSON.
+    harness.get_by_label("linear__get_issue").click();
+    harness.run_steps(3);
+    harness.get_by_label_contains("\"include_comments\": true");
 
     // A prompt typed in the pane goes to the agent. This one has no server behind it, and
     // the pane says so rather than dropping it.

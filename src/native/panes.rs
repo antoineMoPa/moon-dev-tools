@@ -736,19 +736,9 @@ impl PaneView<Pane> for App {
     }
 
     /// The light/dark switch, on the tab strip that doubles as the app header.
-    fn tab_strip_end(&mut self, ui: &mut Ui, frame: FrameId, primary: bool) {
+    fn tab_strip_end(&mut self, ui: &mut Ui, _frame: FrameId, primary: bool) {
         if primary {
             self.window_controls(ui);
-        }
-        // Left of the window's controls, for the Minerve shell in front of this frame.
-        if let Some(terminal_id) = self.inspectable_frames.get(&frame).cloned() {
-            let inspect = ui
-                .small_button("inspect")
-                .on_hover_text("The conversation and its tool calls");
-            // Deferred: the layout is lent out while its strips are drawn.
-            if inspect.clicked() {
-                self.pending_inspect = Some(terminal_id);
-            }
         }
     }
 }

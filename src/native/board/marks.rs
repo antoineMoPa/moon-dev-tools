@@ -37,7 +37,7 @@ pub(super) fn running_dot(ui: &mut Ui, running: bool, palette: &Palette) {
 ///
 /// Drawn rather than typeset, because the bundled fonts have no circle glyph - the system
 /// font that a shell's output borrows is not there to fall back on in a snapshot.
-pub(super) fn activity_dot(ui: &mut Ui, activity: Activity, palette: &Palette) {
+pub(crate) fn activity_dot(ui: &mut Ui, activity: Activity, palette: &Palette) {
     const DIAMETER: f32 = 7.0;
 
     let (rect, _) = ui.allocate_exact_size(vec2(DIAMETER, DIAMETER), egui::Sense::hover());
