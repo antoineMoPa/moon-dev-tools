@@ -127,7 +127,7 @@ pub(crate) struct App {
     /// The tab whose menu said "close other tabs": every other tab of its frame is asked to
     /// close, one at a time.
     pub(crate) pending_close_of_others: Option<PaneId>,
-    /// The terminal whose `inspect` button was clicked on its run's row of the board, opened
+    /// The terminal whose `inspect` button was clicked in its task header, opened
     /// once the layout is back from drawing - see [`crate::native::conversation_pane`].
     pub(crate) pending_inspect: Option<String>,
     pending_tab_action: Option<TabAction>,

@@ -496,20 +496,6 @@ fn draw_resource(
                 if card.pressed(&stop) {
                     actions.push(BoardAction::Stop(task.id.to_string(), resource.id.clone()));
                 }
-                // For an agent that tells moon what it is doing: its conversation, tool calls
-                // and all, in a pane of its own. With the marks rather than after the name, so
-                // a long name does not push it off the card.
-                if resource.agent == AgentKind::Minerve
-                    && let Some(terminal_id) = &resource.terminal_id
-                {
-                    let inspect = widgets::quiet_button_colored(ui, "inspect", palette.accent)
-                        .on_hover_text("The conversation and its tool calls");
-                    if card.pressed(&inspect) {
-                        actions.push(BoardAction::InspectAgent {
-                            terminal_id: terminal_id.clone(),
-                        });
-                    }
-                }
             } else if resource.resumable {
                 let resume = widgets::quiet_button_colored(ui, "resume", palette.accent)
                     .on_hover_text("Start this agent again where it left off");

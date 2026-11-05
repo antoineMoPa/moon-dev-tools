@@ -637,7 +637,20 @@ impl PaneView<Pane> for App {
             ..
         } = pane
         {
-            crate::native::board::header::draw(self, ui, task_id);
+            let inspectable = match pane {
+                Pane::Terminal {
+                    terminal_id,
+                    command: Some(crate::api::AgentKind::Minerve),
+                    ..
+                } => Some(terminal_id),
+                _ => None,
+            };
+            // Deferred: the layout is lent out while its panes are drawn.
+            if crate::native::board::header::draw(self, ui, task_id, inspectable.is_some())
+                && let Some(terminal_id) = inspectable
+            {
+                self.pending_inspect = Some(terminal_id.clone());
+            }
         }
         match pane {
             Pane::Review { session_id, .. } => {

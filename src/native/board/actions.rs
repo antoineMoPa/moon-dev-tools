@@ -105,8 +105,6 @@ pub(crate) enum BoardAction {
         command: Option<AgentKind>,
         task_id: String,
     },
-    /// Open the conversation of a task's running Minerve, beside its shell if that is open.
-    InspectAgent { terminal_id: String },
     /// Open the review of what the task has changed.
     OpenReview(String, String),
     /// Open every repo the task still has pending reviews in, as one diff.
@@ -595,9 +593,6 @@ pub(crate) fn apply(app: &mut App, action: BoardAction) {
                 task_id: Some(task_id),
             }));
         }
-        // Deferred like the strip's own buttons: the board is drawn inside the layout, which is
-        // lent out until the panes are done.
-        BoardAction::InspectAgent { terminal_id } => app.pending_inspect = Some(terminal_id),
         BoardAction::SaveNotes { task_id, notes } => {
             act(app, "could not write the notes", move |backend| {
                 // Opened first, which is what makes the file real: a task that has never had

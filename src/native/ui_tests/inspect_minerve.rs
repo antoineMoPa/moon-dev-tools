@@ -15,7 +15,7 @@ use crate::{
     },
     api::AgentKind,
     native::{
-        panes::PaneKind,
+        panes::{Pane, PaneKind},
         theme::ThemeMode,
     },
 };
@@ -102,7 +102,7 @@ fn running_minerve() -> crate::moontasks::TaskResourceView {
 }
 
 #[test]
-fn inspect_on_a_minerve_run_of_the_board_opens_its_conversation() {
+fn inspect_in_a_minerve_shell_header_opens_its_conversation() {
     let fixture = seeded_fixture("inspect-minerve");
     fixture.write(
         ".moontasks/greet-louder-1111/metadata.json",
@@ -133,7 +133,21 @@ fn inspect_on_a_minerve_run_of_the_board_opens_its_conversation() {
                 && task.resources.is_empty()
             {
                 task.resources.push(running_minerve());
-                on_board_in_ui.store(true, Ordering::Relaxed);
+                let task_id = task.id.clone();
+                if !on_board_in_ui.swap(true, Ordering::Relaxed) {
+                    // Its shell, in a tab of its own under the task's header.
+                    let frame = app.model.layout.frame_ids()[0];
+                    let pane = app.model.layout.add_pane(
+                        frame,
+                        Pane::Terminal {
+                            terminal_id: TERMINAL_ID.to_string(),
+                            command: Some(AgentKind::Minerve),
+                            task_id: Some(task_id),
+                        },
+                        None,
+                    );
+                    app.model.layout.focus_pane(pane);
+                }
             }
             app.draw(ui);
             inspecting_in_ui.store(
@@ -150,7 +164,7 @@ fn inspect_on_a_minerve_run_of_the_board_opens_its_conversation() {
         "the board never read the task out of .moontasks"
     );
     harness.run_steps(3);
-    // On the run's row, not on the tab strip.
+    // In the shell's task header, and not on the run's row of the card.
     assert_eq!(harness.query_all_by_label("inspect").count(), 1);
     harness.get_by_label("inspect").click();
     assert!(
