@@ -1,6 +1,6 @@
 //! The documents a task is about, listed in the task's `file_attachments.txt`, and the
 //! opening of one. The task's pane lists the files left in the task's folder beside them, and
-//! has a button that opens the folder itself.
+//! has a button that opens the window's own file picker in the folder - not the OS's browser.
 //!
 //! The list is a plain file so that a person or an agent adds a document by writing a line.
 //! A click on a text file - a `.txt`, a `.json`, markdown, source, a file with no extension -
@@ -15,6 +15,8 @@
 use std::path::{Path, PathBuf};
 
 use egui::{Align, Layout as UiLayout, RichText, Ui};
+
+use crate::native::file_picker::PickPurpose;
 
 use crate::{
     moontasks::TaskView,
@@ -65,16 +67,17 @@ pub(crate) fn draw_section(
     draw_folder_files(app, ui, task, palette);
 }
 
-/// The button at the right of the Files heading, which hands the task's folder to
-/// [`OPENER`]: the file manager, on a Mac. A browser has no folder of the machine to open, so
-/// there is no button.
+/// The button at the right of the Files heading, which opens the window's own file picker in
+/// the task's folder - the same folder browser as File > Open, so a file is picked from the
+/// list and opened the way the list opens one. A browser has no folder of the machine to
+/// browse, so there is no button.
 #[cfg(not(target_arch = "wasm32"))]
 fn open_folder_button(app: &mut App, ui: &mut Ui, task: &TaskView) {
     ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
         let open = widgets::clickable(ui.small_button("open folder"))
-            .on_hover_text(format!("Open {} in the file manager", task.dir_path));
+            .on_hover_text(format!("Browse {}", task.dir_path));
         if open.clicked() {
-            hand_to_opener(app, PathBuf::from(&task.dir_path));
+            app.ask_for_a_pick(PickPurpose::TaskFile, &task.dir_path);
         }
     });
 }
@@ -173,7 +176,7 @@ fn hand_to_opener(app: &mut App, path: PathBuf) {
 /// The tab is asked for the way a shell's `moon edit` asks, so a document outside the board's
 /// repo - an absolute path to another project - opens in a session on its own project. A
 /// browser has no such asks, so there every document goes to [`OPENER`].
-fn open(app: &mut App, path: PathBuf) {
+pub(crate) fn open(app: &mut App, path: PathBuf) {
     // An error is a path that cannot be read as a file, which is no text for a tab either.
     #[cfg(not(target_arch = "wasm32"))]
     if !goes_to_opener_by_name(&path)

@@ -101,6 +101,46 @@ fn running_minerve() -> crate::moontasks::TaskResourceView {
     }
 }
 
+/// The board's own Minerve has no card, so its shell's header is titled for the board it is on,
+/// and still opens its conversation.
+#[test]
+fn the_board_agents_header_is_titled_for_its_board() {
+    let fixture = seeded_fixture("inspect-board-agent");
+    let mut app = app_for(&fixture.root, ThemeMode::Dark);
+    let project = fixture
+        .root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .expect("the fixture is in a folder of its own");
+    let on_board = Arc::new(AtomicBool::new(false));
+    let on_board_in_ui = Arc::clone(&on_board);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .build_ui(move |ui| {
+            if !on_board_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                app.model.conversations.heard(TERMINAL_ID, conversation());
+                let frame = app.model.layout.frame_ids()[0];
+                let pane = app.model.layout.add_pane(
+                    frame,
+                    Pane::Terminal {
+                        terminal_id: TERMINAL_ID.to_string(),
+                        command: Some(AgentKind::Minerve),
+                        task_id: Some("board-task".to_string()),
+                    },
+                    None,
+                );
+                app.model.layout.focus_pane(pane);
+                on_board_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+        });
+    harness.run_steps(3);
+    harness.get_by_label(&format!("Board {project} agent"));
+    assert_eq!(harness.query_all_by_label("inspect").count(), 1);
+}
+
 #[test]
 fn inspect_in_a_minerve_shell_header_opens_its_conversation() {
     let fixture = seeded_fixture("inspect-minerve");

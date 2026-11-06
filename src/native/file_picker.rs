@@ -47,6 +47,10 @@ pub(crate) enum PickPurpose {
     /// A file to read and edit in a tab.
     #[cfg(not(target_arch = "wasm32"))]
     FileToEdit,
+    /// A file in a task's folder, asked for from the task's Files section and opened the way
+    /// that section's list opens a file.
+    #[cfg(not(target_arch = "wasm32"))]
+    TaskFile,
     /// Where the file of an untitled tab goes and what it is called, asked for by the tab's
     /// first save.
     #[cfg(not(target_arch = "wasm32"))]
@@ -64,7 +68,7 @@ impl PickPurpose {
             Self::RepoFolder => Picks::Folder,
             Self::NewProjectFolder => Picks::NewFolder,
             #[cfg(not(target_arch = "wasm32"))]
-            Self::FileToEdit => Picks::File,
+            Self::FileToEdit | Self::TaskFile => Picks::File,
             #[cfg(not(target_arch = "wasm32"))]
             Self::NameForUntitledFile { .. } => Picks::NewName,
         }
@@ -75,7 +79,7 @@ impl PickPurpose {
         match self {
             Self::RepoFolder | Self::NewProjectFolder => None,
             #[cfg(not(target_arch = "wasm32"))]
-            Self::FileToEdit => None,
+            Self::FileToEdit | Self::TaskFile => None,
             #[cfg(not(target_arch = "wasm32"))]
             Self::NameForUntitledFile { suggested, .. } => Some(suggested),
         }
@@ -88,6 +92,8 @@ impl PickPurpose {
             Self::NewProjectFolder => "Name the new project's folder",
             #[cfg(not(target_arch = "wasm32"))]
             Self::FileToEdit => "Open a file to edit",
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TaskFile => "Open a file from the task's folder",
             #[cfg(not(target_arch = "wasm32"))]
             Self::NameForUntitledFile { .. } => "Save the new file",
         }
@@ -247,6 +253,10 @@ fn picked(app: &mut App, purpose: PickPurpose, pick: Pick) {
         PickPurpose::NewProjectFolder => app.create_project(pick.path),
         #[cfg(not(target_arch = "wasm32"))]
         PickPurpose::FileToEdit => app.open_picked_file(std::path::PathBuf::from(pick.path)),
+        #[cfg(not(target_arch = "wasm32"))]
+        PickPurpose::TaskFile => {
+            crate::native::board::attachments::open(app, std::path::PathBuf::from(pick.path));
+        }
         #[cfg(not(target_arch = "wasm32"))]
         PickPurpose::NameForUntitledFile {
             pane_id,
