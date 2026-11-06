@@ -74,7 +74,7 @@ pub(crate) fn draw_list(
         .model
         .review_requests
         .iter()
-        .filter(|request| request.task_id == task.id)
+        .filter(|request| request.task_id == task.id && !request.task_finished)
         .collect();
     let pending: Vec<&ReviewRequestView> = requests
         .iter()

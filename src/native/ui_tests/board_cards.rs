@@ -105,14 +105,13 @@ fn a_tasks_deploy_list_is_drawn_under_its_card() {
     );
 }
 
-/// A card in the column that finishes a task has nothing left pending on it.
+/// A card in the column that finishes a task shows no review rows at all.
 ///
-/// The repo still has changes and no line was crossed off, so under any other column both rows
-/// would read as pending. Finishing the card is the person saying the work is behind them, and it
-/// finishes what the card was asking for all at once - without writing a word to the file, so a
-/// card dragged back out asks for it again.
+/// The repo still has changes and no line was crossed off, so under any other column the row
+/// would read as pending. Finishing the card is the person saying the work is behind them, so the
+/// rows are not drawn - and nothing is written to the file, so a card dragged back out asks again.
 #[test]
-fn a_finished_cards_deploy_list_reads_as_reviewed() {
+fn a_finished_cards_deploy_list_is_not_shown() {
     use egui_kittest::kittest::Queryable as _;
 
     let fixture = seeded_fixture("board-review-requests-finished");
@@ -152,23 +151,22 @@ fn a_finished_cards_deploy_list_reads_as_reviewed() {
             app.draw(ui);
         });
 
-    // Waited for the same way the pending row is: the board and the requests read off its task
-    // folders are both worker threads, and the row is drawn once both have answered.
+    // The board and the requests are read on worker threads. A row would be drawn once both had
+    // answered, so wait until the open card's title shows before deciding none is there.
     let reviewed = format!("{repo_name} reviewed");
+    let pending = format!("pending {repo_name} review");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && harness.query_by_label(reviewed.as_str()).is_none() {
+    while Instant::now() < deadline && harness.query_by_label("Deploy the thing").is_none() {
         harness.step();
         std::thread::sleep(Duration::from_millis(10));
     }
 
     assert!(
-        harness.query_by_label(reviewed.as_str()).is_some(),
-        "a finished card's row should read as reviewed"
+        harness.query_by_label(reviewed.as_str()).is_none(),
+        "a finished card should not show a review row, reviewed or not"
     );
     assert!(
-        harness
-            .query_by_label(format!("pending {repo_name} review").as_str())
-            .is_none(),
+        harness.query_by_label(pending.as_str()).is_none(),
         "and not as pending, though the repo still has changes to commit"
     );
     assert_eq!(
