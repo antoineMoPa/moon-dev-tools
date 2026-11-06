@@ -464,6 +464,10 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             self.poll_tunnel(ctx);
         }
+        // Text a shell copied with OSC 52: the last one is what the clipboard holds.
+        for text in std::mem::take(&mut self.model.shell_copies) {
+            ctx.copy_text(text);
+        }
         self.open_shell_the_board_started();
         self.open_file_the_board_readied();
         if let Some((task_id, title)) = self.model.board.opened_task_page.take() {

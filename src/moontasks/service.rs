@@ -539,6 +539,8 @@ fn view_of(
     parent: Option<String>,
     open: &OpenSessions,
 ) -> TaskView {
+    let attachments = store::read_attachments(repo_path, task_id);
+    let folder_files = store::read_folder_files(repo_path, task_id, &attachments);
     TaskView {
         id: task_id.to_string(),
         title: metadata.title.clone(),
@@ -554,7 +556,8 @@ fn view_of(
         remote_task_tracker_url: metadata.remote_task_tracker_url.clone(),
         parent,
         notes: store::read_notes(repo_path, task_id),
-        attachments: store::read_attachments(repo_path, task_id),
+        attachments,
+        folder_files,
         resources: resources_of(state, repo_path, works_in, task_id, metadata, open),
     }
 }

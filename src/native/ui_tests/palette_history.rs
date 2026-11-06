@@ -36,6 +36,7 @@ fn quick_task_card() -> TaskView {
         parent: None,
         notes: String::new(),
         attachments: Vec::new(),
+        folder_files: Vec::new(),
         resources: vec![TaskResourceView {
             id: "run".to_string(),
             kind: TaskResourceKind::Agent,

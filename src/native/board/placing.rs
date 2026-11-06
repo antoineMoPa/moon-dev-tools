@@ -220,6 +220,7 @@ mod tests {
                 parent: None,
                 notes: String::new(),
                 attachments: Vec::new(),
+                folder_files: Vec::new(),
                 resources: Vec::new(),
             })
             .collect()

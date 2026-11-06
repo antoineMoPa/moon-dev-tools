@@ -145,6 +145,7 @@ mod tests {
             parent: None,
             notes: notes.to_string(),
             attachments: Vec::new(),
+            folder_files: Vec::new(),
             resources: Vec::new(),
         }
     }

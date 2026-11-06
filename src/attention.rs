@@ -18,13 +18,16 @@
 //!
 //! `ST` is `BEL` or `ESC \`. The bell on its own is the fourth signal, and the one Claude Code
 //! falls back to in a terminal it does not know.
+//!
+//! OSC 52 is not an ask: it is a program copying text to the clipboard, which the window puts
+//! on its own. It is read here, with the same bytes, as [`Heard::Copied`].
 
 // Reading a shell's output is the server's: the window in a browser is only told what it asked.
 #[cfg(not(target_arch = "wasm32"))]
 mod scanner;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use scanner::{Attention, Scanner};
+pub(crate) use scanner::{Attention, Heard, Scanner};
 
 use serde::{Deserialize, Serialize};
 

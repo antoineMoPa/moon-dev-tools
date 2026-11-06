@@ -20,6 +20,7 @@ mod board_tags;
 mod board_touch;
 mod board_tracker_link;
 mod board_task_pane;
+mod board_task_files;
 mod board_task_pane_boxes;
 mod command_launcher;
 mod diff_comments;

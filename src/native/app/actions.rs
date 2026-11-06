@@ -370,14 +370,16 @@ impl App {
             },
         );
         // On the same clock: which shells are asking for a person, for the messages and the
-        // cards - see [`crate::attention`].
+        // cards - see [`crate::attention`] - and what they copied, for the clipboard. A copy is
+        // taken as it is answered, so one whose answer fails is lost.
         let session_id = self.model.root_session_id.clone();
         self.tasks.spawn_keyed(
             Some("attention".to_string()),
             move |backend| backend.terminals_wanting_attention(&session_id),
             |model, result| {
-                if let Ok(asking) = result {
-                    model.take_attention(asking);
+                if let Ok(list) = result {
+                    model.shell_copies.extend(list.copies);
+                    model.take_attention(list.terminals);
                 }
             },
         );

@@ -99,18 +99,14 @@ pub(crate) fn draw(app: &mut App, ui: &mut Ui, pane_id: PaneId, task_id: &str) {
                                     );
                                 }
                                 ui.add_space(LINE_GAP);
-                                if !task.attachments.is_empty() {
-                                    board::attachments::draw_list(
-                                        app,
-                                        ui,
-                                        &task,
-                                        &mut board::gesture::Controls::elsewhere(),
-                                        &palette,
-                                        &mut actions,
-                                        true,
-                                    );
-                                    ui.add_space(LINE_GAP);
-                                }
+                                board::attachments::draw_section(
+                                    app,
+                                    ui,
+                                    &task,
+                                    &palette,
+                                    &mut actions,
+                                );
+                                ui.add_space(LINE_GAP);
                                 board::start::draw_list(app, ui, task.runs(), &mut actions);
                                 ui.add_space(LINE_GAP);
                                 board::tracker_link::draw_field(

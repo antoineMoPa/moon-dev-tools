@@ -199,7 +199,8 @@ The board is a folder in the repo, which is the whole of its state:
     notes.md          # the task's description and shared notes, shown on the card
     request_review.md        # how to write the file below, for an agent about to
     request_for_review.txt   # the repos this work touched, in deploy order, once there are any
-    Coordination.md          # the two sentences an agent is told about the wire
+    Coordination.md          # what an agent that will change code is told about the wire
+    tracker_link.md          # how an agent sets the task's tracker link, in metadata.json
     …                 # anything you or an agent puts here
 ```
 
@@ -227,7 +228,9 @@ board shows under that name.
 
 ## The wire
 
-Agents on one board tell each other what they are touching, from their task's shell:
+Agents on one board tell each other what they are touching, from their task's shell. An agent
+is asked to do this only when it is about to change repo files; research or a written document
+needs no post:
 
 ```bash
 moon wire post "rewriting src/terminal.rs and its tests"    # to every agent
@@ -280,7 +283,9 @@ the end of it.
 
 The brief also says where to write the deploy list - `request_for_review.txt`, above - in one
 line, pointing at `request_review.md`, which is written into the folder beside it and holds the
-format. It is a file rather than more of the brief because the brief is a system prompt on every
+format. When the task has a tracker link, the brief names its issue, and it points at
+`tracker_link.md` for how to set one: `remote_task_tracker_url` in `metadata.json`, which an
+agent can write there as it can any file of the task. There is no `moon` command for it. It is a file rather than more of the brief because the brief is a system prompt on every
 run of every task, and the format is read once, by the agent that has work to hand over.
 
 The brief is worth its own file because it is the difference between an agent that knows which

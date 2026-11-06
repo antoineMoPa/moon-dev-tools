@@ -69,6 +69,11 @@ pub(crate) struct TaskView {
     /// document is found from the task.
     #[serde(default)]
     pub(crate) attachments: Vec<String>,
+    /// The files that sit in the task's folder itself, by name, which the task's pane lists
+    /// under `Files` beside the attachments - see [`store::read_folder_files`]. Empty on a
+    /// card, which lists only the attachments.
+    #[serde(default)]
+    pub(crate) folder_files: Vec<String>,
     pub(crate) resources: Vec<TaskResourceView>,
 }
 

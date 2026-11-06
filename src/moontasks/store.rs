@@ -11,6 +11,11 @@ mod folder;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use folder::*;
+// The files that sit in a task's folder, listed under its `Files` - see `task_files`.
+#[cfg(not(target_arch = "wasm32"))]
+mod task_files;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use task_files::*;
 // Which cards are sub-tasks of which: symlinks in a card's folder - see `sub_task_links`.
 #[cfg(not(target_arch = "wasm32"))]
 mod sub_task_links;

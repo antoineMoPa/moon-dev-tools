@@ -359,6 +359,7 @@ impl App {
                 shells_running_a_command: Vec::new(),
                 shells_wanting_attention: Vec::new(),
                 attention_posted: HashMap::new(),
+                shell_copies: Vec::new(),
                 toasts: Vec::new(),
                 messages: Default::default(),
                 language_servers_working: HashMap::new(),

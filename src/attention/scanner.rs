@@ -2,13 +2,21 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
+
 use super::Asked;
+use crate::api::display::CLIPBOARD_LIMIT;
 
 /// The most of a message that is kept. A notification is a line, not a document.
 const MESSAGE_LIMIT: usize = 240;
 /// The most of a sequence that is read before it is given up on as not a notification: a
 /// program painting an image through an OSC would otherwise be buffered whole.
 const SEQUENCE_LIMIT: usize = 4096;
+/// The most of an OSC 52 that is read: its text is base64, four characters for every three
+/// bytes, plus the `52 ; c ;` in front. A copy of more than [`CLIPBOARD_LIMIT`] is given up on.
+const CLIPBOARD_SEQUENCE_LIMIT: usize = CLIPBOARD_LIMIT.div_ceil(3) * 4 + 16;
+/// What an OSC 52 begins with: the clipboard, and the selection it is about.
+const CLIPBOARD_PREFIX: &[u8] = b"52;";
 
 /// A request for attention a shell has made and nobody has answered: kept on the shell until
 /// someone types into it.
@@ -31,6 +39,16 @@ impl Attention {
     }
 }
 
+/// What a shell's output asked for, as it was read.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Heard {
+    /// A request for a person's attention - see [`Asked`].
+    Asked(Asked),
+    /// Text a program copied to the clipboard with OSC 52, decoded. The window puts it on its
+    /// own clipboard, which is where a copy from the terminal goes.
+    Copied(String),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum State {
     Plain,
@@ -43,7 +61,8 @@ enum State {
 }
 
 /// Reads a shell's output as it comes, in whatever pieces it comes in, and picks out the
-/// requests for attention. A sequence split across two reads is one sequence.
+/// requests for attention and the clipboard copies. A sequence split across two reads is one
+/// sequence.
 pub(crate) struct Scanner {
     state: State,
     sequence: Vec<u8>,
@@ -64,12 +83,12 @@ impl Default for Scanner {
 
 impl Scanner {
     /// Read one piece of output, answering with every request for attention in it, in order.
-    pub(crate) fn feed(&mut self, chunk: &[u8]) -> Vec<Asked> {
+    pub(crate) fn feed(&mut self, chunk: &[u8]) -> Vec<Heard> {
         let mut found = Vec::new();
         for &byte in chunk {
             match self.state {
                 State::Plain => match byte {
-                    0x07 => found.push(Asked::Bell),
+                    0x07 => found.push(Heard::Asked(Asked::Bell)),
                     0x1b => self.state = State::Escape,
                     _ => {}
                 },
@@ -86,7 +105,7 @@ impl Scanner {
                     0x07 => self.finish(&mut found),
                     0x1b => self.state = State::OscEscape,
                     _ => {
-                        if self.sequence.len() < SEQUENCE_LIMIT {
+                        if self.sequence.len() < sequence_limit(&self.sequence) {
                             self.sequence.push(byte);
                         } else {
                             // Too long to be a notification - an image, most likely. Read to
@@ -109,15 +128,55 @@ impl Scanner {
         found
     }
 
-    fn finish(&mut self, found: &mut Vec<Asked>) {
+    fn finish(&mut self, found: &mut Vec<Heard>) {
         if !self.too_long
-            && let Some(message) = notification_in(&self.sequence)
+            && let Some(heard) = heard_in(&self.sequence)
         {
-            found.push(Asked::Notification(message));
+            found.push(heard);
         }
         self.sequence.clear();
         self.state = State::Plain;
     }
+}
+
+/// How much of an OSC is kept while it is read: an OSC 52 needs room for its whole copy.
+fn sequence_limit(sequence: &[u8]) -> usize {
+    if sequence.starts_with(CLIPBOARD_PREFIX) {
+        CLIPBOARD_SEQUENCE_LIMIT
+    } else {
+        SEQUENCE_LIMIT
+    }
+}
+
+/// What a complete OSC asks for, if it is one of the ones moon reads.
+fn heard_in(sequence: &[u8]) -> Option<Heard> {
+    if sequence.starts_with(CLIPBOARD_PREFIX) {
+        return clipboard_in(&sequence[CLIPBOARD_PREFIX.len()..]).map(Heard::Copied);
+    }
+    notification_in(sequence).map(|message| Heard::Asked(Asked::Notification(message)))
+}
+
+/// The text an OSC 52 copies, from what follows `52 ;`: `Pc ; base64`. Only a copy to the
+/// clipboard (`c`, or no selection at all) is taken. A query (`?`) is never answered, so no
+/// program can read the clipboard through moon. Invalid base64, text that is not UTF-8, empty
+/// text and text over [`CLIPBOARD_LIMIT`] are all ignored.
+fn clipboard_in(rest: &[u8]) -> Option<String> {
+    let separator = rest.iter().position(|&byte| byte == b';')?;
+    let (selection, data) = (&rest[..separator], &rest[separator + 1..]);
+    if !selection.is_empty() && !selection.contains(&b'c') {
+        return None;
+    }
+    if data == b"?" {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    if bytes.len() > CLIPBOARD_LIMIT {
+        return None;
+    }
+    let text = String::from_utf8(bytes).ok()?;
+    (!text.is_empty()).then_some(text)
 }
 
 /// The message a complete OSC carries, for the three that are notifications.
@@ -209,8 +268,31 @@ fn readable(message: &str) -> String {
 mod tests {
     use super::*;
 
+    /// What `bytes` asks for, leaving out any copy.
     fn scan(bytes: &[u8]) -> Vec<Asked> {
-        Scanner::default().feed(bytes)
+        asks(Scanner::default().feed(bytes))
+    }
+
+    fn asks(heard: Vec<Heard>) -> Vec<Asked> {
+        heard
+            .into_iter()
+            .filter_map(|heard| match heard {
+                Heard::Asked(asked) => Some(asked),
+                Heard::Copied(_) => None,
+            })
+            .collect()
+    }
+
+    /// What `bytes` copies to the clipboard, leaving out any ask.
+    fn copies(bytes: &[u8]) -> Vec<String> {
+        Scanner::default()
+            .feed(bytes)
+            .into_iter()
+            .filter_map(|heard| match heard {
+                Heard::Copied(text) => Some(text),
+                Heard::Asked(_) => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -253,13 +335,13 @@ mod tests {
         assert!(scanner.feed(b"\x1b]9;Perm").is_empty());
         assert!(scanner.feed(b"ission needs in").is_empty());
         assert_eq!(
-            scanner.feed(b"put\x07"),
+            asks(scanner.feed(b"put\x07")),
             vec![Asked::Notification("Permission needs input".into())]
         );
         // And the ESC of an `ESC \` terminator can end one read.
         assert!(scanner.feed(b"\x1b]9;again\x1b").is_empty());
         assert_eq!(
-            scanner.feed(b"\\"),
+            asks(scanner.feed(b"\\")),
             vec![Asked::Notification("again".into())]
         );
     }
@@ -285,6 +367,85 @@ mod tests {
             panic!("expected one notification");
         };
         assert_eq!(message.len(), MESSAGE_LIMIT);
+    }
+
+    #[test]
+    fn an_osc_52_copy_is_decoded_for_the_clipboard_and_is_no_ask() {
+        // `hello, world` in base64, with BEL and with `ESC \`, and an empty selection as `c`.
+        assert_eq!(
+            copies(b"\x1b]52;c;aGVsbG8sIHdvcmxk\x07"),
+            vec!["hello, world"]
+        );
+        assert_eq!(
+            copies(b"\x1b]52;c;aGVsbG8sIHdvcmxk\x1b\\"),
+            vec!["hello, world"]
+        );
+        assert_eq!(
+            copies(b"\x1b]52;;aGVsbG8sIHdvcmxk\x07"),
+            vec!["hello, world"]
+        );
+        assert_eq!(
+            copies(b"\x1b]52;pc;aGVsbG8sIHdvcmxk\x07"),
+            vec!["hello, world"]
+        );
+        // Newlines are kept as they were copied: a copy is not a message.
+        assert_eq!(copies(b"\x1b]52;c;YQpi\x07"), vec!["a\nb"]);
+        // A copy is not a bell, and the bell after it is still heard.
+        assert_eq!(
+            Scanner::default().feed(b"\x1b]52;c;YQ==\x07\x07"),
+            vec![Heard::Copied("a".into()), Heard::Asked(Asked::Bell)]
+        );
+    }
+
+    #[test]
+    fn an_osc_52_copy_split_across_reads_is_one_copy() {
+        let mut scanner = Scanner::default();
+        assert!(scanner.feed(b"\x1b]52;c;aGVsbG8s").is_empty());
+        assert!(scanner.feed(b"IHdvcmxk\x1b").is_empty());
+        assert_eq!(
+            scanner.feed(b"\\"),
+            vec![Heard::Copied("hello, world".into())]
+        );
+    }
+
+    #[test]
+    fn an_osc_52_query_is_never_answered_and_other_selections_are_ignored() {
+        // A query asks for the clipboard back: nothing is copied, nothing is read.
+        assert!(copies(b"\x1b]52;c;?\x07").is_empty());
+        assert!(copies(b"\x1b]52;;?\x1b\\").is_empty());
+        // Primary and secondary selections are not the clipboard.
+        assert!(copies(b"\x1b]52;p;aGVsbG8=\x07").is_empty());
+        assert!(copies(b"\x1b]52;s;aGVsbG8=\x07").is_empty());
+        assert!(copies(b"\x1b]52;s0;aGVsbG8=\x07").is_empty());
+    }
+
+    #[test]
+    fn an_osc_52_that_is_not_a_copy_is_ignored() {
+        // Invalid base64, text that is not UTF-8, and nothing to copy.
+        assert!(copies(b"\x1b]52;c;!!!!\x07").is_empty());
+        assert!(copies(b"\x1b]52;c;/w==\x07").is_empty());
+        assert!(copies(b"\x1b]52;c;\x07").is_empty());
+        // No selection parameter at all is not an OSC 52 copy.
+        assert!(copies(b"\x1b]52\x07").is_empty());
+    }
+
+    #[test]
+    fn an_osc_52_copy_is_capped_at_the_clipboard_limit() {
+        let at_limit = "x".repeat(CLIPBOARD_LIMIT);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&at_limit);
+        let found = copies(format!("\x1b]52;c;{encoded}\x07").as_bytes());
+        assert_eq!(found, vec![at_limit]);
+
+        let over = "x".repeat(CLIPBOARD_LIMIT + 1);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&over);
+        assert!(encoded.len() <= CLIPBOARD_SEQUENCE_LIMIT);
+        assert!(copies(format!("\x1b]52;c;{encoded}\x07").as_bytes()).is_empty());
+
+        // Far over the raw limit: given up on as it is read, and the copy after it still lands.
+        let mut bytes = b"\x1b]52;c;".to_vec();
+        bytes.extend(std::iter::repeat_n(b'A', CLIPBOARD_SEQUENCE_LIMIT + 100));
+        bytes.extend(b"\x07\x1b]52;c;aGk=\x07");
+        assert_eq!(copies(&bytes), vec!["hi"]);
     }
 
     #[test]

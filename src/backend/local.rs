@@ -539,8 +539,12 @@ impl Backend for LocalBackend {
     fn terminals_wanting_attention(
         &self,
         _session_id: &str,
-    ) -> Result<Vec<crate::api::TerminalAttentionView>> {
-        Ok(self.state.terminals.wanting_attention())
+    ) -> Result<crate::api::TerminalAttentionList> {
+        // Every shell here is this person's.
+        Ok(crate::api::TerminalAttentionList {
+            terminals: self.state.terminals.wanting_attention(),
+            copies: self.state.terminals.take_copies(|_| true),
+        })
     }
 
     fn terminal_visualizations(

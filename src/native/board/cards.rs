@@ -432,7 +432,7 @@ fn draw_card_body(
                 ui.add_space(3.0);
             }
             // The documents the task lists, under what runs in it.
-            super::attachments::draw_list(app, ui, task, &mut card, palette, actions, false);
+            super::attachments::draw_list(app, ui, task, &mut card, palette, actions);
             if !task.attachments.is_empty() {
                 ui.add_space(3.0);
             }

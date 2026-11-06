@@ -13,7 +13,8 @@ pub(crate) use naming::{name_for_new_shell, rename};
 pub(crate) use routes::{
     close_terminal, create_terminal, list_terminals, rename_terminal, run_in_shell,
     start_workspace_shell, start_workspace_shell_in_folder, start_workspace_shell_running,
-    submit_to_agent, terminal_conversation, terminal_socket, terminal_view, terminals_running_a_command, terminals_wanting_attention,
+    submit_to_agent, terminal_conversation, terminal_socket, terminal_view,
+    terminals_running_a_command, terminals_wanting_attention,
 };
 pub(crate) use agent_control::WAITING_FOR_INPUT_NOTIFICATION;
 pub(crate) use shown::Shown;
@@ -264,6 +265,10 @@ pub(crate) struct TerminalSession {
     attention: Mutex<Option<Attention>>,
     /// Reads the shell's output for those asks, across however many reads a sequence spans.
     attention_scanner: Mutex<crate::attention::Scanner>,
+    /// The last text the program copied to the clipboard with OSC 52, until a window takes it
+    /// - see [`TerminalSession::copy_requested`]. Only the last one is kept: the clipboard
+    /// would hold no more than that once they were all done.
+    copied: Mutex<Option<String>>,
     /// Whether the program is gone while the session is kept - a failed agent held open for
     /// its error to be read. Input is discarded then: nothing reads the pty any more, and a
     /// write once its buffer fills would block whoever is typing.
@@ -322,6 +327,17 @@ impl TerminalSession {
             return;
         }
         *attention = Some(Attention::now(asked));
+    }
+
+    /// The program put `text` on the clipboard with OSC 52. A window on the shell puts it on
+    /// its own clipboard when it next asks - see [`crate::terminal::terminals_wanting_attention`].
+    fn copy_requested(&self, text: String) {
+        *self.copied.lock().unwrap() = Some(text);
+    }
+
+    /// The text last copied from this shell, if no window has taken it yet.
+    pub(crate) fn take_copy(&self) -> Option<String> {
+        self.copied.lock().unwrap().take()
     }
 
     /// What the shell is asking for, as the window shows it.

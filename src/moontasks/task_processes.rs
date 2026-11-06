@@ -137,19 +137,25 @@ pub(crate) const LAUNCH_PLACEHOLDERS: &[&str] = &["{session}", "{brief}", "{brie
 /// What an agent working in a task is told, beyond the work itself.
 ///
 /// It names the task and says where anything belonging to it goes; the person who opened the
-/// shell says the rest.
-pub(crate) fn brief_for(title: &str, task_dir: &str) -> String {
+/// shell says the rest. `tracker_url` is the task's issue link, empty for a task with none: it
+/// is named here only when there is one, and the file that says how to set it is always pointed at.
+pub(crate) fn brief_for(title: &str, task_dir: &str, tracker_url: &str) -> String {
+    let task = match tracker_url.is_empty() {
+        true => format!("Task: {title}\nTask folder: {task_dir}"),
+        false => format!("Task: {title}\nTask folder: {task_dir}\nTracker issue: {tracker_url}"),
+    };
     format!(
         "You are working on a task from moonreview's moontasks board.\n\
          \n\
-         Task: {title}\n\
-         Task folder: {task_dir}\n\
+         {task}\n\
          \n\
          To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME}\n\
          \n\
          To attach a document to this task (a PDF, a spreadsheet, etc.), check {ATTACHMENTS_BRIEF_FILE_NAME}\n\
          \n\
-         Before working, check {COORDINATION_BRIEF_FILE_NAME}\n\
+         To link this task to its issue in Linear, Jira, GitHub or GitLab, check {TRACKER_LINK_BRIEF_FILE_NAME}\n\
+         \n\
+         If you will change code, check {COORDINATION_BRIEF_FILE_NAME} first\n\
          \n\
          New card on this board: `{program} tasks new \"<title>\"`, which prints its folder.",
         program = crate::cli::PROGRAM
@@ -178,7 +184,7 @@ pub(crate) fn board_task_brief_for(board_dir: &str, home_dir: &str) -> String {
          \n\
          To request code deploy/review, check {REVIEW_REQUEST_BRIEF_FILE_NAME} in it\n\
          \n\
-         Before working, check {COORDINATION_BRIEF_FILE_NAME} in it",
+         If you will change code, check {COORDINATION_BRIEF_FILE_NAME} in it first",
         program = crate::cli::PROGRAM
     )
 }
@@ -230,11 +236,35 @@ pub(crate) const COORDINATION_BRIEF_FILE_NAME: &str = "Coordination.md";
 /// `wire_file` is the file the wire's broadcasts are kept in, as the agent is to read it.
 pub(crate) fn coordination_brief(wire_file: &str) -> String {
     format!(
-        "Before working, read {wire_file}, then post the areas you will touch: \
-         `{post} \"<one line>\"`. Start it with @handle to message one agent instead.\n",
+        "If you will change code, read {wire_file} first, then post the areas you will touch: \
+         `{post} \"<one line>\"`. Start it with @handle to message one agent instead. Work that \
+         changes no repo file needs neither.\n",
         post = super::wire::post_command()
     )
 }
+
+/// What the task's tracker link is, and how an agent sets it, in the task's folder beside the
+/// file it describes. The brief only points here, as for the attachments.
+pub(crate) const TRACKER_LINK_BRIEF_FILE_NAME: &str = "tracker_link.md";
+
+/// The whole of the tracker-link format. There is no `moon` command for it: the link is a field
+/// of the task's `metadata.json`, which the board reads again every second or two.
+pub(crate) const TRACKER_LINK_BRIEF: &str = "\
+# Linking a task to its tracker issue
+
+A task can name its issue in a tracker kept elsewhere - Linear, Jira, GitHub or GitLab. The
+card shows the issue's id, and a click opens the link.
+
+The link is `remote_task_tracker_url` in `metadata.json` in this task folder. Set it to the
+issue's full web address, as a string:
+
+```
+\"remote_task_tracker_url\": \"https://linear.app/acme/issue/BM-3343/remote-tracker-link-field\"
+```
+
+Change that value and nothing else, and keep the file valid JSON. An empty string takes the
+link off.
+";
 
 /// The notes file as the file pane addresses it: relative to the repo root.
 pub(crate) fn notes_repo_path(task_id: &str) -> String {

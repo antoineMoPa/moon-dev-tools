@@ -10,7 +10,7 @@ use std::{
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use tokio::sync::{broadcast, watch};
 
-use crate::{agent_sessions::AgentHome, api::AgentKind};
+use crate::{agent_sessions::AgentHome, api::AgentKind, attention::Heard};
 
 use super::{
     agent_control::{AgentControl, MINERVE_CONTROL_SOCKET_ENV_VAR},
@@ -196,6 +196,7 @@ impl TerminalRegistry {
             trust_unanswered: std::sync::atomic::AtomicBool::new(false),
             attention: Mutex::new(None),
             attention_scanner: Mutex::new(Default::default()),
+            copied: Mutex::new(None),
             child_ended: std::sync::atomic::AtomicBool::new(false),
             last_activity: Arc::clone(&self.last_activity),
             child_pid,
@@ -231,8 +232,11 @@ impl TerminalRegistry {
                         let chunk = &buffer[..count];
                         crate::api::mark_activity(&session.last_activity);
                         *session.last_output.lock().unwrap() = Some(Instant::now());
-                        for asked in session.attention_scanner.lock().unwrap().feed(chunk) {
-                            session.asked_for_attention(asked);
+                        for heard in session.attention_scanner.lock().unwrap().feed(chunk) {
+                            match heard {
+                                Heard::Asked(asked) => session.asked_for_attention(asked),
+                                Heard::Copied(text) => session.copy_requested(text),
+                            }
                         }
                         // A window attached now reads this as it comes, and answers any question
                         // in it - which a later replay then leaves out.

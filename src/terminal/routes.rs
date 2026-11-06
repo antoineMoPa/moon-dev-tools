@@ -237,29 +237,32 @@ pub(crate) async fn terminals_running_a_command(
     Ok(Json(TerminalList { terminal_ids }))
 }
 
-/// The shells asking for a person - see [`crate::attention`].
+/// The shells asking for a person - see [`crate::attention`] - and the text they copied to
+/// the clipboard, taken as it is asked for.
 pub(crate) async fn terminals_wanting_attention(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    let terminals = tokio::task::spawn_blocking(move || {
+    let list = tokio::task::spawn_blocking(move || {
         crate::api::with_session(&state, &session_id, |_| Ok(()))?;
         let owner = workspace_owner(&state, &session_id)?;
-        anyhow::Ok(
+        let visible = |terminal_id: &str| {
             state
+                .terminals
+                .activity_visible_to(terminal_id, owner.as_deref())
+        };
+        anyhow::Ok(TerminalAttentionList {
+            terminals: state
                 .terminals
                 .wanting_attention()
                 .into_iter()
-                .filter(|terminal| {
-                    state
-                        .terminals
-                        .activity_visible_to(&terminal.terminal_id, owner.as_deref())
-                })
+                .filter(|terminal| visible(&terminal.terminal_id))
                 .collect(),
-        )
+            copies: state.terminals.take_copies(visible),
+        })
     })
     .await??;
-    Ok(Json(TerminalAttentionList { terminals }))
+    Ok(Json(list))
 }
 
 pub(crate) async fn close_terminal(

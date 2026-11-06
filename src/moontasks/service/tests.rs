@@ -202,7 +202,7 @@ fn opencode_is_handed_a_config_naming_the_brief_file() {
 /// know beyond the work itself.
 #[test]
 fn the_brief_names_the_task_and_its_folder() {
-    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", "");
 
     assert!(brief.contains("Fix the login page"));
     assert!(brief.contains("/repo/.moontasks/task"));
@@ -224,7 +224,7 @@ fn the_board_tasks_brief_names_the_board_and_no_task() {
 /// carry it.
 #[test]
 fn the_brief_points_at_the_attachments_format_without_spelling_it_out() {
-    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", "");
 
     assert!(brief.contains(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME));
     assert!(!brief.contains(crate::moontasks::ATTACHMENTS_FILE_NAME));
@@ -234,12 +234,14 @@ fn the_brief_points_at_the_attachments_format_without_spelling_it_out() {
 /// where, and the one sentence about it is in that file.
 #[test]
 fn the_brief_points_at_the_coordination_file_without_spelling_it_out() {
-    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task");
+    let brief = crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", "");
     let board_brief =
         crate::moontasks::board_task_brief_for("/repo/.moontasks", "/repo/.moontasks/board-task");
 
-    assert!(brief.contains("\n\nBefore working, check Coordination.md\n\n"));
-    assert!(board_brief.ends_with("\n\nBefore working, check Coordination.md in it"));
+    assert!(brief.contains("\n\nIf you will change code, check Coordination.md first\n\n"));
+    assert!(
+        board_brief.ends_with("\n\nIf you will change code, check Coordination.md in it first")
+    );
     for brief in [brief, board_brief] {
         assert!(
             !brief.contains(crate::moontasks::WIRE_FILE_NAME),
@@ -251,12 +253,51 @@ fn the_brief_points_at_the_coordination_file_without_spelling_it_out() {
 
 /// The whole of what an agent is told about the wire as it starts.
 #[test]
-fn the_coordination_file_is_two_sentences() {
+fn the_coordination_file_is_conditional_on_changing_code() {
     assert_eq!(
         crate::moontasks::coordination_brief(".moontasks/messageboard.txt"),
-        "Before working, read .moontasks/messageboard.txt, then post the areas you will touch: \
-         `moon wire post \"<one line>\"`. Start it with @handle to message one agent instead.\n"
+        "If you will change code, read .moontasks/messageboard.txt first, then post the areas you \
+         will touch: `moon wire post \"<one line>\"`. Start it with @handle to message one agent \
+         instead. Work that changes no repo file needs neither.\n"
     );
+}
+
+/// A task with a tracker issue has its address in the brief, so the agent knows which issue
+/// it is on without opening the card. The task without one names no link, but still points at
+/// the file that says how to set one.
+#[test]
+fn the_brief_names_the_tracker_issue_when_the_task_has_one() {
+    let issue = "https://linear.app/acme/issue/BM-3343/remote-tracker-link-field";
+    let with_issue =
+        crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", issue);
+    let without_issue =
+        crate::moontasks::brief_for("Fix the login page", "/repo/.moontasks/task", "");
+
+    assert!(
+        with_issue.contains(&format!("Tracker issue: {issue}\n")),
+        "got {with_issue}"
+    );
+    assert!(
+        !without_issue.contains("Tracker issue:"),
+        "got {without_issue}"
+    );
+    for brief in [with_issue, without_issue] {
+        assert!(
+            brief.contains(crate::moontasks::TRACKER_LINK_BRIEF_FILE_NAME),
+            "got {brief}"
+        );
+    }
+}
+
+/// The file that says how to set the tracker link names the field it is set in, and that there
+/// is no command for it.
+#[test]
+fn the_tracker_link_file_names_the_metadata_field() {
+    assert!(
+        crate::moontasks::TRACKER_LINK_BRIEF
+            .contains("`remote_task_tracker_url` in `metadata.json`")
+    );
+    assert!(crate::moontasks::TRACKER_LINK_BRIEF.contains("https://"));
 }
 
 /// A repo with nothing in it but what the test puts there.
@@ -293,6 +334,7 @@ fn a_task_started_in_is_given_the_files_its_brief_points_at() {
         crate::moontasks::REVIEW_REQUEST_BRIEF_FILE_NAME,
         crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME,
         crate::moontasks::COORDINATION_BRIEF_FILE_NAME,
+        crate::moontasks::TRACKER_LINK_BRIEF_FILE_NAME,
     ] {
         assert!(
             brief.contains(pointed_at),
@@ -312,6 +354,38 @@ fn a_task_started_in_is_given_the_files_its_brief_points_at() {
             .expect("expected the wire's file"),
         "",
         "the wire's file is there to be read, with nothing posted yet"
+    );
+}
+
+/// A card whose tracker link is set starts its agent with that link in the brief, and the file
+/// that says how to change it is in the folder.
+#[test]
+fn a_task_with_a_tracker_issue_has_it_in_its_brief() {
+    let repo = temp_repo("tracker");
+    let task_id = store::create_task(
+        &repo,
+        "Fix the login page",
+        &ColumnId::new("todo"),
+        ColumnEnd::Top,
+    )
+    .expect("expected the task to be made");
+    let mut metadata = store::read_task(&repo, &task_id).expect("expected the task");
+    let issue = "https://github.com/acme/moon/issues/12";
+    metadata.remote_task_tracker_url = issue.to_string();
+
+    write_task_files(&task_id, &repo, &metadata).expect("expected the files to be written");
+
+    let dir = store::task_dir(&repo, &task_id).expect("expected the task's folder");
+    let brief = std::fs::read_to_string(dir.join(crate::moontasks::BRIEF_FILE_NAME))
+        .expect("expected the brief");
+    assert!(
+        brief.contains(&format!("Tracker issue: {issue}\n")),
+        "got {brief}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join(crate::moontasks::TRACKER_LINK_BRIEF_FILE_NAME))
+            .expect("expected the tracker file"),
+        crate::moontasks::TRACKER_LINK_BRIEF
     );
 }
 

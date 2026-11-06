@@ -247,7 +247,7 @@ pub(crate) fn slug_of(title: &str) -> String {
     slug
 }
 
-const METADATA_FILE_NAME: &str = "metadata.json";
+pub(crate) const METADATA_FILE_NAME: &str = "metadata.json";
 /// The board's own file, beside the task folders: what its columns are and what they are
 /// called. A board without one has the columns in [`super::DEFAULT_COLUMNS`], and only grows
 /// the file once someone changes them.

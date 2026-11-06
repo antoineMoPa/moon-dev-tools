@@ -16,6 +16,8 @@
 //! On a card the box opens in place of the card's pills, from `[tags]`, and shuts on a press
 //! anywhere off the card. On the task's pane it stands open.
 
+use std::collections::BTreeMap;
+
 use egui::{CornerRadius, Rect, Response, RichText, Sense, Ui, vec2};
 
 use crate::{
@@ -56,25 +58,64 @@ pub(crate) fn background_of(tag: &str, palette: &Palette) -> egui::Color32 {
     palette.tag_bgs[usize::from(checksum) % TAG_HUES]
 }
 
-/// The tags the rest of the board uses that the box does not hold, narrowed to what is being
+/// How many of the board's tags the box offers under itself: the most recently used ones.
+const OFFERED_TAGS: usize = 4;
+
+/// The tags the box offers under itself: the [`OFFERED_TAGS`] the board's cards were most
+/// recently given, leaving out the ones the card holds already, narrowed to what is being
 /// typed. What somebody is halfway through writing is usually a tag they have written before,
-/// so the list under the box is the rest of that word.
+/// so the list under the box is the rest of that word. A tag not offered is still put on by
+/// typing it in full.
 fn suggestions(app: &App, held: &[String], typed: &str) -> Vec<String> {
     let typed = typed.trim().to_lowercase();
-    let mut offered: Vec<String> = Vec::new();
-    for tag in app
-        .model
-        .board
-        .tasks
-        .iter()
-        .flat_map(|other| other.tags.iter())
-    {
-        if held.contains(tag) || offered.contains(tag) || !tag.contains(&typed) {
-            continue;
+    recently_used_tags(
+        app.model
+            .board
+            .tasks
+            .iter()
+            .map(|other| (other.tags.as_slice(), last_used_unix(other))),
+        held,
+        OFFERED_TAGS,
+    )
+    .into_iter()
+    .filter(|tag| tag.contains(&typed))
+    .collect()
+}
+
+/// When a card was last put to use: made, or moved into the column it is in, whichever came
+/// later. The board keeps no time for a tag itself, so a tag is as recent as the newest card
+/// that carries it.
+fn last_used_unix(task: &TaskView) -> u64 {
+    task.entered_column_at_unix
+        .unwrap_or(0)
+        .max(task.created_at_unix)
+}
+
+/// The `limit` tags most recently used across `cards`, each card given as its tags and when it
+/// was last used. A tag is as recent as the newest card carrying it, and the most recent come
+/// first. Ties go to the tag that sorts first, so the same board always offers the same tags.
+/// Tags in `excluded` are left out altogether.
+pub(crate) fn recently_used_tags<'a>(
+    cards: impl IntoIterator<Item = (&'a [String], u64)>,
+    excluded: &[String],
+    limit: usize,
+) -> Vec<String> {
+    let mut latest: BTreeMap<&str, u64> = BTreeMap::new();
+    for (tags, used) in cards {
+        for tag in tags.iter().filter(|tag| !excluded.contains(tag)) {
+            let newest = latest.entry(tag.as_str()).or_insert(0);
+            *newest = (*newest).max(used);
         }
-        offered.push(tag.clone());
     }
-    offered
+    let mut ranked: Vec<(&str, u64)> = latest.into_iter().collect();
+    ranked.sort_by(|(tag, used), (other, other_used)| {
+        other_used.cmp(used).then_with(|| tag.cmp(other))
+    });
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(tag, _)| tag.to_string())
+        .collect()
 }
 
 /// The pills at the foot of a card, one per tag. Nothing at all on a card with none: a card
@@ -444,5 +485,60 @@ mod tests {
 
             assert_eq!(background_of("bug", &palette), palette.bug_tag_bg);
         }
+    }
+
+    fn tags(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
+
+    /// The most recent tags come first, and only the first `limit` are kept - a tag is as recent
+    /// as the newest card that carries it, not the oldest.
+    #[test]
+    fn the_most_recently_used_tags_come_first_and_only_the_limit_is_kept() {
+        let cards = [
+            (tags(&["bug"]), 500),
+            (tags(&["old-only", "parser"]), 100),
+            (tags(&["parser"]), 300),
+            (tags(&["review"]), 400),
+            (tags(&["ui"]), 200),
+            (tags(&["urgent"]), 150),
+        ];
+        let offered = recently_used_tags(
+            cards.iter().map(|(tags, used)| (tags.as_slice(), *used)),
+            &[],
+            4,
+        );
+
+        assert_eq!(offered, ["bug", "review", "parser", "ui"]);
+    }
+
+    /// Ties in recency go to the tag that sorts first, so the same board offers the same tags
+    /// on every frame.
+    #[test]
+    fn tags_used_at_the_same_time_are_ordered_by_name() {
+        let cards = [(tags(&["zeta", "alpha"]), 10), (tags(&["mid"]), 10)];
+        let offered = recently_used_tags(
+            cards.iter().map(|(tags, used)| (tags.as_slice(), *used)),
+            &[],
+            4,
+        );
+
+        assert_eq!(offered, ["alpha", "mid", "zeta"]);
+    }
+
+    /// With fewer tags than the limit, all of them are offered, and the tags a card holds are
+    /// left out rather than counted against the limit.
+    #[test]
+    fn fewer_than_the_limit_offers_them_all_and_held_tags_are_left_out() {
+        let cards = [(tags(&["bug", "parser"]), 10), (tags(&["ui"]), 5)];
+        let held = tags(&["bug"]);
+        let offered = recently_used_tags(
+            cards.iter().map(|(tags, used)| (tags.as_slice(), *used)),
+            &held,
+            4,
+        );
+
+        assert_eq!(offered, ["parser", "ui"]);
+        assert!(recently_used_tags(std::iter::empty(), &[], 4).is_empty());
     }
 }

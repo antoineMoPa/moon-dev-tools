@@ -565,7 +565,11 @@ pub(super) fn write_task_files(
     let dir = store::task_dir(repo_path, task_id)?;
 
     let brief = match metadata.status {
-        Some(_) => crate::moontasks::brief_for(&metadata.title, &dir.display().to_string()),
+        Some(_) => crate::moontasks::brief_for(
+            &metadata.title,
+            &dir.display().to_string(),
+            &metadata.remote_task_tracker_url,
+        ),
         None => crate::moontasks::board_task_brief_for(
             &store::tasks_root(repo_path).display().to_string(),
             &dir.display().to_string(),
@@ -591,6 +595,10 @@ pub(super) fn write_task_files(
 
     let path = dir.join(crate::moontasks::ATTACHMENTS_BRIEF_FILE_NAME);
     std::fs::write(&path, crate::moontasks::ATTACHMENTS_BRIEF)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
+    let path = dir.join(crate::moontasks::TRACKER_LINK_BRIEF_FILE_NAME);
+    std::fs::write(&path, crate::moontasks::TRACKER_LINK_BRIEF)
         .with_context(|| format!("failed to write {}", path.display()))?;
 
     // The wire's file is named from the repo, which is where an agent is started - except

@@ -39,10 +39,15 @@ pub(crate) struct TerminalAttentionView {
     pub(crate) at_unix: u64,
 }
 
-/// Every shell asking for a person, as the window asks for them.
+/// Every shell asking for a person, as the window asks for them, and the text the shells
+/// copied to the clipboard since the window last asked.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct TerminalAttentionList {
     pub(crate) terminals: Vec<TerminalAttentionView>,
+    /// Each shell's last copy with OSC 52, taken as it is asked for - see
+    /// [`crate::attention::Heard::Copied`]. Missing from an older server's answer.
+    #[serde(default)]
+    pub(crate) copies: Vec<String>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]

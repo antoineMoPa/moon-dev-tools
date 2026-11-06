@@ -1,5 +1,6 @@
 //! The documents a task is about, listed in the task's `file_attachments.txt`, and the
-//! opening of one.
+//! opening of one. The task's pane lists the files left in the task's folder beside them, and
+//! has a button that opens the folder itself.
 //!
 //! The list is a plain file so that a person or an agent adds a document by writing a line.
 //! A click on a text file - a `.txt`, a `.json`, markdown, source, a file with no extension -
@@ -31,6 +32,9 @@ const OPENER: &str = "open";
 #[cfg(not(target_os = "macos"))]
 const OPENER: &str = "xdg-open";
 
+/// The width of the dot [`marks::attachment_dot`] draws, which a folder's file leaves room for.
+const DOT_WIDTH: f32 = 7.0;
+
 /// The extensions of text documents that go to [`OPENER`] all the same: a page is attached to
 /// be seen in a browser, not read as markup.
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,11 +46,47 @@ pub(crate) fn path_of(task: &TaskView, listed: &str) -> PathBuf {
     Path::new(&task.dir_path).join(listed)
 }
 
+/// The Files section of a task's pane: a heading with the button that opens the task's folder,
+/// then the documents the task lists, then the files left in the folder. The pane is the only
+/// place the folder's own files are listed - a card lists the documents, and no more.
+pub(crate) fn draw_section(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &TaskView,
+    palette: &Palette,
+    actions: &mut Vec<BoardAction>,
+) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Files").size(SMALL_SIZE).color(palette.muted));
+        open_folder_button(app, ui, task);
+    });
+    ui.add_space(3.0);
+    draw_list(app, ui, task, &mut Controls::elsewhere(), palette, actions);
+    draw_folder_files(app, ui, task, palette);
+}
+
+/// The button at the right of the Files heading, which hands the task's folder to
+/// [`OPENER`]: the file manager, on a Mac. A browser has no folder of the machine to open, so
+/// there is no button.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_folder_button(app: &mut App, ui: &mut Ui, task: &TaskView) {
+    ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+        let open = widgets::clickable(ui.small_button("open folder"))
+            .on_hover_text(format!("Open {} in the file manager", task.dir_path));
+        if open.clicked() {
+            hand_to_opener(app, PathBuf::from(&task.dir_path));
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_folder_button(_app: &mut App, _ui: &mut Ui, _task: &TaskView) {}
+
 /// The list, one link a line. Nothing is drawn for a task with no documents. `card` is what a
 /// press on a link is claimed from, so on a card a click opens the document rather than
-/// picking the card up; the task's pane has no card and passes [`Controls::elsewhere`].
-/// `heading` is for the pane, where the list stands on its own under a name. The mark at the
-/// end of a row asks, through `actions`, for that document to be taken off the task.
+/// picking the card up; the task's pane has no card and passes [`Controls::elsewhere`]. The
+/// mark at the end of a row asks, through `actions`, for that document to be taken off the
+/// task.
 pub(crate) fn draw_list(
     app: &mut App,
     ui: &mut Ui,
@@ -54,15 +94,7 @@ pub(crate) fn draw_list(
     card: &mut Controls,
     palette: &Palette,
     actions: &mut Vec<BoardAction>,
-    heading: bool,
 ) {
-    if task.attachments.is_empty() {
-        return;
-    }
-    if heading {
-        ui.label(RichText::new("Files").size(SMALL_SIZE).color(palette.muted));
-        ui.add_space(3.0);
-    }
     for listed in &task.attachments {
         let path = path_of(task, listed);
         // A row like a shell's or a run's: a dot, then the name, the whole row opening it.
@@ -100,6 +132,35 @@ pub(crate) fn draw_list(
     }
 }
 
+/// The files in the task's folder that the list above does not already show, a row each. A row
+/// opens its file the way an attachment's does. None of them is taken off the task with a mark,
+/// since none is on it: a file stays listed for as long as it is in the folder.
+fn draw_folder_files(app: &mut App, ui: &mut Ui, task: &TaskView, palette: &Palette) {
+    for name in &task.folder_files {
+        let path = path_of(task, name);
+        let row = resources::draw_row(ui, palette, true, &format!("Open {}", path.display()));
+        let mut name_pressed = false;
+        resources::draw_in_row(ui, row.rect, |ui| {
+            // The place the dot of an attachment's row takes, so the names line up.
+            ui.add_space(DOT_WIDTH + ui.spacing().item_spacing.x);
+            let button = widgets::quiet_button_cut_to_row(ui, name)
+                .on_hover_text(format!("Open {}", path.display()));
+            name_pressed = button.clicked();
+        });
+        if row.clicked() || name_pressed {
+            open(app, path);
+        }
+    }
+}
+
+/// Hand `path` to [`OPENER`], which opens it in whatever the machine has for it.
+fn hand_to_opener(app: &mut App, path: PathBuf) {
+    if let Err(error) = std::process::Command::new(OPENER).arg(&path).spawn() {
+        app.model
+            .error(format!("could not open {}: {error}", path.display()));
+    }
+}
+
 /// Open one listed document: a text file in a tab, anything else - and a web page - with
 /// [`OPENER`].
 ///
@@ -126,10 +187,7 @@ fn open(app: &mut App, path: PathBuf) {
             });
         return;
     }
-    if let Err(error) = std::process::Command::new(OPENER).arg(&path).spawn() {
-        app.model
-            .error(format!("could not open {}: {error}", path.display()));
-    }
+    hand_to_opener(app, path);
 }
 
 /// Whether `path` is named as one of [`EXTENSIONS_FOR_OPENER`].

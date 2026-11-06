@@ -217,6 +217,19 @@ impl TerminalRegistry {
         asking
     }
 
+    /// The text copied from the shells `visible` lets through, each shell's last copy, which no
+    /// window has taken yet - see `TerminalSession::take_copy`. Taken: a copy is for one
+    /// window's clipboard, and the next poll has nothing of it.
+    pub(crate) fn take_copies(&self, visible: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut terminal_ids: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
+        terminal_ids.sort_unstable();
+        terminal_ids
+            .iter()
+            .filter(|terminal_id| visible(terminal_id))
+            .filter_map(|terminal_id| self.get(terminal_id)?.take_copy())
+            .collect()
+    }
+
     /// Every visualization the Codex runs in these terminals have announced - see
     /// [`crate::visualizations::rollout`] - each with the home of whoever's Codex it is,
     /// which is where its fragment is. Reads their rollouts, so it is file work, done for

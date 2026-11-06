@@ -389,11 +389,13 @@ pub(crate) trait Backend: Send + Sync + 'static {
     /// a prompt. This is what quitting would interrupt, and so what the window warns about.
     fn terminals_running_a_command(&self, session_id: &str) -> Result<Vec<String>>;
     /// The shells asking for a person - a bell, or the notification an agent sends when it
-    /// is waiting on a question - and what each said. See [`crate::attention`].
+    /// is waiting on a question - and what each said. See [`crate::attention`]. With them, the
+    /// text the shells copied to the clipboard with OSC 52, taken so that the window puts it
+    /// on its own - see [`crate::attention::Heard::Copied`].
     fn terminals_wanting_attention(
         &self,
         session_id: &str,
-    ) -> Result<Vec<crate::api::TerminalAttentionView>>;
+    ) -> Result<crate::api::TerminalAttentionList>;
     /// Every visualization an agent in the server's terminals has announced - see
     /// [`crate::visualizations`].
     fn terminal_visualizations(

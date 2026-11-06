@@ -156,6 +156,9 @@ pub(crate) struct Model {
     pub(crate) shells_wanting_attention: Vec<crate::api::TerminalAttentionView>,
     /// When each shell's last posted ask was made, by terminal id.
     pub(crate) attention_posted: HashMap<String, u64>,
+    /// Text the shells copied to the clipboard with OSC 52, as the last poll brought it. The
+    /// next frame puts it on the window's clipboard - see [`crate::attention::Heard::Copied`].
+    pub(crate) shell_copies: Vec<String>,
     pub(crate) toasts: Vec<Toast>,
     /// Every message the window has posted, toast or error, whether or not it was read
     /// before it faded - see [`crate::native::messages`].

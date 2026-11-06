@@ -246,3 +246,54 @@ fn a_remote_shell_is_renamed_over_http() {
         .close_terminal(&opened.session_id, &terminal_id)
         .expect("expected the remote shell to close");
 }
+
+/// A program in a remote shell copying with OSC 52 reaches the window on the attention poll,
+/// once: the copy is taken as it is answered, and the next poll has nothing of it.
+#[test]
+fn a_remote_shell_s_copy_arrives_once_with_the_attention_poll() {
+    let served = serve_a_repo("shell-copy");
+    let backend =
+        RemoteBackend::connect(&served.base_url, pass_key()).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+    let terminal_id = backend
+        .create_terminal(&opened.session_id, None)
+        .expect("expected a remote shell to start");
+    let attachment = backend
+        .attach_terminal(&opened.session_id, &terminal_id)
+        .expect("expected to attach to the remote shell");
+    // `aGk=` is `hi`. The shell echoes the command with `\033` spelled out, which is no OSC.
+    attachment
+        .tty
+        .write(b"printf '\\033]52;c;aGk=\\007'\n")
+        .expect("expected to write to the remote shell");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut copies = Vec::new();
+    while copies.is_empty() && Instant::now() < deadline {
+        while attachment.output.try_recv().is_ok() {}
+        copies = backend
+            .terminals_wanting_attention(&opened.session_id)
+            .expect("expected the attention poll")
+            .copies;
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(copies, vec!["hi".to_string()]);
+    assert!(
+        backend
+            .terminals_wanting_attention(&opened.session_id)
+            .expect("expected the attention poll")
+            .copies
+            .is_empty(),
+        "a copy is taken by the poll that answered it"
+    );
+
+    backend
+        .close_terminal(&opened.session_id, &terminal_id)
+        .expect("expected the remote shell to close");
+}
